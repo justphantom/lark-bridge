@@ -1,0 +1,11 @@
+{
+  "backend_id":   "claude-1",
+  "frontend_url": "http://localhost:6060",
+  "ipc_secret":   "${IPC_SECRET}",
+  "state_dir":    "/var/lib/lark-bridge",
+  "claude": {
+    "cli_path":          "claude",
+    "permission_mode":   "acceptEdits",
+    "default_directory": "/var/lib/lark-bridge/claude"
+  }
+}

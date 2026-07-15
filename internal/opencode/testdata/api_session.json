@@ -1,0 +1,70 @@
+{
+  "data": [
+    {
+      "id": "ses_0cd342512ffe040T5EQbsX2wva",
+      "projectID": "4e4c6dab7ce7b718ae7e8b0e40affcd842fbb95c",
+      "agent": "build",
+      "model": {
+        "id": "big-pickle",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "cost": 0,
+      "tokens": {
+        "input": 13489,
+        "output": 287,
+        "reasoning": 111,
+        "cache": {
+          "read": 49792,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1783263648493,
+        "updated": 1783266576409,
+        "archived": null
+      },
+      "title": "Git pull operation",
+      "location": {
+        "directory": "/opt/code/feishu-opencode-bridge",
+        "workspaceID": null
+      },
+      "subpath": null
+    },
+    {
+      "id": "ses_0cd34a136ffekt1xftBvQrXA0X",
+      "projectID": "4aa90b235fcf8c54b2f767bed4dc8204f7addc09",
+      "agent": "build",
+      "model": {
+        "id": "mimo-v2.5-free",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "cost": 0,
+      "tokens": {
+        "input": 22997,
+        "output": 296,
+        "reasoning": 186,
+        "cache": {
+          "read": 52224,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1783263616713,
+        "updated": 1783266691457,
+        "archived": null
+      },
+      "title": "Git pull",
+      "location": {
+        "directory": "/opt/code/feishu-claude-bridge",
+        "workspaceID": null
+      },
+      "subpath": null
+    }
+  ],
+  "cursor": {
+    "previous": "eyJhbmNob3IiOnsiaWQiOiJzZXNfMGNkMzQyNTEyZmZlMDQwVDVFUWJzWDJ3dmEiLCJ0aW1lIjoxNzgzMjYzNjQ4NDkzLCJkaXJlY3Rpb24iOiJwcmV2aW91cyJ9fQ",
+    "next": "eyJhbmNob3IiOnsiaWQiOiJzZXNfMTBlMTIxZTU2ZmZlcHQ5WWtDT0U3VHJBRnMiLCJ0aW1lIjoxNzgyMTc1MzU5NDAxLCJkaXJlY3Rpb24iOiJuZXh0In19"
+  }
+}

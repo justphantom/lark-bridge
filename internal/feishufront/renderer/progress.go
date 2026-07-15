@@ -1,0 +1,299 @@
+package renderer
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
+)
+
+// maxCompletedTools bounds how many completed-tool detail rows are shown.
+// Older ones are folded into the grouped summary ("… 另完成 读取 N · 执行 N")
+// so the card does not grow unbounded on long multi-round agent tasks. 3
+// keeps the recent-actions window short — the grouped summary carries the
+// scale, the window carries only "what just happened".
+const maxCompletedTools = 3
+
+// maxRunningTools bounds how many running-tool rows are shown. When
+// exceeded, older running rows are collapsed into a "... 及 N 个运行中"
+// summary. In practice concurrent tools rarely exceed 3-4, but this
+// prevents a subagent storm from exploding the card height.
+const maxRunningTools = 5
+
+// maxToolOutputLen caps the error excerpt shown for a failed tool row. 50
+// runes is enough to convey the failure reason (permission denied, exit 1,
+// timeout) without letting a verbose stack trace crowd the error zone.
+const maxToolOutputLen = 50
+
+// maxThinkingLen caps the visible thinking text per block.
+const maxThinkingLen = 200
+
+// maxTextRunes caps the accumulated streaming text shown in the progress
+// card. The progress card is a preview, not the full reply — the result
+// card carries the complete text (maxResultRunes). 2000 runes (~20 lines
+// on mobile) is enough to convey what Claude is writing without making
+// the card extremely tall.
+const maxTextRunes = 2000
+
+// toolRow tracks one tool invocation through its lifecycle.
+type toolRow struct {
+	name       string
+	desc       string // human-readable summary (file path, command, etc.)
+	status     string // running | completed | error
+	output     string // truncated error excerpt, shown only when status == error
+	count      int    // number of same name+desc calls collapsed into this row
+	isSubagent bool   // claude "<Type> Agent" row or opencode "task" tool
+	taskID     string // claude subagent identifier; empty for leaf tools/opencode
+}
+
+// ProgressState accumulates the streaming pieces of one prompt so each
+// progress update renders the whole card.
+type ProgressState struct {
+	textBuf strings.Builder
+	// lastThinking keeps only the most recent thinking block. Both backends
+	// emit each thinking block whole (one Event per block, not token deltas),
+	// so AddThinking = one new block. Keeping just the latest reflects what the
+	// model is currently reasoning about; prior blocks are dropped to keep the
+	// card short. thinkingCount still rises with every block so the (第 k 段)
+	// marker tracks total progress.
+	lastThinking  string
+	thinkingCount int
+	tools         []toolRow
+	stepCount     int
+}
+
+// NewProgressState builds an empty state.
+func NewProgressState() *ProgressState { return &ProgressState{} }
+
+// AddText appends a text delta.
+func (s *ProgressState) AddText(delta string) { s.textBuf.WriteString(delta) }
+
+// AddThinking records a thinking block. Each call is one whole block (both
+// backends emit thinking block-wise, not as token deltas); the latest block
+// overwrites the prior so the card surfaces the model's current reasoning and
+// stays short. thinkingCount still rises with every block so the (第 k 段)
+// marker conveys how many reasoning steps have happened.
+func (s *ProgressState) AddThinking(delta string) {
+	s.lastThinking = delta
+	s.thinkingCount++
+}
+
+// AddToolUse records a tool invocation start. A repeated call with the same
+// name+desc collapses into the existing row (incrementing count) rather than
+// spawning a duplicate; this keeps consecutive identical calls (e.g. reading
+// the same file twice) visible as "Read: /x ×2" instead of two rows.
+// isSubagent is the backend's authoritative flag (not a name-based guess).
+// For subagents with a non-empty taskID (claude), matching is by taskID so the
+// row folds its started/progress/notification lifecycle into one entry even
+// though name/desc drift across it; leaf tools (and opencode subagents, which
+// carry no taskID) keep the legacy name+desc match.
+func (s *ProgressState) AddToolUse(name, desc string, isSubagent bool, taskID string) {
+	// Normalize tool name: first letter upper-case (or mcp:<tool>).
+	name = normalizeToolName(name)
+	if isSubagent && taskID != "" {
+		for i := range s.tools {
+			if s.tools[i].isSubagent && s.tools[i].taskID == taskID {
+				s.tools[i].status = "running"
+				s.tools[i].desc = desc
+				s.tools[i].count++
+				s.tools[i].name = name
+				return
+			}
+		}
+		s.tools = append(s.tools, toolRow{name: name, desc: desc, status: "running", count: 1, isSubagent: true, taskID: taskID})
+		return
+	}
+	for i := range s.tools {
+		if s.tools[i].name == name && s.tools[i].desc == desc {
+			s.tools[i].status = "running"
+			s.tools[i].count++
+			s.tools[i].isSubagent = isSubagent
+			return
+		}
+	}
+	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: "running", count: 1, isSubagent: isSubagent})
+}
+
+// AddToolResult records a tool completion. desc carries the input summary so a
+// result-only event (no prior ToolUse, e.g. opencode's single completed line)
+// still renders "Read: /path" when it appends a fresh row. When it matches an
+// existing running row, that row keeps its own desc. Matching prefers the most
+// recent running row of the same name. For subagents with a non-empty taskID
+// (claude), the row is closed by taskID so the notification reaches the exact
+// subagent that started — not merely the most-recent same-name running row
+// (which under concurrency closes the wrong one). If that row was already
+// collapsed out by maxRunningTools the result is accepted as an orphan
+// completed entry rather than retroactively resizing the card.
+func (s *ProgressState) AddToolResult(name, desc, output string, isError, isSubagent bool, taskID string) {
+	name = normalizeToolName(name)
+	status := "completed"
+	if isError {
+		status = "error"
+	}
+	preview := truncateOutput(output)
+	if isSubagent && taskID != "" {
+		for i := range s.tools {
+			if s.tools[i].isSubagent && s.tools[i].taskID == taskID {
+				s.tools[i].status = status
+				s.tools[i].output = preview
+				if desc != "" && desc != s.tools[i].desc {
+					s.tools[i].desc = desc
+				}
+				return
+			}
+		}
+		s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1, isSubagent: true, taskID: taskID})
+		return
+	}
+	for i := len(s.tools) - 1; i >= 0; i-- {
+		if s.tools[i].name == name && s.tools[i].status == "running" {
+			s.tools[i].status = status
+			s.tools[i].output = preview
+			s.tools[i].isSubagent = isSubagent
+			// A terminal description (e.g. a subagent's notification summary
+			// with cumulative usage) supersedes the live progress description
+			// the row was showing while running.
+			if desc != "" && desc != s.tools[i].desc {
+				s.tools[i].desc = desc
+			}
+			return
+		}
+	}
+	// No matching running tool — append as completed, using the input
+	// summary as the row's description.
+	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1, isSubagent: isSubagent})
+}
+
+// AddProgress counts a step. The desc is currently unused but kept on the
+// signature so callers do not need to change if the progress card starts
+// surfacing step descriptions.
+func (s *ProgressState) AddProgress(desc string) {
+	s.stepCount++
+}
+
+// Render produces the progress card JSON.
+func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
+	header.Template = "blue"
+	if header.Title == "" {
+		header.Title = "处理中"
+	}
+	// Enrich title with step + completed-tool count. Running tools are shown
+	// in their own zone and excluded from the title count so the title tracks
+	// settled actions (completed + errored), not the volatile in-flight set.
+	if s.stepCount > 0 {
+		header.Title += " · 第 " + strconv.Itoa(s.stepCount) + " 轮"
+	}
+	completedTitle := 0
+	for _, t := range s.tools {
+		if t.status != "running" {
+			completedTitle++
+		}
+	}
+	if completedTitle > 0 {
+		header.Title += " · 已完成 " + strconv.Itoa(completedTitle)
+	}
+
+	// Each zone builds its own element (or nil when empty); appendZones
+	// inserts an hr between adjacent non-empty zones so thinking / tools /
+	// text don't run together when several are present.
+	var zones []cardkit.Element
+
+	// Thinking: latest block only (capped, blockquote style). The running
+	// (第 k 段) marker tells the user reasoning is advancing even though earlier
+	// blocks are no longer shown — prior blocks are dropped to keep the card
+	// short and focused on the model's current thought.
+	if s.lastThinking != "" {
+		preview := truncateRunes(s.lastThinking, maxThinkingLen)
+		zones = append(zones, cardkit.MarkdownElement("> 💭 (第 "+strconv.Itoa(s.thinkingCount)+" 段) "+preview))
+	}
+
+	// Tools split into three zones (running → completed → error) per the
+	// four-zone card spec. Error rows are separated out so the completed
+	// zone's grouped summary counts only successes ("不含出错动作") and the
+	// error zone can list failures verbatim with their excerpts.
+	completed := 0
+	var running, done, errored []string
+	var doneRows []toolRow
+	for _, t := range s.tools {
+		line := formatToolLine(t)
+		switch t.status {
+		case "running":
+			running = append(running, line)
+		case "error":
+			errored = append(errored, line)
+		default:
+			done = append(done, line)
+			doneRows = append(doneRows, t)
+			completed++
+		}
+	}
+
+	// Zone 2: executing. Cap running tools — keep the most recent, collapse
+	// older ones.
+	var runningLines []string
+	skipRunning := len(running) - maxRunningTools
+	if skipRunning > 0 {
+		runningLines = append(runningLines, "... 及 "+strconv.Itoa(skipRunning)+" 个运行中")
+		runningLines = append(runningLines, running[skipRunning:]...)
+	} else {
+		runningLines = append(runningLines, running...)
+	}
+	if len(runningLines) > 0 {
+		zones = append(zones, cardkit.MarkdownElement(strings.Join(runningLines, "\n")))
+	}
+
+	// Zone 3: completed. Show only the last N detail rows; group-summarise
+	// the rest so the user sees scale + category mix during long tasks.
+	var doneLines []string
+	skip := completed - maxCompletedTools
+	if skip > 0 {
+		if summary := groupedSummary(categoryTotals(doneRows)); summary != "" {
+			doneLines = append(doneLines, summary)
+		} else {
+			doneLines = append(doneLines, "... 及 "+strconv.Itoa(skip)+" 个已完成")
+		}
+		doneLines = append(doneLines, done[skip:]...)
+	} else {
+		doneLines = append(doneLines, done...)
+	}
+	if len(doneLines) > 0 {
+		zones = append(zones, cardkit.MarkdownElement(strings.Join(doneLines, "\n")))
+	}
+
+	// Zone 4: errors. Each failure is listed verbatim with its excerpt; no
+	// collapsing — failures are rare and each one's reason matters.
+	if len(errored) > 0 {
+		zones = append(zones, cardkit.MarkdownElement(strings.Join(errored, "\n")))
+	}
+
+	// Accumulated text (if any), capped so the card stays under Feishu's
+	// content limit even when the backend streams a long file.
+	if t := s.textBuf.String(); t != "" {
+		zones = append(zones, cardkit.MarkdownElement(truncateRunes(t, maxTextRunes)))
+	}
+
+	// Abort button: only while tools are running. A pure-text reply (no
+	// tools) finishes quickly and the button would be noise; once everything
+	// is done the card is about to be replaced by the result card anyway.
+	// The button carries kind="abort"; DispatchCardAction forwards it as a
+	// TypeAbort event to the backend, same path as /session-abort.
+	var actions []cardkit.Action
+	if len(running) > 0 {
+		actions = append(actions, cardkit.ButtonAction("⏹ 停止", "abort", nil, false, false))
+	}
+
+	return cardkit.Card(header, footer, appendZones(zones), actions)
+}
+
+// appendZones flattens zone elements into a single slice, inserting an hr
+// divider between adjacent zones so the card reads as distinct sections.
+func appendZones(zones []cardkit.Element) []cardkit.Element {
+	var out []cardkit.Element
+	for _, z := range zones {
+		if len(out) > 0 {
+			out = append(out, cardkit.HrElement())
+		}
+		out = append(out, z)
+	}
+	return out
+}

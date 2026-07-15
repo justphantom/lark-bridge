@@ -1,0 +1,51 @@
+{
+  "feishu_app_id":     "${FEISHU_APP_ID}",
+  "feishu_app_secret": "${FEISHU_APP_SECRET}",
+  "feishu_domain":     "feishu",
+  "feishu_log_level":  "info",
+
+  "ipc_secret":   "${IPC_SECRET}",
+  "ipc_addr":     "localhost:6060",
+  "backend_id":   "claude-1",
+  "frontend_url": "http://localhost:6060",
+
+  "claude": {
+    "cli_path":            "claude",
+    "permission_mode":     "acceptEdits",
+    "default_directory":   "/var/lib/lark-bridge/claude",
+    "max_concurrent":      4,
+    "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
+    "stream_history":      50,
+    "model_options":       ["haiku", "sonnet", "opus"],
+    "permission_options":  ["acceptEdits", "plan", "bypassPermissions"],
+    "effort_options":      ["low", "medium", "high", "xhigh", "max"],
+    "settings_dir":        "~/.claude",
+    "settings_cache_ttl":  3600
+  },
+
+  "opencode": {
+    "cli_path":          "opencode",
+    "default_directory": "/var/lib/lark-bridge/opencode",
+    "max_concurrent":    4,
+    "stream_history":    50,
+    "list_cache_ttl":    3600
+  },
+
+  "log_level":            "info",
+  "log_output":           "stderr",
+  "log_format":           "text",
+  "log_debug_redact":     true,
+  "component_log_levels": {},
+
+  "state_dir": "/var/lib/lark-bridge",
+
+  "timeouts": {
+    "backend_health":     "90s"
+  },
+
+  "dedup": {
+    "stale_window":       "300s",
+    "event_ttl":          "5m",
+    "event_max_entries":  1000
+  }
+}

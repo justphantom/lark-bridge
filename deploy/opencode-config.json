@@ -1,0 +1,11 @@
+{
+  "backend_id":   "opencode-1",
+  "frontend_url": "http://localhost:6060",
+  "ipc_secret":   "${IPC_SECRET}",
+  "state_dir":    "/var/lib/lark-bridge",
+  "opencode": {
+    "cli_path":          "opencode",
+    "default_directory": "/var/lib/lark-bridge/opencode",
+    "max_concurrent":    4
+  }
+}
