@@ -28,7 +28,7 @@ set -euo pipefail
 
 # ── 可配参数 ─────────────────────────────────────────
 INSTALL_DIR="${INSTALL_DIR:-/opt}"
-GIT_URL="${GIT_URL:-https://github.com/justphantom/lark-bridge.git}"
+GIT_URL="${GIT_URL:-https://gitee.com/qixiayizhimei/lark-bridge.git}"
 GO_VERSION="${GO_VERSION:-1.25.0}"
 NODE_VERSION="${NODE_VERSION:-20.18.1}"
 BUN_VERSION="${BUN_VERSION:-1.1.429}"
