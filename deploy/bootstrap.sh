@@ -31,7 +31,7 @@ INSTALL_DIR="${INSTALL_DIR:-/opt}"
 GIT_URL="${GIT_URL:-https://gitee.com/qixiayizhimei/lark-bridge.git}"
 GO_VERSION="${GO_VERSION:-1.25.0}"
 NODE_VERSION="${NODE_VERSION:-20.18.1}"
-BUN_VERSION="${BUN_VERSION:-1.1.429}"
+BUN_VERSION="${BUN_VERSION:-1.3.14}"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -103,7 +103,7 @@ install_bun() {
     if command -v bun >/dev/null; then
         info "bun 已存在，跳过"; return
     fi
-    local url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BARCH}.zip"
+    local url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BARCH}-musl.zip"
     info "下载 $url"
     curl -fsSL "$url" -o /tmp/bun.zip
     if ! command -v unzip >/dev/null; then
@@ -111,7 +111,7 @@ install_bun() {
     fi
     rm -rf /tmp/bun-extract && mkdir -p /tmp/bun-extract
     unzip -q /tmp/bun.zip -d /tmp/bun-extract
-    sudo install -m 0755 "/tmp/bun-extract/bun-linux-${BARCH}/bun" /usr/local/bin/bun
+    sudo install -m 0755 "/tmp/bun-extract/bun-linux-${BARCH}-musl/bun" /usr/local/bin/bun
     rm -rf /tmp/bun.zip /tmp/bun-extract
 }
 install_bun
