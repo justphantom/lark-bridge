@@ -42,9 +42,10 @@ type Config struct {
 	RouterPath  string `json:"router_path,omitempty"`  // router 持久化文件路径（前后端共用）
 
 	// —— 后端运行时：各后端按需 ——
-	Claude   Claude   `json:"claude,omitempty"`   // claude-back 用
-	Opencode Opencode `json:"opencode,omitempty"` // opencode-back 用
-	Peri     Peri     `json:"peri,omitempty"`     // peri-back 用
+	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
+	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
+	Peri          Peri          `json:"peri,omitempty"`           // peri-back 用
+	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 
 	// —— 日志：共用 ——
 	LogLevel           string            `json:"log_level"`
@@ -164,14 +165,25 @@ type Peri struct {
 	SettingsDir string `json:"settings_dir,omitempty"`
 }
 
+// DeployMonitor holds settings for the lark-deploy-monitor backend, which
+// receives /deploy prompts and runs `make <DeployTarget>` in ProjectRoot.
+type DeployMonitor struct {
+	// ProjectRoot is the repo root where `make` runs. Empty → working dir
+	// of the monitor process (set in config; systemd sets WorkingDirectory).
+	ProjectRoot string `json:"project_root,omitempty"`
+	// DeployTarget is the make target invoked (default "deploy").
+	DeployTarget string `json:"deploy_target,omitempty"`
+}
+
 // ComponentLogLevel configures per-component log level overrides.
 type ComponentLogLevel struct {
-	Router   string `json:"router,omitempty"`
-	Opencode string `json:"opencode,omitempty"`
-	Peri     string `json:"peri,omitempty"`
-	Feishu   string `json:"feishu,omitempty"`
-	Bridge   string `json:"bridge,omitempty"`
-	Dedup    string `json:"dedup,omitempty"`
+	Router        string `json:"router,omitempty"`
+	Opencode      string `json:"opencode,omitempty"`
+	Peri          string `json:"peri,omitempty"`
+	Feishu        string `json:"feishu,omitempty"`
+	Bridge        string `json:"bridge,omitempty"`
+	Dedup         string `json:"dedup,omitempty"`
+	DeployMonitor string `json:"deploy_monitor,omitempty"`
 }
 
 // Duration is a time.Duration that JSON-encodes as a Go duration

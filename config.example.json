@@ -41,6 +41,11 @@
     "effort_options":     ["low", "medium", "high", "max"]
   },
 
+  "deploy_monitor": {
+    "project_root":  "/home/user/ZCodeProject/lark-bridge",
+    "deploy_target": "deploy"
+  },
+
   "log_level":            "info",
   "log_output":           "stderr",
   "log_format":           "text",

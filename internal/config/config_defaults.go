@@ -84,6 +84,9 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Peri.StreamHistory <= 0 {
 		cfg.Peri.StreamHistory = 50
 	}
+	if cfg.DeployMonitor.DeployTarget == "" {
+		cfg.DeployMonitor.DeployTarget = "deploy"
+	}
 	if cfg.StateDir == "" {
 		// Default to the directory holding the config file so state
 		// lands next to the config. Relative paths resolve to CWD.

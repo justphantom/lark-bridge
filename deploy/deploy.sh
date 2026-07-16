@@ -193,6 +193,7 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-peri-back" ]]      || fail "构建产物缺失：lark-peri-back"
+[[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
 # ── 步骤 2：在临时目录生成三个 config（不修改 repo 源文件）──
 # 三个进程各用独立 config：claude-config.json / opencode-config.json / feishu-config.json。
@@ -258,10 +259,19 @@ cp "$STAGE/claude-config.json" "$STAGE/peri-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "peri-1",|' "$STAGE/peri-config.json"
 inject_router_path "$STAGE/peri-config.json" "/var/lib/lark-bridge/peri-router.json"
 
+# deploy-monitor：独立 backend_id，无 session/router 需求；注入 project_root 指向 repo 根。
+# monitor 不参与本脚本的 stop/start（见 SERVICES 数组），它的二进制更新需单独重启。
+cp "$STAGE/claude-config.json" "$STAGE/deploy-monitor-config.json"
+sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "deploy-monitor-1",|' "$STAGE/deploy-monitor-config.json"
+sed -i '/"router_path"/d' "$STAGE/deploy-monitor-config.json"
+# 注入 deploy_monitor.project_root（若 config 无此字段则追加到首对象闭合前较复杂；
+# 改用 jq 风格的 sed 在 backend_id 行后插入，失败则保留默认空值，monitor 回退到 CWD）
+sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'"},' "$STAGE/deploy-monitor-config.json"
+
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config（claude-router.json）/ opencode-config（opencode-1, opencode-router.json）/ peri-config（peri-1, peri-router.json）/ feishu-config"
+info "claude-config / opencode-config / peri-config / deploy-monitor-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode,peri} 是三个后端的 default_directory，per-chat 工作目录
@@ -274,14 +284,25 @@ stop_services
 
 info "复制二进制和配置..."
 
-sudo cp "$BIN_DIR"/* "$DEPLOY_DIR/"
+# 业务服务二进制已在 stop_services 后全部停止，可直接覆盖。deploy-monitor 不在
+# SERVICES 中（它要存活到部署结束发完成通知），其运行中的二进制无法被覆盖
+# (ETXTBSY)，故单独处理：运行中则跳过本次 cp，提示运维手动重启 monitor 更新。
+if systemctl is-active --quiet lark-deploy-monitor 2>/dev/null; then
+    warn "lark-deploy-monitor 正在运行，跳过其二进制更新（避免 ETXTBSY）；如需更新 monitor 请手动 systemctl restart"
+    for f in lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back; do
+        sudo cp "$BIN_DIR/$f" "$DEPLOY_DIR/"
+    done
+else
+    sudo cp "$BIN_DIR"/* "$DEPLOY_DIR/"
+fi
 sudo chmod 755 "$DEPLOY_DIR"/*
 
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
-sudo cp "$STAGE/claude-config.json"   "$CONFIG_DIR/"
-sudo cp "$STAGE/opencode-config.json" "$CONFIG_DIR/"
-sudo cp "$STAGE/peri-config.json"     "$CONFIG_DIR/"
-sudo cp "$STAGE/feishu-config.json"   "$CONFIG_DIR/"
+sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
+sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
+sudo cp "$STAGE/peri-config.json"          "$CONFIG_DIR/"
+sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
+sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
 # .env 含真实凭证，仅首次部署写入；后续部署保留现有的 .env 不覆盖
@@ -303,6 +324,7 @@ write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-co
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
 write_unit lark-peri-back      lark-peri-back      lark-peri-back      peri-config.json     lark-feishu-front
+write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
@@ -317,6 +339,17 @@ wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法
 
 # 端口已通，再起三个后端（并行，互不依赖）
 sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back
+
+# deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
+# 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程
+# 全程存活以发送部署完成通知。monitor 二进制更新需运维手动 restart。
+if ! systemctl is-enabled --quiet lark-deploy-monitor 2>/dev/null; then
+    info "首次部署：enable + start lark-deploy-monitor"
+    sudo systemctl enable lark-deploy-monitor 2>/dev/null || true
+    sudo systemctl start lark-deploy-monitor
+else
+    info "lark-deploy-monitor 已 enabled，保持运行（不重启）"
+fi
 
 # ── 步骤 6：验证（轮询 is-active，替代固定 sleep）─────
 info "验证..."
