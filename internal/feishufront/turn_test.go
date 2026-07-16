@@ -60,6 +60,33 @@ func TestInFlight(t *testing.T) {
 	}
 }
 
+// InFlight must exclude a deploy-monitor backend's own turn: a /deploy prompt
+// runs `make deploy`, which queries /v1/status — counting it back would block
+// every deploy. Other backends' turns still count.
+func TestInFlight_ExcludesDeployMonitor(t *testing.T) {
+	types := map[string]string{
+		"back-claude":   "claude",
+		"back-deploy":   "deploy-monitor",
+		"back-opencode": "opencode",
+	}
+	m := NewTurnManager()
+	m.SetTypeResolver(func(id string) string { return types[id] })
+
+	m.Start("p-c1", "c-1", "m-c1", "back-claude")
+	m.Start("p-d1", "c-2", "m-d1", "back-deploy")
+	m.Start("p-o1", "c-3", "m-o1", "back-opencode")
+	if got := m.InFlight(); got != 2 {
+		t.Fatalf("InFlight = %d, want 2 (exclude deploy-monitor)", got)
+	}
+
+	// Without a resolver the count falls back to total (back-compat for
+	// callers/tests that never wire SetTypeResolver).
+	m.SetTypeResolver(nil)
+	if got := m.InFlight(); got != 3 {
+		t.Fatalf("InFlight without resolver = %d, want 3", got)
+	}
+}
+
 // SweepInteractive evicts only bindings older than cardkit.InteractiveTimeout and reports
 // their requestIDs so paired card state can be dropped. (M4)
 func TestSweepInteractive_TTL(t *testing.T) {

@@ -30,9 +30,10 @@ type interactiveEntry struct {
 // TurnManager tracks promptID → Turn (progress card) plus requestID →
 // interactive-card binding. All access is goroutine-safe.
 type TurnManager struct {
-	mu          sync.RWMutex
-	turns       map[string]*Turn
-	interactive map[string]interactiveEntry // requestID → interactive card binding
+	mu           sync.RWMutex
+	turns        map[string]*Turn
+	interactive  map[string]interactiveEntry // requestID → interactive card binding
+	typeResolver func(backendID string) string
 }
 
 // NewTurnManager builds an empty manager.
@@ -41,6 +42,17 @@ func NewTurnManager() *TurnManager {
 		turns:       make(map[string]*Turn),
 		interactive: make(map[string]interactiveEntry),
 	}
+}
+
+// SetTypeResolver wires a backendID→backendType lookup (typically
+// *BackendRegistry.BackendType). When set, InFlight excludes turns whose
+// backendType is "deploy-monitor": a /deploy turns into `make deploy`, which
+// itself calls /v1/status — counting the monitor's own turn would deadlock
+// the deploy (deploy.sh refuses while inflight>0). Safe to call once at startup.
+func (m *TurnManager) SetTypeResolver(fn func(backendID string) string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.typeResolver = fn
 }
 
 // Start records the progress card for one prompt.
@@ -108,10 +120,25 @@ func (m *TurnManager) TurnsByBackend(backendID string) []string {
 // started but not yet reached their terminal control). Used by the deploy-time
 // status endpoint to let an operator avoid restarting the frontend while a
 // conversation is mid-flight.
+//
+// Turns owned by a "deploy-monitor" backend are excluded: a /deploy prompt
+// triggers `make deploy`, which queries this endpoint — counting the monitor's
+// own turn would block every deploy (deploy.sh refuses while inflight>0).
 func (m *TurnManager) InFlight() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return len(m.turns)
+	resolve := m.typeResolver
+	if resolve == nil {
+		return len(m.turns)
+	}
+	n := 0
+	for _, t := range m.turns {
+		if resolve(t.BackendID) == "deploy-monitor" {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // BindInteractive records the messageID of an interactive card by requestID.
