@@ -1,0 +1,12 @@
+{
+  "backend_id":   "peri-1",
+  "frontend_url": "http://localhost:6060",
+  "ipc_secret":   "${IPC_SECRET}",
+  "state_dir":    "/var/lib/lark-bridge",
+  "peri": {
+    "cli_path":          "peri",
+    "default_directory": "/var/lib/lark-bridge/peri",
+    "max_concurrent":    4,
+    "max_turns":         10
+  }
+}

@@ -44,7 +44,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back)
+SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back)
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -192,6 +192,7 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-feishu-front" ]]   || fail "构建产物缺失：lark-feishu-front"
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
+[[ -x "$BIN_DIR/lark-peri-back" ]]      || fail "构建产物缺失：lark-peri-back"
 
 # ── 步骤 2：在临时目录生成三个 config（不修改 repo 源文件）──
 # 三个进程各用独立 config：claude-config.json / opencode-config.json / feishu-config.json。
@@ -252,16 +253,21 @@ cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "/var/lib/lark-bridge/opencode-router.json"
 
+# peri-back：独立 backend_id + 独立 router_path
+cp "$STAGE/claude-config.json" "$STAGE/peri-config.json"
+sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "peri-1",|' "$STAGE/peri-config.json"
+inject_router_path "$STAGE/peri-config.json" "/var/lib/lark-bridge/peri-router.json"
+
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config（claude-router.json）/ opencode-config（opencode-1, opencode-router.json）/ feishu-config"
+info "claude-config（claude-router.json）/ opencode-config（opencode-1, opencode-router.json）/ peri-config（peri-1, peri-router.json）/ feishu-config"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
-# STATE_DIR/{claude,opencode} 是两个后端的 default_directory，per-chat 工作目录
+# STATE_DIR/{claude,opencode,peri} 是三个后端的 default_directory，per-chat 工作目录
 # 在运行时由 MkdirAll 在其下自动创建。
 info "创建系统目录..."
-sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode"
+sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/peri"
 
 # 必须先停服务，否则覆盖二进制会 "Text file busy"
 stop_services
@@ -274,6 +280,7 @@ sudo chmod 755 "$DEPLOY_DIR"/*
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
 sudo cp "$STAGE/claude-config.json"   "$CONFIG_DIR/"
 sudo cp "$STAGE/opencode-config.json" "$CONFIG_DIR/"
+sudo cp "$STAGE/peri-config.json"     "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"   "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
@@ -295,6 +302,7 @@ info "生成 systemd unit 文件（User=$RUN_USER）..."
 write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
+write_unit lark-peri-back      lark-peri-back      lark-peri-back      peri-config.json     lark-feishu-front
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
@@ -307,8 +315,8 @@ sudo systemctl start lark-feishu-front
 wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
 wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 
-# 端口已通，再起两个后端（并行，互不依赖）
-sudo systemctl start lark-claude-back lark-opencode-back
+# 端口已通，再起三个后端（并行，互不依赖）
+sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back
 
 # ── 步骤 6：验证（轮询 is-active，替代固定 sleep）─────
 info "验证..."
