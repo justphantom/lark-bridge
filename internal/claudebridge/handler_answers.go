@@ -10,10 +10,8 @@ import "github.com/hu/lark-bridge/internal/protocol"
 // instead of being copy-pasted across the three bridges.
 
 // registerAnswer reserves a slot for an interactive card's answer under
-// requestID and returns the channel that will receive it. The returned cancel
-// func must be called when the caller stops waiting (success, timeout, or
-// error) to remove the slot. If requestID is already pending, registration
-// fails (the caller should generate a fresh id).
+// requestID and returns the channel that will receive it. If requestID is
+// already pending, registration fails (the caller should generate a fresh id).
 func (h *Handler) registerAnswer(requestID string) (<-chan *protocol.AnswerPayload, bool) {
 	return h.answers.Register(requestID)
 }

@@ -82,15 +82,6 @@ func (b *AnswerBroker) Drain() {
 	}
 }
 
-// PendingCount returns the number of answer slots currently registered, for
-// tests that poll for a picker to register (or clear) its slot without poking
-// the broker's internal lock directly.
-func (b *AnswerBroker) PendingCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.pending)
-}
-
 // PendingIDs returns the requestIDs of every currently-registered slot, for
 // tests that need the id of a slot a picker just registered. Order is not
 // meaningful.

@@ -198,8 +198,7 @@ func TestCmdModel_Picker_ListError(t *testing.T) {
 	// registering a slot. Poll briefly to confirm.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		n := h.answers.PendingCount()
-		if n == 0 {
+		if len(h.answers.PendingIDs()) == 0 {
 			return // good: no dangling slot
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -224,8 +223,7 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 	// ModelSpec must stay empty. Give the goroutine a moment to process.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		n := h.answers.PendingCount()
-		if n == 0 {
+		if len(h.answers.PendingIDs()) == 0 {
 			break // goroutine consumed the answer and exited
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -253,8 +251,7 @@ func TestDrainAnswers_OnClose(t *testing.T) {
 	// The picker goroutine exits; pendingAnswers drains. Poll for it.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		n := h.answers.PendingCount()
-		if n == 0 {
+		if len(h.answers.PendingIDs()) == 0 {
 			return // picker unblocked, slot cleared — no leak
 		}
 		time.Sleep(5 * time.Millisecond)

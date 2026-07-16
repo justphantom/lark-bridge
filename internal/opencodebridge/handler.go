@@ -31,9 +31,10 @@ type Handler struct {
 	// logDebugRedact controls redaction of sensitive text in debug logs.
 	logDebugRedact atomic.Bool
 
-	// defaultDirectory is the base dir under which per-chat working
-	// directories are allocated. Each chat gets defaultDirectory/<chatID>.
-	// When empty, stateDir is used as the base.
+	// defaultDirectory is reserved as the base for per-chat working dirs but is
+	// currently unused: opencode takes its working dir from the /cd pin or an
+	// event override (see ensureBinding), never auto-derived. Retained for
+	// config parity with the claude bridge.
 	defaultDirectory string
 	stateDir         string
 
