@@ -54,7 +54,10 @@ stop_services() {
     timeout 15 sudo systemctl stop "${SERVICES[@]}" 2>/dev/null || true
     sleep 1
 
-    # 仍存活的进程：SIGKILL 连同 cgroup 内子进程一并清理
+    # 仍存活的进程：SIGKILL 连同 cgroup 内子进程一并清理。systemd 的
+    # cgroup kill 已覆盖单元内所有子进程，无需再 pgrep 兜底——后者会
+    # 误伤 deploy-monitor（其 cmdline 含 $DEPLOY_DIR/ 前缀，正是它 fork
+    # 出本次 make deploy，被杀会连带终结整个部署脚本进程树）。
     for svc in "${SERVICES[@]}"; do
         local pid
         pid="$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)"
@@ -64,15 +67,6 @@ stop_services() {
         fi
     done
     sleep 1
-
-    # 兜底：清理 $DEPLOY_DIR 下任何残留进程
-    local stray
-    stray="$(pgrep -f "$DEPLOY_DIR/" 2>/dev/null || true)"
-    if [[ -n "$stray" ]]; then
-        warn "发现残留进程（$stray），SIGKILL"
-        sudo kill -9 $stray 2>/dev/null || true
-        sleep 1
-    fi
 
     # 最终确认：任一仍 active 则中止部署
     for svc in "${SERVICES[@]}"; do
