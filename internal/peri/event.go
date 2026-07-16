@@ -59,3 +59,30 @@ func (e Event) GetResult() string { return e.result }
 
 // GetIsError reports whether this is a terminal error event.
 func (e Event) GetIsError() bool { return e.isError }
+
+// NewTextEvent builds an EventText. Exported for tests in other packages that
+// script a peri event stream without a real subprocess.
+func NewTextEvent(text string) Event {
+	return Event{kind: EventText, text: text}
+}
+
+// NewToolUseEvent builds an EventToolUse.
+func NewToolUseEvent(name, id string) Event {
+	return Event{kind: EventToolUse, toolName: name, toolID: id}
+}
+
+// NewToolResultEvent builds an EventToolResult. isErr sets the prefix-sniffed
+// error flag directly so tests do not need to prepend "Tool execution failed:".
+func NewToolResultEvent(name, id, output string, isErr bool) Event {
+	return Event{kind: EventToolResult, toolName: name, toolID: id, text: output, isToolError: isErr}
+}
+
+// NewResultEvent builds an EventResult carrying the final reply.
+func NewResultEvent(reply string) Event {
+	return Event{kind: EventResult, result: reply}
+}
+
+// NewErrorEvent builds a terminal EventError.
+func NewErrorEvent(text string) Event {
+	return Event{kind: EventError, text: text, isError: true}
+}

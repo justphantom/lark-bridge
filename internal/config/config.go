@@ -44,6 +44,7 @@ type Config struct {
 	// —— 后端运行时：各后端按需 ——
 	Claude   Claude   `json:"claude,omitempty"`   // claude-back 用
 	Opencode Opencode `json:"opencode,omitempty"` // opencode-back 用
+	Peri     Peri     `json:"peri,omitempty"`     // peri-back 用
 
 	// —— 日志：共用 ——
 	LogLevel           string            `json:"log_level"`
@@ -126,10 +127,35 @@ type Opencode struct {
 	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
 }
 
+// Peri holds settings for the local peri CLI subprocess that acts as the
+// agent backend. The peri-back binary shells out to the `peri` CLI in print
+// mode per turn and reads an NDJSON event flow from stdout.
+//
+// peri print mode has NO session persistence: each turn is stateless. This is
+// an accepted design constraint (no multi-turn continuity, no /model or
+// /agent pickers — peri has no list subcommands, models are configured in
+// ~/.peri/settings.json).
+type Peri struct {
+	// CLIPath is the path to the peri binary (default "peri").
+	CLIPath string `json:"cli_path,omitempty"`
+	// DefaultDirectory is the base dir for per-chat working dirs.
+	DefaultDirectory string `json:"default_directory,omitempty"`
+	// MaxConcurrent caps parallel peri subprocesses (default 4).
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
+	// MaxTurns caps the agentic turns per run (passed as --max-turns). <=0 → 1.
+	// One turn = one model call; tool-using tasks need more.
+	MaxTurns int `json:"max_turns,omitempty"`
+	// StreamHistory caps how many recent raw stream-json captures are kept
+	// under {state_dir}/streams. <=0/unset → disabled (peri client has no
+	// LineSink hook yet, so this is reserved for future use).
+	StreamHistory int `json:"stream_history,omitempty"`
+}
+
 // ComponentLogLevel configures per-component log level overrides.
 type ComponentLogLevel struct {
 	Router   string `json:"router,omitempty"`
 	Opencode string `json:"opencode,omitempty"`
+	Peri     string `json:"peri,omitempty"`
 	Feishu   string `json:"feishu,omitempty"`
 	Bridge   string `json:"bridge,omitempty"`
 	Dedup    string `json:"dedup,omitempty"`

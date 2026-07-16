@@ -31,6 +31,13 @@
     "list_cache_ttl":    3600
   },
 
+  "peri": {
+    "cli_path":          "peri",
+    "default_directory": "/var/lib/lark-bridge/peri",
+    "max_concurrent":    4,
+    "max_turns":         10
+  },
+
   "log_level":            "info",
   "log_output":           "stderr",
   "log_format":           "text",
