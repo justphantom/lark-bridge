@@ -1,37 +1,56 @@
 package peribridge
 
 import (
-	"sync"
+	"strings"
 	"time"
 )
 
-// controlThrottle limits how often streaming text/thinking deltas are
-// forwarded to the frontend as Control messages, so a fast-typing model does
-// not flood the IPC channel (and the frontend's UpdateCard path).
-// Tool/result/error controls bypass the throttle and are always sent
-// immediately.
-type controlThrottle struct {
+// textThrottle batches per-token text deltas and releases them at most once
+// per interval. peri's stream-json splits even short replies into one-char
+// chunks (observed: 125 events for 230 chars), so emitting each delta as its
+// own Control floods the IPC channel and starves the frontend render loop.
+//
+// The throttle accumulates chunks in a buffer; Add returns the flushed batch
+// when the interval has elapsed since the last flush, or "" when the window
+// has not elapsed (caller drops it — the bytes are retained for the next
+// window). Flush forces a drain for the terminal path so trailing bytes are
+// not lost.
+type textThrottle struct {
 	interval time.Duration
-	mu       sync.Mutex
 	last     time.Time
+	buf      strings.Builder
 }
 
-func newControlThrottle(interval time.Duration) *controlThrottle {
-	return &controlThrottle{interval: interval}
+func newTextThrottle(interval time.Duration) *textThrottle {
+	return &textThrottle{interval: interval}
 }
 
-// shouldEmitText reports whether a TypeText/TypeThinking control should be
-// emitted now. Returns true on the first call and at most once per interval
-// thereafter.
-func (t *controlThrottle) shouldEmitText(now time.Time) bool {
+// Add appends a text chunk to the pending batch. It returns the concatenated
+// batch to emit when the interval has elapsed since the last flush (and resets
+// the buffer); otherwise it returns "" and the chunk stays buffered. A zero or
+// negative interval disables throttling — every Add returns its chunk
+// immediately so the bridge still emits, just unbatched.
+func (t *textThrottle) Add(chunk string, now time.Time) string {
 	if t.interval <= 0 {
-		return true
+		return chunk
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.buf.WriteString(chunk)
 	if t.last.IsZero() || now.Sub(t.last) >= t.interval {
+		out := t.buf.String()
+		t.buf.Reset()
 		t.last = now
-		return true
+		return out
 	}
-	return false
+	return ""
+}
+
+// Flush returns any buffered text and clears it. Called at terminal/cancel so
+// the final partial batch is not lost. Returns "" when nothing is pending.
+func (t *textThrottle) Flush() string {
+	out := t.buf.String()
+	t.buf.Reset()
+	if out != "" {
+		t.last = time.Now()
+	}
+	return out
 }

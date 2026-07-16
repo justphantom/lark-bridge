@@ -3,6 +3,7 @@ package peribridge
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,6 +279,69 @@ func TestHandleEvent_BusyChatRejected(t *testing.T) {
 		case <-deadline:
 			t.Fatal("did not see busy-reject notice")
 		}
+	}
+}
+
+// TestHandleEvent_EmptyReplyFallback verifies the bridge surfaces a friendly
+// hint instead of a blank card when peri returns no text and no tool call
+// (the model-empty-reply case). peri print mode ends with no terminal result
+// line; without the fallback the user sees nothing.
+func TestHandleEvent_EmptyReplyFallback(t *testing.T) {
+	api := scriptedPeri{events: []peri.Event{
+		peri.NewResultEvent(""), // empty reply, no prior text/tool
+	}}
+	h, reg, cleanup := newTestHandler(t, api)
+	defer cleanup()
+
+	h.router.Bind("chat-empty", "", t.TempDir(), "", "", "")
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-empty",
+		Prompt: &protocol.PromptPayload{ChatID: "chat-empty", Text: "hi"}}
+	if err := h.HandleEvent(context.Background(), ev); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	select {
+	case c := <-reg.Controls():
+		if c.Control.Type != protocol.TypeResult {
+			t.Fatalf("control type = %q, want result", c.Control.Type)
+		}
+		if !strings.Contains(c.Control.Result.Text, "未返回内容") {
+			t.Errorf("empty reply fallback = %q, want fallback hint", c.Control.Result.Text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for result control")
+	}
+}
+
+// TestHandleEvent_EmptyReplyWithToolsNoFallback verifies the fallback does NOT
+// trigger when tools ran (their results are on the progress card; an absent
+// final summary is not an error). The result text may be empty in that case.
+func TestHandleEvent_EmptyReplyWithToolsNoFallback(t *testing.T) {
+	api := scriptedPeri{events: []peri.Event{
+		peri.NewToolUseEvent("Bash", "t-1"),
+		peri.NewToolResultEvent("Bash", "t-1", "done", false),
+		peri.NewResultEvent(""), // tools ran, but no final summary text
+	}}
+	h, reg, cleanup := newTestHandler(t, api)
+	defer cleanup()
+
+	h.router.Bind("chat-t", "", t.TempDir(), "", "", "")
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-t",
+		Prompt: &protocol.PromptPayload{ChatID: "chat-t", Text: "run it"}}
+	if err := h.HandleEvent(context.Background(), ev); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	select {
+	case c := <-reg.Controls():
+		if c.Control.Type != protocol.TypeResult {
+			t.Fatalf("control type = %q, want result", c.Control.Type)
+		}
+		if strings.Contains(c.Control.Result.Text, "未返回内容") {
+			t.Errorf("fallback wrongly applied when tools ran: %q", c.Control.Result.Text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for result control")
 	}
 }
 

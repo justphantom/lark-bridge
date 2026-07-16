@@ -31,8 +31,20 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		toolCount int
 		startTime time.Time
 
-		throttle = newControlThrottle(textEmitInterval)
+		throttle = newTextThrottle(textEmitInterval)
 	)
+
+	// flushText drains any buffered text delta. Called before tool/error/result
+	// events so a pending partial batch is delivered rather than lost or
+	// interleaved with non-text controls. A no-op when the buffer is empty.
+	flushText := func() {
+		if delta := throttle.Flush(); delta != "" {
+			h.emitAsync(promptID, &protocol.Control{
+				Type: protocol.TypeText,
+				Text: &protocol.TextPayload{Delta: delta},
+			})
+		}
+	}
 
 	for ev := range events {
 		h.logger.Debug("bridge received peri event",
@@ -42,6 +54,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			log.FieldToolName, ev.GetToolName())
 
 		if ctx.Err() != nil {
+			flushText()
 			return promptResult{
 				err:         ctx.Err(),
 				isCancelled: true,
@@ -52,13 +65,16 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		switch ev.GetType() {
 		case peri.EventText:
 			text.WriteString(ev.GetText())
-			if throttle.shouldEmitText(time.Now()) {
+			// Batch this chunk with any pending ones; Add returns the merged
+			// batch when the interval elapses, "" to keep buffering.
+			if delta := throttle.Add(ev.GetText(), time.Now()); delta != "" {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
-					Text: &protocol.TextPayload{Delta: ev.GetText()},
+					Text: &protocol.TextPayload{Delta: delta},
 				})
 			}
 		case peri.EventToolUse:
+			flushText()
 			toolCount++
 			if startTime.IsZero() {
 				startTime = time.Now()
@@ -68,6 +84,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName()},
 			})
 		case peri.EventToolResult:
+			flushText()
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
@@ -77,8 +94,10 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case peri.EventResult:
+			flushText()
 			return h.finalizeResult(ev, text.String(), modelSpec, toolCount, startTime)
 		case peri.EventError:
+			flushText()
 			h.logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
 				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
@@ -130,6 +149,14 @@ func (h *Handler) finalizeResult(ev peri.Event, accText, modelSpec string, toolC
 		reply = stripThinking(accText)
 	} else {
 		reply = stripThinking(reply)
+	}
+	// Empty-reply fallback: peri print mode (stream-json) ends with no terminal
+	// result line, and the model occasionally returns an empty content (no
+	// text, no tool call). Without this the user sees a blank result card with
+	// no signal to retry. When tools DID run, their results are already on the
+	// progress card, so an absent final summary is not surfaced as an error.
+	if strings.TrimSpace(reply) == "" && toolCount == 0 {
+		reply = "（模型未返回内容，请重试或调整问题）"
 	}
 	result.reply = reply
 	return result
