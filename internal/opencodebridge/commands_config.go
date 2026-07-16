@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 )
 
@@ -52,7 +53,7 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 // on the binding snapshot.
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载模型列表", "正在获取可用模型，请稍候（约半分钟）…")
-	goSafe(h.logger, "model-picker:"+chatID, func() {
+	bridgebase.GoSafe(h.logger, "model-picker:"+chatID, func() {
 		choice, err := h.askAndWait(chatID, "", "模型", "选择模型", h.agent.ListModels, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
@@ -116,7 +117,7 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 // for why it runs async, emits its own notices, and returns Handled.
 func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载 agent 列表", "正在获取可用 agent，请稍候（约半分钟）…")
-	goSafe(h.logger, "agent-picker:"+chatID, func() {
+	bridgebase.GoSafe(h.logger, "agent-picker:"+chatID, func() {
 		choice, err := h.askAndWait(chatID, "", "agent", "选择 agent", h.agent.ListAgents, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())

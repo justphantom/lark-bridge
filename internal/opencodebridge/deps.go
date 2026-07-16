@@ -23,8 +23,6 @@ type opencodeAPI interface {
 	// drains the channel until it is closed; a terminal event (result/error)
 	// precedes close.
 	Run(ctx context.Context, opts opencode.RunOptions) (<-chan opencode.Event, error)
-	// IsReady is the startup health gate (opencode --version).
-	IsReady(ctx context.Context) error
 	// ListModels runs `opencode models` for the interactive /model picker.
 	// Returns one `provider/model` entry per line.
 	ListModels(ctx context.Context) ([]string, error)

@@ -1,4 +1,4 @@
-package claudebridge
+package bridgebase
 
 import (
 	"strings"
@@ -56,9 +56,9 @@ func TestStripThinking(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := stripThinking(tc.in)
+			got := StripThinking(tc.in, "> 💭 ")
 			if got != tc.want {
-				t.Errorf("stripThinking() = %q, want %q", got, tc.want)
+				t.Errorf("StripThinking() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -66,7 +66,7 @@ func TestStripThinking(t *testing.T) {
 
 func TestStripThinking_MultipleBlocks(t *testing.T) {
 	in := "<think>first</think> middle <think>second</think> end"
-	got := stripThinking(in)
+	got := StripThinking(in, "> 💭 ")
 	if !strings.Contains(got, "> 💭 first") {
 		t.Errorf("missing first block: %q", got)
 	}
@@ -75,5 +75,14 @@ func TestStripThinking_MultipleBlocks(t *testing.T) {
 	}
 	if !strings.Contains(got, "middle") || !strings.Contains(got, "end") {
 		t.Errorf("non-think text dropped: %q", got)
+	}
+}
+
+// TestStripThinking_Prefix verifies the quote prefix is caller-supplied so the
+// three bridges share one stripper: claude passes "> 💭 ", the others pass ">".
+func TestStripThinking_Prefix(t *testing.T) {
+	in := "x<think>reasoning</think>y"
+	if got := StripThinking(in, "> "); got != "x> reasoning\ny" {
+		t.Errorf("plain prefix = %q, want %q", got, "x> reasoning\ny")
 	}
 }

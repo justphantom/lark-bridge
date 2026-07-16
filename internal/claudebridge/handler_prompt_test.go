@@ -18,8 +18,6 @@ import (
 // claude.Event values (whose fields are unexported).
 type closedStreamClaude struct{}
 
-func (closedStreamClaude) IsReady(context.Context) error { return nil }
-
 func (closedStreamClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
 
 func (closedStreamClaude) Run(_ context.Context, _ claude.RunOptions) (<-chan claude.Event, error) {
@@ -99,7 +97,6 @@ func TestStartPromptBusy(t *testing.T) {
 // be recovered so a single bad turn never crashes the backend process.
 type panicClaude struct{}
 
-func (panicClaude) IsReady(context.Context) error                  { return nil }
 func (panicClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
 func (panicClaude) Run(context.Context, claude.RunOptions) (<-chan claude.Event, error) {
 	panic("simulated agent panic")

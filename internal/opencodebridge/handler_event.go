@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -62,7 +63,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// wrap a skill prompt that should reach the CLI as-is.
 	if !p.Skill {
 		if cmd, _ := cmdutil.ParseCommand(p.Text); cmd != "" {
-			goSafe(h.logger, "dispatchCommand:"+chatID, func() {
+			bridgebase.GoSafe(h.logger, "dispatchCommand:"+chatID, func() {
 				h.dispatchCommand(h.appCtx, chatID, p.Text, replyToID)
 			})
 			return nil

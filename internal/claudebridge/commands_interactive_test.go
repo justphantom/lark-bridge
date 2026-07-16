@@ -15,7 +15,7 @@ import (
 
 // newPickerTestHandler builds a Handler wired with a real in-memory router and
 // the given option lists. rpc stays nil (emit is a no-op); the test reads the
-// requestID straight from h.pendingAnswers and delivers the answer itself,
+// requestID straight from h.answers and delivers the answer itself,
 // exercising the same routing the IPC path would.
 func newPickerTestHandler(t *testing.T, modelOpts, permOpts, effortOpts []string) (*Handler, *router.Router) {
 	t.Helper()
@@ -66,7 +66,7 @@ func TestPickAnswerValue(t *testing.T) {
 
 // TestCmdModel_Picker_Success drives the full interactive loop: /model (no
 // args) blocks in askAndWait; the test reads the requestID from
-// h.pendingAnswers, delivers the answer, and verifies the router pin.
+// h.answers, delivers the answer, and verifies the router pin.
 func TestCmdModel_Picker_Success(t *testing.T) {
 	h, r := defaultPickerHandler(t)
 
@@ -261,18 +261,15 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 
 // --- helpers ---
 
-// waitPending polls h.pendingAnswers until a slot appears, returning its
+// waitPending polls h.answers until a slot appears, returning its
 // requestID. Fails the test if no slot appears within timeout.
 func waitPending(t *testing.T, h *Handler, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		h.answerMu.Lock()
-		for id := range h.pendingAnswers {
-			h.answerMu.Unlock()
-			return id
+		if ids := h.answers.PendingIDs(); len(ids) > 0 {
+			return ids[0]
 		}
-		h.answerMu.Unlock()
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("no pending answer slot appeared within timeout")
@@ -280,13 +277,11 @@ func waitPending(t *testing.T, h *Handler, timeout time.Duration) string {
 }
 
 // settingsFakeAgent is a claudeAPI fake whose ListSettings returns the given
-// paths (full paths, as the real Client would). Run/IsReady are unused by the
+// paths (full paths, as the real Client would). Run is unused by the
 // settings picker path.
 type settingsFakeAgent struct {
 	paths []string
 }
-
-func (settingsFakeAgent) IsReady(context.Context) error { return nil }
 
 func (settingsFakeAgent) Run(context.Context, claude.RunOptions) (<-chan claude.Event, error) {
 	ch := make(chan claude.Event)

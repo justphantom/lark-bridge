@@ -22,8 +22,6 @@ type scriptedPeri struct {
 	events []peri.Event
 }
 
-func (s scriptedPeri) IsReady(context.Context) error { return nil }
-
 func (s scriptedPeri) Run(_ context.Context, _ peri.RunOptions) (<-chan peri.Event, error) {
 	ch := make(chan peri.Event, len(s.events))
 	for _, ev := range s.events {
@@ -37,8 +35,6 @@ func (s scriptedPeri) Run(_ context.Context, _ peri.RunOptions) (<-chan peri.Eve
 // its defensive "no terminal event" error path.
 type closedStreamPeri struct{}
 
-func (closedStreamPeri) IsReady(context.Context) error { return nil }
-
 func (closedStreamPeri) Run(_ context.Context, _ peri.RunOptions) (<-chan peri.Event, error) {
 	ch := make(chan peri.Event)
 	close(ch)
@@ -48,8 +44,6 @@ func (closedStreamPeri) Run(_ context.Context, _ peri.RunOptions) (<-chan peri.E
 // blockingPeri mimics a peri subprocess whose stdout stays open until the run
 // context is cancelled.
 type blockingPeri struct{}
-
-func (blockingPeri) IsReady(context.Context) error { return nil }
 
 func (blockingPeri) Run(ctx context.Context, _ peri.RunOptions) (<-chan peri.Event, error) {
 	ch := make(chan peri.Event)
@@ -332,16 +326,23 @@ func TestHandleEvent_EmptyReplyWithToolsNoFallback(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	select {
-	case c := <-reg.Controls():
-		if c.Control.Type != protocol.TypeResult {
-			t.Fatalf("control type = %q, want result", c.Control.Type)
+	// Tool controls are emitted async (fire-and-forget) while the result is
+	// emitted synchronously, so either may arrive first on the loopback IPC;
+	// drain until the terminal result lands.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case c := <-reg.Controls():
+			if c.Control.Type != protocol.TypeResult {
+				continue // tool_use/tool_result from the async path
+			}
+			if strings.Contains(c.Control.Result.Text, "未返回内容") {
+				t.Errorf("fallback wrongly applied when tools ran: %q", c.Control.Result.Text)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for result control")
 		}
-		if strings.Contains(c.Control.Result.Text, "未返回内容") {
-			t.Errorf("fallback wrongly applied when tools ran: %q", c.Control.Result.Text)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for result control")
 	}
 }
 

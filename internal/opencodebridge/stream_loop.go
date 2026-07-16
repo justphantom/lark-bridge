@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/opencode"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -221,9 +222,9 @@ func (h *Handler) finalizeResult(ev opencode.Event, accText, sessionID, modelSpe
 
 	reply := ev.GetResult()
 	if reply == "" {
-		reply = stripThinking(accText)
+		reply = bridgebase.StripThinking(accText, "> ")
 	} else {
-		reply = stripThinking(reply)
+		reply = bridgebase.StripThinking(reply, "> ")
 	}
 	result.reply = reply
 	return result

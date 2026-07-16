@@ -81,7 +81,6 @@ func TestStartPromptBusy(t *testing.T) {
 // be recovered so a single bad turn never crashes the backend process.
 type panicOpencode struct{}
 
-func (panicOpencode) IsReady(context.Context) error                { return nil }
 func (panicOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) Run(context.Context, opencode.RunOptions) (<-chan opencode.Event, error) {

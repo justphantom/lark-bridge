@@ -20,8 +20,6 @@ import (
 // construct opencode.Event values (whose fields are unexported).
 type closedStreamOpencode struct{}
 
-func (closedStreamOpencode) IsReady(context.Context) error { return nil }
-
 func (closedStreamOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 
 func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
@@ -36,8 +34,6 @@ func (closedStreamOpencode) Run(_ context.Context, _ opencode.RunOptions) (<-cha
 // until the run context is cancelled. It lets timeout/cancel tests exercise
 // runPrompt without a real subprocess.
 type blockingOpencode struct{}
-
-func (blockingOpencode) IsReady(context.Context) error { return nil }
 
 func (blockingOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 

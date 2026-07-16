@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/claude"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -235,9 +236,9 @@ func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, mod
 
 	reply := ev.GetResult()
 	if reply == "" {
-		reply = stripThinking(accText)
+		reply = bridgebase.StripThinking(accText, "> 💭 ")
 	} else {
-		reply = stripThinking(reply)
+		reply = bridgebase.StripThinking(reply, "> 💭 ")
 	}
 	result.reply = reply
 	return result

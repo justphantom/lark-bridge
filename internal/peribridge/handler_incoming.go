@@ -3,8 +3,6 @@ package peribridge
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/router"
@@ -52,35 +50,4 @@ func (h *Handler) ensureBinding(chatID, directory, modelSpec string) (router.Bin
 		log.FieldChatID, chatID,
 		log.FieldDirectory, directory)
 	return b, nil
-}
-
-// sessionDirectory returns the per-chat working directory under the configured
-// default directory.
-func (h *Handler) sessionDirectory(chatID string) string {
-	base := h.defaultDirectory
-	if base == "" {
-		base = h.stateDir
-	}
-	if base == "" {
-		base = "."
-	}
-	return filepath.Join(base, sanitizeForPath(chatID))
-}
-
-// sanitizeForPath reduces s to a single safe path component.
-func sanitizeForPath(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_' || r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "session"
-	}
-	return out
 }

@@ -2,11 +2,11 @@ package peribridge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/peri"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -146,9 +146,9 @@ func (h *Handler) finalizeResult(ev peri.Event, accText, modelSpec string, toolC
 
 	reply := ev.GetResult()
 	if strings.TrimSpace(reply) == "" {
-		reply = stripThinking(accText)
+		reply = bridgebase.StripThinking(accText, "> ")
 	} else {
-		reply = stripThinking(reply)
+		reply = bridgebase.StripThinking(reply, "> ")
 	}
 	// Empty-reply fallback: peri print mode (stream-json) ends with no terminal
 	// result line, and the model occasionally returns an empty content (no
@@ -187,29 +187,4 @@ func resolveModel(spec string) string {
 		return spec
 	}
 	return "peri"
-}
-
-// summarizeToolInput is retained for structural parity with the opencode
-// bridge but peri stream-json emits null tool input, so it always returns "".
-// Kept as a documented no-op so callers reading the opencode bridge do not
-// expect a missing helper here.
-func summarizeToolInput(input string) string {
-	if input == "" || input == "{}" {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(input), &m); err != nil {
-		return input
-	}
-	for _, key := range []string{"command", "filePath", "pattern", "path", "query", "description", "prompt", "url"} {
-		if v, ok := m[key].(string); ok && v != "" {
-			return v
-		}
-	}
-	for _, v := range m {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return input
 }

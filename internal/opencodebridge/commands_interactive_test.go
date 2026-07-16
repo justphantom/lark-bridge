@@ -13,14 +13,12 @@ import (
 )
 
 // pickerFakeAgent is an opencodeAPI fake for the interactive picker tests. Its
-// ListModels/ListAgents return canned lists; Run/IsReady are unused by the
+// ListModels/ListAgents return canned lists; Run is unused by the
 // picker path.
 type pickerFakeAgent struct {
 	models []string
 	agents []string
 }
-
-func (pickerFakeAgent) IsReady(context.Context) error { return nil }
 
 func (pickerFakeAgent) Run(context.Context, opencode.RunOptions) (<-chan opencode.Event, error) {
 	ch := make(chan opencode.Event)
@@ -36,8 +34,6 @@ func (f pickerFakeAgent) ListAgents(context.Context) ([]string, error) { return 
 // error path of askAndWait (the picker goroutine logs the error and emits a
 // Notice; the test asserts no pending slot is left behind).
 type failingListAgent struct{}
-
-func (failingListAgent) IsReady(context.Context) error { return nil }
 
 func (failingListAgent) Run(context.Context, opencode.RunOptions) (<-chan opencode.Event, error) {
 	ch := make(chan opencode.Event)
@@ -128,7 +124,7 @@ func TestRegisterDeliverCancel(t *testing.T) {
 // TestCmdModel_Picker_Success drives the full async interactive loop: /model
 // (no args) returns immediately with Handled; a background goroutine lists
 // models (fake agent), emits a Question card (rpc nil → no-op), and blocks.
-// The test reads the requestID from h.pendingAnswers, delivers the answer,
+// The test reads the requestID from h.answers, delivers the answer,
 // and waits for the goroutine to pin the choice on the router.
 func TestCmdModel_Picker_Success(t *testing.T) {
 	h, r := newPickerHandlerWithAgent(t, pickerFakeAgent{
@@ -202,9 +198,7 @@ func TestCmdModel_Picker_ListError(t *testing.T) {
 	// registering a slot. Poll briefly to confirm.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		h.answerMu.Lock()
-		n := len(h.pendingAnswers)
-		h.answerMu.Unlock()
+		n := h.answers.PendingCount()
 		if n == 0 {
 			return // good: no dangling slot
 		}
@@ -230,9 +224,7 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 	// ModelSpec must stay empty. Give the goroutine a moment to process.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		h.answerMu.Lock()
-		n := len(h.pendingAnswers)
-		h.answerMu.Unlock()
+		n := h.answers.PendingCount()
 		if n == 0 {
 			break // goroutine consumed the answer and exited
 		}
@@ -261,9 +253,7 @@ func TestDrainAnswers_OnClose(t *testing.T) {
 	// The picker goroutine exits; pendingAnswers drains. Poll for it.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		h.answerMu.Lock()
-		n := len(h.pendingAnswers)
-		h.answerMu.Unlock()
+		n := h.answers.PendingCount()
 		if n == 0 {
 			return // picker unblocked, slot cleared — no leak
 		}
@@ -291,25 +281,22 @@ func newPickerHandlerWithAgent(t *testing.T, agent opencodeAPI) (*Handler, *rout
 		t.Fatalf("router new: %v", err)
 	}
 	// rpc stays nil: emit becomes a no-op so the Question card is "sent" to
-	// nowhere. The test reads the requestID straight from h.pendingAnswers
+	// nowhere. The test reads the requestID straight from h.answers
 	// and delivers the answer itself, exercising the same routing the IPC
 	// path would.
 	h := NewWithLogger(r, agent, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
 	return h, r
 }
 
-// waitPending polls h.pendingAnswers until a slot appears, returning its
+// waitPending polls h.answers until a slot appears, returning its
 // requestID. Fails the test if no slot appears within timeout.
 func waitPending(t *testing.T, h *Handler, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		h.answerMu.Lock()
-		for id := range h.pendingAnswers {
-			h.answerMu.Unlock()
-			return id
+		if ids := h.answers.PendingIDs(); len(ids) > 0 {
+			return ids[0]
 		}
-		h.answerMu.Unlock()
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("no pending answer slot appeared within timeout")

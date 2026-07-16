@@ -27,8 +27,6 @@ type periAPI interface {
 	// drains the channel until it is closed; a terminal event (result/error)
 	// precedes close.
 	Run(ctx context.Context, opts peri.RunOptions) (<-chan peri.Event, error)
-	// IsReady is the startup health gate (peri --version).
-	IsReady(ctx context.Context) error
 }
 
 // sessionRouter is the subset of *router.Router the Handler uses. peri-back

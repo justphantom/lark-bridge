@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hu/lark-bridge/internal/backendrpc"
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
 	"github.com/hu/lark-bridge/internal/usage"
@@ -63,13 +64,19 @@ type Handler struct {
 	// orphaned claude/opencode children.
 	wg sync.WaitGroup
 
-	// pendingAnswers routes an interactive card's answer back to the goroutine
-	// that emitted the Question control. askAndWait registers a channel under
-	// the requestID, emits the card, and blocks on the channel; HandleEvent's
-	// TypeAnswer branch delivers the answer. Close drains all waiters so a
-	// shutdown does not leave a goroutine blocked forever.
-	answerMu       sync.Mutex
-	pendingAnswers map[string]chan *protocol.AnswerPayload
+	// answers routes an interactive card's answer back to the goroutine that
+	// emitted the Question control. askAndWait registers under the requestID,
+	// emits the card, and blocks on the channel; HandleEvent's TypeAnswer
+	// branch delivers the answer. Close drains all waiters so a shutdown does
+	// not leave a goroutine blocked forever. Implemented by bridgebase so the
+	// three bridges share one routing implementation instead of a per-bridge
+	// copy.
+	answers *bridgebase.AnswerBroker
+
+	// emitSem caps concurrent fire-and-forget emit goroutines so an extreme
+	// event burst cannot exhaust goroutines (see emitAsync). A Handler field
+	// (not a package global) so concurrent tests do not share one semaphore.
+	emitSem chan struct{}
 
 	// usage records per-session token/cost totals. nil when not wired
 	// (e.g. unit tests). Set via SetUsage before the first prompt.
@@ -89,6 +96,10 @@ const askWaitTimeout = 9 * time.Minute
 // group and reap it, short enough that a stuck goroutine does not hang the
 // process on SIGTERM.
 const shutdownGrace = 5 * time.Second
+
+// emitConcurrency caps the number of concurrent fire-and-forget emit
+// goroutines (see emitAsync).
+const emitConcurrency = 32
 
 // HandlerConfig carries the scalar runtime config the Handler reads. It is
 // populated from the config file's opencode + state_dir sections by
@@ -129,7 +140,8 @@ func NewWithLogger(r sessionRouter, api opencodeAPI, rpc *backendrpc.Client, cfg
 		streamHistory:    cfg.StreamHistory,
 		promptTimeout:    cfg.PromptTimeout,
 		cancelByChat:     make(map[string]*promptCancel),
-		pendingAnswers:   make(map[string]chan *protocol.AnswerPayload),
+		answers:          bridgebase.NewAnswerBroker(),
+		emitSem:          make(chan struct{}, emitConcurrency),
 	}
 	h.appCtx, h.appCancel = context.WithCancel(context.Background())
 	h.logDebugRedact.Store(cfg.DebugRedact)
@@ -176,11 +188,6 @@ func (h *Handler) emitNoticeLogged(chatID, level, title, body string, extra ...s
 	}
 }
 
-// emitSem caps the number of concurrent fire-and-forget emit goroutines so
-// an extreme event burst cannot exhaust goroutines. controlThrottle (200ms
-// for text/thinking) is the first layer; this is the second.
-var emitSem = make(chan struct{}, 32)
-
 // emitAsync sends a Control in a background goroutine (fire-and-forget) so
 // the stream loop never blocks on IPC latency. Each goroutine uses an
 // independent 5s context — it does not inherit the prompt ctx — so an
@@ -196,7 +203,7 @@ func (h *Handler) emitAsync(promptID string, ctrl *protocol.Control) {
 		return
 	}
 	select {
-	case emitSem <- struct{}{}:
+	case h.emitSem <- struct{}{}:
 	default:
 		// Semaphore full (32 in-flight emits + slow IPC): drop a disposable
 		// intermediate control rather than block the stream loop. The terminal
@@ -206,8 +213,8 @@ func (h *Handler) emitAsync(promptID string, ctrl *protocol.Control) {
 			log.FieldControlType, ctrl.Type)
 		return
 	}
-	goSafe(h.logger, "emit:"+string(ctrl.Type), func() {
-		defer func() { <-emitSem }()
+	bridgebase.GoSafe(h.logger, "emit:"+string(ctrl.Type), func() {
+		defer func() { <-h.emitSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := h.rpc.SendControl(ctx, ctrl); err != nil {

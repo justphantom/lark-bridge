@@ -21,8 +21,6 @@ type scriptClaude struct {
 	events []claude.Event
 }
 
-func (s *scriptClaude) IsReady(context.Context) error { return nil }
-
 func (s *scriptClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
 
 func (s *scriptClaude) Run(_ context.Context, _ claude.RunOptions) (<-chan claude.Event, error) {
@@ -208,8 +206,6 @@ func TestHandleEvent_UnknownTypeReturnsError(t *testing.T) {
 // the pipe closes). It lets Close-waits-for-runPrompt be exercised without a
 // real subprocess.
 type blockingClaude struct{}
-
-func (blockingClaude) IsReady(context.Context) error { return nil }
 
 func (blockingClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
 
