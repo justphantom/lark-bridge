@@ -1,7 +1,9 @@
 package peri
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -292,4 +294,83 @@ func containsAny(args []string, flags ...string) bool {
 		}
 	}
 	return false
+}
+
+// TestRun_LineSinkTeed verifies a non-nil LineSink receives every raw stdout
+// line verbatim (one '\n'-terminated NDJSON record per line) while the parsed
+// event stream still flows normally. This is the archive contract: the bridge
+// wires newStreamSink here so each run lands on disk.
+func TestRun_LineSinkTeed(t *testing.T) {
+	skipIfNoPeri(t)
+	c := New(Config{CLIPath: "peri", MaxTurns: 2}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	var sink bytes.Buffer
+	events, err := c.Run(ctx, RunOptions{
+		Prompt:   "Count from 1 to 3, one number per line.",
+		LineSink: &sink,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	terminal := false
+	var eventCount int
+	var lastErr string
+	for ev := range events {
+		eventCount++
+		if ev.GetType() == EventResult || ev.GetType() == EventError {
+			terminal = true
+			if ev.GetType() == EventError {
+				lastErr = ev.GetText()
+			}
+		}
+	}
+	if !terminal {
+		t.Fatal("stream closed without a terminal event")
+	}
+	if eventCount == 0 {
+		t.Fatal("no events emitted; peri returned nothing — re-run, the model is non-deterministic on empty replies")
+	}
+	// If peri errored without emitting any stdout line, the sink legitimately
+	// has no bytes (the error was synthesized from stderr on cmd.Wait). Only
+	// fail when peri DID emit text/tool events (proven by eventCount>1, since
+	// a single terminal event means no stdout was parsed) yet the sink stayed
+	// empty — that would indicate a real tee bug.
+	if sink.Len() == 0 && eventCount > 1 {
+		t.Fatalf("LineSink empty despite %d events (tee bug); lastErr=%q", eventCount, lastErr)
+	}
+	if sink.Len() == 0 {
+		t.Logf("peri produced no stdout (eventCount=%d, lastErr=%q); sink legitimately empty", eventCount, lastErr)
+		return
+	}
+
+	// The sink must contain at least one complete NDJSON line. Each line ends
+	// with '\n' and parses as JSON with a "type" field.
+	out := sink.String()
+	if out == "" {
+		t.Fatal("LineSink received no bytes")
+	}
+	lines := 0
+	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if ln == "" {
+			continue
+		}
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(ln), &probe); err != nil {
+			t.Errorf("sink line not JSON: %q: %v", ln, err)
+			continue
+		}
+		if probe.Type == "" {
+			t.Errorf("sink line %q has no type", ln)
+		}
+		lines++
+	}
+	if lines == 0 {
+		t.Fatal("LineSink produced no parseable NDJSON lines")
+	}
 }

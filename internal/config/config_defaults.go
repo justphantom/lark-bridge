@@ -72,6 +72,18 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Opencode.ListCacheTTL == 0 {
 		cfg.Opencode.ListCacheTTL = 3600
 	}
+	if cfg.Peri.CLIPath == "" {
+		cfg.Peri.CLIPath = "peri"
+	}
+	if cfg.Peri.MaxConcurrent == 0 {
+		cfg.Peri.MaxConcurrent = 4
+	}
+	if cfg.Peri.MaxTurns == 0 {
+		cfg.Peri.MaxTurns = 1
+	}
+	if cfg.Peri.StreamHistory <= 0 {
+		cfg.Peri.StreamHistory = 50
+	}
 	if cfg.StateDir == "" {
 		// Default to the directory holding the config file so state
 		// lands next to the config. Relative paths resolve to CWD.

@@ -36,6 +36,7 @@
     "default_directory": "/var/lib/lark-bridge/peri",
     "max_concurrent":    4,
     "max_turns":         10,
+    "stream_history":    50,
     "permission_options": ["bypass", "accept-edit", "auto-mode"],
     "effort_options":     ["low", "medium", "high", "max"]
   },

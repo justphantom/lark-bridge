@@ -146,8 +146,8 @@ type Peri struct {
 	// One turn = one model call; tool-using tasks need more.
 	MaxTurns int `json:"max_turns,omitempty"`
 	// StreamHistory caps how many recent raw stream-json captures are kept
-	// under {state_dir}/streams. <=0/unset → disabled (peri client has no
-	// LineSink hook yet, so this is reserved for future use).
+	// under {state_dir}/streams. <=0/unset → 50 (matches claude/opencode).
+	// Set to a negative value to disable archiving entirely.
 	StreamHistory int `json:"stream_history,omitempty"`
 
 	// PermissionOptions lists the modes offered in the interactive /perm

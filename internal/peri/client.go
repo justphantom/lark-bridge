@@ -87,6 +87,10 @@ type RunOptions struct {
 	// SettingsFile optionally loads an extra settings file or JSON string
 	// (--settings). Empty disables the flag.
 	SettingsFile string
+	// LineSink, when non-nil, receives every raw stream-json line verbatim
+	// before parsing. Used by the bridge to archive each run's NDJSON under
+	// {state_dir}/streams with rotation (StreamHistory cap). nil disables tee.
+	LineSink io.Writer
 }
 
 // IsReady verifies the CLI is installed by running `<cliPath> --version`.
@@ -157,7 +161,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 		log.FieldModel, opts.Model)
 
 	out := make(chan Event, runEventChanBuf)
-	go c.pump(ctx, cmd, stdout, stderr, out)
+	go c.pump(ctx, cmd, stdout, stderr, out, opts.LineSink)
 	return out, nil
 }
 
@@ -213,7 +217,7 @@ func (c *Client) buildCommand(opts RunOptions) (*exec.Cmd, io.WriteCloser, error
 // pump reads stdout line by line, parses each into Events, and feeds out. On
 // subprocess exit it synthesises a terminal Event (Result on clean EOF with no
 // prior terminal, Error on non-zero exit / cancel) then closes out.
-func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Reader, out chan<- Event) {
+func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Reader, out chan<- Event, sink io.Writer) {
 	defer func() {
 		<-c.sem
 		close(out)
@@ -257,6 +261,14 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 emitLoop:
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		// Tee the raw line to the archive sink before parsing so the on-disk
+		// capture is verbatim (matching claude/opencode bridges). Best-effort:
+		// a write error is logged at debug and never fails the run.
+		if sink != nil {
+			if _, werr := sink.Write(append(line, '\n')); werr != nil {
+				c.logger.Debug("peri: stream archive write", "error", werr)
+			}
+		}
 		evs, terminal, err := parseLine(line, &textAcc)
 		if err != nil {
 			c.logger.Debug("peri: unparseable line", "error", err, "line", truncate(string(line), 200))

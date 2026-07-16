@@ -23,10 +23,6 @@ const streamFileTimeLayout = "20060102T150405.000000000"
 // {stateDir}/streams and prunes the directory to streamHistory-1 files first.
 // Returns nil when archiving is disabled (streamHistory<=0) or when setup
 // fails — archiving is best-effort and must never fail the run.
-//
-// NOTE: peri client.RunOptions has no LineSink field yet (unlike opencode), so
-// this sink is currently unused by runPeri. It is retained so wiring a LineSink
-// into the peri client later is a one-line change in runPeri.
 func (h *Handler) newStreamSink(chatID, replyToID string) (io.Writer, func() error) {
 	if h.streamHistory <= 0 || h.stateDir == "" {
 		return nil, nil

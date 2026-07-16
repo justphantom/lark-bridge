@@ -86,8 +86,14 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 }
 
 // runPeri starts one peri subprocess, streams its events into Controls, and
-// reduces the stream to a promptResult.
+// reduces the stream to a promptResult. The raw NDJSON is archived under
+// {stateDir}/streams when StreamHistory > 0 (best-effort).
 func (h *Handler) runPeri(ctx context.Context, chatID, promptID string, opts peri.RunOptions, modelSpec string) promptResult {
+	sink, closeSink := h.newStreamSink(chatID, promptID)
+	if sink != nil {
+		opts.LineSink = sink
+		defer closeSink()
+	}
 	events, err := h.agent.Run(ctx, opts)
 	if err != nil {
 		return promptResult{

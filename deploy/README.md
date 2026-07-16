@@ -122,7 +122,7 @@ set -a; source .env; set +a
 | `peri.cli_path` | `peri` |
 | `peri.max_concurrent` | `4` |
 | `peri.max_turns` | `1` |
-| `peri.stream_history` | `0`（禁用） |
+| `peri.stream_history` | `50` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}`（当前仅 opencode-back 生效） |
