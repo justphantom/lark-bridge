@@ -98,12 +98,15 @@ func run(cfgPath string) error {
 
 	bridgeLogger := componentLogger(cfg, baseLevel, output, "bridge")
 	h := peribridge.NewWithLogger(r, client, rpc, peribridge.HandlerConfig{
-		DefaultDirectory: cfg.Peri.DefaultDirectory,
-		StateDir:         cfg.StateDir,
-		StreamHistory:    cfg.Peri.StreamHistory,
-		PromptTimeout:    time.Duration(cfg.Timeouts.PromptTimeout),
-		DebugRedact:      cfg.LogDebugRedact,
-		WorkspaceRoot:    os.Getenv("WORKSPACE_ROOT"),
+		DefaultDirectory:  cfg.Peri.DefaultDirectory,
+		StateDir:          cfg.StateDir,
+		StreamHistory:     cfg.Peri.StreamHistory,
+		PromptTimeout:     time.Duration(cfg.Timeouts.PromptTimeout),
+		PermissionOptions: cfg.Peri.PermissionOptions,
+		EffortOptions:     cfg.Peri.EffortOptions,
+		SettingsDir:       cfg.Peri.SettingsDir,
+		DebugRedact:       cfg.LogDebugRedact,
+		WorkspaceRoot:     os.Getenv("WORKSPACE_ROOT"),
 	}, bridgeLogger)
 	defer h.Close()
 

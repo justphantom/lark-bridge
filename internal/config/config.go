@@ -149,6 +149,19 @@ type Peri struct {
 	// under {state_dir}/streams. <=0/unset → disabled (peri client has no
 	// LineSink hook yet, so this is reserved for future use).
 	StreamHistory int `json:"stream_history,omitempty"`
+
+	// PermissionOptions lists the modes offered in the interactive /perm
+	// picker card. nil/unset → [bypass, accept-edit, auto-mode]. "default" is
+	// intentionally excluded by default: it enables HITL approval which
+	// deadlocks the non-interactive -p subprocess.
+	PermissionOptions []string `json:"permission_options,omitempty"`
+	// EffortOptions lists the levels offered in the interactive /effort picker
+	// card. nil/unset → [low, medium, high, max] (peri's documented values).
+	EffortOptions []string `json:"effort_options,omitempty"`
+	// SettingsDir is the directory scanned for the interactive /settings
+	// picker (*.json files). Empty/unset → ~/.peri at runtime via
+	// os.UserHomeDir.
+	SettingsDir string `json:"settings_dir,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

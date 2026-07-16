@@ -73,9 +73,12 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 
 	modelSpec := binding.ModelSpec
 	opts := peri.RunOptions{
-		Prompt:    prompt,
-		Directory: binding.Directory,
-		Model:     modelSpec,
+		Prompt:         prompt,
+		Directory:      binding.Directory,
+		Model:          modelSpec,
+		Effort:         binding.EffortLevel,
+		PermissionMode: binding.PermissionMode,
+		SettingsFile:   binding.SettingsFile,
 	}
 
 	result := h.runPeri(ctx, chatID, replyToID, opts, modelSpec)

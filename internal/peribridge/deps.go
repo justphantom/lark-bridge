@@ -32,14 +32,19 @@ type periAPI interface {
 }
 
 // sessionRouter is the subset of *router.Router the Handler uses. peri-back
-// never reads SessionID (stateless), but still writes directory/modelSpec via
-// the binding so /cd and model pinning persist across turns. SessionID-related
-// methods are kept off this interface intentionally.
+// never reads SessionID (stateless), but still writes directory/modelSpec/
+// permissionMode/effortLevel/settingsFile via the binding so /cd, /model,
+// /perm, /effort, /settings persist across turns. SessionID-related methods
+// are kept off this interface intentionally.
 type sessionRouter interface {
 	Lookup(chatID string) (router.Binding, bool)
 	Bind(chatID, sessionID, directory, title, modelSpec, agent string)
 	Unbind(chatID string)
 	TitleOf(chatID string) string
+	AllBindings() map[string]router.Binding
 	SetModelSpec(chatID, modelSpec string)
 	SetDirectory(chatID, directory string)
+	SetPermissionMode(chatID, permissionMode string)
+	SetEffortLevel(chatID, effortLevel string)
+	SetSettingsFile(chatID, settingsFile string)
 }

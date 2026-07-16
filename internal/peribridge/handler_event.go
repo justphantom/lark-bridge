@@ -91,6 +91,27 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 		h.router.SetModelSpec(chatID, p.ModelSpec)
 		binding.ModelSpec = p.ModelSpec
 	}
+	// Per-prompt overrides land on the binding; runPrompt reads them back when
+	// constructing peri.RunOptions.
+	if p.Permission != "" {
+		h.router.SetPermissionMode(chatID, p.Permission)
+		binding.PermissionMode = p.Permission
+	}
+	if p.Effort != "" {
+		h.router.SetEffortLevel(chatID, p.Effort)
+		binding.EffortLevel = p.Effort
+	}
+	if p.SettingsFile != "" {
+		if err := validateSettingsPath(p.SettingsFile); err != nil {
+			return h.emit(ctx, replyToID, &protocol.Control{
+				Type:   protocol.TypeNotice,
+				ChatID: chatID,
+				Notice: &protocol.NoticePayload{Level: "error", Title: "settings 路径非法", Message: err.Error()},
+			})
+		}
+		h.router.SetSettingsFile(chatID, p.SettingsFile)
+		binding.SettingsFile = p.SettingsFile
+	}
 
 	promptCtx, mine, ok := h.startPrompt(ctx, chatID)
 	if !ok {

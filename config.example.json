@@ -35,7 +35,9 @@
     "cli_path":          "peri",
     "default_directory": "/var/lib/lark-bridge/peri",
     "max_concurrent":    4,
-    "max_turns":         10
+    "max_turns":         10,
+    "permission_options": ["bypass", "accept-edit", "auto-mode"],
+    "effort_options":     ["low", "medium", "high", "max"]
   },
 
   "log_level":            "info",

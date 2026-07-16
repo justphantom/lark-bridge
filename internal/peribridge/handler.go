@@ -38,6 +38,15 @@ type Handler struct {
 	defaultDirectory string
 	stateDir         string
 
+	// permissionOptions/effortOptions feed the interactive /perm and /effort
+	// pickers. Empty falls back to built-in defaults at the call site.
+	permissionOptions []string
+	effortOptions     []string
+
+	// settingsDir is scanned for the interactive /settings picker
+	// (settings.json and *-settings.json). Empty → ~/.peri at runtime.
+	settingsDir string
+
 	// workspaceRoot bounds /cd to its subdirectories. Empty disables the
 	// picker. workspaceMu/workspaceCache memoise the one-level subdir scan
 	// for workspaceCacheTTL so repeated /cd pickers are instant.
@@ -94,6 +103,13 @@ type HandlerConfig struct {
 	StreamHistory int
 	// PromptTimeout is the per-prompt safety net. 0 disables it.
 	PromptTimeout time.Duration
+	// PermissionOptions/EffortOptions feed the interactive pickers. Empty
+	// falls back to built-in defaults at the call site.
+	PermissionOptions []string
+	EffortOptions     []string
+	// SettingsDir is scanned for the interactive /settings picker. Empty →
+	// resolve to ~/.peri at runtime via os.UserHomeDir.
+	SettingsDir string
 	// DebugRedact controls whether prompt/error text in debug logs is
 	// replaced wholesale with <redacted>.
 	DebugRedact bool
@@ -109,17 +125,20 @@ func NewWithLogger(r sessionRouter, api periAPI, rpc *backendrpc.Client, cfg Han
 		logger = log.Nop()
 	}
 	h := &Handler{
-		router:           r,
-		agent:            api,
-		rpc:              rpc,
-		logger:           logger,
-		defaultDirectory: cfg.DefaultDirectory,
-		stateDir:         cfg.StateDir,
-		workspaceRoot:    cfg.WorkspaceRoot,
-		streamHistory:    cfg.StreamHistory,
-		promptTimeout:    cfg.PromptTimeout,
-		cancelByChat:     make(map[string]*promptCancel),
-		pendingAnswers:   make(map[string]chan *protocol.AnswerPayload),
+		router:            r,
+		agent:             api,
+		rpc:               rpc,
+		logger:            logger,
+		defaultDirectory:  cfg.DefaultDirectory,
+		stateDir:          cfg.StateDir,
+		permissionOptions: cfg.PermissionOptions,
+		effortOptions:     cfg.EffortOptions,
+		settingsDir:       cfg.SettingsDir,
+		workspaceRoot:     cfg.WorkspaceRoot,
+		streamHistory:     cfg.StreamHistory,
+		promptTimeout:     cfg.PromptTimeout,
+		cancelByChat:      make(map[string]*promptCancel),
+		pendingAnswers:    make(map[string]chan *protocol.AnswerPayload),
 	}
 	h.appCtx, h.appCancel = context.WithCancel(context.Background())
 	h.logDebugRedact.Store(cfg.DebugRedact)

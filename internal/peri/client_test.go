@@ -223,3 +223,73 @@ func TestParseLine(t *testing.T) {
 		t.Fatalf("blank line: evs=%v err=%v", evs, err)
 	}
 }
+
+// TestBuildCommand_Args verifies the CLI argument assembly without spawning peri.
+// It checks that permission mode defaults to bypass when unset, that an override
+// replaces it, and that effort/settings/model flags appear only when set.
+func TestBuildCommand_Args(t *testing.T) {
+	c := New(Config{CLIPath: "peri", MaxTurns: 1}, nil)
+
+	// Default: no overrides → bypass, no effort/settings/model.
+	cmd, _, err := c.buildCommand(RunOptions{Prompt: "x"})
+	if err != nil {
+		t.Fatalf("buildCommand: %v", err)
+	}
+	got := cmd.Args
+	if !containsPair(got, "--permission-mode", "bypass") {
+		t.Errorf("default perm: args=%v", got)
+	}
+	if containsAny(got, "--effort", "--settings", "--model") {
+		t.Errorf("unexpected flag in default: args=%v", got)
+	}
+
+	// All overrides applied.
+	cmd, _, err = c.buildCommand(RunOptions{
+		Prompt:         "x",
+		Model:          "sonnet",
+		Effort:         "high",
+		PermissionMode: "accept-edit",
+		SettingsFile:   "/tmp/s.json",
+	})
+	if err != nil {
+		t.Fatalf("buildCommand: %v", err)
+	}
+	got = cmd.Args
+	if !containsPair(got, "--permission-mode", "accept-edit") {
+		t.Errorf("perm override: args=%v", got)
+	}
+	if containsPair(got, "--permission-mode", "bypass") {
+		t.Errorf("bypass should be replaced: args=%v", got)
+	}
+	if !containsPair(got, "--model", "sonnet") {
+		t.Errorf("model missing: args=%v", got)
+	}
+	if !containsPair(got, "--effort", "high") {
+		t.Errorf("effort missing: args=%v", got)
+	}
+	if !containsPair(got, "--settings", "/tmp/s.json") {
+		t.Errorf("settings missing: args=%v", got)
+	}
+}
+
+// containsPair reports whether args contain flag immediately followed by val.
+func containsPair(args []string, flag, val string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
+
+// containsAny reports whether any of the flags appears in args.
+func containsAny(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+		}
+	}
+	return false
+}

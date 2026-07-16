@@ -77,6 +77,16 @@ type RunOptions struct {
 	Directory string
 	// Model optionally overrides the configured model (--model alias/name).
 	Model string
+	// Effort optionally overrides the reasoning effort (--effort). Peri
+	// accepts low/medium/high/max. Empty falls back to the peri default.
+	Effort string
+	// PermissionMode optionally overrides the permission mode
+	// (--permission-mode). Peri accepts bypass/default/accept-edit/auto-mode.
+	// Empty falls back to bypass (backends run unattended).
+	PermissionMode string
+	// SettingsFile optionally loads an extra settings file or JSON string
+	// (--settings). Empty disables the flag.
+	SettingsFile string
 }
 
 // IsReady verifies the CLI is installed by running `<cliPath> --version`.
@@ -162,12 +172,26 @@ func (c *Client) buildCommand(opts RunOptions) (*exec.Cmd, io.WriteCloser, error
 		"-p",
 		"--output-format", "stream-json",
 		"--max-turns", fmt.Sprintf("%d", maxTurns),
-		// bypass: backend runs unattended; HITL is handled by the bridge's
-		// own Question/Permission controls, not peri's TUI approval.
-		"--permission-mode", "bypass",
 	}
+	// Permission mode: default to bypass (backends run unattended; HITL is
+	// handled by the bridge's own Question/Permission controls, not peri's
+	// TUI approval). A non-empty override from /perm replaces it. "default"
+	// would deadlock the non-interactive -p subprocess; the bridge's /perm
+	// picker excludes it, but a direct pin is still honoured here so a
+	// misconfigured picker surfaces the hang rather than silently rewriting.
+	permMode := opts.PermissionMode
+	if permMode == "" {
+		permMode = "bypass"
+	}
+	args = append(args, "--permission-mode", permMode)
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		args = append(args, "--effort", opts.Effort)
+	}
+	if opts.SettingsFile != "" {
+		args = append(args, "--settings", opts.SettingsFile)
 	}
 
 	// #nosec G204 -- cliPath from trusted config; args constructed internally.
