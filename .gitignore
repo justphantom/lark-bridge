@@ -1,3 +1,6 @@
 /.idea/
 /bin/
 .env
+.zcode/
+claude.log
+opencode.log
