@@ -44,7 +44,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back)
+SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back)
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -187,6 +187,7 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-peri-back" ]]      || fail "构建产物缺失：lark-peri-back"
+[[ -x "$BIN_DIR/lark-goose-back" ]]     || fail "构建产物缺失：lark-goose-back"
 [[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
 # ── 步骤 2：在临时目录生成三个 config（不修改 repo 源文件）──
@@ -253,6 +254,11 @@ cp "$STAGE/claude-config.json" "$STAGE/peri-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "peri-1",|' "$STAGE/peri-config.json"
 inject_router_path "$STAGE/peri-config.json" "/var/lib/lark-bridge/peri-router.json"
 
+# goose-back：独立 backend_id + 独立 router_path（同 peri 模式）
+cp "$STAGE/claude-config.json" "$STAGE/goose-config.json"
+sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "goose-1",|' "$STAGE/goose-config.json"
+inject_router_path "$STAGE/goose-config.json" "/var/lib/lark-bridge/goose-router.json"
+
 # deploy-monitor：独立 backend_id，无 session/router 需求；注入 project_root 指向 repo 根。
 # monitor 不参与本脚本的 stop/start（见 SERVICES 数组），它的二进制更新需单独重启。
 cp "$STAGE/claude-config.json" "$STAGE/deploy-monitor-config.json"
@@ -265,13 +271,13 @@ sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'"
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config / opencode-config / peri-config / deploy-monitor-config / feishu-config 已生成"
+info "claude-config / opencode-config / peri-config / goose-config / deploy-monitor-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode,peri} 是三个后端的 default_directory，per-chat 工作目录
 # 在运行时由 MkdirAll 在其下自动创建。
 info "创建系统目录..."
-sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/peri"
+sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/peri" "$STATE_DIR/goose"
 
 # 必须先停服务，否则覆盖二进制会 "Text file busy"
 stop_services
@@ -283,7 +289,7 @@ info "复制二进制和配置..."
 # (ETXTBSY)，故单独处理：运行中则跳过本次 cp，提示运维手动重启 monitor 更新。
 if systemctl is-active --quiet lark-deploy-monitor 2>/dev/null; then
     warn "lark-deploy-monitor 正在运行，跳过其二进制更新（避免 ETXTBSY）；如需更新 monitor 请手动 systemctl restart"
-    for f in lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back; do
+    for f in lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back; do
         sudo cp "$BIN_DIR/$f" "$DEPLOY_DIR/"
     done
 else
@@ -295,6 +301,7 @@ sudo chmod 755 "$DEPLOY_DIR"/*
 sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
 sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
 sudo cp "$STAGE/peri-config.json"          "$CONFIG_DIR/"
+sudo cp "$STAGE/goose-config.json"         "$CONFIG_DIR/"
 sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
@@ -318,6 +325,7 @@ write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-co
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
 write_unit lark-peri-back      lark-peri-back      lark-peri-back      peri-config.json     lark-feishu-front
+write_unit lark-goose-back     lark-goose-back     lark-goose-back     goose-config.json    lark-feishu-front
 write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
@@ -332,7 +340,7 @@ wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
 wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 
 # 端口已通，再起三个后端（并行，互不依赖）
-sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back
+sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back lark-goose-back
 
 # deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
 # 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程

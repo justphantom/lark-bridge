@@ -1,7 +1,7 @@
 # lark-bridge build and test entry points.
 #
 # Targets:
-#   build       compile the five binaries into bin/ (version-stamped)
+#   build       compile the six binaries into bin/ (version-stamped)
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
@@ -19,7 +19,7 @@
 
 .PHONY: build build-check test vet fmt clean deploy
 
-# Default to `build` so a bare `make` produces the five binaries.
+# Default to `build` so a bare `make` produces the six binaries.
 .DEFAULT_GOAL := build
 
 # VERSION is the short commit hash (dirty-suffixed when the worktree has
@@ -39,6 +39,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-back ./cmd/opencode-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-peri-back ./cmd/peri-back
+	go build -ldflags "$(LDFLAGS)" -o bin/lark-goose-back ./cmd/goose-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
 vet:

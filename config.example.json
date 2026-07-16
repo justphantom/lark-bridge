@@ -41,6 +41,15 @@
     "effort_options":     ["low", "medium", "high", "max"]
   },
 
+  "goose": {
+    "cli_path":          "goose",
+    "default_directory": "/var/lib/lark-bridge/goose",
+    "max_concurrent":    4,
+    "max_turns":         10,
+    "stream_history":    50,
+    "model_options":     ["gpt-4o", "claude-sonnet-4-5", "kimi-for-coding"]
+  },
+
   "deploy_monitor": {
     "project_root":  "/home/user/ZCodeProject/lark-bridge",
     "deploy_target": "deploy"
