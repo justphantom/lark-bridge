@@ -246,6 +246,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 
 	textAcc := strings.Builder{}
 	gotTerminal := false
+	var lineCount int
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -261,6 +262,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 emitLoop:
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		lineCount++
 		// Tee the raw line to the archive sink before parsing so the on-disk
 		// capture is verbatim (matching claude/opencode bridges). Best-effort:
 		// a write error is logged at debug and never fails the run.
@@ -283,6 +285,17 @@ emitLoop:
 			gotTerminal = true
 			break
 		}
+	}
+
+	// Surface the 0-byte-archive root cause: a run that opened an archive
+	// file but emitted no stdout line (lineCount==0) left a 0-byte file on
+	// disk. Distinguishes "peri produced nothing" (model empty reply, CLI
+	// startup crash with stderr only, or pre-first-line cancel) from a
+	// healthy run. Logged at Warn so it stands out without needing debug.
+	if lineCount == 0 {
+		c.logger.Warn("peri: produced no stdout lines (archive will be empty)",
+			"got_terminal", gotTerminal,
+			"scan_err", scanner.Err())
 	}
 
 	// Drain any unread stdout so cmd.Wait does not block waiting on the pipe
@@ -319,6 +332,13 @@ emitLoop:
 		if hint == "" {
 			hint = waitErr.Error()
 		}
+		// Log the exit error + stderr separately from the synthesized event so
+		// a 0-byte-archive crash is diagnosable: lineCount (Warn above) shows
+		// no stdout was produced, and this Warn shows why peri exited.
+		c.logger.Warn("peri: subprocess exited non-zero",
+			"error", waitErr,
+			"stderr", truncate(hint, 500),
+			"line_count", lineCount)
 		select {
 		case out <- Event{kind: EventError, text: hint, isError: true}:
 		default:
