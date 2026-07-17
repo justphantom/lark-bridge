@@ -259,14 +259,23 @@ cp "$STAGE/claude-config.json" "$STAGE/goose-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "goose-1",|' "$STAGE/goose-config.json"
 inject_router_path "$STAGE/goose-config.json" "/var/lib/lark-bridge/goose-router.json"
 
-# deploy-monitor：独立 backend_id，无 session/router 需求；注入 project_root 指向 repo 根。
-# monitor 不参与本脚本的 stop/start（见 SERVICES 数组），它的二进制更新需单独重启。
+# deploy-monitor：独立 backend_id，无 session/router 需求；注入 deploy_monitor 块
+# 指向 repo 根。monitor 不参与本脚本的 stop/start（见 SERVICES 数组），其二进制更新需单独重启。
 cp "$STAGE/claude-config.json" "$STAGE/deploy-monitor-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "deploy-monitor-1",|' "$STAGE/deploy-monitor-config.json"
 sed -i '/"router_path"/d' "$STAGE/deploy-monitor-config.json"
-# 注入 deploy_monitor.project_root（若 config 无此字段则追加到首对象闭合前较复杂；
-# 改用 jq 风格的 sed 在 backend_id 行后插入，失败则保留默认空值，monitor 回退到 CWD）
-sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'"},' "$STAGE/deploy-monitor-config.json"
+# 注入 deploy_monitor 块必须用「先删后插」而非直接 a\ 追加。base config 可能已含
+# deploy_monitor 块——例如无 claude-config.json 时从 config.example.json 派生，其带
+# 占位 project_root（/home/user/ZCodeProject/...）。直接在 backend_id 后追加会产生两
+# 个 deploy_monitor 键；Go encoding/json 对重复键静默取最后一个，而原块在后，于是占位
+# 路径覆盖注入值 → monitor 指向不存在的目录，首次远程 /deploy 必失败。故先范围删除
+# 既有 deploy_monitor 块（键行到其后首个 } 闭合行；deploy_monitor 当前为扁平对象无嵌套
+# }, 首个 } 即其闭合），再注入唯一的新块。deploy_target 显式给出（config_defaults 亦有兜底）。
+sed -i '/"deploy_monitor"[[:space:]]*:/,/^[[:space:]]*}/d' "$STAGE/deploy-monitor-config.json"
+sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'", "deploy_target": "deploy"},' "$STAGE/deploy-monitor-config.json"
+# 校验注入成功（sed 在锚点不匹配时静默返回 0，须显式确认；与 inject_router_path 同模式）
+grep -q '"deploy_monitor"[[:space:]]*:[[:space:]]*{"project_root"' "$STAGE/deploy-monitor-config.json" \
+    || fail "deploy_monitor 注入失败：$STAGE/deploy-monitor-config.json 缺少 backend_id（注入锚点缺失），monitor 的 project_root 将为空"
 
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
