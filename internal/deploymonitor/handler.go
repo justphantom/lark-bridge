@@ -117,17 +117,21 @@ func (h *Handler) runDeploy(chatID string) {
 	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, h.cfg.DeployTarget)
 	if err != nil {
 		h.logger.Error("deploy failed", log.FieldChatID, chatID, log.FieldError, err)
-		noticeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		noticeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = h.notify(noticeCtx, chatID, "error", "部署失败",
-			tailOutput(out, 500)+"\n错误："+err.Error())
+		if err := h.notify(noticeCtx, chatID, "error", "部署失败",
+			tailOutput(out, 500)+"\n错误："+err.Error()); err != nil {
+			h.logger.Warn("deploy failure notify failed", log.FieldChatID, chatID, log.FieldError, err)
+		}
 		return
 	}
 
 	h.logger.Info("deploy done", log.FieldChatID, chatID)
-	noticeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	noticeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_ = h.notify(noticeCtx, chatID, "success", "部署完成", tailOutput(out, 500))
+	if err := h.notify(noticeCtx, chatID, "success", "部署完成", tailOutput(out, 500)); err != nil {
+		h.logger.Warn("deploy success notify failed", log.FieldChatID, chatID, log.FieldError, err)
+	}
 }
 
 // notify emits a Notice Control to chatID. ChatID is required by the frontend
