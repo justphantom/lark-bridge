@@ -33,9 +33,8 @@ var shellBlockedPatterns = []string{
 	"poweroff",
 	"reboot",
 	"halt",
-	":(){:|:&};:", // fork bomb
+		":(){:|:&};:", // fork bomb
 	"> /dev/sd",
-	"/dev/null > /dev/sd",
 	"chmod -R 000",
 	"chown -R",
 }

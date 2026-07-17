@@ -198,7 +198,12 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 			log.FieldPromptID, promptID,
 			log.FieldError, err,
 			"duration", time.Since(start))
-		h.emitError(chatID, promptID, err.Error())
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeError,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Error:    &protocol.ErrorPayload{Message: err.Error(), Recoverable: true},
+		})
 		return
 	}
 	h.logger.Info("miniagent turn done",
@@ -236,7 +241,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 // promptID so the frontend folds them into the same card. Emits are
 // best-effort: a failure is logged but never fails the turn.
 func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
-	return func(_ string, sig Signal) {
+	return func(sig Signal) {
 		var ctrl *protocol.Control
 		switch sig.Kind {
 		case SignalToolUse:
@@ -274,17 +279,6 @@ func (h *Handler) sendCtrl(ctrl *protocol.Control) {
 			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
 			log.FieldControlType, ctrl.Type, log.FieldError, err)
 	}
-}
-
-// emitError sends a terminal TypeError so the frontend surfaces the failure
-// instead of leaving the turn card hanging.
-func (h *Handler) emitError(chatID, promptID, message string) {
-	h.sendCtrl(&protocol.Control{
-		Type:     protocol.TypeError,
-		PromptID: promptID,
-		ChatID:   chatID,
-		Error:    &protocol.ErrorPayload{Message: message, Recoverable: true},
-	})
 }
 
 // notify emits a non-terminal Notice (e.g. empty-prompt warning).

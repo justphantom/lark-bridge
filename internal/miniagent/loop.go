@@ -34,9 +34,10 @@ type Signal struct {
 	IsError bool
 }
 
-// EmitFunc receives out-of-band signals from the loop as it runs. promptID
-// scopes the signal to the in-flight turn. May be nil (tests).
-type EmitFunc func(promptID string, sig Signal)
+// EmitFunc receives out-of-band signals from the loop as it runs (tool_use /
+// tool_result). The handler's implementation captures the promptID it needs
+// to scope the emit, so the signal itself does not carry it. May be nil.
+type EmitFunc func(sig Signal)
 
 // Result is what loop.Run returns to the handler: the terminal assistant
 // text plus the cumulative token usage across every LLM call this run.
@@ -80,18 +81,19 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 	}
 	emitSignal := func(sig Signal) {
 		if emit != nil {
-			emit(promptID, sig)
+			emit(sig)
 		}
 	}
 
-	// msgs = loaded history + this turn's user message. newMsgs tracks only
-	// what this turn adds, so the handler can append it to history without
-	// re-saving the prior turns.
+	// msgs starts as loaded history + this turn's user message and only grows
+	// after that. The new messages this turn added — what the handler appends
+	// to history — are therefore exactly msgs[len(history):] (history's length
+	// is the offset of userMsg within msgs). Tracked implicitly rather than
+	// maintaining a parallel slice.
 	userMsg := Message{Role: "user", Content: userPrompt}
 	msgs := make([]Message, 0, len(history)+1)
 	msgs = append(msgs, history...)
 	msgs = append(msgs, userMsg)
-	newMsgs := []Message{userMsg}
 
 	var total Usage
 	for step := 1; step <= maxIterations; step++ {
@@ -130,18 +132,15 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		if len(resp.ToolCalls) == 0 {
 			logger.Info("miniagent loop terminal (text reply)",
 				log.FieldPromptID, promptID, "step", step, "total_steps", step)
-			finalMsg := Message{Role: "assistant", Content: resp.Text}
-			newMsgs = append(newMsgs, finalMsg)
-			return Result{Text: resp.Text, Usage: total, Steps: step, History: newMsgs}, nil
+			msgs = append(msgs, Message{Role: "assistant", Content: resp.Text})
+			return Result{Text: resp.Text, Usage: total, Steps: step, History: msgs[len(history):]}, nil
 		}
 
 		// Tool branch: record the assistant's tool_calls verbatim, then
 		// execute each and append a tool-role message carrying the result.
 		// OpenAI requires tool_call_id on each tool message to match the
 		// assistant's call id; a missing/mismatched id yields a 400.
-		assistantMsg := Message{Role: "assistant", ToolCalls: resp.ToolCalls}
-		msgs = append(msgs, assistantMsg)
-		newMsgs = append(newMsgs, assistantMsg)
+		msgs = append(msgs, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
 		for _, tc := range resp.ToolCalls {
 			emitSignal(Signal{Kind: SignalToolUse, Name: tc.Name, Input: tc.Args})
 			tool, ok := toolByName[tc.Name]
@@ -159,9 +158,7 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 			// back to the LLM / history so one huge tool_result cannot crowd
 			// out the rest of the conversation.
 			emitSignal(Signal{Kind: SignalToolResult, Name: tc.Name, Input: tc.Args, Output: tres.Output, IsError: tres.IsError})
-			toolMsg := Message{Role: "tool", ToolCallID: tc.ID, Content: truncateToolResult(tres.Output)}
-			msgs = append(msgs, toolMsg)
-			newMsgs = append(newMsgs, toolMsg)
+			msgs = append(msgs, Message{Role: "tool", ToolCallID: tc.ID, Content: truncateToolResult(tres.Output)})
 		}
 	}
 	logger.Warn("miniagent loop exhausted max iterations",

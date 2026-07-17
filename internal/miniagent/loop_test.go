@@ -85,7 +85,7 @@ func TestRun_ReActToolThenText(t *testing.T) {
 		{Text: "the file says hello", Usage: Usage{InputTokens: 4, OutputTokens: 5}},
 	}}
 	var signals []Signal
-	emit := func(_ string, s Signal) { signals = append(signals, s) }
+	emit := func(s Signal) { signals = append(signals, s) }
 
 	res, err := Run(context.Background(), llm, LoopConfig{Tools: []Tool{tool}}, "p1", "read a", nil, emit, nil)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestRun_UnknownToolYieldsErrorResult(t *testing.T) {
 		{Text: "ok"},
 	}}
 	var signals []Signal
-	emit := func(_ string, s Signal) { signals = append(signals, s) }
+	emit := func(s Signal) { signals = append(signals, s) }
 	res, err := Run(context.Background(), llm, LoopConfig{}, "p1", "x", nil, emit, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
