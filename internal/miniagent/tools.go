@@ -16,25 +16,20 @@ import (
 )
 
 // maxReadFileChars bounds one read_file result so a huge file cannot blow
-// the LLM context window or stall the turn. The tail is dropped; a marker
-// is appended so the LLM knows it saw a truncated view.
+// the LLM context window. Truncated with a marker.
 const maxReadFileChars = 20000
 
-// maxShellOutputChars bounds one shell command's combined stdout+stderr so
-// a chatty command cannot blow the context. Same clamp-and-mark policy as
-// read_file.
+// maxShellOutputChars is the same cap for shell combined stdout+stderr.
 const maxShellOutputChars = 20000
 
-// shellTimeout bounds one shell command. A hung command cannot stall the
-// turn forever; on timeout the process is killed and the partial output is
-// returned with an error marker.
+// shellTimeout bounds one shell command; a hung command is killed and the
+// partial output returned with an error marker.
 const shellTimeout = 60 * time.Second
 
-// maxWebFetchChars bounds one webfetch result. Same clamp-and-mark policy
-// as read_file.
+// maxWebFetchChars is the same cap for webfetch text output.
 const maxWebFetchChars = 20000
 
-// webfetchTimeout bounds one HTTP GET. A hung server cannot stall the turn.
+// webfetchTimeout bounds one HTTP GET.
 const webfetchTimeout = 30 * time.Second
 
 // shellBlockedPatterns are command substrings the shell tool refuses to run.
@@ -88,7 +83,6 @@ type ReadFile struct {
 	WorkspaceRoot string // absolute or relative; cleaned in Call
 }
 
-// Spec returns the OpenAI function schema advertised to the LLM.
 func (ReadFile) Spec() ToolSpec {
 	return ToolSpec{
 		Name:        "read_file",
@@ -196,7 +190,6 @@ type Shell struct {
 	WorkspaceRoot string
 }
 
-// Spec returns the OpenAI function schema advertised to the LLM.
 func (Shell) Spec() ToolSpec {
 	return ToolSpec{
 		Name:        "shell",
@@ -283,7 +276,6 @@ type WriteFile struct {
 	WorkspaceRoot string
 }
 
-// Spec returns the OpenAI function schema advertised to the LLM.
 func (WriteFile) Spec() ToolSpec {
 	return ToolSpec{
 		Name:        "write_file",
@@ -364,7 +356,6 @@ type WebFetch struct {
 	HTTP *http.Client // nil → default with webfetchTimeout
 }
 
-// Spec returns the OpenAI function schema advertised to the LLM.
 func (WebFetch) Spec() ToolSpec {
 	return ToolSpec{
 		Name:        "webfetch",
