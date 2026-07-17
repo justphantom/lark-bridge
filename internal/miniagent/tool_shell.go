@@ -52,6 +52,7 @@ type shellArgs struct {
 // command that exceeds shellTimeout is killed.
 type Shell struct {
 	WorkspaceRoot string
+	Unrestricted  bool
 }
 
 func (Shell) Spec() ToolSpec {
@@ -71,12 +72,10 @@ func (Shell) Spec() ToolSpec {
 	}
 }
 
-// Call runs the command. Empty WorkspaceRoot → error. A blocked pattern →
-// error. Otherwise CombinedOutput under a timeout, truncated on return.
+// Call runs the command. In default mode: empty WorkspaceRoot → error, a
+// blocked pattern → error, cwd pinned to root. In free mode (Unrestricted):
+// skip blocklist + cwd lock + root check, but env isolation is ALWAYS on.
 func (s Shell) Call(ctx context.Context, args string) ToolResult {
-	if strings.TrimSpace(s.WorkspaceRoot) == "" {
-		return ToolResult{IsError: true, Output: "shell 未配置：workspace_root 为空"}
-	}
 	var a shellArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("参数解析失败：%v（收到 %q）", err, args)}
@@ -84,28 +83,32 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 	if strings.TrimSpace(a.Command) == "" {
 		return ToolResult{IsError: true, Output: "参数缺失：command"}
 	}
-	if msg := blockedShellReason(a.Command); msg != "" {
-		return ToolResult{IsError: true, Output: msg}
-	}
 
-	root, err := filepath.Abs(s.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
-	}
-	if _, err := os.Stat(root); err != nil {
-		return ToolResult{IsError: true, Output: fmt.Sprintf("workspace_root 不可访问：%v", err)}
+	if !s.Unrestricted {
+		if strings.TrimSpace(s.WorkspaceRoot) == "" {
+			return ToolResult{IsError: true, Output: "shell 未配置：workspace_root 为空"}
+		}
+		if msg := blockedShellReason(a.Command); msg != "" {
+			return ToolResult{IsError: true, Output: msg}
+		}
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, shellTimeout)
 	defer cancel()
-	// #nosec G204 -- the agent's whole purpose is to run LLM-chosen shell;
-	// the workspace_root pin + blocked-pattern tripwire + unprivileged user
-	// are the accepted boundaries, not command allow-listing.
+	// #nosec G204 -- the agent's whole purpose is to run LLM-chosen shell.
 	cmd := exec.CommandContext(runCtx, "sh", "-c", a.Command)
-	cmd.Dir = root
-	// Strip credentials so an LLM-run `env` (or a tool that logs its env)
-	// cannot exfiltrate the miniagent/feishu/ipc keys. PATH/HOME/LANG etc.
-	// pass through so commands still find their tools.
+	if !s.Unrestricted {
+		root, err := filepath.Abs(s.WorkspaceRoot)
+		if err != nil {
+			return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
+		}
+		if _, err := os.Stat(root); err != nil {
+			return ToolResult{IsError: true, Output: fmt.Sprintf("workspace_root 不可访问：%v", err)}
+		}
+		cmd.Dir = root
+	}
+	// Env isolation is ALWAYS enforced regardless of Unrestricted — API key
+	// leakage is an absolute security concern, not a convenience trade-off.
 	cmd.Env = envWithoutSecrets()
 	out, err := cmd.CombinedOutput()
 	body := truncate(string(out), maxShellOutputChars, "…")

@@ -20,6 +20,7 @@ type writefileArgs struct {
 // path that escapes WorkspaceRoot (after Clean) is refused.
 type WriteFile struct {
 	WorkspaceRoot string
+	Unrestricted  bool
 }
 
 func (WriteFile) Spec() ToolSpec {
@@ -47,9 +48,6 @@ func (WriteFile) Spec() ToolSpec {
 // Any failure (root unset, escape, mkdir failure, write failure) yields
 // IsError=true. Returns the bytes written on success.
 func (w WriteFile) Call(_ context.Context, args string) ToolResult {
-	if w.WorkspaceRoot == "" {
-		return ToolResult{IsError: true, Output: "write_file 未配置：workspace_root 为空"}
-	}
 	var a writefileArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("参数解析失败：%v（收到 %q）", err, args)}
@@ -58,13 +56,21 @@ func (w WriteFile) Call(_ context.Context, args string) ToolResult {
 		return ToolResult{IsError: true, Output: "参数缺失：path"}
 	}
 
-	root, err := filepath.Abs(w.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
-	}
-	full, err := resolveUnderRoot(root, a.Path)
-	if err != nil {
-		return ToolResult{IsError: true, Output: err.Error()}
+	var full string
+	if w.Unrestricted {
+		full = a.Path
+	} else {
+		if w.WorkspaceRoot == "" {
+			return ToolResult{IsError: true, Output: "write_file 未配置：workspace_root 为空"}
+		}
+		root, err := filepath.Abs(w.WorkspaceRoot)
+		if err != nil {
+			return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
+		}
+		full, err = resolveUnderRoot(root, a.Path)
+		if err != nil {
+			return ToolResult{IsError: true, Output: err.Error()}
+		}
 	}
 
 	// MkdirAll so the LLM can write src/new.go without a separate mkdir

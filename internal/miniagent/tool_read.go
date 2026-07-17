@@ -19,9 +19,12 @@ type readfileArgs struct {
 
 // ReadFile reads a text file under WorkspaceRoot. Call enforces
 // WorkspaceRoot: a path that escapes it (after Clean) returns an error
-// result instead of touching the filesystem.
+// result instead of touching the filesystem. When Unrestricted is true
+// (security_level="free"), path checks are skipped and any path the
+// process user can access is readable.
 type ReadFile struct {
 	WorkspaceRoot string
+	Unrestricted  bool
 }
 
 func (ReadFile) Spec() ToolSpec {
@@ -45,9 +48,6 @@ func (ReadFile) Spec() ToolSpec {
 // Any failure (root unset, escape attempt, missing file, not a regular
 // file, read error) yields IsError=true with a human-readable Output.
 func (r ReadFile) Call(_ context.Context, args string) ToolResult {
-	if r.WorkspaceRoot == "" {
-		return ToolResult{IsError: true, Output: "read_file 未配置：workspace_root 为空"}
-	}
 	var a readfileArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("参数解析失败：%v（收到 %q）", err, args)}
@@ -56,13 +56,21 @@ func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 		return ToolResult{IsError: true, Output: "参数缺失：path"}
 	}
 
-	root, err := filepath.Abs(r.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
-	}
-	full, err := resolveUnderRoot(root, a.Path)
-	if err != nil {
-		return ToolResult{IsError: true, Output: err.Error()}
+	var full string
+	if r.Unrestricted {
+		full = a.Path // no path bounds in free mode
+	} else {
+		if r.WorkspaceRoot == "" {
+			return ToolResult{IsError: true, Output: "read_file 未配置：workspace_root 为空"}
+		}
+		root, err := filepath.Abs(r.WorkspaceRoot)
+		if err != nil {
+			return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
+		}
+		full, err = resolveUnderRoot(root, a.Path)
+		if err != nil {
+			return ToolResult{IsError: true, Output: err.Error()}
+		}
 	}
 
 	info, err := os.Stat(full)

@@ -84,18 +84,17 @@ func run(cfgPath string) error {
 		Logger:  logger,
 		HTTP:    &http.Client{Timeout: 120 * time.Second},
 	}
-	// Tools register only when workspace_root is set (empty = disabled; the
-	// LLM never sees them). All three are bounded to workspace_root:
-	//   - read_file  reads text (path escape refused)
-	//   - write_file writes/overwrites text + creates parent dirs (0644)
-	//   - shell      `sh -c` with cwd pinned + destructive-pattern tripwire
-	// webfetch is URL-driven (not path-driven) so it registers unconditionally.
+	// Tools: read_file/write_file/shell register when workspace_root is set
+	// (default mode) OR when security_level is "free" (then they operate
+	// without path/cwd restrictions). webfetch is URL-driven, always on.
+	// Env key isolation and output truncation are ALWAYS enforced.
+	unrestricted := cfg.MiniAgent.SecurityLevel == "free"
 	var tools []miniagent.Tool
-	if cfg.MiniAgent.WorkspaceRoot != "" {
+	if cfg.MiniAgent.WorkspaceRoot != "" || unrestricted {
 		tools = append(tools,
-			miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
-			miniagent.WriteFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
-			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
+			miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
+			miniagent.WriteFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
+			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
 		)
 	}
 	tools = append(tools, miniagent.WebFetch{})
@@ -128,7 +127,8 @@ func run(cfgPath string) error {
 		"memory_enabled", memoryEnabled,
 		"model", cfg.MiniAgent.Model,
 		"tools", len(tools),
-		"workspace_root", cfg.MiniAgent.WorkspaceRoot)
+		"workspace_root", cfg.MiniAgent.WorkspaceRoot,
+		"security_level", cfg.MiniAgent.SecurityLevel)
 
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
