@@ -70,6 +70,32 @@ func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 	}
 }
 
+// TestHandleEvent_EmitsStepsOnResult verifies the turn's LLM call count
+// (result.Steps) reaches the frontend Result payload so the card can show
+// the round count like the other backends do.
+func TestHandleEvent_EmitsStepsOnResult(t *testing.T) {
+	tool := &fakeTool{name: "read_file", result: ToolResult{Output: "FILE=hello"}}
+	llm := &fakeLLM{responses: []Response{
+		{ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Args: `{"path":"a"}`}}},
+		{Text: "done", Usage: Usage{InputTokens: 4, OutputTokens: 5}},
+	}}
+	rpc := &captureSender{}
+	h := New(llm, LoopConfig{Model: "m", Tools: []Tool{tool}}, rpc, log.Nop(), nil)
+
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "read a"}}
+	if err := h.HandleEvent(context.Background(), ev); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	controls := waitControls(t, rpc, 3) // tool_use, tool_result, result
+	ctl := controls[len(controls)-1]
+	if ctl.Type != protocol.TypeResult {
+		t.Fatalf("Type = %s, want %s", ctl.Type, protocol.TypeResult)
+	}
+	if ctl.Result.Steps != 2 {
+		t.Errorf("Steps = %d, want 2 (tool step + text step)", ctl.Result.Steps)
+	}
+}
+
 // TestHandleEvent_EmitsErrorOnLLMFailure verifies an LLM failure surfaces as
 // TypeError (not a silent hang on the turn card).
 func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {

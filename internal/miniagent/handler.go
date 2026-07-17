@@ -207,6 +207,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 			Model:       h.cfg.Model,
 			Tokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
 			Duration:    time.Since(start),
+			Steps:       result.Steps,
 			TotalTokens: result.Usage.InputTokens + result.Usage.OutputTokens,
 			SessionID:   "", // P0 is stateless; P2 memory supplies this.
 		},
