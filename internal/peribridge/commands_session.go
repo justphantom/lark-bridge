@@ -14,7 +14,7 @@ import (
 // central session registry, so this is purely the local binding table (each
 // row is a chat's working directory + pinned settings, not a live session).
 func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	body := formatBindings(h.router.AllBindings(), chatID)
+	body := formatBindings(h.Router.AllBindings(), chatID)
 	return commandResult{Body: body}, nil
 }
 
@@ -23,24 +23,24 @@ func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) 
 // pin — the directory is preserved so files on disk remain reachable.
 // Any in-flight prompt is aborted first.
 func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无绑定，直接发送消息即可开始。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.SetModelSpec(chatID, "")
-	h.logger.Info("context reset (clear model pin)", log.FieldChatID, chatID)
+	h.Router.SetModelSpec(chatID, "")
+	h.Logger.Info("context reset (clear model pin)", log.FieldChatID, chatID)
 	return commandResult{Body: "已重置工作上下文（模型设置已清除，目录保留）。发送消息即开始新对话。"}, nil
 }
 
 // cmdSessionDel removes the binding entirely; the next prompt recreates a
 // fresh binding (new directory + default model).
 func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无绑定。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.Unbind(chatID)
-	h.logger.Info("binding deleted", log.FieldChatID, chatID)
+	h.Router.Unbind(chatID)
+	h.Logger.Info("binding deleted", log.FieldChatID, chatID)
 	return commandResult{Body: "已删除绑定。下次提问将创建新目录与默认设置。"}, nil
 }
 

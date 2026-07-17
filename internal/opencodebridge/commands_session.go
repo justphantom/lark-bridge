@@ -14,12 +14,12 @@ import (
 // in-flight prompt is aborted first so the old session is not resumed
 // mid-turn.
 func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.SetSessionID(chatID, "")
-	h.logger.Info("session reset (new conversation)", log.FieldChatID, chatID)
+	h.Router.SetSessionID(chatID, "")
+	h.Logger.Info("session reset (new conversation)", log.FieldChatID, chatID)
 	return commandResult{Body: "已重置会话上下文。工作目录保留，发送消息即开始新对话。"}, nil
 }
 
@@ -27,12 +27,12 @@ func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (c
 // fresh binding (new directory + new session). Use /session-new to keep the
 // directory but reset the conversation.
 func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话绑定。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.Unbind(chatID)
-	h.logger.Info("binding deleted", log.FieldChatID, chatID)
+	h.Router.Unbind(chatID)
+	h.Logger.Info("binding deleted", log.FieldChatID, chatID)
 	return commandResult{Body: "已删除会话绑定。下次提问将创建新会话与新目录。"}, nil
 }
 

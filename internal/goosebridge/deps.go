@@ -19,7 +19,6 @@ import (
 	"context"
 
 	"github.com/hu/lark-bridge/internal/goose"
-	"github.com/hu/lark-bridge/internal/router"
 )
 
 // gooseAPI is the goose backend capability the bridge needs. The production
@@ -30,22 +29,4 @@ type gooseAPI interface {
 	// drains the channel until it is closed; a terminal event (complete/error)
 	// precedes close.
 	Run(ctx context.Context, opts goose.RunOptions) (<-chan goose.Event, error)
-}
-
-// sessionRouter is the subset of *router.Router the Handler uses. goose-back
-// writes the --name anchor into SessionID (the bridge back-fills it on the
-// first successful turn and resets it on /cd, /session-new). Directory,
-// modelSpec, permissionMode, effortLevel, settingsFile persist across turns.
-type sessionRouter interface {
-	Lookup(chatID string) (router.Binding, bool)
-	Bind(chatID, sessionID, directory, title, modelSpec, agent string)
-	Unbind(chatID string)
-	TitleOf(chatID string) string
-	AllBindings() map[string]router.Binding
-	SetSessionID(chatID, sessionID string)
-	SetModelSpec(chatID, modelSpec string)
-	SetDirectory(chatID, directory string)
-	SetPermissionMode(chatID, permissionMode string)
-	SetEffortLevel(chatID, effortLevel string)
-	SetSettingsFile(chatID, settingsFile string)
 }

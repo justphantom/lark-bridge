@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/opencode"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -64,7 +65,7 @@ func TestPickAnswerValue(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := pickAnswerValue(c.ans); got != c.want {
+			if got := bridgebase.PickAnswerValue(c.ans); got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -78,12 +79,12 @@ func TestRegisterDeliverCancel(t *testing.T) {
 	h, _ := newPickerHandler(t)
 
 	t.Run("deliver wakes waiter", func(t *testing.T) {
-		ch, ok := h.registerAnswer("req-1")
+		ch, ok := h.Answers.Register("req-1")
 		if !ok {
 			t.Fatal("register failed")
 		}
 		ans := &protocol.AnswerPayload{Choices: []string{"p/m"}}
-		if !h.deliverAnswer("req-1", ans) {
+		if !h.Answers.Deliver("req-1", ans) {
 			t.Fatal("deliver returned false for a pending waiter")
 		}
 		select {
@@ -97,25 +98,25 @@ func TestRegisterDeliverCancel(t *testing.T) {
 	})
 
 	t.Run("deliver with no waiter returns false", func(t *testing.T) {
-		if h.deliverAnswer("unknown", &protocol.AnswerPayload{}) {
+		if h.Answers.Deliver("unknown", &protocol.AnswerPayload{}) {
 			t.Fatal("deliver should return false when no waiter exists")
 		}
 	})
 
 	t.Run("double register fails", func(t *testing.T) {
-		if _, ok := h.registerAnswer("req-2"); !ok {
+		if _, ok := h.Answers.Register("req-2"); !ok {
 			t.Fatal("first register should succeed")
 		}
-		if _, ok := h.registerAnswer("req-2"); ok {
+		if _, ok := h.Answers.Register("req-2"); ok {
 			t.Fatal("second register of same id should fail")
 		}
-		h.cancelAnswer("req-2")
+		h.Answers.Cancel("req-2")
 	})
 
 	t.Run("cancel removes slot", func(t *testing.T) {
-		h.registerAnswer("req-3")
-		h.cancelAnswer("req-3")
-		if h.deliverAnswer("req-3", &protocol.AnswerPayload{}) {
+		h.Answers.Register("req-3")
+		h.Answers.Cancel("req-3")
+		if h.Answers.Deliver("req-3", &protocol.AnswerPayload{}) {
 			t.Fatal("deliver after cancel should return false")
 		}
 	})
@@ -124,7 +125,7 @@ func TestRegisterDeliverCancel(t *testing.T) {
 // TestCmdModel_Picker_Success drives the full async interactive loop: /model
 // (no args) returns immediately with Handled; a background goroutine lists
 // models (fake agent), emits a Question card (rpc nil → no-op), and blocks.
-// The test reads the requestID from h.answers, delivers the answer,
+// The test reads the requestID from h.Answers, delivers the answer,
 // and waits for the goroutine to pin the choice on the router.
 func TestCmdModel_Picker_Success(t *testing.T) {
 	h, r := newPickerHandlerWithAgent(t, pickerFakeAgent{
@@ -140,7 +141,7 @@ func TestCmdModel_Picker_Success(t *testing.T) {
 	}
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"p/b"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"p/b"}})
 
 	if got := waitModelSpec(t, r, "chat-1", "p/b", 2*time.Second); got != "p/b" {
 		t.Errorf("modelSpec = %q, want p/b", got)
@@ -159,7 +160,7 @@ func TestCmdModel_Picker_CustomWins(t *testing.T) {
 	}
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"p/a"}, Custom: "manual/x"})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"p/a"}, Custom: "manual/x"})
 
 	if got := waitModelSpec(t, r, "chat-1", "manual/x", 2*time.Second); got != "manual/x" {
 		t.Errorf("modelSpec = %q, want manual/x (custom overrides choice)", got)
@@ -177,7 +178,7 @@ func TestCmdAgent_Picker_Success(t *testing.T) {
 	}
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"explore"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"explore"}})
 
 	if got := waitAgentSpec(t, r, "chat-1", "explore", 2*time.Second); got != "explore" {
 		t.Errorf("agent = %q, want explore", got)
@@ -198,7 +199,7 @@ func TestCmdModel_Picker_ListError(t *testing.T) {
 	// registering a slot. Poll briefly to confirm.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if len(h.answers.PendingIDs()) == 0 {
+		if len(h.Answers.PendingIDs()) == 0 {
 			return // good: no dangling slot
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -217,13 +218,13 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 	}
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{})
 
 	// The goroutine returns an error from askAndWait (未选择); the binding's
 	// ModelSpec must stay empty. Give the goroutine a moment to process.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if len(h.answers.PendingIDs()) == 0 {
+		if len(h.Answers.PendingIDs()) == 0 {
 			break // goroutine consumed the answer and exited
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -251,7 +252,7 @@ func TestDrainAnswers_OnClose(t *testing.T) {
 	// The picker goroutine exits; pendingAnswers drains. Poll for it.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(h.answers.PendingIDs()) == 0 {
+		if len(h.Answers.PendingIDs()) == 0 {
 			return // picker unblocked, slot cleared — no leak
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -278,20 +279,20 @@ func newPickerHandlerWithAgent(t *testing.T, agent opencodeAPI) (*Handler, *rout
 		t.Fatalf("router new: %v", err)
 	}
 	// rpc stays nil: emit becomes a no-op so the Question card is "sent" to
-	// nowhere. The test reads the requestID straight from h.answers
+	// nowhere. The test reads the requestID straight from h.Answers
 	// and delivers the answer itself, exercising the same routing the IPC
 	// path would.
 	h := NewWithLogger(r, agent, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
 	return h, r
 }
 
-// waitPending polls h.answers until a slot appears, returning its
+// waitPending polls h.Answers until a slot appears, returning its
 // requestID. Fails the test if no slot appears within timeout.
 func waitPending(t *testing.T, h *Handler, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if ids := h.answers.PendingIDs(); len(ids) > 0 {
+		if ids := h.Answers.PendingIDs(); len(ids) > 0 {
 			return ids[0]
 		}
 		time.Sleep(2 * time.Millisecond)

@@ -14,7 +14,7 @@ import (
 // goose backend has no central session registry, so this is purely the
 // local binding table.
 func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	body := formatBindings(h.router.AllBindings(), chatID)
+	body := formatBindings(h.Router.AllBindings(), chatID)
 	return commandResult{Body: body}, nil
 }
 
@@ -24,12 +24,12 @@ func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) 
 // is dropped. Any in-flight prompt is aborted first so the old session
 // is not resumed mid-turn.
 func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.SetSessionID(chatID, "")
-	h.logger.Info("session reset (new conversation)", log.FieldChatID, chatID)
+	h.Router.SetSessionID(chatID, "")
+	h.Logger.Info("session reset (new conversation)", log.FieldChatID, chatID)
 	return commandResult{Body: "已重置会话上下文。工作目录保留，发送消息即开始新对话。"}, nil
 }
 
@@ -45,12 +45,12 @@ func (h *Handler) cmdSessionAbort(_ context.Context, chatID string, _ []string) 
 // a fresh binding (new directory + new session). Use /session-new to
 // keep the directory but reset the conversation.
 func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.router.Lookup(chatID); !ok {
+	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话绑定。"}, nil
 	}
 	h.abortChat(chatID)
-	h.router.Unbind(chatID)
-	h.logger.Info("binding deleted", log.FieldChatID, chatID)
+	h.Router.Unbind(chatID)
+	h.Logger.Info("binding deleted", log.FieldChatID, chatID)
 	return commandResult{Body: "已删除会话绑定。下次提问将创建新会话与新目录。"}, nil
 }
 
@@ -80,7 +80,7 @@ func (h *Handler) cmdCurrent(_ context.Context, chatID string, _ []string) (comm
 	fmt.Fprintf(&sb, "  模型：%s\n", model)
 	perm := b.PermissionMode
 	if perm == "" {
-		perm = "默认 (" + h.permissionDefault + ")"
+		perm = "默认 (" + h.PermissionDefault + ")"
 	}
 	fmt.Fprintf(&sb, "  权限模式：%s\n", perm)
 	effort := b.EffortLevel

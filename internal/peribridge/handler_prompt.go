@@ -7,19 +7,13 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/peri"
 	"github.com/hu/lark-bridge/internal/protocol"
 	"github.com/hu/lark-bridge/internal/router"
+	"github.com/hu/lark-bridge/internal/streamarchive"
 )
-
-// promptCancel wraps a context.CancelFunc in a struct so the entry stored in
-// cancelByChat is uniquely identifiable by pointer equality.
-type promptCancel struct {
-	cancel    context.CancelFunc
-	startTime time.Time
-	chatID    string
-}
 
 // cancelNoticeTimeout bounds the fresh context used to emit the "已取消"
 // notice after the prompt ctx is already cancelled.
@@ -31,14 +25,14 @@ const cancelNoticeTimeout = 5 * time.Second
 // peri is stateless: there is no session id to back-fill, so this is simpler
 // than the opencode variant. There is also no usage recording (peri emits no
 // token data).
-func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *promptCancel) {
+func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *bridgebase.PromptCancel) {
 	defer func() {
 		if r := recover(); r != nil {
-			h.logger.Error("panic in runPrompt",
+			h.Logger.Error("panic in runPrompt",
 				log.FieldChatID, chatID,
 				log.FieldPanic, r,
 				log.FieldStack, debug.Stack())
-			if h.appCtx.Err() == nil {
+			if h.AppCtx.Err() == nil {
 				h.emitLogged(context.Background(), replyToID, chatID, &protocol.Control{
 					Type:   protocol.TypeNotice,
 					ChatID: chatID,
@@ -47,24 +41,24 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 			}
 		}
 	}()
-	defer h.wg.Done()
+	defer h.Wg.Done()
 	defer h.endPrompt(chatID, mine)
-	defer mine.cancel()
+	defer mine.Cancel()
 
 	// Re-read the binding: a concurrent /cd or /model command (run in a
 	// separate goroutine) could have mutated the router between
 	// ensureBinding and this point.
-	if fresh, ok := h.router.Lookup(chatID); ok {
+	if fresh, ok := h.Router.Lookup(chatID); ok {
 		binding = fresh
 	}
 
-	h.logger.Debug("runPrompt start",
+	h.Logger.Debug("runPrompt start",
 		log.FieldChatID, chatID,
 		"prompt", truncateForDebug(prompt, h.debugRedact()))
 
 	ctx, cancel := context.WithCancelCause(parent)
-	if h.promptTimeout > 0 {
-		timer := time.AfterFunc(h.promptTimeout, func() {
+	if h.PromptTimeout > 0 {
+		timer := time.AfterFunc(h.PromptTimeout, func() {
 			cancel(context.DeadlineExceeded)
 		})
 		defer timer.Stop()
@@ -89,7 +83,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 // reduces the stream to a promptResult. The raw NDJSON is archived under
 // {stateDir}/streams when StreamHistory > 0 (best-effort).
 func (h *Handler) runPeri(ctx context.Context, chatID, promptID string, opts peri.RunOptions, modelSpec string) promptResult {
-	sink, closeSink := h.newStreamSink(chatID, promptID)
+	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "peri", chatID, promptID, h.StreamHistory)
 	if sink != nil {
 		opts.LineSink = sink
 		defer closeSink()
@@ -147,40 +141,40 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 
 // startPrompt tries to register a per-chat prompt slot derived from appCtx.
 // Busy-then-drop per chat.
-func (h *Handler) startPrompt(_ context.Context, chatID string) (ctx context.Context, mine *promptCancel, ok bool) {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if _, busy := h.cancelByChat[chatID]; busy {
+func (h *Handler) startPrompt(_ context.Context, chatID string) (ctx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if _, busy := h.CancelByChat[chatID]; busy {
 		return nil, nil, false
 	}
-	ctx, cancel := context.WithCancel(h.appCtx)
-	mine = &promptCancel{
-		cancel:    cancel,
-		startTime: time.Now(),
-		chatID:    chatID,
+	ctx, cancel := context.WithCancel(h.AppCtx)
+	mine = &bridgebase.PromptCancel{
+		Cancel:    cancel,
+		StartTime: time.Now(),
+		ChatID:    chatID,
 	}
-	h.cancelByChat[chatID] = mine
+	h.CancelByChat[chatID] = mine
 	return ctx, mine, true
 }
 
 // endPrompt removes the per-chat cancel slot only if it still points at mine.
-func (h *Handler) endPrompt(chatID string, mine *promptCancel) {
+func (h *Handler) endPrompt(chatID string, mine *bridgebase.PromptCancel) {
 	if mine == nil {
 		return
 	}
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if cur, ok := h.cancelByChat[chatID]; ok && cur == mine {
-		delete(h.cancelByChat, chatID)
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if cur, ok := h.CancelByChat[chatID]; ok && cur == mine {
+		delete(h.CancelByChat, chatID)
 	}
 }
 
 // abortChat cancels the in-flight prompt for chatID, if any.
 func (h *Handler) abortChat(chatID string) bool {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if pc, ok := h.cancelByChat[chatID]; ok {
-		pc.cancel()
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if pc, ok := h.CancelByChat[chatID]; ok {
+		pc.Cancel()
 		return true
 	}
 	return false

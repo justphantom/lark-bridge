@@ -1,4 +1,4 @@
-package peribridge
+package bridgebase
 
 import (
 	"strings"
@@ -6,12 +6,83 @@ import (
 	"time"
 )
 
+// TestShouldEmitText_FirstCallTrue verifies the first call always emits,
+// regardless of interval.
+func TestShouldEmitText_FirstCallTrue(t *testing.T) {
+	th := NewControlThrottle(200 * time.Millisecond)
+	if !th.ShouldEmitText(time.Now()) {
+		t.Error("first call should always emit")
+	}
+}
+
+// TestShouldEmitText_ThrottlesWithinInterval verifies calls within the interval
+// after an emit are suppressed.
+func TestShouldEmitText_ThrottlesWithinInterval(t *testing.T) {
+	th := NewControlThrottle(200 * time.Millisecond)
+	base := time.Now()
+	if !th.ShouldEmitText(base) {
+		t.Fatal("first call should emit")
+	}
+	// Subsequent calls within the interval must be suppressed.
+	for _, offset := range []time.Duration{10, 50, 100, 199} {
+		if th.ShouldEmitText(base.Add(offset * time.Millisecond)) {
+			t.Errorf("call at +%dms should be throttled", offset)
+		}
+	}
+}
+
+// TestShouldEmitText_EmitsAfterInterval verifies a call at or beyond the
+// interval emits and resets the window.
+func TestShouldEmitText_EmitsAfterInterval(t *testing.T) {
+	th := NewControlThrottle(200 * time.Millisecond)
+	base := time.Now()
+	th.ShouldEmitText(base)
+	// Exactly at interval boundary.
+	if !th.ShouldEmitText(base.Add(200 * time.Millisecond)) {
+		t.Error("call at interval boundary should emit")
+	}
+	// After the emit, the next call within the new window is throttled.
+	if th.ShouldEmitText(base.Add(250 * time.Millisecond)) {
+		t.Error("call 50ms after re-emit should be throttled")
+	}
+}
+
+// TestShouldEmitText_ZeroIntervalAlwaysEmits verifies interval<=0 disables
+// throttling (every call emits).
+func TestShouldEmitText_ZeroIntervalAlwaysEmits(t *testing.T) {
+	th := NewControlThrottle(0)
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		if !th.ShouldEmitText(now.Add(time.Duration(i) * time.Microsecond)) {
+			t.Errorf("call %d: interval<=0 should always emit", i)
+		}
+	}
+}
+
+// TestShouldEmitText_ConcurrentSafe verifies the throttle does not panic under
+// concurrent access (race detector enforces this when run with -race).
+func TestShouldEmitText_ConcurrentSafe(t *testing.T) {
+	th := NewControlThrottle(time.Millisecond)
+	done := make(chan struct{}, 4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 100; j++ {
+				th.ShouldEmitText(time.Now())
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		<-done
+	}
+}
+
 // TestTextThrottle_DisabledWhenNoInterval verifies a zero/negative interval
 // passes every chunk through immediately (no batching) so the bridge still
 // emits when throttling is off.
 func TestTextThrottle_DisabledWhenNoInterval(t *testing.T) {
 	for _, interval := range []time.Duration{0, -1} {
-		th := newTextThrottle(interval)
+		th := NewTextThrottle(interval)
 		if got := th.Add("a", time.Now()); got != "a" {
 			t.Errorf("interval=%v: Add = %q, want %q", interval, got, "a")
 		}
@@ -24,7 +95,7 @@ func TestTextThrottle_DisabledWhenNoInterval(t *testing.T) {
 // TestTextThrottle_BatchesWithinWindow verifies chunks accumulate and are
 // released as one merged delta only after the interval elapses.
 func TestTextThrottle_BatchesWithinWindow(t *testing.T) {
-	th := newTextThrottle(100 * time.Millisecond)
+	th := NewTextThrottle(100 * time.Millisecond)
 	base := time.Now()
 
 	// First Add primes last and returns immediately (first-chunk flush).
@@ -47,7 +118,7 @@ func TestTextThrottle_BatchesWithinWindow(t *testing.T) {
 // TestTextThrottle_Flush verifies Flush drains any buffered remainder; critical
 // for the terminal path so trailing bytes are not lost.
 func TestTextThrottle_Flush(t *testing.T) {
-	th := newTextThrottle(100 * time.Millisecond)
+	th := NewTextThrottle(100 * time.Millisecond)
 	base := time.Now()
 	th.Add("a", base)                          // primes last, buffer now empty
 	th.Add("bc", base.Add(1*time.Millisecond)) // buffered
@@ -66,7 +137,7 @@ func TestTextThrottle_Flush(t *testing.T) {
 // TestTextThrottle_FlushEmpty verifies Flush on a never-used throttle returns
 // "" without setting last (so a subsequent Add still flushes on first call).
 func TestTextThrottle_FlushEmpty(t *testing.T) {
-	th := newTextThrottle(100 * time.Millisecond)
+	th := NewTextThrottle(100 * time.Millisecond)
 	if got := th.Flush(); got != "" {
 		t.Errorf("Flush on empty = %q, want empty", got)
 	}
@@ -76,10 +147,10 @@ func TestTextThrottle_FlushEmpty(t *testing.T) {
 }
 
 // TestTextThrottle_PreservesAllBytes is a regression guard: across a long
-// fragmented run (peri's one-char-per-event pattern) the concatenation of
-// every Add return + final Flush must equal the input.
+// fragmented run (one-char-per-event pattern) the concatenation of every Add
+// return + final Flush must equal the input.
 func TestTextThrottle_PreservesAllBytes(t *testing.T) {
-	th := newTextThrottle(50 * time.Millisecond)
+	th := NewTextThrottle(50 * time.Millisecond)
 	input := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 10) // 260 chars
 	var emitted strings.Builder
 	start := time.Now()

@@ -31,7 +31,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		toolCount int
 		startTime time.Time
 
-		throttle = newTextThrottle(textEmitInterval)
+		throttle = bridgebase.NewTextThrottle(textEmitInterval)
 	)
 
 	// flushText drains any buffered text delta. Called before tool/error/result
@@ -47,7 +47,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	}
 
 	for ev := range events {
-		h.logger.Debug("bridge received peri event",
+		h.Logger.Debug("bridge received peri event",
 			log.FieldChatID, chatID,
 			log.FieldEventType, ev.GetType(),
 			"text_length", len(ev.GetText()),
@@ -98,7 +98,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			return h.finalizeResult(ev, text.String(), modelSpec, toolCount, startTime)
 		case peri.EventError:
 			flushText()
-			h.logger.Debug("bridge: error event",
+			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
 				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
 			return promptResult{
@@ -106,7 +106,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				model: resolveModel(modelSpec),
 			}
 		default:
-			h.logger.Debug("peri: unhandled event type",
+			h.Logger.Debug("peri: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.GetType())
 		}

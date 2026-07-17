@@ -12,7 +12,6 @@ import (
 	"context"
 
 	"github.com/hu/lark-bridge/internal/opencode"
-	"github.com/hu/lark-bridge/internal/router"
 )
 
 // opencodeAPI is the opencode backend capability the bridge needs. The
@@ -29,19 +28,4 @@ type opencodeAPI interface {
 	// ListAgents runs `opencode agent list` for the interactive /agent picker.
 	// Returns user-visible agent names (hidden internal agents filtered).
 	ListAgents(ctx context.Context) ([]string, error)
-}
-
-// sessionRouter is the subset of *router.Router the Handler uses. The
-// router's Bind is the 6-arg superset (agent). opencode-back passes the
-// agent pinned on the binding. SetSessionID back-fills the lazily-captured
-// session id after a run's session event.
-type sessionRouter interface {
-	Lookup(chatID string) (router.Binding, bool)
-	Bind(chatID, sessionID, directory, title, modelSpec, agent string)
-	Unbind(chatID string)
-	TitleOf(chatID string) string
-	SetModelSpec(chatID, modelSpec string)
-	SetAgent(chatID, agent string)
-	SetSessionID(chatID, sessionID string)
-	SetDirectory(chatID, directory string)
 }

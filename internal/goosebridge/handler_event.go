@@ -17,7 +17,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if err := ev.Validate(); err != nil {
 		// reconnect logs handler errors without terminating the loop, so a
 		// malformed event is observable but cannot take the backend offline.
-		h.logger.Warn("invalid event from frontend",
+		h.Logger.Warn("invalid event from frontend",
 			log.FieldError, err,
 			log.FieldEventType, ev.Type)
 		return err
@@ -31,7 +31,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		// blocked in askAndWait. A reply with no waiter is a late/duplicate
 		// click after the backend already timed out; discard it.
 		if ev.Answer != nil {
-			h.deliverAnswer(ev.Answer.RequestID, ev.Answer)
+			h.Answers.Deliver(ev.Answer.RequestID, ev.Answer)
 		}
 		return nil
 	case protocol.TypeAbort:
@@ -66,8 +66,8 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// wrap a skill prompt that should reach the CLI as-is.
 	if !p.Skill {
 		if cmd, _ := cmdutil.ParseCommand(p.Text); cmd != "" {
-			bridgebase.GoSafe(h.logger, "dispatchCommand:"+chatID, func() {
-				h.dispatchCommand(h.appCtx, chatID, p.Text, replyToID)
+			bridgebase.GoSafe(h.Logger, "dispatchCommand:"+chatID, func() {
+				h.dispatchCommand(h.AppCtx, chatID, p.Text, replyToID)
 			})
 			return nil
 		}
@@ -106,7 +106,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 			Notice: &protocol.NoticePayload{Level: "warning", Title: "请稍后", Message: "正在处理上一个请求"},
 		})
 	}
-	h.wg.Add(1)
+	h.Wg.Add(1)
 	go h.runPrompt(promptCtx, chatID, binding, p.Text, replyToID, mine)
 	return nil
 }

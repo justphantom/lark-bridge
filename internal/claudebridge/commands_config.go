@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/claude"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 )
@@ -57,27 +58,27 @@ func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string)
 
 	old := b.PermissionMode
 	if old == "" {
-		old = "默认 (" + h.permissionDefault + ")"
+		old = "默认 (" + h.PermissionDefault + ")"
 	}
-	h.router.SetPermissionMode(chatID, mode)
-	cmdutil.LogSettingChange(h.logger, chatID, "permission_mode", mode)
+	h.Router.SetPermissionMode(chatID, mode)
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", mode)
 	return cmdutil.ChangeResult("权限模式", old, mode, "下次提问生效。"), nil
 }
 
 // runPermPicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
 func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
-	choice, err := h.askAndWait(chatID, "选择权限模式", h.permissionOptions, false)
+	choice, err := h.askAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	old := oldMode
 	if old == "" {
-		old = "默认 (" + h.permissionDefault + ")"
+		old = "默认 (" + h.PermissionDefault + ")"
 	}
-	h.router.SetPermissionMode(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "permission_mode", choice)
+	h.Router.SetPermissionMode(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", choice)
 	res := cmdutil.ChangeResult("权限模式", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -87,11 +88,11 @@ func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
 func clearPermissionMode(h *Handler, chatID, oldMode string) commandResult {
 	old := oldMode
 	if old == "" {
-		old = "默认 (" + h.permissionDefault + ")"
+		old = "默认 (" + h.PermissionDefault + ")"
 	}
-	h.router.SetPermissionMode(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "permission", "")
-	return cmdutil.ChangeResult("权限模式", old, "默认 ("+h.permissionDefault+")",
+	h.Router.SetPermissionMode(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission", "")
+	return cmdutil.ChangeResult("权限模式", old, "默认 ("+h.PermissionDefault+")",
 		"已清除权限设置，回退默认。")
 }
 
@@ -129,7 +130,7 @@ func (h *Handler) cmdSettings(_ context.Context, chatID string, args []string) (
 // file, so the pinned path always comes from the trusted settings-directory
 // scan and never from free-form input.
 func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
-	paths, err := h.agent.ListSettings(h.appCtx)
+	paths, err := h.agent.ListSettings(h.AppCtx)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", "获取 settings 文件列表失败："+err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -150,7 +151,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 		byName[name] = p
 	}
 
-	choice, err := h.askAndWait(chatID, "选择 settings 文件", options, false)
+	choice, err := h.askAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -167,8 +168,8 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 	if old == "" {
 		old = "(未设置)"
 	}
-	h.router.SetSettingsFile(chatID, path)
-	cmdutil.LogSettingChange(h.logger, chatID, "settings_file", path)
+	h.Router.SetSettingsFile(chatID, path)
+	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", path)
 	res := cmdutil.ChangeResult("--settings 文件", old, path, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -180,8 +181,8 @@ func clearSettingsFile(h *Handler, chatID, oldFile string) commandResult {
 	if old == "" {
 		old = "(未设置)"
 	}
-	h.router.SetSettingsFile(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "settings_file", "")
+	h.Router.SetSettingsFile(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", "")
 	return cmdutil.ChangeResult("--settings 文件", old, "(未设置)", "已清除 --settings 文件设置。")
 }
 

@@ -39,8 +39,8 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, spec)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", spec)
+	h.Router.SetModelSpec(chatID, spec)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", spec)
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
@@ -48,12 +48,12 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 // goroutine. The opencode CLI takes 25–50s to list models, so the command
 // returns immediately with a placeholder Notice (Handled=true, dispatcher
 // skips its own Notice); goSafe runs the slow list → Question → wait →
-// confirm loop on h.appCtx, emitting the selection card and result Notice
+// confirm loop on h.AppCtx, emitting the selection card and result Notice
 // itself. oldSpec is captured by value so concurrent /model calls do not race
 // on the binding snapshot.
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载模型列表", "正在获取可用模型，请稍候（约半分钟）…")
-	bridgebase.GoSafe(h.logger, "model-picker:"+chatID, func() {
+	bridgebase.GoSafe(h.Logger, "model-picker:"+chatID, func() {
 		choice, err := h.askAndWait(chatID, "", "模型", "选择模型", h.agent.ListModels, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
@@ -63,8 +63,8 @@ func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 		if old == "" {
 			old = "默认"
 		}
-		h.router.SetModelSpec(chatID, choice)
-		cmdutil.LogSettingChange(h.logger, chatID, "model", choice)
+		h.Router.SetModelSpec(chatID, choice)
+		cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
 		res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
 		h.emitNoticeLogged(chatID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
 	})
@@ -78,8 +78,8 @@ func clearModelSpec(h *Handler, chatID, oldSpec string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "model", "")
+	h.Router.SetModelSpec(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", "")
 	return cmdutil.ChangeResult("模型", old, "默认", "已清除模型设置，将使用 opencode 默认模型。")
 }
 
@@ -108,8 +108,8 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetAgent(chatID, agent)
-	cmdutil.LogSettingChange(h.logger, chatID, "agent", agent)
+	h.Router.SetAgent(chatID, agent)
+	cmdutil.LogSettingChange(h.Logger, chatID, "agent", agent)
 	return cmdutil.ChangeResult("agent", old, agent, "下次提问生效。"), nil
 }
 
@@ -117,7 +117,7 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 // for why it runs async, emits its own notices, and returns Handled.
 func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载 agent 列表", "正在获取可用 agent，请稍候（约半分钟）…")
-	bridgebase.GoSafe(h.logger, "agent-picker:"+chatID, func() {
+	bridgebase.GoSafe(h.Logger, "agent-picker:"+chatID, func() {
 		choice, err := h.askAndWait(chatID, "", "agent", "选择 agent", h.agent.ListAgents, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
@@ -127,8 +127,8 @@ func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 		if old == "" {
 			old = "默认"
 		}
-		h.router.SetAgent(chatID, choice)
-		cmdutil.LogSettingChange(h.logger, chatID, "agent", choice)
+		h.Router.SetAgent(chatID, choice)
+		cmdutil.LogSettingChange(h.Logger, chatID, "agent", choice)
 		res := cmdutil.ChangeResult("agent", old, choice, "下次提问生效。")
 		h.emitNoticeLogged(chatID, "success", "已切换 agent", res.Body, res.Field, res.Before, res.After)
 	})
@@ -141,8 +141,8 @@ func clearAgentSpec(h *Handler, chatID, oldAgent string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetAgent(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "agent", "")
+	h.Router.SetAgent(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "agent", "")
 	return cmdutil.ChangeResult("agent", old, "默认", "已清除 agent 设置，将使用 opencode 默认 agent。")
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/opencode"
 	"github.com/hu/lark-bridge/internal/router"
@@ -73,8 +74,8 @@ func TestSummarizeToolInput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := summarizeToolInput(tc.input); got != tc.want {
-				t.Errorf("summarizeToolInput(%q) = %q, want %q", tc.input, got, tc.want)
+			if got := bridgebase.SummarizeToolInput(tc.input); got != tc.want {
+				t.Errorf("bridgebase.SummarizeToolInput(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}

@@ -239,7 +239,7 @@ func TestClose_WaitsForInFlightPrompt(t *testing.T) {
 	}
 
 	// Close cancels appCtx → the blocking channel closes → runPrompt returns →
-	// wg.Done. This should complete well within shutdownGrace.
+	// wg.Done. This should complete well within the shutdown grace.
 	start := time.Now()
 	done := make(chan struct{})
 	go func() {
@@ -248,10 +248,10 @@ func TestClose_WaitsForInFlightPrompt(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(shutdownGrace + 2*time.Second):
-		t.Fatal("Close did not return within shutdownGrace")
+	case <-time.After(7 * time.Second):
+		t.Fatal("Close did not return within the shutdown grace")
 	}
-	if d := time.Since(start); d > shutdownGrace {
-		t.Errorf("Close waited %v, should have returned well under shutdownGrace", d)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("Close waited %v, should have returned well under the shutdown grace", d)
 	}
 }

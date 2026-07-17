@@ -35,20 +35,20 @@ func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title s
 			return router.Binding{}, err
 		}
 	}
-	if b, ok := h.router.Lookup(chatID); ok {
+	if b, ok := h.Router.Lookup(chatID); ok {
 		if sessionID != "" {
-			h.router.SetSessionID(chatID, sessionID)
+			h.Router.SetSessionID(chatID, sessionID)
 			b.SessionID = sessionID
 		}
 		if directory != "" {
 			if err := os.MkdirAll(directory, dirPerm); err != nil {
 				return router.Binding{}, fmt.Errorf("create session dir: %w", err)
 			}
-			h.router.SetDirectory(chatID, directory)
+			h.Router.SetDirectory(chatID, directory)
 			b.Directory = directory
 		}
 		if modelSpec != "" {
-			h.router.SetModelSpec(chatID, modelSpec)
+			h.Router.SetModelSpec(chatID, modelSpec)
 			b.ModelSpec = modelSpec
 		}
 		return b, nil
@@ -62,9 +62,9 @@ func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title s
 		}
 	}
 	// Empty session id → streamRun back-fills it after the first run.
-	h.router.Bind(chatID, sessionID, directory, title, modelSpec, "")
-	b, _ := h.router.Lookup(chatID)
-	h.logger.Info("binding created",
+	h.Router.Bind(chatID, sessionID, directory, title, modelSpec, "")
+	b, _ := h.Router.Lookup(chatID)
+	h.Logger.Info("binding created",
 		log.FieldChatID, chatID,
 		log.FieldDirectory, directory)
 	return b, nil
@@ -74,9 +74,9 @@ func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title s
 // configured default directory. The chatID is sanitised so an unusual chat
 // id cannot escape the base directory.
 func (h *Handler) sessionDirectory(chatID string) string {
-	base := h.defaultDirectory
+	base := h.DefaultDirectory
 	if base == "" {
-		base = h.stateDir
+		base = h.StateDir
 	}
 	if base == "" {
 		base = "."

@@ -3,21 +3,12 @@ package claudebridge
 import (
 	"bytes"
 	"io"
-
-	"github.com/hu/lark-bridge/internal/streamarchive"
 )
 
 // backendTag is this backend's archive subdirectory name under
 // {stateDir}/streams/. Kept as a const so the path and any log/debug mention
 // of the backend stay single-sourced.
 const backendTag = "claude"
-
-// newStreamSink wraps streamarchive.NewSink with the claude backend tag. The
-// generic sink/prune/sanitize logic lives in internal/streamarchive; this
-// method only adds the backend identity and the claude-specific line filter.
-func (h *Handler) newStreamSink(chatID, replyToID string) (io.Writer, func() error) {
-	return streamarchive.NewSink(h.logger, h.stateDir, backendTag, chatID, replyToID, h.streamHistory)
-}
 
 // thinkingTokensMarker identifies a system line the bridge never consumes but
 // upstream emits on every reasoning-token delta — the bulk of the archive by

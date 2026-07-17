@@ -125,8 +125,8 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 	if old == "" {
 		old = "(未设置)"
 	}
-	h.router.SetSettingsFile(chatID, path)
-	cmdutil.LogSettingChange(h.logger, chatID, "settings_file", path)
+	h.Router.SetSettingsFile(chatID, path)
+	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", path)
 	res := cmdutil.ChangeResult("--settings 文件", old, path, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -138,7 +138,7 @@ func clearSettingsFile(h *Handler, chatID, oldFile string) commandResult {
 	if old == "" {
 		old = "(未设置)"
 	}
-	h.router.SetSettingsFile(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "settings_file", "")
+	h.Router.SetSettingsFile(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", "")
 	return cmdutil.ChangeResult("--settings 文件", old, "(未设置)", "已清除 --settings 文件设置。")
 }

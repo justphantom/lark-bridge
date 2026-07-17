@@ -120,7 +120,7 @@ func TestHandleEvent_PromptEmitsResult(t *testing.T) {
 	defer cleanup()
 
 	// Bind a directory first so ensureBinding yields a runnable binding.
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 
 	ev := &protocol.Event{
 		Type:     protocol.TypePrompt,
@@ -177,7 +177,7 @@ func TestHandleEvent_AbortCancelsInFlight(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, blockingPeri{})
 	defer cleanup()
 
-	h.router.Bind("chat-2", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-2", "", t.TempDir(), "", "", "")
 
 	promptEv := &protocol.Event{
 		Type:     protocol.TypePrompt,
@@ -217,7 +217,7 @@ func TestHandleEvent_ClosedStreamEmitsError(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, closedStreamPeri{})
 	defer cleanup()
 
-	h.router.Bind("chat-3", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-3", "", t.TempDir(), "", "", "")
 
 	ev := &protocol.Event{
 		Type:     protocol.TypePrompt,
@@ -244,7 +244,7 @@ func TestHandleEvent_BusyChatRejected(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, blockingPeri{})
 	defer cleanup()
 
-	h.router.Bind("chat-4", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-4", "", t.TempDir(), "", "", "")
 
 	p1 := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-4a",
 		Prompt: &protocol.PromptPayload{ChatID: "chat-4", Text: "first"}}
@@ -287,7 +287,7 @@ func TestHandleEvent_EmptyReplyFallback(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-empty", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-empty", "", t.TempDir(), "", "", "")
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-empty",
 		Prompt: &protocol.PromptPayload{ChatID: "chat-empty", Text: "hi"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -319,7 +319,7 @@ func TestHandleEvent_EmptyReplyWithToolsNoFallback(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-t", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-t", "", t.TempDir(), "", "", "")
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-t",
 		Prompt: &protocol.PromptPayload{ChatID: "chat-t", Text: "run it"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -358,7 +358,7 @@ func TestHandleEvent_ToolUseFlow(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-5", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-5", "", t.TempDir(), "", "", "")
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p-5",
 		Prompt: &protocol.PromptPayload{ChatID: "chat-5", Text: "read it"}}

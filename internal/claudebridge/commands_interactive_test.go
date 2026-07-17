@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/claude"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
@@ -15,7 +16,7 @@ import (
 
 // newPickerTestHandler builds a Handler wired with a real in-memory router and
 // the given option lists. rpc stays nil (emit is a no-op); the test reads the
-// requestID straight from h.answers and delivers the answer itself,
+// requestID straight from h.Answers and delivers the answer itself,
 // exercising the same routing the IPC path would.
 func newPickerTestHandler(t *testing.T, modelOpts, permOpts, effortOpts []string) (*Handler, *router.Router) {
 	t.Helper()
@@ -57,7 +58,7 @@ func TestPickAnswerValue(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := pickAnswerValue(c.ans); got != c.want {
+			if got := bridgebase.PickAnswerValue(c.ans); got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -66,7 +67,7 @@ func TestPickAnswerValue(t *testing.T) {
 
 // TestCmdModel_Picker_Success drives the full interactive loop: /model (no
 // args) blocks in askAndWait; the test reads the requestID from
-// h.answers, delivers the answer, and verifies the router pin.
+// h.Answers, delivers the answer, and verifies the router pin.
 func TestCmdModel_Picker_Success(t *testing.T) {
 	h, r := defaultPickerHandler(t)
 
@@ -77,7 +78,7 @@ func TestCmdModel_Picker_Success(t *testing.T) {
 	}()
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"sonnet"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"sonnet"}})
 
 	select {
 	case err := <-done:
@@ -106,7 +107,7 @@ func TestCmdModel_Picker_CustomWins(t *testing.T) {
 	}()
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"haiku"}, Custom: "claude-sonnet-4-5"})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"haiku"}, Custom: "claude-sonnet-4-5"})
 
 	select {
 	case err := <-done:
@@ -151,7 +152,7 @@ func TestCmdEffort_Picker_Success(t *testing.T) {
 	}()
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"max"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"max"}})
 
 	select {
 	case err := <-done:
@@ -194,7 +195,7 @@ func TestCmdPerm_Picker_Success(t *testing.T) {
 	}()
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"plan"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"plan"}})
 
 	select {
 	case err := <-done:
@@ -240,7 +241,7 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 	}()
 
 	reqID := waitPending(t, h, time.Second)
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{})
 
 	select {
 	case res := <-done:
@@ -261,13 +262,13 @@ func TestCmdModel_Picker_EmptyAnswer(t *testing.T) {
 
 // --- helpers ---
 
-// waitPending polls h.answers until a slot appears, returning its
+// waitPending polls h.Answers until a slot appears, returning its
 // requestID. Fails the test if no slot appears within timeout.
 func waitPending(t *testing.T, h *Handler, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if ids := h.answers.PendingIDs(); len(ids) > 0 {
+		if ids := h.Answers.PendingIDs(); len(ids) > 0 {
 			return ids[0]
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -327,7 +328,7 @@ func TestCmdSettings_Picker_Success(t *testing.T) {
 
 	reqID := waitPending(t, h, time.Second)
 	// User selects the "kimi-settings.json" option (a basename).
-	h.deliverAnswer(reqID, &protocol.AnswerPayload{Choices: []string{"kimi-settings.json"}})
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"kimi-settings.json"}})
 
 	select {
 	case err := <-done:
@@ -353,7 +354,7 @@ func TestCmdSettings_Clear(t *testing.T) {
 	if _, err := h.ensureBinding("chat-1", "", "", "", ""); err != nil {
 		t.Fatalf("ensureBinding: %v", err)
 	}
-	h.router.SetSettingsFile("chat-1", "/etc/claude/k.json")
+	h.Router.SetSettingsFile("chat-1", "/etc/claude/k.json")
 
 	if _, err := h.cmdSettings(context.Background(), "chat-1", []string{"clear"}); err != nil {
 		t.Fatalf("cmdSettings clear: %v", err)

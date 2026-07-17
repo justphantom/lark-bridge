@@ -115,7 +115,7 @@ func TestHandleEvent_PromptEmitsResult(t *testing.T) {
 	defer cleanup()
 
 	// Bind a directory first so ensureBinding yields a runnable binding.
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 
 	if err := h.HandleEvent(context.Background(), promptEvent("chat-1", "hi")); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
@@ -149,7 +149,7 @@ func TestHandleEvent_ThinkingForwarded(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "hi"))
 
 	var gotThinking, gotResult bool
@@ -198,7 +198,7 @@ func TestHandleEvent_ToolUseFlow(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "ls"))
 
 	var gotToolUse, gotToolResult, gotResult bool
@@ -253,7 +253,7 @@ func TestHandleEvent_ClosedStreamEmitsError(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "hi"))
 
 	deadline := time.After(5 * time.Second)
@@ -278,7 +278,7 @@ func TestHandleEvent_EmptyReplyFallback(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "hi"))
 
 	deadline := time.After(5 * time.Second)
@@ -304,7 +304,7 @@ func TestHandleEvent_BusyChatRejected(t *testing.T) {
 	h, reg, cleanup := newTestHandler(t, api)
 	defer cleanup()
 
-	h.router.Bind("chat-1", "", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "first"))
 	// Second prompt while the first is still blocking.
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "second"))
@@ -334,13 +334,13 @@ func TestHandleEvent_SessionAnchorBackfilled(t *testing.T) {
 	defer cleanup()
 
 	// Pre-bind with a session anchor simulating a resumed turn.
-	h.router.Bind("chat-1", "feishu:chat-1", t.TempDir(), "", "", "")
+	h.Router.Bind("chat-1", "feishu:chat-1", t.TempDir(), "", "", "")
 	_ = h.HandleEvent(context.Background(), promptEvent("chat-1", "hi"))
 
 	// Give the async run a moment to finish + back-fill.
 	deadline := time.After(2 * time.Second)
 	for {
-		b, ok := h.router.Lookup("chat-1")
+		b, ok := h.Router.Lookup("chat-1")
 		if ok && b.SessionID == "feishu:chat-1" {
 			return
 		}

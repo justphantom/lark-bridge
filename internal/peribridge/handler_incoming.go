@@ -23,16 +23,16 @@ func (h *Handler) ensureBinding(chatID, directory, modelSpec string) (router.Bin
 			return router.Binding{}, err
 		}
 	}
-	if b, ok := h.router.Lookup(chatID); ok {
+	if b, ok := h.Router.Lookup(chatID); ok {
 		if directory != "" {
 			if err := os.MkdirAll(directory, dirPerm); err != nil {
 				return router.Binding{}, fmt.Errorf("create session dir: %w", err)
 			}
-			h.router.SetDirectory(chatID, directory)
+			h.Router.SetDirectory(chatID, directory)
 			b.Directory = directory
 		}
 		if modelSpec != "" {
-			h.router.SetModelSpec(chatID, modelSpec)
+			h.Router.SetModelSpec(chatID, modelSpec)
 			b.ModelSpec = modelSpec
 		}
 		return b, nil
@@ -44,9 +44,9 @@ func (h *Handler) ensureBinding(chatID, directory, modelSpec string) (router.Bin
 	}
 	// SessionID is always "" for peri (stateless). The router.Bind signature
 	// still takes it for cross-backend uniformity.
-	h.router.Bind(chatID, "", directory, "", modelSpec, "")
-	b, _ := h.router.Lookup(chatID)
-	h.logger.Info("binding created",
+	h.Router.Bind(chatID, "", directory, "", modelSpec, "")
+	b, _ := h.Router.Lookup(chatID)
+	h.Logger.Info("binding created",
 		log.FieldChatID, chatID,
 		log.FieldDirectory, directory)
 	return b, nil

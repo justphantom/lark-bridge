@@ -28,7 +28,7 @@ func newTestHandler(t *testing.T) *Handler {
 
 // TestRunPromptCancelsContext locks in the leak fix: startPrompt derives the
 // prompt context from appCtx via context.WithCancel, so runPrompt MUST call
-// mine.cancel() on exit. Without it the context (and the goroutine spawned by
+// mine.Cancel() on exit. Without it the context (and the goroutine spawned by
 // context.propagateCancel) would survive until appCtx cancels at process
 // shutdown — one leaked goroutine per completed prompt.
 func TestRunPromptCancelsContext(t *testing.T) {
@@ -69,7 +69,7 @@ func TestStartPromptBusy(t *testing.T) {
 	if !ok {
 		t.Fatal("first startPrompt returned ok=false")
 	}
-	defer mine1.cancel()
+	defer mine1.Cancel()
 
 	if _, _, ok2 := h.startPrompt(context.Background(), "chat-busy"); ok2 {
 		t.Fatal("second startPrompt for busy chat should return ok=false")

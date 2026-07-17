@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/router"
@@ -109,7 +110,7 @@ func TestCmdDirectory_LazyBind(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 
 	res, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir})
 	if err != nil {
@@ -186,7 +187,7 @@ func TestCmdSessionDel_RemovesBinding(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 	if _, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir}); err != nil {
 		t.Fatalf("cmdDirectory: %v", err)
 	}
@@ -205,7 +206,7 @@ func TestCmdDirectory_RejectsRelative(t *testing.T) {
 	h, _ := newCmdTestHandler(t)
 	// Set workspaceRoot so the rejection comes from validateAbsDir (relative
 	// path) rather than validateWorkspacePath (workspace unconfigured).
-	h.workspaceRoot = t.TempDir()
+	h.DirCache = bridgebase.NewDirCache(t.TempDir())
 	_, err := h.cmdDirectory(context.Background(), "chat-1", []string{"relative/path"})
 	if err == nil {
 		t.Fatal("expected error for relative path, got nil")
@@ -231,7 +232,7 @@ func TestValidateWorkspacePath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateWorkspacePath(c.dir, c.root)
+			err := bridgebase.NewDirCache(c.root).Validate(c.dir)
 			if c.wantErr && err == nil {
 				t.Errorf("validateWorkspacePath(%q,%q) expected error", c.dir, c.root)
 			}
@@ -247,7 +248,7 @@ func TestValidateWorkspacePath(t *testing.T) {
 // path.
 func TestCmdDirectory_RejectsEscape(t *testing.T) {
 	h, r := newCmdTestHandler(t)
-	h.workspaceRoot = t.TempDir()
+	h.DirCache = bridgebase.NewDirCache(t.TempDir())
 	_, err := h.cmdDirectory(context.Background(), "chat-1", []string{"/etc"})
 	if err == nil {
 		t.Fatal("expected error for path outside workspace")
@@ -264,7 +265,7 @@ func TestCmdDirectory_Clear(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, "proj")
 	os.MkdirAll(dir, 0o755)
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 	if _, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir}); err != nil {
 		t.Fatalf("cmdDirectory set: %v", err)
 	}
@@ -284,9 +285,9 @@ func TestListWorkspaceDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(workspace, "proj-a"), 0o755)
 	os.MkdirAll(filepath.Join(workspace, "proj-b"), 0o755)
 	os.WriteFile(filepath.Join(workspace, "not-a-dir.txt"), []byte("x"), 0o644)
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 
-	dirs, err := h.listWorkspaceDirs()
+	dirs, err := h.DirCache.List()
 	if err != nil {
 		t.Fatalf("listWorkspaceDirs: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestListWorkspaceDirs(t *testing.T) {
 // TestListWorkspaceDirs_EmptyRoot verifies an unset workspaceRoot errors.
 func TestListWorkspaceDirs_EmptyRoot(t *testing.T) {
 	h, _ := newCmdTestHandler(t)
-	_, err := h.listWorkspaceDirs()
+	_, err := h.DirCache.List()
 	if err == nil {
 		t.Fatal("expected error for empty workspaceRoot")
 	}
@@ -329,13 +330,13 @@ func TestCmdRunning_ListsSessionsWithAgent(t *testing.T) {
 	// Seed a binding with model + agent so the running card shows them.
 	r.Bind("chat-1", "sess-1", "", "测试群", "glm-5.2", "build")
 	// Inject an in-flight prompt.
-	h.cancelMu.Lock()
-	h.cancelByChat["chat-1"] = &promptCancel{
-		cancel:    func() {},
-		startTime: time.Now().Add(-30 * time.Second),
-		chatID:    "chat-1",
+	h.CancelMu.Lock()
+	h.CancelByChat["chat-1"] = &bridgebase.PromptCancel{
+		Cancel:    func() {},
+		StartTime: time.Now().Add(-30 * time.Second),
+		ChatID:    "chat-1",
 	}
-	h.cancelMu.Unlock()
+	h.CancelMu.Unlock()
 
 	res, err := h.cmdRunning(context.Background(), "", nil)
 	if err != nil {
@@ -344,25 +345,6 @@ func TestCmdRunning_ListsSessionsWithAgent(t *testing.T) {
 	for _, want := range []string{"运行中会话", "测试群", "glm-5.2", "build", "30秒"} {
 		if !strings.Contains(res.Body, want) {
 			t.Errorf("Body missing %q\ngot:\n%s", want, res.Body)
-		}
-	}
-}
-
-// TestFormatDuration covers the three time bands.
-func TestFormatDuration(t *testing.T) {
-	cases := []struct {
-		d    time.Duration
-		want string
-	}{
-		{45 * time.Second, "45秒"},
-		{90 * time.Second, "1分30秒"},
-		{2 * time.Minute, "2分钟"},
-		{70 * time.Minute, "1小时10分"},
-		{2 * time.Hour, "2小时"},
-	}
-	for _, c := range cases {
-		if got := formatDuration(c.d); got != c.want {
-			t.Errorf("formatDuration(%v) = %q, want %q", c.d, got, c.want)
 		}
 	}
 }

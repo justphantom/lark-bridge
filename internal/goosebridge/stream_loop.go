@@ -32,7 +32,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		toolCount int
 		startTime time.Time
 
-		throttle = newControlThrottle(textEmitInterval)
+		throttle = bridgebase.NewControlThrottle(textEmitInterval)
 	)
 
 	// flushText is a no-op placeholder for symmetry with other bridges; goose
@@ -42,7 +42,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	flushText := func() {}
 
 	for ev := range events {
-		h.logger.Debug("bridge received goose event",
+		h.Logger.Debug("bridge received goose event",
 			log.FieldChatID, chatID,
 			log.FieldEventType, ev.GetType(),
 			"text_length", len(ev.GetText()),
@@ -62,7 +62,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case goose.EventThinking:
 			// Reasoning deltas stream live (not accumulated); gate by the same
 			// throttle as text so a burst of one-char chunks does not flood IPC.
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type:     protocol.TypeThinking,
 					Thinking: &protocol.ThinkingPayload{Delta: ev.GetText()},
@@ -70,7 +70,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 		case goose.EventText:
 			text.WriteString(ev.GetText())
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
 					Text: &protocol.TextPayload{Delta: ev.GetText()},
@@ -99,11 +99,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// the next turn resumes, and fold the usage + accumulated text
 			// into the result.
 			if sessionName != "" {
-				h.router.SetSessionID(chatID, sessionName)
+				h.Router.SetSessionID(chatID, sessionName)
 			}
 			return h.finalizeResult(text.String(), modelSpec, sessionName, toolCount, startTime, ev)
 		case goose.EventError:
-			h.logger.Debug("bridge: error event",
+			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
 				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
 			return promptResult{
@@ -112,7 +112,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				sessionID: sessionName,
 			}
 		default:
-			h.logger.Debug("goose: unhandled event type",
+			h.Logger.Debug("goose: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.GetType())
 		}

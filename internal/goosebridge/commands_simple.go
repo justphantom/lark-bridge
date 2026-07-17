@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 )
 
@@ -33,8 +34,8 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, spec)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", spec)
+	h.Router.SetModelSpec(chatID, spec)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", spec)
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
@@ -44,7 +45,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 // Handled so the dispatcher skips its default Notice (the confirmation is
 // already emitted by emitNotice, and the dispatcher's ctx may have expired).
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
-	choice, err := h.askAndWait(chatID, "选择模型", h.modelOptions, true)
+	choice, err := h.askAndWait(chatID, "", "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -53,8 +54,8 @@ func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", choice)
+	h.Router.SetModelSpec(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
 	res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -66,8 +67,8 @@ func clearModelSpec(h *Handler, chatID, oldSpec string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "model", "")
+	h.Router.SetModelSpec(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", "")
 	return cmdutil.ChangeResult("模型", old, "默认", "已清除模型设置，将使用 goose 默认模型。")
 }
 

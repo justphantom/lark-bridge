@@ -17,7 +17,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if err := ev.Validate(); err != nil {
 		// reconnect logs handler errors without terminating the loop, so a
 		// malformed event is observable but cannot take the backend offline.
-		h.logger.Warn("invalid event from frontend",
+		h.Logger.Warn("invalid event from frontend",
 			log.FieldError, err,
 			log.FieldEventType, ev.Type)
 		return err
@@ -31,7 +31,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		// blocked in askAndWait. A reply with no waiter is a late/duplicate
 		// click after the backend already timed out; discard it.
 		if ev.Answer != nil {
-			h.deliverAnswer(ev.Answer.RequestID, ev.Answer)
+			h.Answers.Deliver(ev.Answer.RequestID, ev.Answer)
 		}
 		return nil
 	case protocol.TypeAbort:
@@ -63,8 +63,8 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// wrap a skill prompt that should reach the CLI as-is.
 	if !p.Skill {
 		if cmd, _ := cmdutil.ParseCommand(p.Text); cmd != "" {
-			bridgebase.GoSafe(h.logger, "dispatchCommand:"+chatID, func() {
-				h.dispatchCommand(h.appCtx, chatID, p.Text, replyToID)
+			bridgebase.GoSafe(h.Logger, "dispatchCommand:"+chatID, func() {
+				h.dispatchCommand(h.AppCtx, chatID, p.Text, replyToID)
 			})
 			return nil
 		}
@@ -98,11 +98,11 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// Per-prompt claude overrides land on the binding; streamRun reads them
 	// back when constructing claude.RunOptions.
 	if p.Permission != "" {
-		h.router.SetPermissionMode(chatID, p.Permission)
+		h.Router.SetPermissionMode(chatID, p.Permission)
 		binding.PermissionMode = p.Permission
 	}
 	if p.Effort != "" {
-		h.router.SetEffortLevel(chatID, p.Effort)
+		h.Router.SetEffortLevel(chatID, p.Effort)
 		binding.EffortLevel = p.Effort
 	}
 	if p.SettingsFile != "" {
@@ -113,7 +113,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 				Notice: &protocol.NoticePayload{Level: "error", Title: "settings 路径非法", Message: err.Error()},
 			})
 		}
-		h.router.SetSettingsFile(chatID, p.SettingsFile)
+		h.Router.SetSettingsFile(chatID, p.SettingsFile)
 		binding.SettingsFile = p.SettingsFile
 	}
 
@@ -125,7 +125,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 			Notice: &protocol.NoticePayload{Level: "warning", Title: "请稍后", Message: "正在处理上一个请求"},
 		})
 	}
-	h.wg.Add(1)
+	h.Wg.Add(1)
 	go h.runPrompt(promptCtx, chatID, binding, p.Text, replyToID, mine)
 	return nil
 }

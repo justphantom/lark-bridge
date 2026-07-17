@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/router"
@@ -112,7 +113,7 @@ func TestCmdDirectory_LazyBind(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 
 	res, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir})
 	if err != nil {
@@ -248,7 +249,7 @@ func TestCmdSessionDel_RemovesBinding(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 	if _, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir}); err != nil {
 		t.Fatalf("cmdDirectory: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestValidateWorkspacePath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateWorkspacePath(c.dir, c.root)
+			err := bridgebase.NewDirCache(c.root).Validate(c.dir)
 			if c.wantErr && err == nil {
 				t.Errorf("validateWorkspacePath(%q,%q) expected error", c.dir, c.root)
 			}
@@ -305,7 +306,7 @@ func TestValidateWorkspacePath(t *testing.T) {
 // not the rejected path.
 func TestCmdDirectory_RejectsEscape(t *testing.T) {
 	h, r := newCmdTestHandler(t)
-	h.workspaceRoot = t.TempDir()
+	h.DirCache = bridgebase.NewDirCache(t.TempDir())
 	_, err := h.cmdDirectory(context.Background(), "chat-1", []string{"/etc"})
 	if err == nil {
 		t.Fatal("expected error for path outside workspace")
@@ -322,7 +323,7 @@ func TestCmdDirectory_Clear(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, "proj")
 	os.MkdirAll(dir, 0o755)
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 	// Pin first.
 	if _, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir}); err != nil {
 		t.Fatalf("cmdDirectory set: %v", err)
@@ -344,9 +345,9 @@ func TestListWorkspaceDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(workspace, "proj-a"), 0o755)
 	os.MkdirAll(filepath.Join(workspace, "proj-b"), 0o755)
 	os.WriteFile(filepath.Join(workspace, "not-a-dir.txt"), []byte("x"), 0o644) // skipped
-	h.workspaceRoot = workspace
+	h.DirCache = bridgebase.NewDirCache(workspace)
 
-	dirs, err := h.listWorkspaceDirs()
+	dirs, err := h.DirCache.List()
 	if err != nil {
 		t.Fatalf("listWorkspaceDirs: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestListWorkspaceDirs(t *testing.T) {
 // TestListWorkspaceDirs_EmptyRoot verifies an unset workspaceRoot errors.
 func TestListWorkspaceDirs_EmptyRoot(t *testing.T) {
 	h, _ := newCmdTestHandler(t)
-	_, err := h.listWorkspaceDirs()
+	_, err := h.DirCache.List()
 	if err == nil {
 		t.Fatal("expected error for empty workspaceRoot")
 	}

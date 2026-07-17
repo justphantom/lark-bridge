@@ -32,11 +32,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// rendered with the right tool row in the progress card.
 		toolNames = map[string]string{}
 
-		throttle = newControlThrottle(textEmitInterval)
+		throttle = bridgebase.NewControlThrottle(textEmitInterval)
 	)
 
 	for ev := range events {
-		h.logger.Debug("bridge received claude event",
+		h.Logger.Debug("bridge received claude event",
 			log.FieldChatID, chatID,
 			log.FieldEventType, ev.GetType(),
 			log.FieldEventSubtype, ev.GetSubtype(),
@@ -63,10 +63,10 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// still bound.
 		if sessionID == "" && ev.GetSessionID() != "" {
 			sessionID = ev.GetSessionID()
-			if _, ok := h.router.Lookup(chatID); ok {
-				h.router.SetSessionID(chatID, sessionID)
+			if _, ok := h.Router.Lookup(chatID); ok {
+				h.Router.SetSessionID(chatID, sessionID)
 			}
-			h.logger.Debug("captured claude session id",
+			h.Logger.Debug("captured claude session id",
 				log.FieldChatID, chatID,
 				log.FieldSessionID, sessionID)
 		}
@@ -122,14 +122,14 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			})
 		case claude.EventText:
 			text.WriteString(ev.GetText())
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
 					Text: &protocol.TextPayload{Delta: ev.GetText()},
 				})
 			}
 		case claude.EventThinking:
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type:     protocol.TypeThinking,
 					Thinking: &protocol.ThinkingPayload{Delta: ev.GetText()},
@@ -141,7 +141,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: summarizeToolInput(ev.GetToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolInput())},
 			})
 		case claude.EventToolResult:
 			// claude tool_result carries only the id; look up the name
@@ -161,7 +161,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case claude.EventResult:
 			return h.finalizeResult(ev, text.String(), sessionID, model, modelSpec, chatID)
 		case claude.EventError:
-			h.logger.Debug("bridge: error event",
+			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
 				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
 			return promptResult{
@@ -173,7 +173,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// Forward-compat: the parser forwards unknown line types verbatim
 			// (raw retained). Log at debug so a schema change is observable
 			// without dropping the event silently or breaking the turn.
-			h.logger.Debug("claude: unhandled event type",
+			h.Logger.Debug("claude: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.GetType(),
 				log.FieldEventSubtype, ev.GetSubtype())
@@ -203,7 +203,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 // comes from the result event's result field (the protocol truth), falling
 // back to accumulated text blocks.
 func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, modelSpec, chatID string) promptResult {
-	h.logger.Debug("bridge: result event",
+	h.Logger.Debug("bridge: result event",
 		log.FieldChatID, chatID,
 		"is_error", ev.GetIsError(),
 		"cost_usd", ev.GetCostUSD(),

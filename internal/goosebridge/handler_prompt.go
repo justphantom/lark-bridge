@@ -8,21 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/goose"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
 	"github.com/hu/lark-bridge/internal/router"
+	"github.com/hu/lark-bridge/internal/streamarchive"
 	"github.com/hu/lark-bridge/internal/usage"
 )
-
-// promptCancel wraps a context.CancelFunc in a struct so the entry stored
-// in cancelByChat is uniquely identifiable by pointer equality. endPrompt
-// uses that identity to delete only its own entry.
-type promptCancel struct {
-	cancel    context.CancelFunc
-	startTime time.Time
-	chatID    string
-}
 
 // cancelNoticeTimeout bounds the fresh context used to emit the "已取消"
 // notice after the prompt ctx is already cancelled.
@@ -32,14 +25,14 @@ const cancelNoticeTimeout = 5 * time.Second
 // subprocess, streams its events, and emits the terminal control. The goose
 // session anchor (--name) is the binding's SessionID: empty on the first
 // turn (creates a session), non-empty afterwards (resumes it).
-func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *promptCancel) {
+func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *bridgebase.PromptCancel) {
 	defer func() {
 		if r := recover(); r != nil {
-			h.logger.Error("panic in runPrompt",
+			h.Logger.Error("panic in runPrompt",
 				log.FieldChatID, chatID,
 				log.FieldPanic, r,
 				log.FieldStack, debug.Stack())
-			if h.appCtx.Err() == nil {
+			if h.AppCtx.Err() == nil {
 				h.emitLogged(context.Background(), replyToID, chatID, &protocol.Control{
 					Type:   protocol.TypeNotice,
 					ChatID: chatID,
@@ -48,25 +41,25 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 			}
 		}
 	}()
-	defer h.wg.Done()
+	defer h.Wg.Done()
 	defer h.endPrompt(chatID, mine)
-	defer mine.cancel()
+	defer mine.Cancel()
 
 	// Re-read the binding: a concurrent /cd, /session-del or /model command
 	// (run in a separate goroutine) could have mutated the router between
 	// ensureBinding and this point.
-	if fresh, ok := h.router.Lookup(chatID); ok {
+	if fresh, ok := h.Router.Lookup(chatID); ok {
 		binding = fresh
 	}
 
-	h.logger.Debug("runPrompt start",
+	h.Logger.Debug("runPrompt start",
 		log.FieldChatID, chatID,
 		log.FieldSessionID, binding.SessionID,
 		"prompt", truncateForDebug(prompt, h.debugRedact()))
 
 	ctx, cancel := context.WithCancelCause(parent)
-	if h.promptTimeout > 0 {
-		timer := time.AfterFunc(h.promptTimeout, func() {
+	if h.PromptTimeout > 0 {
+		timer := time.AfterFunc(h.PromptTimeout, func() {
 			cancel(context.DeadlineExceeded)
 		})
 		defer timer.Stop()
@@ -93,10 +86,10 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	if result.err != nil && opts.Resume &&
 		strings.Contains(result.err.Error(), "No session found") &&
 		ctx.Err() == nil {
-		h.logger.Warn("stale goose session, retrying without --resume",
+		h.Logger.Warn("stale goose session, retrying without --resume",
 			log.FieldChatID, chatID,
 			log.FieldSessionID, binding.SessionID)
-		h.router.SetSessionID(chatID, "")
+		h.Router.SetSessionID(chatID, "")
 		opts.Resume = false
 		opts.SessionName = ""
 		result = h.runGoose(ctx, chatID, replyToID, opts, modelSpec)
@@ -111,10 +104,10 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 // event (the only source of these counts) typically did not arrive. Errors
 // are still recorded — a failed run that consumed tokens is real cost.
 func (h *Handler) recordUsage(chatID string, result promptResult) {
-	if h.usage == nil || result.isCancelled || result.sessionID == "" {
+	if h.Usage == nil || result.isCancelled || result.sessionID == "" {
 		return
 	}
-	h.usage.Add(usage.Delta{
+	h.Usage.Add(usage.Delta{
 		SessionID: result.sessionID,
 		ChatID:    chatID,
 		Input:     result.inputTokens,
@@ -126,7 +119,7 @@ func (h *Handler) recordUsage(chatID string, result promptResult) {
 // runGoose starts one goose subprocess, streams its events into Controls,
 // and reduces the stream to a promptResult.
 func (h *Handler) runGoose(ctx context.Context, chatID, replyToID string, opts goose.RunOptions, modelSpec string) promptResult {
-	sink, closeSink := h.newStreamSink(chatID, replyToID)
+	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "goose", chatID, replyToID, h.StreamHistory)
 	if sink != nil {
 		opts.LineSink = sink
 		defer closeSink()
@@ -173,7 +166,7 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 		// Cumulative input+output across this session's turns (including this
 		// one). 0 when no store or no history; the renderer hides it then.
 		var totalTokens int
-		if e, ok := h.usage.Get(result.sessionID); ok {
+		if e, ok := h.Usage.Get(result.sessionID); ok {
 			totalTokens = e.Input + e.Output
 		}
 		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
@@ -195,41 +188,41 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 // Busy-then-drop per chat: if a prompt is already in-flight for chatID the
 // new one is rejected (ok=false). ok=false callers MUST NOT touch the
 // returned ctx/mine (both nil).
-func (h *Handler) startPrompt(_ context.Context, chatID string) (ctx context.Context, mine *promptCancel, ok bool) {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if _, busy := h.cancelByChat[chatID]; busy {
+func (h *Handler) startPrompt(_ context.Context, chatID string) (ctx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if _, busy := h.CancelByChat[chatID]; busy {
 		return nil, nil, false
 	}
-	ctx, cancel := context.WithCancel(h.appCtx)
-	mine = &promptCancel{
-		cancel:    cancel,
-		startTime: time.Now(),
-		chatID:    chatID,
+	ctx, cancel := context.WithCancel(h.AppCtx)
+	mine = &bridgebase.PromptCancel{
+		Cancel:    cancel,
+		StartTime: time.Now(),
+		ChatID:    chatID,
 	}
-	h.cancelByChat[chatID] = mine
+	h.CancelByChat[chatID] = mine
 	return ctx, mine, true
 }
 
 // endPrompt removes the per-chat cancel slot only if it still points at mine.
-func (h *Handler) endPrompt(chatID string, mine *promptCancel) {
+func (h *Handler) endPrompt(chatID string, mine *bridgebase.PromptCancel) {
 	if mine == nil {
 		return
 	}
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if cur, ok := h.cancelByChat[chatID]; ok && cur == mine {
-		delete(h.cancelByChat, chatID)
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if cur, ok := h.CancelByChat[chatID]; ok && cur == mine {
+		delete(h.CancelByChat, chatID)
 	}
 }
 
 // abortChat cancels the in-flight prompt for chatID, if any. Returns whether
 // one was cancelled. Used by the TypeAbort event.
 func (h *Handler) abortChat(chatID string) bool {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if pc, ok := h.cancelByChat[chatID]; ok {
-		pc.cancel()
+	h.CancelMu.Lock()
+	defer h.CancelMu.Unlock()
+	if pc, ok := h.CancelByChat[chatID]; ok {
+		pc.Cancel()
 		return true
 	}
 	return false

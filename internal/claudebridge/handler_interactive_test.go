@@ -28,12 +28,12 @@ func TestRegisterDeliverCancel(t *testing.T) {
 	h := newInteractiveTestHandler(t)
 
 	t.Run("deliver wakes waiter", func(t *testing.T) {
-		ch, ok := h.registerAnswer("req-1")
+		ch, ok := h.Answers.Register("req-1")
 		if !ok {
 			t.Fatal("register failed")
 		}
 		ans := &protocol.AnswerPayload{Choices: []string{"sonnet"}}
-		if !h.deliverAnswer("req-1", ans) {
+		if !h.Answers.Deliver("req-1", ans) {
 			t.Fatal("deliver returned false for a pending waiter")
 		}
 		select {
@@ -47,25 +47,25 @@ func TestRegisterDeliverCancel(t *testing.T) {
 	})
 
 	t.Run("deliver with no waiter returns false", func(t *testing.T) {
-		if h.deliverAnswer("unknown", &protocol.AnswerPayload{}) {
+		if h.Answers.Deliver("unknown", &protocol.AnswerPayload{}) {
 			t.Fatal("deliver should return false when no waiter exists")
 		}
 	})
 
 	t.Run("double register fails", func(t *testing.T) {
-		if _, ok := h.registerAnswer("req-2"); !ok {
+		if _, ok := h.Answers.Register("req-2"); !ok {
 			t.Fatal("first register should succeed")
 		}
-		if _, ok := h.registerAnswer("req-2"); ok {
+		if _, ok := h.Answers.Register("req-2"); ok {
 			t.Fatal("second register of same id should fail")
 		}
-		h.cancelAnswer("req-2")
+		h.Answers.Cancel("req-2")
 	})
 
 	t.Run("cancel removes slot", func(t *testing.T) {
-		h.registerAnswer("req-3")
-		h.cancelAnswer("req-3")
-		if h.deliverAnswer("req-3", &protocol.AnswerPayload{}) {
+		h.Answers.Register("req-3")
+		h.Answers.Cancel("req-3")
+		if h.Answers.Deliver("req-3", &protocol.AnswerPayload{}) {
 			t.Fatal("deliver after cancel should return false")
 		}
 	})
@@ -76,7 +76,7 @@ func TestRegisterDeliverCancel(t *testing.T) {
 // blocked on askAndWait would hang until askWaitTimeout (9 min).
 func TestDrainAnswers_OnClose(t *testing.T) {
 	h := newInteractiveTestHandler(t)
-	ch, ok := h.registerAnswer("req-close")
+	ch, ok := h.Answers.Register("req-close")
 	if !ok {
 		t.Fatal("register failed")
 	}

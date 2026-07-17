@@ -30,8 +30,8 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 		if old == "" {
 			old = "默认"
 		}
-		h.router.SetModelSpec(chatID, "")
-		cmdutil.LogSettingChange(h.logger, chatID, "model", "")
+		h.Router.SetModelSpec(chatID, "")
+		cmdutil.LogSettingChange(h.Logger, chatID, "model", "")
 		return cmdutil.ChangeResult("模型", old, "默认", "已清除模型设置，将使用 ~/.peri/settings.json 的默认配置。"), nil
 	}
 	spec := strings.Join(args, " ")
@@ -39,8 +39,8 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, spec)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", spec)
+	h.Router.SetModelSpec(chatID, spec)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", spec)
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
@@ -132,8 +132,8 @@ func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string)
 	if old == "" {
 		old = "默认 (bypass)"
 	}
-	h.router.SetPermissionMode(chatID, mode)
-	cmdutil.LogSettingChange(h.logger, chatID, "permission_mode", mode)
+	h.Router.SetPermissionMode(chatID, mode)
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", mode)
 	return cmdutil.ChangeResult("权限模式", old, mode, "下次提问生效。"), nil
 }
 
@@ -154,8 +154,8 @@ func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
 	if old == "" {
 		old = "默认 (bypass)"
 	}
-	h.router.SetPermissionMode(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "permission_mode", choice)
+	h.Router.SetPermissionMode(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", choice)
 	res := cmdutil.ChangeResult("权限模式", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -167,8 +167,8 @@ func clearPermissionMode(h *Handler, chatID, oldMode string) commandResult {
 	if old == "" {
 		old = "默认 (bypass)"
 	}
-	h.router.SetPermissionMode(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "permission_mode", "")
+	h.Router.SetPermissionMode(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", "")
 	return cmdutil.ChangeResult("权限模式", old, "默认 (bypass)", "已清除权限设置，回退默认 bypass。")
 }
 
@@ -213,8 +213,8 @@ func (h *Handler) cmdEffort(_ context.Context, chatID string, args []string) (co
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, level)
-	cmdutil.LogSettingChange(h.logger, chatID, "effort_level", level)
+	h.Router.SetEffortLevel(chatID, level)
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort_level", level)
 	return cmdutil.ChangeResult("推理级别", old, level, "下次提问生效。"), nil
 }
 
@@ -235,8 +235,8 @@ func (h *Handler) runEffortPicker(chatID, oldLevel string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "effort_level", choice)
+	h.Router.SetEffortLevel(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort_level", choice)
 	res := cmdutil.ChangeResult("推理级别", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置推理级别", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -248,7 +248,7 @@ func clearEffortLevel(h *Handler, chatID, oldLevel string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "effort_level", "")
+	h.Router.SetEffortLevel(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort_level", "")
 	return cmdutil.ChangeResult("推理级别", old, "默认", "已清除推理级别设置，将使用 peri 默认配置。")
 }

@@ -95,7 +95,7 @@ func TestValidateSettingsPath(t *testing.T) {
 func TestCmdPermission_DirectPin(t *testing.T) {
 	h, _, cleanup := newTestHandler(t, closedStreamPeri{})
 	defer cleanup()
-	h.router.Bind("chat-p", "", t.TempDir(), "T", "", "")
+	h.Router.Bind("chat-p", "", t.TempDir(), "T", "", "")
 
 	// Valid pin.
 	res, err := h.cmdPermission(context.Background(), "chat-p", []string{"accept-edit"})
@@ -105,7 +105,7 @@ func TestCmdPermission_DirectPin(t *testing.T) {
 	if res.After != "accept-edit" {
 		t.Errorf("result After = %q, want accept-edit", res.After)
 	}
-	b, _ := h.router.Lookup("chat-p")
+	b, _ := h.Router.Lookup("chat-p")
 	if b.PermissionMode != "accept-edit" {
 		t.Errorf("binding perm = %q, want accept-edit", b.PermissionMode)
 	}
@@ -115,7 +115,7 @@ func TestCmdPermission_DirectPin(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for default mode")
 	}
-	b, _ = h.router.Lookup("chat-p")
+	b, _ = h.Router.Lookup("chat-p")
 	if b.PermissionMode != "accept-edit" {
 		t.Errorf("binding perm changed on reject: %q", b.PermissionMode)
 	}
@@ -126,7 +126,7 @@ func TestCmdPermission_DirectPin(t *testing.T) {
 func TestCmdEffort_DirectPin(t *testing.T) {
 	h, _, cleanup := newTestHandler(t, closedStreamPeri{})
 	defer cleanup()
-	h.router.Bind("chat-e", "", t.TempDir(), "T", "", "")
+	h.Router.Bind("chat-e", "", t.TempDir(), "T", "", "")
 
 	res, err := h.cmdEffort(context.Background(), "chat-e", []string{"max"})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestCmdEffort_DirectPin(t *testing.T) {
 	if res.After != "max" {
 		t.Errorf("result After = %q, want max", res.After)
 	}
-	b, _ := h.router.Lookup("chat-e")
+	b, _ := h.Router.Lookup("chat-e")
 	if b.EffortLevel != "max" {
 		t.Errorf("binding effort = %q, want max", b.EffortLevel)
 	}
@@ -152,10 +152,10 @@ func TestCmdCurrent_ShowAllSettings(t *testing.T) {
 	h, _, cleanup := newTestHandler(t, closedStreamPeri{})
 	defer cleanup()
 	dir := t.TempDir()
-	h.router.Bind("chat-c", "", dir, "T", "sonnet", "")
-	h.router.SetPermissionMode("chat-c", "accept-edit")
-	h.router.SetEffortLevel("chat-c", "high")
-	h.router.SetSettingsFile("chat-c", "/tmp/s.json")
+	h.Router.Bind("chat-c", "", dir, "T", "sonnet", "")
+	h.Router.SetPermissionMode("chat-c", "accept-edit")
+	h.Router.SetEffortLevel("chat-c", "high")
+	h.Router.SetSettingsFile("chat-c", "/tmp/s.json")
 
 	res, err := h.cmdCurrent(context.Background(), "chat-c", nil)
 	if err != nil {
@@ -172,8 +172,8 @@ func TestCmdCurrent_ShowAllSettings(t *testing.T) {
 func TestCmdListSessions(t *testing.T) {
 	h, _, cleanup := newTestHandler(t, closedStreamPeri{})
 	defer cleanup()
-	h.router.Bind("a", "", t.TempDir(), "Alpha", "", "")
-	h.router.Bind("b", "", t.TempDir(), "Beta", "sonnet", "")
+	h.Router.Bind("a", "", t.TempDir(), "Alpha", "", "")
+	h.Router.Bind("b", "", t.TempDir(), "Beta", "sonnet", "")
 
 	res, err := h.cmdListSessions(context.Background(), "a", nil)
 	if err != nil {

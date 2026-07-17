@@ -2,7 +2,6 @@ package opencodebridge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,11 +36,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		accInput, accOutput, accCacheRead, accCacheWrite int
 		accCost                                          float64
 
-		throttle = newControlThrottle(textEmitInterval)
+		throttle = bridgebase.NewControlThrottle(textEmitInterval)
 	)
 
 	for ev := range events {
-		h.logger.Debug("bridge received opencode event",
+		h.Logger.Debug("bridge received opencode event",
 			log.FieldChatID, chatID,
 			log.FieldEventType, ev.GetType(),
 			log.FieldSessionID, ev.GetSessionID(),
@@ -62,8 +61,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// binding (new prompt) must not be clobbered with this turn's id.
 		if sessionID == "" && ev.GetSessionID() != "" {
 			sessionID = ev.GetSessionID()
-			if _, ok := h.router.Lookup(chatID); ok {
-				h.router.SetSessionID(chatID, sessionID)
+			if _, ok := h.Router.Lookup(chatID); ok {
+				h.Router.SetSessionID(chatID, sessionID)
 			}
 		}
 
@@ -101,14 +100,14 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			accCost += ev.GetCost()
 		case opencode.EventText:
 			text.WriteString(ev.GetText())
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
 					Text: &protocol.TextPayload{Delta: ev.GetText()},
 				})
 			}
 		case opencode.EventThinking:
-			if throttle.shouldEmitText(time.Now()) {
+			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type:     protocol.TypeThinking,
 					Thinking: &protocol.ThinkingPayload{Delta: ev.GetText()},
@@ -121,7 +120,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// forward-compat so the row still opens as running.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: summarizeToolInput(ev.GetToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolInput())},
 			})
 		case opencode.EventToolResult:
 			// opencode's "task" tool IS the subagent delegation.
@@ -130,7 +129,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:       ev.GetToolName(),
-					Input:      summarizeToolInput(ev.GetToolInput()),
+					Input:      bridgebase.SummarizeToolInput(ev.GetToolInput()),
 					Output:     ev.GetText(),
 					IsError:    ev.GetIsToolError(),
 					IsSubagent: isSub,
@@ -140,7 +139,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,
 				accInput, accOutput, accCacheRead, accCacheWrite, accCost)
 		case opencode.EventError:
-			h.logger.Debug("bridge: error event",
+			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
 				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
 			return promptResult{
@@ -152,7 +151,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// Forward-compat: the parser forwards unknown line types verbatim.
 			// Log at debug so a schema change is observable without breaking
 			// the turn.
-			h.logger.Debug("opencode: unhandled event type",
+			h.Logger.Debug("opencode: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.GetType())
 		}
@@ -255,31 +254,4 @@ func resolveModel(_, spec string) string {
 		return spec
 	}
 	return "opencode"
-}
-
-// summarizeToolInput extracts a human-readable description from an opencode
-// tool_use JSON input. opencode's native tools use camelCase field names
-// (filePath, command), while MCP tools pass through server-defined params
-// (often snake_case like project/repo_path), so both shapes are covered.
-func summarizeToolInput(input string) string {
-	if input == "" || input == "{}" {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(input), &m); err != nil {
-		return input
-	}
-	for _, key := range []string{"command", "filePath", "pattern", "path", "query", "description", "prompt", "taskId", "skill", "repo_path", "repoPath", "project", "url"} {
-		if v, ok := m[key].(string); ok && v != "" {
-			return v
-		}
-	}
-	// Fall back to the first string value so an unrecognised tool still shows
-	// something useful instead of raw JSON.
-	for _, v := range m {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return input
 }

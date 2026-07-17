@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/cmdutil"
 )
 
@@ -33,8 +34,8 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, spec)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", spec)
+	h.Router.SetModelSpec(chatID, spec)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", spec)
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
@@ -44,7 +45,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 // Handled so the dispatcher skips its default Notice (the confirmation is
 // already emitted by emitNotice, and the dispatcher's ctx may have expired).
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
-	choice, err := h.askAndWait(chatID, "选择模型", h.modelOptions, true)
+	choice, err := h.askAndWait(chatID, "", "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -53,8 +54,8 @@ func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "model", choice)
+	h.Router.SetModelSpec(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
 	res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -66,8 +67,8 @@ func clearModelSpec(h *Handler, chatID, oldSpec string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetModelSpec(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "model", "")
+	h.Router.SetModelSpec(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "model", "")
 	return cmdutil.ChangeResult("模型", old, "默认", "已清除模型设置，将使用 Claude 默认模型。")
 }
 
@@ -117,15 +118,15 @@ func (h *Handler) cmdEffort(_ context.Context, chatID string, args []string) (co
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, level)
-	cmdutil.LogSettingChange(h.logger, chatID, "effort_level", level)
+	h.Router.SetEffortLevel(chatID, level)
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort_level", level)
 	return cmdutil.ChangeResult("推理级别", old, level, "下次提问生效。"), nil
 }
 
 // runEffortPicker is the effort analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured effort options.
 func (h *Handler) runEffortPicker(chatID, oldLevel string) commandResult {
-	choice, err := h.askAndWait(chatID, "选择推理级别", h.effortOptions, false)
+	choice, err := h.askAndWait(chatID, "", "推理级别", "选择推理级别", bridgebase.StaticOptions(h.effortOptions), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -134,8 +135,8 @@ func (h *Handler) runEffortPicker(chatID, oldLevel string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, choice)
-	cmdutil.LogSettingChange(h.logger, chatID, "effort_level", choice)
+	h.Router.SetEffortLevel(chatID, choice)
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort_level", choice)
 	res := cmdutil.ChangeResult("推理级别", old, choice, "下次提问生效。")
 	h.emitNoticeLogged(chatID, "success", "已设置推理级别", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
@@ -147,8 +148,8 @@ func clearEffortLevel(h *Handler, chatID, oldLevel string) commandResult {
 	if old == "" {
 		old = "默认"
 	}
-	h.router.SetEffortLevel(chatID, "")
-	cmdutil.LogSettingChange(h.logger, chatID, "effort", "")
+	h.Router.SetEffortLevel(chatID, "")
+	cmdutil.LogSettingChange(h.Logger, chatID, "effort", "")
 	return cmdutil.ChangeResult("推理级别", old, "默认", "已清除推理级别设置，将使用 Claude 默认级别。")
 }
 
