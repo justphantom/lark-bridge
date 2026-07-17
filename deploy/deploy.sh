@@ -214,10 +214,11 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-goose-back" ]]     || fail "构建产物缺失：lark-goose-back"
 [[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
-# ── 步骤 2：在临时目录生成三个 config（不修改 repo 源文件）──
-# 三个进程各用独立 config：claude-config.json / opencode-config.json / feishu-config.json。
-# 三者都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
-# 两个后端必须用不同的 router_path，否则写同一文件互相覆盖。
+# ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
+# 六个进程各用独立 config：claude/opencode/peri/goose/deploy-monitor/feishu-config.json。
+# 都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
+# 各 backend 必须用不同的 router_path（feishu-front 与 deploy-monitor 除外），否则
+# 写同一文件互相覆盖。
 #
 # 所有 sed 在临时副本上操作，repo 里的源 config 不被污染（git 不变 dirty）。
 info "准备配置文件..."
@@ -249,20 +250,20 @@ fi
 # 步骤 3 的 .env 写入），无需 sed 改 JSON——既消除字面量替换的元字符转义陷阱，也避免
 # sed 静默失败导致 state 分裂。
 
-# claude-back / opencode-back 各注入独立 router_path。两后端共享同一个
+# 各 backend（claude/opencode/peri/goose）注入独立 router_path。四者共享同一个
 # state_dir，若用默认的同一 router.v5.json 会互相覆盖会话绑定，故部署脚本
-# 显式拆为 claude-router.json / opencode-router.json（文件名仅本脚本约定，
+# 显式拆为 claude/opencode/peri/goose-router.json（文件名仅本脚本约定，
 # 与 config 默认的 router.v5.json 不同；router_path 字段本身可配）。
 #
 # 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后追加。若
-# 用户自定义 config 缺 backend_id 字段，sed 静默不追加，两后端回退到同一
+# 用户自定义 config 缺 backend_id 字段，sed 静默不追加，回退到同一
 # 默认 router.v5.json 会互相覆盖会话绑定，故注入后必须显式校验存在。
 inject_router_path() {
     local file="$1" path="$2"
     sed -i '/"router_path"/d' "$file"
     sed -i '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     grep -q '"router_path"' "$file" \
-        || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），两后端将共用默认 router 文件互相覆盖"
+        || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），backend 将共用默认 router 文件互相覆盖"
 }
 
 inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
@@ -306,8 +307,8 @@ cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 info "claude-config / opencode-config / peri-config / goose-config / deploy-monitor-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
-# STATE_DIR/{claude,opencode,peri} 是三个后端的 default_directory，per-chat 工作目录
-# 在运行时由 MkdirAll 在其下自动创建。
+# STATE_DIR/{claude,opencode,peri,goose} 是四个 backend 的 default_directory，
+# per-chat 工作目录在运行时由 MkdirAll 在其下自动创建。
 info "创建系统目录..."
 sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/peri" "$STATE_DIR/goose"
 
@@ -404,7 +405,7 @@ deploy_goose_secret_check
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
 sudo systemctl daemon-reload
-# enable 三服务开机自启，但不 --now；下面显式控制启动顺序。
+# enable 所有服务开机自启，但不 --now；下面显式控制启动顺序。
 sudo systemctl enable "${SERVICES[@]}" 2>/dev/null || true
 
 # 先起前端，等 IPC 端口 listen，避免后端连不上而崩溃-重启
@@ -412,7 +413,7 @@ sudo systemctl start lark-feishu-front
 wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
 wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 
-# 端口已通，再起三个后端（并行，互不依赖）
+# 端口已通，再起四个 backend（并行，互不依赖）
 sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back lark-goose-back
 
 # deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
