@@ -52,6 +52,7 @@ type Result struct {
 	Steps   int // number of LLM calls made
 	History []Message
 }
+
 // safeCall invokes a tool and converts any panic into an IsError ToolResult
 // so a buggy/malformed tool input cannot crash the whole backend (the tool
 // runs in the runTurn goroutine; an unrecovered panic would take the process

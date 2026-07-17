@@ -22,10 +22,10 @@ import (
 // "tool". Content is the text body; ToolCallID tags a role="tool" message
 // with the call it answers (OpenAI requires this correlation).
 type Message struct {
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string    `json:"tool_call_id,omitempty"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 // ToolCall is one LLM-requested tool invocation. P0 carries the type but
@@ -39,11 +39,11 @@ type ToolCall struct {
 // Request is the backend-agnostic call to the LLM. System is sent as a
 // leading "system" message; Messages is the conversation so far.
 type Request struct {
-	Model      string
-	System     string
-	Messages   []Message
-	MaxTokens  int
-	Tools      []ToolSpec // P1+; empty in P0
+	Model     string
+	System    string
+	Messages  []Message
+	MaxTokens int
+	Tools     []ToolSpec // P1+; empty in P0
 }
 
 // ToolSpec declares one tool to the LLM (OpenAI function-calling schema).

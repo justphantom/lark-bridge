@@ -267,12 +267,12 @@ func TestValidSessionID(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"",                   // empty
-		"..",                 // dot traversal
-		"a/b",                // path separator
-		"UPPER",              // uppercase
-		"with space",         // whitespace
-		"under_score",        // underscore not in the produced charset
+		"",            // empty
+		"..",          // dot traversal
+		"a/b",         // path separator
+		"UPPER",       // uppercase
+		"with space",  // whitespace
+		"under_score", // underscore not in the produced charset
 		"semi;colon",
 		strings.Repeat("a", 65), // over length cap
 	}

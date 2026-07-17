@@ -25,7 +25,6 @@ type controlSender interface {
 type promptCancel struct {
 	cancel    context.CancelFunc
 	startTime time.Time
-	chatID    string
 }
 
 // closeGrace bounds how long Close waits for in-flight turns to wind down
@@ -51,6 +50,7 @@ type Handler struct {
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
+	closed    bool                     // set under cancelMu by Close; rejects new startTurn
 	wg        sync.WaitGroup           // tracks runTurn goroutines
 	closeOnce sync.Once
 }
@@ -80,11 +80,17 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *promptCancel, ok bool) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
+	// After Close, reject new turns so the wg.Wait in Close is not held open
+	// by a late HandleEvent that slipped in between cancelAll releasing the
+	// lock and the wait starting.
+	if h.closed {
+		return nil, nil, false
+	}
 	if _, busy := h.cancelBy[chatID]; busy {
 		return nil, nil, false
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
-	mine = &promptCancel{cancel: cancel, startTime: time.Now(), chatID: chatID}
+	mine = &promptCancel{cancel: cancel, startTime: time.Now()}
 	h.cancelBy[chatID] = mine
 	h.wg.Add(1)
 	return turnCtx, mine, true
@@ -107,6 +113,7 @@ func (h *Handler) endTurn(chatID string, mine *promptCancel) {
 func (h *Handler) Close() {
 	h.closeOnce.Do(func() {
 		h.cancelMu.Lock()
+		h.closed = true
 		for _, pc := range h.cancelBy {
 			pc.cancel()
 		}
@@ -350,5 +357,3 @@ func (h *Handler) notify(_ context.Context, chatID, level, title, message string
 		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
 }
-
-

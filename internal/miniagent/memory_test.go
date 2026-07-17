@@ -84,12 +84,12 @@ func TestHistory_TrimKeepsToolPairing(t *testing.T) {
 	// tool_call/tool_result pair in the oldest turn.
 	big := strings.Repeat("x ", maxHistoryTokens*3) // ~6x the cap per message
 	msgs := []Message{
-		{Role: "user", Content: big},                                   // turn 1 (old, huge)
+		{Role: "user", Content: big}, // turn 1 (old, huge)
 		{Role: "assistant", ToolCalls: []ToolCall{{ID: "c1", Name: "read_file", Args: `{"path":"x"}`}}},
 		{Role: "tool", ToolCallID: "c1", Content: big},
 		{Role: "assistant", Content: big},
-		{Role: "user", Content: "recent question"},                     // turn 2 (keep)
-		{Role: "assistant", Content: "recent answer"},                  // keep
+		{Role: "user", Content: "recent question"},    // turn 2 (keep)
+		{Role: "assistant", Content: "recent answer"}, // keep
 	}
 	got := h.trim(msgs)
 	// The first turn (4 messages) must be entirely gone; only the recent

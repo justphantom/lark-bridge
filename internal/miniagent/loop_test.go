@@ -69,7 +69,9 @@ type fakeTool struct {
 	calls  []string
 }
 
-func (f *fakeTool) Spec() ToolSpec { return ToolSpec{Name: f.name, Parameters: map[string]any{"type": "object"}} }
+func (f *fakeTool) Spec() ToolSpec {
+	return ToolSpec{Name: f.name, Parameters: map[string]any{"type": "object"}}
+}
 func (f *fakeTool) Call(_ context.Context, args string) ToolResult {
 	f.calls = append(f.calls, args)
 	return f.result
@@ -79,7 +81,9 @@ func (f *fakeTool) Call(_ context.Context, args string) ToolResult {
 // catches it and the loop keeps going instead of crashing the process.
 type panicTool struct{ name string }
 
-func (p *panicTool) Spec() ToolSpec { return ToolSpec{Name: p.name, Parameters: map[string]any{"type": "object"}} }
+func (p *panicTool) Spec() ToolSpec {
+	return ToolSpec{Name: p.name, Parameters: map[string]any{"type": "object"}}
+}
 func (p *panicTool) Call(_ context.Context, _ string) ToolResult {
 	panic("boom from inside tool")
 }
