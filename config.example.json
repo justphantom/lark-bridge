@@ -43,7 +43,7 @@
   },
 
   "deploy_monitor": {
-    "project_root":  "/home/user/ZCodeProject/lark-bridge",
+    "project_root":  "${PROJECT_ROOT}",
     "deploy_target": "deploy"
   },
 

@@ -243,6 +243,18 @@ if [[ "${1:-}" == "--init" ]]; then
 fi
 [[ -f "$PROJECT_ROOT/.env" ]] || fail "未找到 .env（用 --init 自动生成或手动 cp deploy/env.example）"
 
+# 检查 .env 是否仍含占位值（首次部署容易忘改）
+check_env_placeholder() {
+    local key="$1" pattern="$2" hint="$3"
+    if grep -q "^${key}=${pattern}" "$PROJECT_ROOT/.env" 2>/dev/null; then
+        warn "$key 仍为占位值，请编辑 .env 后重新部署：$hint"
+    fi
+}
+check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
+check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
+check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
+check_env_placeholder WORKSPACE_ROOT '/home/user/your-project' '本机项目根路径（agent 工具边界）'
+
 # 基础 config：优先用 repo 里用户自定义的 claude-config.json，否则 fallback 到 example
 if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
     cp "$PROJECT_ROOT/claude-config.json" "$STAGE/claude-config.json"
@@ -337,6 +349,7 @@ update_env_key() {
 # config 模板里的 ${IPC_ADDR} / ${STATE_DIR} 展开会失败。
 update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
 update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
+update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
 sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
 info "已覆盖 $CONFIG_DIR/.env（以 repo 根 .env 为真源）"
