@@ -247,3 +247,132 @@ func TestShell_Spec(t *testing.T) {
 		t.Errorf("Name = %q, want shell", spec.Name)
 	}
 }
+
+// === WriteFile tests ===
+
+// TestWriteFile_CreatesNew verifies a fresh file is written with the content.
+func TestWriteFile_CreatesNew(t *testing.T) {
+	dir := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	res := w.Call(context.Background(), `{"path":"a.txt","content":"hello"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("content = %q, want 'hello'", got)
+	}
+}
+
+// TestWriteFile_OverwritesExisting verifies a second write replaces content.
+func TestWriteFile_OverwritesExisting(t *testing.T) {
+	dir := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	if res := w.Call(context.Background(), `{"path":"b.txt","content":"old"}`); res.IsError {
+		t.Fatalf("first write: %s", res.Output)
+	}
+	if res := w.Call(context.Background(), `{"path":"b.txt","content":"new"}`); res.IsError {
+		t.Fatalf("second write: %s", res.Output)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "b.txt"))
+	if string(got) != "new" {
+		t.Errorf("content = %q, want 'new' (overwrite)", got)
+	}
+}
+
+// TestWriteFile_CreatesParentDirs verifies missing nested dirs are made.
+func TestWriteFile_CreatesParentDirs(t *testing.T) {
+	dir := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	res := w.Call(context.Background(), `{"path":"src/nested/deep/c.go","content":"x"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "src", "nested", "deep", "c.go")); err != nil {
+		t.Errorf("file not created: %v", err)
+	}
+}
+
+// TestWriteFile_EscapeRejected verifies ../ outside root is refused.
+func TestWriteFile_EscapeRejected(t *testing.T) {
+	dir := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	res := w.Call(context.Background(), `{"path":"../../../tmp/evil","content":"x"}`)
+	if !res.IsError {
+		t.Fatal("expected error for escape, got success")
+	}
+}
+
+// TestWriteFile_AbsoluteOutsideRejected verifies an abs path outside root.
+func TestWriteFile_AbsoluteOutsideRejected(t *testing.T) {
+	dir := t.TempDir()
+	other := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	res := w.Call(context.Background(), `{"path":"`+filepath.Join(other, "x")+`","content":"x"}`)
+	if !res.IsError {
+		t.Fatal("expected error for outside-root absolute path")
+	}
+}
+
+// TestWriteFile_EmptyWorkspaceRoot errors.
+func TestWriteFile_EmptyWorkspaceRoot(t *testing.T) {
+	w := WriteFile{}
+	res := w.Call(context.Background(), `{"path":"x","content":"y"}`)
+	if !res.IsError {
+		t.Fatal("expected error for empty workspace_root")
+	}
+}
+
+// TestWriteFile_BadArgs errors.
+func TestWriteFile_BadArgs(t *testing.T) {
+	w := WriteFile{WorkspaceRoot: t.TempDir()}
+	res := w.Call(context.Background(), `not json`)
+	if !res.IsError {
+		t.Fatal("expected error for malformed args")
+	}
+}
+
+// TestWriteFile_MissingPath errors.
+func TestWriteFile_MissingPath(t *testing.T) {
+	w := WriteFile{WorkspaceRoot: t.TempDir()}
+	res := w.Call(context.Background(), `{"content":"y"}`)
+	if !res.IsError {
+		t.Fatal("expected error for missing path")
+	}
+}
+
+// TestWriteFile_FileMode0644 verifies the default mode.
+func TestWriteFile_FileMode0644(t *testing.T) {
+	dir := t.TempDir()
+	w := WriteFile{WorkspaceRoot: dir}
+	if res := w.Call(context.Background(), `{"path":"m.txt","content":"x"}`); res.IsError {
+		t.Fatalf("write: %s", res.Output)
+	}
+	info, err := os.Stat(filepath.Join(dir, "m.txt"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("mode = %o, want 0644", got)
+	}
+}
+
+// TestWriteFile_Spec verifies the schema name + required fields.
+func TestWriteFile_Spec(t *testing.T) {
+	spec := WriteFile{}.Spec()
+	if spec.Name != "write_file" {
+		t.Errorf("Name = %q, want write_file", spec.Name)
+	}
+	props, ok := spec.Parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("parameters.properties missing")
+	}
+	for _, k := range []string{"path", "content"} {
+		if _, ok := props[k]; !ok {
+			t.Errorf("schema missing %q property", k)
+		}
+	}
+}

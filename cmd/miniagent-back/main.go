@@ -83,13 +83,15 @@ func run(cfgPath string) error {
 		Logger:  logger,
 	}
 	// Tools register only when workspace_root is set (empty = disabled; the
-	// LLM never sees them). read_file reads text under workspace_root; shell
-	// runs `sh -c` with cwd pinned to workspace_root plus a destructive-
-	// pattern tripwire (not a security boundary — see tools.go docs).
+	// LLM never sees them). All three are bounded to workspace_root:
+	//   - read_file  reads text (path escape refused)
+	//   - write_file writes/overwrites text + creates parent dirs (0644)
+	//   - shell      `sh -c` with cwd pinned + destructive-pattern tripwire
 	var tools []miniagent.Tool
 	if cfg.MiniAgent.WorkspaceRoot != "" {
 		tools = append(tools,
 			miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
+			miniagent.WriteFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
 			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
 		)
 	}
