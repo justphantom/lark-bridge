@@ -117,21 +117,34 @@ func (h *Handler) runDeploy(chatID string) {
 	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, h.cfg.DeployTarget)
 	if err != nil {
 		h.logger.Error("deploy failed", log.FieldChatID, chatID, log.FieldError, err)
-		noticeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := h.notify(noticeCtx, chatID, "error", "部署失败",
-			tailOutput(out, 500)+"\n错误："+err.Error()); err != nil {
-			h.logger.Warn("deploy failure notify failed", log.FieldChatID, chatID, log.FieldError, err)
-		}
+		h.notifyWithRetry(chatID, "error", "部署失败",
+			tailOutput(out, 500)+"\n错误："+err.Error())
 		return
 	}
 
 	h.logger.Info("deploy done", log.FieldChatID, chatID)
-	noticeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := h.notify(noticeCtx, chatID, "success", "部署完成", tailOutput(out, 500)); err != nil {
-		h.logger.Warn("deploy success notify failed", log.FieldChatID, chatID, log.FieldError, err)
+	h.notifyWithRetry(chatID, "success", "部署完成", tailOutput(out, 500))
+}
+
+// notifyWithRetry sends a notice to the chat, retrying when the frontend
+// returns 503 "backend not registered" — which happens after a redeploy:
+// feishu-front restarts, and deploy-monitor's SSE reconnect lands a few
+// seconds later. Until the SSE is re-established, POST /v1/control returns
+// 503 because the backend is not in the frontend's registry. We poll the
+// reconnect with 2s intervals up to 30s total.
+func (h *Handler) notifyWithRetry(chatID, level, title, message string) {
+	for attempt := 0; attempt < 15; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := h.notify(ctx, chatID, level, title, message)
+		cancel()
+		if err == nil {
+			return
+		}
+		h.logger.Warn("deploy notify attempt failed, retrying",
+			log.FieldChatID, chatID, "attempt", attempt+1, log.FieldError, err)
+		time.Sleep(2 * time.Second)
 	}
+	h.logger.Error("deploy notify gave up after retries", log.FieldChatID, chatID)
 }
 
 // notify emits a Notice Control to chatID. ChatID is required by the frontend
