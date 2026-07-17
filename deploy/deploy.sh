@@ -151,25 +151,19 @@ wait_listen() {
 # 用 Wants= 而非 Requires=：前端崩溃时后端不被连带停止，in-flight Claude 对话
 # 继续运行，backendrpc.Run 的重连机制在前端恢复后重新接上 SSE。
 write_unit() {
-    local unit="$1" desc="$2" binary="$3" config="$4" requires="${5:-}" extra_env="${6:-}"
+    local unit="$1" desc="$2" binary="$3" config="$4" requires="${5:-}" extra_env="${6:-}" privileged="${7:-false}"
     local deps="After=network.target"
     [[ -n "$requires" ]] && deps="After=$requires.service"$'\n'"Wants=$requires.service"
     # extra_env 非空时尾部补一个换行，使 heredoc 里 ExecStart 独立成行；空则留空。
     local env_block=""
     [[ -n "$extra_env" ]] && env_block="$extra_env"$'\n'
-    sudo tee "/etc/systemd/system/$unit.service" > /dev/null <<EOF
-[Unit]
-Description=lark-bridge $desc
-$deps
-
-[Service]
-EnvironmentFile=$CONFIG_DIR/.env
-${env_block}ExecStart=$DEPLOY_DIR/$binary -config $CONFIG_DIR/$config
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=10
-User=$RUN_USER
-# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
+    # privileged=true 时整个沙箱块省略：deploy-monitor 跑 `make deploy`，要
+    # sudo 提权写 /etc/systemd/system、跑 systemctl，NoNewPrivileges 会禁止
+    # sudo 的 setuid 提权导致远程 /deploy 必失败（"no new privileges" flag is
+    # set）。沙箱是为不需要提权的 backend 准备的，不适用于它。
+    local sandbox=""
+    if [[ "$privileged" != "true" ]]; then
+        sandbox='# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
 #   NoNewPrivileges      禁 setuid 提权（backend 不需要）
 #   ProtectSystem=full   /usr /boot 只读；/var/lib(state_dir) 与 /home 仍可写
 #                        （不用 strict：claude 写 ~/.claude、opencode 读 ~/.config）
@@ -188,8 +182,21 @@ ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
-CapabilityBoundingSet=
+CapabilityBoundingSet='
+    fi
+    sudo tee "/etc/systemd/system/$unit.service" > /dev/null <<EOF
+[Unit]
+Description=lark-bridge $desc
+$deps
 
+[Service]
+EnvironmentFile=$CONFIG_DIR/.env
+${env_block}ExecStart=$DEPLOY_DIR/$binary -config $CONFIG_DIR/$config
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+User=$RUN_USER
+${sandbox}
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -364,7 +371,7 @@ write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-co
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
 write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front
-write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
+write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front "" true
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
