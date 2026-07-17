@@ -75,6 +75,18 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}
+	if cfg.MiniAgent.BaseURL == "" {
+		cfg.MiniAgent.BaseURL = "https://api.openai.com"
+	}
+	if cfg.MiniAgent.Model == "" {
+		cfg.MiniAgent.Model = "gpt-4o-mini"
+	}
+	if cfg.MiniAgent.SystemPrompt == "" {
+		cfg.MiniAgent.SystemPrompt = "你是一个简洁的助手，回答通常不超过 500 字。"
+	}
+	if cfg.MiniAgent.MaxTokens <= 0 {
+		cfg.MiniAgent.MaxTokens = 4096
+	}
 	if cfg.StateDir == "" {
 		// Default to the directory holding the config file so state
 		// lands next to the config. Relative paths resolve to CWD.

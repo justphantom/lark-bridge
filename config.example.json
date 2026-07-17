@@ -31,6 +31,14 @@
     "list_cache_ttl":    3600
   },
 
+  "miniagent": {
+    "api_key":       "${MINIAGENT_API_KEY}",
+    "base_url":      "https://api.openai.com",
+    "model":         "gpt-4o-mini",
+    "system_prompt": "你是一个简洁的助手，回答通常不超过 500 字。",
+    "max_tokens":    4096
+  },
+
   "deploy_monitor": {
     "project_root":  "/home/user/ZCodeProject/lark-bridge",
     "deploy_target": "deploy"

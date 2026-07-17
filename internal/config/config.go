@@ -45,6 +45,7 @@ type Config struct {
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
+	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
 
 	// —— 日志：共用 ——
 	LogLevel           string            `json:"log_level"`
@@ -135,6 +136,29 @@ type DeployMonitor struct {
 	ProjectRoot string `json:"project_root,omitempty"`
 	// DeployTarget is the make target invoked (default "deploy").
 	DeployTarget string `json:"deploy_target,omitempty"`
+}
+
+// MiniAgent holds settings for the miniagent backend, a self-contained
+// ReAct agent (LLM + tools + memory) that does NOT shell out to an external
+// agent CLI like claude/opencode. It calls an OpenAI-compatible chat
+// completions endpoint directly via net/http.
+type MiniAgent struct {
+	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
+	// pull from the environment (config.Load expands it); writing the key
+	// literally in the config file is discouraged.
+	APIKey string `json:"api_key,omitempty"`
+	// BaseURL is the OpenAI-compatible root (no /v1/... suffix). Empty →
+	// https://api.openai.com. Set to a compatible provider's root (e.g.
+	// https://api.deepseek.com) to redirect.
+	BaseURL string `json:"base_url,omitempty"`
+	// Model is the model id passed as the request "model" field (e.g.
+	// "gpt-4o", "deepseek-chat"). Empty → "gpt-4o-mini" in config_defaults.
+	Model string `json:"model,omitempty"`
+	// SystemPrompt is prepended to every turn as the system message. Empty
+	// → a concise default assistant persona in config_defaults.
+	SystemPrompt string `json:"system_prompt,omitempty"`
+	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.
