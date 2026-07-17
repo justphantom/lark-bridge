@@ -2,10 +2,13 @@ package miniagent
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeTemp writes a file under a fresh temp dir and returns the dir.
@@ -374,5 +377,113 @@ func TestWriteFile_Spec(t *testing.T) {
 		if _, ok := props[k]; !ok {
 			t.Errorf("schema missing %q property", k)
 		}
+	}
+}
+
+// === WebFetch tests ===
+
+// TestWebFetch_ParsesHTML verifies an HTML page is fetched and its visible
+// text extracted (script/style stripped).
+func TestWebFetch_ParsesHTML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><title>T</title><style>x{}</style></head><body><p>hello <b>world</b></p><script>alert(1)</script></body></html>`))
+	}))
+	defer srv.Close()
+	w := WebFetch{}
+	res := w.Call(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "hello world") {
+		t.Errorf("Output = %q, want contains 'hello world'", res.Output)
+	}
+	if strings.Contains(res.Output, "alert") {
+		t.Errorf("Output = %q, script not stripped", res.Output)
+	}
+	if strings.Contains(res.Output, "x{}") {
+		t.Errorf("Output = %q, style not stripped", res.Output)
+	}
+}
+
+// TestWebFetch_NonHTTPSchemeRejected verifies file:// and friends are refused.
+func TestWebFetch_NonHTTPSchemeRejected(t *testing.T) {
+	w := WebFetch{}
+	for _, bad := range []string{"file:///etc/passwd", "ftp://x/y", "javascript:alert(1)"} {
+		res := w.Call(context.Background(), `{"url":"`+bad+`"}`)
+		if !res.IsError {
+			t.Errorf("expected error for %q", bad)
+		}
+	}
+}
+
+// TestWebFetch_Non2xxIsError verifies a 404 yields IsError with status.
+func TestWebFetch_Non2xxIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("nope"))
+	}))
+	defer srv.Close()
+	w := WebFetch{}
+	res := w.Call(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if !res.IsError {
+		t.Fatal("expected IsError for 404")
+	}
+	if !strings.Contains(res.Output, "404") {
+		t.Errorf("error = %q, want mentions 404", res.Output)
+	}
+}
+
+// TestWebFetch_PlainTextReturned verifies non-HTML text is returned as-is.
+func TestWebFetch_PlainTextReturned(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("plain body"))
+	}))
+	defer srv.Close()
+	w := WebFetch{}
+	res := w.Call(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if res.Output != "plain body" {
+		t.Errorf("Output = %q, want 'plain body'", res.Output)
+	}
+}
+
+// TestWebFetch_EmptyURLErrors verifies a missing url yields IsError.
+func TestWebFetch_EmptyURLErrors(t *testing.T) {
+	w := WebFetch{}
+	res := w.Call(context.Background(), `{"url":""}`)
+	if !res.IsError {
+		t.Fatal("expected error for empty url")
+	}
+}
+
+// TestWebFetch_BadArgs verifies malformed JSON errors.
+func TestWebFetch_BadArgs(t *testing.T) {
+	w := WebFetch{}
+	res := w.Call(context.Background(), `not json`)
+	if !res.IsError {
+		t.Fatal("expected error for malformed args")
+	}
+}
+
+// TestWebFetch_ConnectionError verifies a dead host yields IsError (not panic).
+func TestWebFetch_ConnectionError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // make URL dead
+	w := WebFetch{HTTP: &http.Client{Timeout: 2 * time.Second}}
+	res := w.Call(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if !res.IsError {
+		t.Fatal("expected error for dead host")
+	}
+}
+
+// TestWebFetch_Spec verifies the schema.
+func TestWebFetch_Spec(t *testing.T) {
+	spec := WebFetch{}.Spec()
+	if spec.Name != "webfetch" {
+		t.Errorf("Name = %q, want webfetch", spec.Name)
 	}
 }

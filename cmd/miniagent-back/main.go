@@ -87,6 +87,7 @@ func run(cfgPath string) error {
 	//   - read_file  reads text (path escape refused)
 	//   - write_file writes/overwrites text + creates parent dirs (0644)
 	//   - shell      `sh -c` with cwd pinned + destructive-pattern tripwire
+	// webfetch is URL-driven (not path-driven) so it registers unconditionally.
 	var tools []miniagent.Tool
 	if cfg.MiniAgent.WorkspaceRoot != "" {
 		tools = append(tools,
@@ -95,6 +96,7 @@ func run(cfgPath string) error {
 			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
 		)
 	}
+	tools = append(tools, miniagent.WebFetch{})
 	h := miniagent.New(llm, miniagent.LoopConfig{
 		Model:     cfg.MiniAgent.Model,
 		System:    cfg.MiniAgent.SystemPrompt,
