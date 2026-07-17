@@ -5,14 +5,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // maxReadFileChars bounds one read_file result so a huge file cannot blow
 // the LLM context window or stall the turn. The tail is dropped; a marker
 // is appended so the LLM knows it saw a truncated view.
 const maxReadFileChars = 20000
+
+// maxShellOutputChars bounds one shell command's combined stdout+stderr so
+// a chatty command cannot blow the context. Same clamp-and-mark policy as
+// read_file.
+const maxShellOutputChars = 20000
+
+// shellTimeout bounds one shell command. A hung command cannot stall the
+// turn forever; on timeout the process is killed and the partial output is
+// returned with an error marker.
+const shellTimeout = 60 * time.Second
+
+// shellBlockedPatterns are command substrings the shell tool refuses to run.
+// Matching is case-insensitive on the raw command string and is a coarse
+// guard, NOT a security boundary: a determined prompt can bypass it via
+// base64 decoding, variable expansion, symlinks, etc. The real boundary is
+// that the tool runs as an unprivileged user under workspace_root; treat
+// this list as a tripwire on the most destructive shapes, not a sandbox.
+var shellBlockedPatterns = []string{
+	"rm -rf",
+	"rm -fr",
+	"mkfs",
+	"dd if=",
+	"shutdown",
+	"poweroff",
+	"reboot",
+	"halt",
+	":(){:|:&};:", // fork bomb
+	"> /dev/sd",
+	"/dev/null > /dev/sd",
+	"chmod -R 000",
+	"chown -R",
+}
 
 // Tool is one agent tool the LLM may call. Spec returns the OpenAI
 // function schema (name/description/parameters); Call executes it with the
@@ -131,4 +165,93 @@ func truncateToLimit(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "\n…(已截断，共 " + fmt.Sprintf("%d", len(r)) + " 字符)"
+}
+
+// shellArgs is the LLM-supplied argument object for shell.
+type shellArgs struct {
+	Command string `json:"command"`
+}
+
+// Shell runs one shell command under WorkspaceRoot via `sh -c`. It is the
+// destructive-capable counterpart to ReadFile: cwd is pinned to
+// WorkspaceRoot (so relative paths land there), but a command can still
+// escape via absolute paths or cd, so shellBlockedPatterns refuses the
+// most destructive shapes as a coarse tripwire (NOT a security boundary —
+// see its doc). Output is stdout+stderr combined, truncated to
+// maxShellOutputChars. A command that exceeds shellTimeout is killed.
+type Shell struct {
+	WorkspaceRoot string
+}
+
+// Spec returns the OpenAI function schema advertised to the LLM.
+func (Shell) Spec() ToolSpec {
+	return ToolSpec{
+		Name:        "shell",
+		Description: "在 workspace_root 下执行一条 shell 命令（sh -c）。返回 stdout+stderr 合并输出。破坏性命令会被拒绝；命令最长运行 " + shellTimeout.String() + "。",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command": map[string]any{
+					"type":        "string",
+					"description": "要执行的 shell 命令，相对路径基于 workspace_root",
+				},
+			},
+			"required": []string{"command"},
+		},
+	}
+}
+
+// Call runs the command. Empty WorkspaceRoot → error. A blocked pattern →
+// error. Otherwise CombinedOutput under a timeout, truncated on return.
+func (s Shell) Call(ctx context.Context, args string) ToolResult {
+	if strings.TrimSpace(s.WorkspaceRoot) == "" {
+		return ToolResult{IsError: true, Output: "shell 未配置：workspace_root 为空"}
+	}
+	var a shellArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return ToolResult{IsError: true, Output: fmt.Sprintf("参数解析失败：%v（收到 %q）", err, args)}
+	}
+	if strings.TrimSpace(a.Command) == "" {
+		return ToolResult{IsError: true, Output: "参数缺失：command"}
+	}
+	if msg := blockedShellReason(a.Command); msg != "" {
+		return ToolResult{IsError: true, Output: msg}
+	}
+
+	root, err := filepath.Abs(s.WorkspaceRoot)
+	if err != nil {
+		return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
+	}
+	if _, err := os.Stat(root); err != nil {
+		return ToolResult{IsError: true, Output: fmt.Sprintf("workspace_root 不可访问：%v", err)}
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, shellTimeout)
+	defer cancel()
+	// #nosec G204 -- the agent's whole purpose is to run LLM-chosen shell;
+	// the workspace_root pin + blocked-pattern tripwire + unprivileged user
+	// are the accepted boundaries, not command allow-listing.
+	cmd := exec.CommandContext(runCtx, "sh", "-c", a.Command)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	body := truncateToLimit(string(out), maxShellOutputChars)
+	if err != nil {
+		if runCtx.Err() == context.DeadlineExceeded {
+			return ToolResult{IsError: true, Output: body + fmt.Sprintf("\n⏱ 命令超时（>%s），已终止。", shellTimeout)}
+		}
+		return ToolResult{IsError: true, Output: body + fmt.Sprintf("\n退出码错误：%v", err)}
+	}
+	return ToolResult{Output: body}
+}
+
+// blockedShellReason returns a non-empty human reason when command matches a
+// blocked pattern, "" otherwise. Case-insensitive on a folded copy.
+func blockedShellReason(command string) string {
+	folded := strings.ToLower(command)
+	for _, p := range shellBlockedPatterns {
+		if strings.Contains(folded, strings.ToLower(p)) {
+			return fmt.Sprintf("拒绝执行：命令匹配黑名单模式 %q（破坏性命令已被拦截）。", p)
+		}
+	}
+	return ""
 }

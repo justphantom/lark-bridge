@@ -144,3 +144,106 @@ func TestReadFile_Spec(t *testing.T) {
 		t.Error("schema missing path property")
 	}
 }
+
+// === Shell tests ===
+
+// TestShell_RunsCommand verifies a plain command executes and returns output.
+func TestShell_RunsCommand(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"echo hello"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "hello") {
+		t.Errorf("Output = %q, want contains 'hello'", res.Output)
+	}
+}
+
+// TestShell_CwdIsWorkspaceRoot verifies cwd is the workspace root: a pwd
+// lands inside it.
+func TestShell_CwdIsWorkspaceRoot(t *testing.T) {
+	dir := t.TempDir()
+	s := Shell{WorkspaceRoot: dir}
+	res := s.Call(context.Background(), `{"command":"pwd"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	// pwd resolves the absolute dir; match by suffix (TempDir may have macOS
+	// /var -> /private/var or linux symlinks, so HasSuffix on Cleaned dir).
+	cleaned := filepath.Clean(dir)
+	if !strings.Contains(res.Output, cleaned) {
+		t.Errorf("Output = %q, want contains %q", res.Output, cleaned)
+	}
+}
+
+// TestShell_BlockedPattern verifies rm -rf is refused before exec.
+func TestShell_BlockedPattern(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"rm -rf /"}`)
+	if !res.IsError {
+		t.Fatal("expected error for blocked pattern")
+	}
+	if !strings.Contains(res.Output, "黑名单") {
+		t.Errorf("error = %q, want mentions 黑名单", res.Output)
+	}
+}
+
+// TestShell_BlockedPatternCaseInsensitive verifies matching is case-insensitive.
+func TestShell_BlockedPatternCaseInsensitive(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"RM -RF /tmp/x"}`)
+	if !res.IsError {
+		t.Fatal("expected error for upper-case blocked pattern")
+	}
+}
+
+// TestShell_NonZeroExitIsError verifies a failing command yields IsError with
+// the output preserved (LLM needs stderr to diagnose).
+func TestShell_NonZeroExitIsError(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"echo out; exit 3"}`)
+	if !res.IsError {
+		t.Fatal("expected IsError for non-zero exit")
+	}
+	if !strings.Contains(res.Output, "out") {
+		t.Errorf("Output = %q, want contains stdout 'out'", res.Output)
+	}
+	if !strings.Contains(res.Output, "退出码") {
+		t.Errorf("Output = %q, want mentions 退出码", res.Output)
+	}
+}
+
+// TestShell_EmptyWorkspaceRoot verifies unset root errors without exec.
+func TestShell_EmptyWorkspaceRoot(t *testing.T) {
+	s := Shell{}
+	res := s.Call(context.Background(), `{"command":"echo x"}`)
+	if !res.IsError {
+		t.Fatal("expected error for empty workspace_root")
+	}
+}
+
+// TestShell_EmptyCommand verifies an empty/whitespace command errors.
+func TestShell_EmptyCommand(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"   "}`)
+	if !res.IsError {
+		t.Fatal("expected error for empty command")
+	}
+}
+
+// TestShell_BadArgs verifies malformed JSON errors.
+func TestShell_BadArgs(t *testing.T) {
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `not json`)
+	if !res.IsError {
+		t.Fatal("expected error for malformed args")
+	}
+}
+
+// TestShell_Spec verifies the schema.
+func TestShell_Spec(t *testing.T) {
+	spec := Shell{}.Spec()
+	if spec.Name != "shell" {
+		t.Errorf("Name = %q, want shell", spec.Name)
+	}
+}

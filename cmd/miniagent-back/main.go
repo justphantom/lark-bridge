@@ -82,11 +82,16 @@ func run(cfgPath string) error {
 		BaseURL: cfg.MiniAgent.BaseURL,
 		Logger:  logger,
 	}
-	// Tools: read_file only registers when workspace_root is set (empty
-	// means disabled; the LLM never sees the tool). Add future tools here.
+	// Tools register only when workspace_root is set (empty = disabled; the
+	// LLM never sees them). read_file reads text under workspace_root; shell
+	// runs `sh -c` with cwd pinned to workspace_root plus a destructive-
+	// pattern tripwire (not a security boundary — see tools.go docs).
 	var tools []miniagent.Tool
 	if cfg.MiniAgent.WorkspaceRoot != "" {
-		tools = append(tools, miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot})
+		tools = append(tools,
+			miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
+			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot},
+		)
 	}
 	h := miniagent.New(llm, miniagent.LoopConfig{
 		Model:     cfg.MiniAgent.Model,
