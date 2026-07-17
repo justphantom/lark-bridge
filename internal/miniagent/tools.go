@@ -23,10 +23,16 @@ type ToolResult struct {
 	IsError bool
 }
 
-// resolveUnderRoot cleans p and ensures the result stays under root. It
-// accepts an absolute path inside root or a path relative to root. A path
-// that escapes root via ".." or is absolute but outside root returns an
-// error naming the offending path.
+// resolveUnderRoot cleans p and ensures the result stays under root, both on
+// the string level (Clean+Rel against ".." and absolute-outside-root) AND on
+// the filesystem level (EvalSymlinks on the parent dir). The symlink check is
+// what stops the shell+read_file combo where the agent first `ln -s
+// /etc/passwd link` then `read_file link` — without it the string check sees
+// `link` as inside root while the read actually hits /etc/passwd.
+//
+// EvalSymlinks targets the parent directory (always present for both reads of
+// existing files and writes of new ones) so a symlinked parent escaping root
+// is caught; the leaf name is appended after resolution.
 func resolveUnderRoot(root, p string) (string, error) {
 	clean := filepath.Clean(p)
 	var full string
@@ -35,14 +41,37 @@ func resolveUnderRoot(root, p string) (string, error) {
 	} else {
 		full = filepath.Join(root, clean)
 	}
+	if err := checkUnderRoot(root, full, p); err != nil {
+		return "", err
+	}
+	// Resolve the parent directory's symlinks, then re-check the real path.
+	// A symlink under root pointing outward (e.g. `link -> /etc`) is caught
+	// here; a missing leaf is fine because we only evaluate the parent.
+	realParent, err := filepath.EvalSymlinks(filepath.Dir(full))
+	if err != nil {
+		// Missing parent (e.g. root itself not yet created) — fall back to
+		// the string check above, which is the best we can do.
+		return full, nil
+	}
+	real := filepath.Join(realParent, filepath.Base(full))
+	if err := checkUnderRoot(root, real, p); err != nil {
+		return "", err
+	}
+	return real, nil
+}
+
+// checkUnderRoot is the string-level containment test shared by the pre- and
+// post-symlink-resolution checks. It reports whether full is rooted under
+// root (not escaping via ".." or as an outside absolute path).
+func checkUnderRoot(root, full, original string) error {
 	rel, err := filepath.Rel(root, full)
 	if err != nil {
-		return "", fmt.Errorf("路径 %q 不在 workspace_root 内", p)
+		return fmt.Errorf("路径 %q 不在 workspace_root 内", original)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("路径 %q 越出 workspace_root", p)
+		return fmt.Errorf("路径 %q 越出 workspace_root", original)
 	}
-	return full, nil
+	return nil
 }
 
 // truncate clamps s to n runes and appends marker when it truncated. rune-

@@ -60,6 +60,32 @@ func TestReadFile_EscapeViaDotDot(t *testing.T) {
 	}
 }
 
+// TestReadFile_SymlinkEscapeRejected verifies a symlink inside root pointing
+// outward (the shell+read_file attack) is refused after EvalSymlinks.
+func TestReadFile_SymlinkEscapeRejected(t *testing.T) {
+	dir := t.TempDir()
+	// Place a secret outside root.
+	secret := t.TempDir()
+	secretFile := filepath.Join(secret, "secret.txt")
+	if err := os.WriteFile(secretFile, []byte("TOPSECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink inside root pointing at the secret dir.
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(secret, link); err != nil {
+		// Some sandboxes forbid symlink creation; skip rather than fail.
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	r := ReadFile{WorkspaceRoot: dir}
+	res := r.Call(context.Background(), `{"path":"link/secret.txt"}`)
+	if !res.IsError {
+		t.Fatalf("expected error for symlink escape, got Output=%q", res.Output)
+	}
+	if strings.Contains(res.Output, "TOPSECRET") {
+		t.Errorf("symlink escape succeeded! read secret: %q", res.Output)
+	}
+}
+
 // TestReadFile_AbsoluteOutsideRoot verifies an absolute path outside root is rejected.
 func TestReadFile_AbsoluteOutsideRoot(t *testing.T) {
 	dir := writeTemp(t, "d.txt", "x")
@@ -248,6 +274,35 @@ func TestShell_Spec(t *testing.T) {
 	spec := Shell{}.Spec()
 	if spec.Name != "shell" {
 		t.Errorf("Name = %q, want shell", spec.Name)
+	}
+}
+
+// TestShell_StripsSecretEnv verifies the shell tool's child process does NOT
+// inherit secret-bearing env vars, so an LLM-run `env` cannot exfiltrate
+// credentials. Covers both prefix-based (MINIAGENT_) and suffix-based
+// (*_SECRET) shapes.
+func TestShell_StripsSecretEnv(t *testing.T) {
+	// t.Setenv restores the prior value on test exit.
+	t.Setenv("MINIAGENT_API_KEY", "sk-LEAK-MINIAGENT")
+	t.Setenv("MY_DB_PASSWORD", "pw-LEAK-SUFFIX")
+	t.Setenv("PROVIDER_TOKEN", "tok-LEAK-SUFFIX")
+	t.Setenv("MY_CUSTOM_SECRET", "sec-LEAK-SUFFIX")
+	t.Setenv("VENDOR_API_KEY", "key-LEAK-SUFFIX")
+	// PATH is preserved so `env` is findable.
+	t.Setenv("SHELL_TEST_MARKER", "kept")
+
+	s := Shell{WorkspaceRoot: t.TempDir()}
+	res := s.Call(context.Background(), `{"command":"env"}`)
+	if res.IsError {
+		t.Fatalf("shell env failed: %s", res.Output)
+	}
+	for _, leak := range []string{"sk-LEAK", "pw-LEAK", "tok-LEAK", "sec-LEAK", "key-LEAK"} {
+		if strings.Contains(res.Output, leak) {
+			t.Errorf("secret value leaked into shell env: %q found in output", leak)
+		}
+	}
+	if !strings.Contains(res.Output, "SHELL_TEST_MARKER=kept") {
+		t.Errorf("non-secret var stripped: output missing SHELL_TEST_MARKER=kept")
 	}
 }
 
