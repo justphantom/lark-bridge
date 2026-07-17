@@ -5,14 +5,14 @@
   "feishu_log_level":  "info",
 
   "ipc_secret":   "${IPC_SECRET}",
-  "ipc_addr":     "localhost:6060",
+  "ipc_addr":     "${IPC_ADDR}",
   "backend_id":   "claude-1",
-  "frontend_url": "http://localhost:6060",
+  "frontend_url": "http://${IPC_ADDR}",
 
   "claude": {
     "cli_path":            "claude",
     "permission_mode":     "acceptEdits",
-    "default_directory":   "/var/lib/lark-bridge/claude",
+    "default_directory":   "${STATE_DIR}/claude",
     "max_concurrent":      4,
     "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
     "stream_history":      50,
@@ -25,7 +25,7 @@
 
   "opencode": {
     "cli_path":          "opencode",
-    "default_directory": "/var/lib/lark-bridge/opencode",
+    "default_directory": "${STATE_DIR}/opencode",
     "max_concurrent":    4,
     "stream_history":    50,
     "list_cache_ttl":    3600
@@ -33,7 +33,7 @@
 
   "peri": {
     "cli_path":          "peri",
-    "default_directory": "/var/lib/lark-bridge/peri",
+    "default_directory": "${STATE_DIR}/peri",
     "max_concurrent":    4,
     "max_turns":         10,
     "stream_history":    50,
@@ -43,7 +43,7 @@
 
   "goose": {
     "cli_path":          "goose",
-    "default_directory": "/var/lib/lark-bridge/goose",
+    "default_directory": "${STATE_DIR}/goose",
     "max_concurrent":    4,
     "max_turns":         10,
     "stream_history":    50,
@@ -61,7 +61,7 @@
   "log_debug_redact":     true,
   "component_log_levels": {},
 
-  "state_dir": "/var/lib/lark-bridge",
+  "state_dir": "${STATE_DIR}",
 
   "timeouts": {
     "backend_health":     "90s"

@@ -223,24 +223,11 @@ else
     cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
 fi
 
-# 将基础 config 里的默认 state 目录字面量 /var/lib/lark-bridge 统一替换为 $STATE_DIR，
-# 使 state_dir 与各后端 default_directory 都随 STATE_DIR 环境变量移动。否则 STATE_DIR
-# 仅作用于下面的 mkdir，而配置仍指向硬编码默认目录 → 目录建在新处、进程读写旧处，
-# 状态分裂（router、per-chat 工作目录全丢）。STATE_DIR 默认值即该字面量，默认场景
-# 为 no-op。config.example.json 中该字面量仅出现在 state_dir 与各 default_directory，
-# 均应随之移动；project_root 等不含此串，不受影响。
-# 转义替换串中的 sed 元字符（& \ |），路径含特殊字符时不破坏替换。
-esc_state="${STATE_DIR//\\/\\\\}"
-esc_state="${esc_state//&/\\&}"
-esc_state="${esc_state//|/\\|}"
-sed -i "s|/var/lib/lark-bridge|${esc_state}|g" "$STAGE/claude-config.json"
-
-# 确保 ipc_addr / frontend_url 与 IPC_ADDR 一致
-sed_expr="s|\"ipc_addr\"[[:space:]]*:.*|\"ipc_addr\":     \"$IPC_ADDR\",|; s|\"frontend_url\"[[:space:]]*:.*|\"frontend_url\": \"http://$IPC_ADDR\",|"
-sed -i "$sed_expr" "$STAGE/claude-config.json"
-# 校验 ipc_addr 注入成功（sed 在 pattern 不匹配时静默返回 0，须显式确认）
-grep -qE "\"ipc_addr\"[[:space:]]*:[[:space:]]*\"$IPC_ADDR\"" "$STAGE/claude-config.json" \
-    || fail "ipc_addr 注入失败（期望 $IPC_ADDR），请检查 config 是否含 ipc_addr 字段"
+# state_dir / ipc_addr / frontend_url 已在 config 模板里写成 ${STATE_DIR} / ${IPC_ADDR}
+# 占位符，由各进程的 config.Load 在启动时从环境变量展开（见 internal/config 的
+# expandEnvVars）。deploy.sh 只需保证 IPC_ADDR / STATE_DIR 进入 EnvironmentFile（见
+# 步骤 3 的 .env 写入），无需 sed 改 JSON——既消除字面量替换的元字符转义陷阱，也避免
+# sed 静默失败导致 state 分裂。
 
 # claude-back / opencode-back 各注入独立 router_path。两后端共享同一个
 # state_dir，若用默认的同一 router.v5.json 会互相覆盖会话绑定，故部署脚本
@@ -332,13 +319,28 @@ sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
-# .env 含真实凭证，仅首次部署写入；后续部署保留现有的 .env 不覆盖
+# .env 含真实凭证，仅首次部署写入；后续部署保留现有的 .env 不覆盖。
+# 但 IPC_ADDR / STATE_DIR 是部署参数（可随部署变更），非凭证——每次部署
+# 都强制同步为本次值，否则 config 模板里的 ${IPC_ADDR} / ${STATE_DIR} 会
+# 展开成旧值，state 目录与 IPC 地址对不上。用 sed 幂等更新：键存在则改，
+# 不存在则追加。
 if [[ ! -f "$CONFIG_DIR/.env" ]]; then
     sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
     info "首次部署：已写入 .env"
 else
-    info "保留现有 .env（不覆盖）"
+    info "保留现有 .env（不覆盖凭证，仅同步部署参数）"
 fi
+# 幂等更新部署参数键。grep -q 判断存在性，存在用 sed 改整行，不存在追加。
+update_env_key() {
+    local key="$1" val="$2" file="$3"
+    if sudo grep -q "^${key}=" "$file"; then
+        sudo sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+    else
+        echo "${key}=${val}" | sudo tee -a "$file" > /dev/null
+    fi
+}
+update_env_key IPC_ADDR "$IPC_ADDR" "$CONFIG_DIR/.env"
+update_env_key STATE_DIR "$STATE_DIR" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
 
 info "修复目录和文件权限 → owner=$RUN_USER"
