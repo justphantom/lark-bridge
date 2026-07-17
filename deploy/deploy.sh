@@ -169,6 +169,26 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
 User=$RUN_USER
+# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
+#   NoNewPrivileges      禁 setuid 提权（backend 不需要）
+#   ProtectSystem=full   /usr /boot 只读；/var/lib(state_dir) 与 /home 仍可写
+#                        （不用 strict：claude 写 ~/.claude、goose 读 ~/.config/goose）
+#   ProtectHome 不设：backend 依赖用户 home 下的 CLI 配置与缓存
+#   PrivateTmp           独立 /tmp 命名空间，不共享系统 tmp
+#   ProtectKernel*       禁止改内核运行时/模块/日志/cgroup
+#   RestrictSUIDSGID     拒绝执行 setuid/setgid 二进制
+#   CapabilityBoundingSet=  清空能力集（无需任何 Linux capability）
+# 不设 SystemCallFilter：backend 透传执行任意外部 CLI（git/node/shell…），
+# 系统调用白名单极易误伤，收益不抵风险。
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target
