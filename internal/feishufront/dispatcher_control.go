@@ -99,6 +99,39 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 	return d.updateCard(ctx, turn.MessageID, card)
 }
 
+// sendTerminalCard ships a terminal card (result or notice) and unconditionally
+// releases the turn/progress slots bound to promptID, whether the send
+// succeeded or not. It tries to update the existing progress card in place
+// first (so a terminal reply replaces the "starting" placeholder), falling
+// back to a fresh card. finalizeInteractive also closes a linked interactive
+// card on success (the result path); the notice path passes false.
+func (d *Dispatcher) sendTerminalCard(ctx context.Context, promptID, chatID, messageID string, card []byte, finalizeInteractive bool) error {
+	if messageID != "" {
+		if uerr := d.bot.UpdateCard(ctx, messageID, card); uerr == nil {
+			if finalizeInteractive {
+				d.finalizeLinkedInteractive(ctx, promptID)
+			}
+			d.turns.Finish(promptID)
+			d.cleanupProgress(promptID, messageID)
+			return nil
+		}
+	}
+	_, err := d.bot.SendCard(ctx, chatID, card, "")
+	if err == nil {
+		if finalizeInteractive {
+			d.finalizeLinkedInteractive(ctx, promptID)
+		}
+		d.turns.Finish(promptID)
+		d.cleanupProgress(promptID, messageID)
+	} else {
+		// Both the in-place UpdateCard and the fresh SendCard failed: still
+		// release the turn/progress slots so the promptID does not leak.
+		d.turns.Finish(promptID)
+		d.cleanupProgress(promptID, messageID)
+	}
+	return err
+}
+
 func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, backendType string) error {
 	turn, ok, chatID, footer := d.resolveFooter(ctrl, backendType)
 	messageID := ""
@@ -132,26 +165,7 @@ func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, bac
 	// enqueue a stale frame that the next debouncer tick would flush over
 	// this final card.
 	d.markFinalized(messageID)
-	if messageID != "" {
-		if uerr := d.bot.UpdateCard(ctx, messageID, card); uerr == nil {
-			d.finalizeLinkedInteractive(ctx, ctrl.PromptID)
-			d.turns.Finish(ctrl.PromptID)
-			d.cleanupProgress(ctrl.PromptID, messageID)
-			return nil
-		}
-	}
-	_, err = d.bot.SendCard(ctx, chatID, card, "")
-	if err == nil {
-		d.finalizeLinkedInteractive(ctx, ctrl.PromptID)
-		d.turns.Finish(ctrl.PromptID)
-		d.cleanupProgress(ctrl.PromptID, messageID)
-	} else {
-		// Both the in-place UpdateCard and the fresh SendCard failed: still
-		// release the turn/progress slots so the promptID does not leak.
-		d.turns.Finish(ctrl.PromptID)
-		d.cleanupProgress(ctrl.PromptID, messageID)
-	}
-	return err
+	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, card, true)
 }
 
 func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Control, backendType string) error {
@@ -193,24 +207,7 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 	}
 	// Mark finalized so a straggler progress frame cannot overwrite this notice.
 	d.markFinalized(messageID)
-	if messageID != "" {
-		if uerr := d.bot.UpdateCard(ctx, messageID, card); uerr == nil {
-			d.turns.Finish(ctrl.PromptID)
-			d.cleanupProgress(ctrl.PromptID, messageID)
-			return nil
-		}
-	}
-	_, err = d.bot.SendCard(ctx, chatID, card, "")
-	if err == nil {
-		d.turns.Finish(ctrl.PromptID)
-		d.cleanupProgress(ctrl.PromptID, messageID)
-	} else {
-		// Both the in-place UpdateCard and the fresh SendCard failed: still
-		// release the turn/progress slots so the promptID does not leak.
-		d.turns.Finish(ctrl.PromptID)
-		d.cleanupProgress(ctrl.PromptID, messageID)
-	}
-	return err
+	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, card, false)
 }
 
 func (d *Dispatcher) notice(ctx context.Context, chatID, level, title, message string) error {
