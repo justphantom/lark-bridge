@@ -75,6 +75,50 @@ func (f *fakeTool) Call(_ context.Context, args string) ToolResult {
 	return f.result
 }
 
+// panicTool simulates a buggy tool whose Call panics. Used to verify safeCall
+// catches it and the loop keeps going instead of crashing the process.
+type panicTool struct{ name string }
+
+func (p *panicTool) Spec() ToolSpec { return ToolSpec{Name: p.name, Parameters: map[string]any{"type": "object"}} }
+func (p *panicTool) Call(_ context.Context, _ string) ToolResult {
+	panic("boom from inside tool")
+}
+
+// TestRun_ToolPanicRecovered verifies a panicking tool yields an IsError
+// result the LLM sees (not a process crash), and the loop continues.
+func TestRun_ToolPanicRecovered(t *testing.T) {
+	tool := &panicTool{name: "boom"}
+	llm := &fakeLLM{responses: []Response{
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "boom", Args: "{}"}}},
+		{Text: "recovered ok"},
+	}}
+	var signals []Signal
+	emit := func(s Signal) { signals = append(signals, s) }
+	res, err := Run(context.Background(), llm, LoopConfig{Tools: []Tool{tool}}, "p1", "x", nil, emit, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "recovered ok" {
+		t.Errorf("Text = %q, want 'recovered ok'", res.Text)
+	}
+	// The tool_result signal must carry IsError (panic → error result).
+	var tr Signal
+	for _, s := range signals {
+		if s.Kind == SignalToolResult {
+			tr = s
+		}
+	}
+	if tr.Name == "" {
+		t.Fatal("no tool_result signal emitted")
+	}
+	if !tr.IsError {
+		t.Errorf("tool_result IsError = false, want true (panic must surface as error)")
+	}
+	if !strings.Contains(tr.Output, "panic") {
+		t.Errorf("tool_result Output = %q, want contains 'panic'", tr.Output)
+	}
+}
+
 // TestRun_ReActToolThenText verifies the full ReAct 2-step path: LLM asks
 // for a tool (step 1) → tool executes → result fed back → LLM replies
 // with text (step 2) → loop terminates with that text.

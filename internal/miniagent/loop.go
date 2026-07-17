@@ -52,9 +52,22 @@ type Result struct {
 	Steps   int // number of LLM calls made
 	History []Message
 }
+// safeCall invokes a tool and converts any panic into an IsError ToolResult
+// so a buggy/malformed tool input cannot crash the whole backend (the tool
+// runs in the runTurn goroutine; an unrecovered panic would take the process
+// down). The panic value is included in the output so the LLM sees why.
+func safeCall(logger *log.Logger, tool Tool, name, args string, ctx context.Context) (res ToolResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("miniagent tool panic recovered",
+				"tool", name, "panic", r)
+			res = ToolResult{IsError: true, Output: fmt.Sprintf("工具 %q 内部错误（panic: %v）", name, r)}
+		}
+	}()
+	return tool.Call(ctx, args)
+}
 
-// Run drives the ReAct loop for one turn.
-//   - LLM returns plain text → loop terminates with that text.
+// Run drives the ReAct loop for one turn.//   - LLM returns plain text → loop terminates with that text.
 //   - LLM returns tool_calls → loop executes each via cfg.Tools, emits
 //     ToolUse/ToolResult signals, appends the assistant tool_calls message
 //     plus one tool message per call, and continues. Bounded by
@@ -148,7 +161,7 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 			if !ok {
 				tres = ToolResult{IsError: true, Output: fmt.Sprintf("未知工具 %q", tc.Name)}
 			} else {
-				tres = tool.Call(ctx, tc.Args)
+				tres = safeCall(logger, tool, tc.Name, tc.Args, ctx)
 			}
 			logger.Info("miniagent tool executed",
 				log.FieldPromptID, promptID, "step", step,
