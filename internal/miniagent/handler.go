@@ -37,23 +37,34 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger) *Han
 
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
 // own goroutine (the SSE event loop must not block on a multi-second LLM
-// call). ctx cancels on process shutdown; P0 has no /abort command wired.
+// call). ctx is the process-lifetime ctx from backendrpc.Run; it is NOT
+// per-prompt (P0 has no /abort), so a turn only cancels on process shutdown.
+// promptID MUST come from ev.PromptID (frontend assigns one per inbound
+// message); reusing a chatID-derived id made the 2nd turn's Result collide
+// with the 1st's closed card and silently drop.
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
+		h.logger.Debug("miniagent ignore non-prompt event", "event_type", ev.Type)
 		return nil
 	}
 	chatID := ev.Prompt.ChatID
+	promptID := ev.PromptID
 	prompt := strings.TrimSpace(ev.Prompt.Text)
+	h.logger.Info("miniagent prompt received",
+		log.FieldChatID, chatID,
+		log.FieldPromptID, promptID,
+		"prompt_len", len(prompt))
 	if chatID == "" {
 		return fmt.Errorf("miniagent: prompt missing chatID")
 	}
+	if promptID == "" {
+		return fmt.Errorf("miniagent: prompt missing promptID (frontend must assign one per message)")
+	}
 	if prompt == "" {
+		h.logger.Info("miniagent empty prompt, noticing", log.FieldChatID, chatID)
 		return h.notify(ctx, chatID, "warning", "空消息", "请发送需要处理的内容。")
 	}
 
-	// promptID correlates emits with this turn. P0 reuses the chatID-derived
-	// id; the frontend groups Controls under one promptID into a card.
-	promptID := promptIDFor(chatID)
 	go h.runTurn(ctx, promptID, chatID, prompt)
 	return nil
 }
@@ -64,16 +75,25 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 // terminal emit so it still lands after the prompt ctx is cancelled.
 func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	h.logger.Debug("miniagent turn start", log.FieldChatID, chatID, "prompt_len", len(prompt))
+	h.logger.Info("miniagent turn start",
+		log.FieldChatID, chatID,
+		log.FieldPromptID, promptID,
+		"model", h.cfg.Model,
+		"prompt_preview", truncateForLog(prompt, 80))
 
-	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, nil)
+	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, h.emitHook(chatID, promptID), h.logger)
 	if err != nil {
-		h.logger.Warn("miniagent turn failed", log.FieldChatID, chatID, log.FieldError, err)
-		h.emitError(chatID, err.Error())
+		h.logger.Warn("miniagent turn failed",
+			log.FieldChatID, chatID,
+			log.FieldPromptID, promptID,
+			log.FieldError, err,
+			"duration", time.Since(start))
+		h.emitError(chatID, promptID, err.Error())
 		return
 	}
 	h.logger.Info("miniagent turn done",
 		log.FieldChatID, chatID,
+		log.FieldPromptID, promptID,
 		"steps", result.Steps,
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens,
@@ -81,31 +101,50 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 
 	emitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = h.rpc.SendControl(emitCtx, &protocol.Control{
+	if err := h.rpc.SendControl(emitCtx, &protocol.Control{
 		Type:     protocol.TypeResult,
 		PromptID: promptID,
 		ChatID:   chatID,
 		Result: &protocol.ResultPayload{
-			Text:           result.Text,
-			Model:          h.cfg.Model,
-			Tokens:         result.Usage.InputTokens + result.Usage.OutputTokens,
-			Duration:       time.Since(start),
-			TotalTokens:    result.Usage.InputTokens + result.Usage.OutputTokens,
-			SessionID:      "", // P0 is stateless; P2 memory supplies this.
+			Text:        result.Text,
+			Model:       h.cfg.Model,
+			Tokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
+			Duration:    time.Since(start),
+			TotalTokens: result.Usage.InputTokens + result.Usage.OutputTokens,
+			SessionID:   "", // P0 is stateless; P2 memory supplies this.
 		},
-	})
+	}); err != nil {
+		h.logger.Warn("miniagent emit result failed",
+			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
+	}
+}
+
+// emitHook returns an EmitFunc that logs each loop signal (tool_use /
+// tool_result / thinking) for triage. P0 fires no signals (no tools); the
+// hook is in place so P1's tool emits are observable from the start.
+func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
+	return func(_, kind, name, payload string) {
+		h.logger.Debug("miniagent loop signal",
+			log.FieldChatID, chatID,
+			log.FieldPromptID, promptID,
+			"kind", kind, "name", name)
+	}
 }
 
 // emitError sends a terminal TypeError so the frontend surfaces the failure
 // instead of leaving the turn card hanging.
-func (h *Handler) emitError(chatID, message string) {
+func (h *Handler) emitError(chatID, promptID, message string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = h.rpc.SendControl(ctx, &protocol.Control{
-		Type:   protocol.TypeError,
-		ChatID: chatID,
-		Error:  &protocol.ErrorPayload{Message: message, Recoverable: true},
-	})
+	if err := h.rpc.SendControl(ctx, &protocol.Control{
+		Type:     protocol.TypeError,
+		PromptID: promptID,
+		ChatID:   chatID,
+		Error:    &protocol.ErrorPayload{Message: message, Recoverable: true},
+	}); err != nil {
+		h.logger.Warn("miniagent emit error failed",
+			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
+	}
 }
 
 // notify emits a non-terminal Notice (e.g. empty-prompt warning).
@@ -117,9 +156,13 @@ func (h *Handler) notify(ctx context.Context, chatID, level, title, message stri
 	})
 }
 
-// promptIDFor derives a stable per-turn id from chatID. The frontend groups
-// Controls sharing a promptID into one card. P0 uses a fixed prefix so a
-// chat has one rolling card; P2 (memory) may make this per-turn unique.
-func promptIDFor(chatID string) string {
-	return "miniagent:" + chatID
+// truncateForLog clamps a string to n runes for log previews so a long
+// prompt does not flood the journal.
+func truncateForLog(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
+

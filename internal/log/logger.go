@@ -63,6 +63,7 @@ const (
 	FieldEventType      = "event_type"
 	FieldEventSubtype   = "event_subtype"
 	FieldToolName       = "tool_name"
+	FieldPromptID       = "prompt_id"
 )
 
 // LevelVar is a variable Level.

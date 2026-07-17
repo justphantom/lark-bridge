@@ -37,7 +37,7 @@ func TestRun_TextOnlyReturnsImmediately(t *testing.T) {
 		Text:  "hello world",
 		Usage: Usage{InputTokens: 10, OutputTokens: 5},
 	}}}
-	res, err := Run(context.Background(), llm, LoopConfig{Model: "gpt-4o-mini", System: "be brief"}, "p1", "hi", nil)
+	res, err := Run(context.Background(), llm, LoopConfig{Model: "gpt-4o-mini", System: "be brief"}, "p1", "hi", nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRun_ToolCallRejectedInP0(t *testing.T) {
 		Text:      "",
 		ToolCalls: []ToolCall{{ID: "c1", Name: "read_file", Args: "{}"}},
 	}}}
-	_, err := Run(context.Background(), llm, LoopConfig{}, "p1", "read x", nil)
+	_, err := Run(context.Background(), llm, LoopConfig{}, "p1", "read x", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for tool call in P0, got nil")
 	}
@@ -84,7 +84,7 @@ func TestRun_LLMErrorPropagates(t *testing.T) {
 	llm := &fakeLLM{
 		errs: []error{errors.New("upstream 503")},
 	}
-	_, err := Run(context.Background(), llm, LoopConfig{}, "p1", "hi", nil)
+	_, err := Run(context.Background(), llm, LoopConfig{}, "p1", "hi", nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -95,7 +95,7 @@ func TestRun_LLMErrorPropagates(t *testing.T) {
 
 // TestRun_NilClientErrors verifies the guard against a missing client.
 func TestRun_NilClientErrors(t *testing.T) {
-	if _, err := Run(context.Background(), nil, LoopConfig{}, "p1", "hi", nil); err == nil {
+	if _, err := Run(context.Background(), nil, LoopConfig{}, "p1", "hi", nil, nil); err == nil {
 		t.Fatal("expected error for nil client, got nil")
 	}
 }
@@ -106,7 +106,7 @@ func TestRun_CancelledCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	llm := &fakeLLM{responses: []Response{{Text: "x"}}}
-	_, err := Run(ctx, llm, LoopConfig{}, "p1", "hi", nil)
+	_, err := Run(ctx, llm, LoopConfig{}, "p1", "hi", nil, nil)
 	if err == nil {
 		t.Fatal("expected error on cancelled ctx, got nil")
 	}

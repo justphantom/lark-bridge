@@ -80,6 +80,7 @@ func run(cfgPath string) error {
 	llm := &miniagent.HTTPClient{
 		APIKey:  cfg.MiniAgent.APIKey,
 		BaseURL: cfg.MiniAgent.BaseURL,
+		Logger:  logger,
 	}
 	h := miniagent.New(llm, miniagent.LoopConfig{
 		Model:     cfg.MiniAgent.Model,

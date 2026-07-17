@@ -40,7 +40,7 @@ func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 	rpc := &captureSender{}
 	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop())
 
-	ev := &protocol.Event{Type: protocol.TypePrompt, Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "hi"}}
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "hi"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 	rpc := &captureSender{}
 	h := New(llm, LoopConfig{}, rpc, log.Nop())
 
-	ev := &protocol.Event{Type: protocol.TypePrompt, Prompt: &protocol.PromptPayload{ChatID: "c", Text: "x"}}
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "x"}}
 	_ = h.HandleEvent(context.Background(), ev)
 
 	deadline := time.After(2 * time.Second)
@@ -108,7 +108,7 @@ func TestHandleEvent_EmptyPromptNotices(t *testing.T) {
 	rpc := &captureSender{}
 	h := New(llm, LoopConfig{}, rpc, log.Nop())
 
-	ev := &protocol.Event{Type: protocol.TypePrompt, Prompt: &protocol.PromptPayload{ChatID: "c", Text: "   "}}
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p3", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "   "}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}

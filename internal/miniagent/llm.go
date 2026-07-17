@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hu/lark-bridge/internal/log"
 )
 
 // Message is one chat message. Role is "system" | "user" | "assistant" |
@@ -74,10 +76,13 @@ type Client interface {
 
 // HTTPClient calls an OpenAI-compatible chat completions endpoint via
 // net/http. BaseURL must NOT end with a slash or /v1; the path is appended.
+// Logger is optional (nil → no HTTP-level logs); the loop logs call results
+// at a higher level, this logs the raw request/response for triage.
 type HTTPClient struct {
 	APIKey  string
 	BaseURL string // e.g. "https://api.openai.com"
 	HTTP    *http.Client
+	Logger  *log.Logger
 }
 
 // Do posts req to {BaseURL}/v1/chat/completions and parses the response.
@@ -88,11 +93,18 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	if c.HTTP == nil {
 		c.HTTP = &http.Client{Timeout: 120 * time.Second}
 	}
+	logger := c.Logger
+	if logger == nil {
+		logger = log.Nop()
+	}
 	body, err := buildChatBody(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("build request body: %w", err)
 	}
 	url := strings.TrimRight(c.BaseURL, "/") + "/v1/chat/completions"
+	logger.Debug("miniagent http request",
+		"url", url, "model", req.Model,
+		"messages", len(req.Messages), "body_bytes", len(body))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return Response{}, fmt.Errorf("build request: %w", err)
@@ -102,6 +114,7 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
+		logger.Warn("miniagent http transport failed", log.FieldError, err, "url", url)
 		return Response{}, fmt.Errorf("llm request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -110,8 +123,12 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		logger.Warn("miniagent http non-200",
+			"status", resp.StatusCode, "body_len", len(raw),
+			"body_preview", truncate(string(raw), 200))
 		return Response{}, fmt.Errorf("llm returned %d: %s", resp.StatusCode, truncate(string(raw), 500))
 	}
+	logger.Debug("miniagent http response", "status", resp.StatusCode, "body_bytes", len(raw))
 	return parseChatResponse(raw)
 }
 
