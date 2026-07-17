@@ -39,7 +39,7 @@
     "max_tokens":      4096,
     "workspace_root":  "${WORKSPACE_ROOT}",
     "memory_enabled":  true,
-    "security_level":  "free"
+    "permission":      "free"
   },
 
   "deploy_monitor": {

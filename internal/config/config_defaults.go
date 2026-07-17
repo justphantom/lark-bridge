@@ -81,6 +81,14 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.MiniAgent.MaxTokens <= 0 {
 		cfg.MiniAgent.MaxTokens = 4096
 	}
+	// Permission: new field takes priority; fall back to deprecated SecurityLevel.
+	if cfg.MiniAgent.Permission == "" {
+		if cfg.MiniAgent.SecurityLevel == "free" {
+			cfg.MiniAgent.Permission = "free"
+		} else {
+			cfg.MiniAgent.Permission = "default"
+		}
+	}
 	if cfg.StateDir == "" {
 		// Default to the directory holding the config file so state
 		// lands next to the config. Relative paths resolve to CWD.

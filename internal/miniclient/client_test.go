@@ -71,7 +71,7 @@ func TestBuildArgs_Full(t *testing.T) {
 		BaseURL:       "http://localhost:8080",
 		SystemPrompt:  "be brief",
 		MaxTokens:     2048,
-		SecurityLevel: "free",
+		Permission: "free",
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Prompt:   "hi",
@@ -83,7 +83,7 @@ func TestBuildArgs_Full(t *testing.T) {
 	// Check key flags are present.
 	want := map[string]bool{
 		"--model": false, "--api-key": false, "--base-url": false,
-		"--system": false, "--max-tokens": false, "--security": false,
+		"--system": false, "--max-tokens": false, "--permission": false,
 		"--verbose": false, "--workdir": false, "--chat-id": false,
 		"--state-dir": false,
 	}

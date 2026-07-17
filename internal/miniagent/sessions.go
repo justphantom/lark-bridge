@@ -332,6 +332,59 @@ func (h *History) dirPath(chatID string) string {
 	return filepath.Join(h.dir, sanitizeChatID(chatID)+".dir")
 }
 
+// Permission returns the per-chat pinned permission mode, or "" when none
+// is set (the caller falls back to the global default).
+func (h *History) Permission(chatID string) string {
+	if h == nil {
+		return ""
+	}
+	b, err := os.ReadFile(h.permPath(chatID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SetPermission pins a permission mode for chatID (atomic temp+rename).
+// An empty mode clears the pin.
+func (h *History) SetPermission(chatID, mode string) error {
+	if h == nil {
+		return errors.New("miniagent: memory disabled")
+	}
+	if mode == "" {
+		_ = os.Remove(h.permPath(chatID))
+		return nil
+	}
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return err
+	}
+	target := h.permPath(chatID)
+	tmp, err := os.CreateTemp(h.dir, ".perm-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(mode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+func (h *History) permPath(chatID string) string {
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+".perm")
+}
+
 func (h *History) sessionPath(chatID, sid string) string {
 	return filepath.Join(h.dir, sanitizeChatID(chatID)+"__"+sid+".jsonl")
 }

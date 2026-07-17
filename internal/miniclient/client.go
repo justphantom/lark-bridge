@@ -25,26 +25,26 @@ const defaultMaxConcurrent = 4
 
 // Config carries the scalar settings the Client reads from config.MiniAgent.
 type Config struct {
-	CLIPath        string
-	APIKey         string
-	BaseURL        string
-	SystemPrompt   string
-	MaxTokens      int
-	SecurityLevel  string
-	MaxConcurrent  int
+	CLIPath       string
+	APIKey        string
+	BaseURL       string
+	SystemPrompt  string
+	MaxTokens     int
+	Permission    string // global default permission mode
+	MaxConcurrent int
 }
 
 // Client wraps the miniagent-cli binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
-	cliPath  string
-	apiKey   string
-	baseURL  string
-	system   string
-	maxTokens int
-	security string
-	logger   *log.Logger
-	sem      chan struct{}
+	cliPath    string
+	apiKey     string
+	baseURL    string
+	system     string
+	maxTokens  int
+	permission string // global default
+	logger     *log.Logger
+	sem        chan struct{}
 }
 
 // New builds a Client. logger may be nil (→ nop).
@@ -57,24 +57,25 @@ func New(cfg Config, logger *log.Logger) *Client {
 		n = defaultMaxConcurrent
 	}
 	return &Client{
-		cliPath:   cfg.CLIPath,
-		apiKey:    cfg.APIKey,
-		baseURL:   cfg.BaseURL,
-		system:    cfg.SystemPrompt,
-		maxTokens: cfg.MaxTokens,
-		security:  cfg.SecurityLevel,
-		logger:    logger,
-		sem:       make(chan struct{}, n),
+		cliPath:    cfg.CLIPath,
+		apiKey:     cfg.APIKey,
+		baseURL:    cfg.BaseURL,
+		system:     cfg.SystemPrompt,
+		maxTokens:  cfg.MaxTokens,
+		permission: cfg.Permission,
+		logger:     logger,
+		sem:        make(chan struct{}, n),
 	}
 }
 
 // RunOptions describes one miniagent-cli turn.
 type RunOptions struct {
-	Prompt   string
-	Model    string
-	Workdir  string
-	ChatID   string
-	StateDir string
+	Prompt     string
+	Model      string
+	Workdir    string
+	ChatID     string
+	StateDir   string
+	Permission string // per-chat override; "" → use Client's global default
 }
 
 // Run starts one miniagent-cli subprocess for opts and returns the event
@@ -141,8 +142,12 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if c.maxTokens > 0 {
 		a = append(a, "--max-tokens", strconv.Itoa(c.maxTokens))
 	}
-	if c.security != "" {
-		a = append(a, "--security", c.security)
+	if c.permission != "" {
+		a = append(a, "--permission", c.permission)
+	}
+	if opts.Permission != "" {
+		// Per-chat override replaces the global default.
+		a = replaceArg(a, "--permission", opts.Permission)
 	}
 	if opts.Workdir != "" {
 		a = append(a, "--workdir", opts.Workdir)
@@ -154,6 +159,18 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 		a = append(a, "--state-dir", opts.StateDir)
 	}
 	return a
+}
+
+// replaceArg finds --flag <old> in args and replaces <old> with newval.
+// If --flag is not present, appends --flag newval.
+func replaceArg(args []string, flag, newval string) []string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			args[i+1] = newval
+			return args
+		}
+	}
+	return append(args, flag, newval)
 }
 
 // pump reads stdout lines, parses them into Events, and forwards to out.

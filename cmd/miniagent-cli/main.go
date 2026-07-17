@@ -40,7 +40,7 @@ func main() {
 		workdir    = flag.String("workdir", "", "working directory (tool bounds + shell cwd)")
 		stateDir   = flag.String("state-dir", "", "state directory for session/memory (empty = stateless)")
 		chatID     = flag.String("chat-id", "", "chat id for per-chat session isolation (empty = no history)")
-		security   = flag.String("security", "default", "security level: default or free")
+		permission = flag.String("permission", "default", "permission mode: plan (read-only), default (bounded), free (unrestricted)")
 		verbose    = flag.Bool("verbose", false, "emit tool_use and tool_result events (default: tool_use only)")
 		showVer    = flag.Bool("version", false, "show version")
 	)
@@ -83,17 +83,28 @@ func main() {
 		Logger:  logger,
 	}
 
-	// Tools.
-	unrestricted := *security == "free"
+	// Tools: permission mode controls tool set and restrictions.
+	// plan = read-only (no write/shell); default = bounded; free = unrestricted.
+	unrestricted := *permission == "free"
 	var tools []miniagent.Tool
-	if *workdir != "" || unrestricted {
-		tools = append(tools,
-			miniagent.ReadFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
-			miniagent.WriteFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
-			miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
-		)
+	switch *permission {
+	case "plan":
+		// Read-only: only read_file + webfetch. No write/shell registered.
+		if *workdir != "" {
+			tools = append(tools, miniagent.ReadFile{WorkspaceRoot: *workdir})
+		}
+		tools = append(tools, miniagent.WebFetch{})
+	default:
+		// default or free: full tool set.
+		if *workdir != "" || unrestricted {
+			tools = append(tools,
+				miniagent.ReadFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
+				miniagent.WriteFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
+				miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
+			)
+		}
+		tools = append(tools, miniagent.WebFetch{})
 	}
-	tools = append(tools, miniagent.WebFetch{})
 
 	// History (optional).
 	var history *miniagent.History

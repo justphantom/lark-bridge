@@ -43,15 +43,16 @@ const closeGrace = 5 * time.Second
 // turn (which would race on the LLM, the history jsonl, and the emit
 // ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm           Client
-	cfg           LoopConfig
-	rpc           controlSender
-	logger        *log.Logger
-	history       *History // nil → stateless (MemoryEnabled=false)
-	answers       *answerBroker
-	workspaceRoot string // global default for tools + /cd picker scope
-	client        *miniclient.Client // non-nil → CLI subprocess mode (P3)
-	historyDir    string             // state dir for CLI's --state-dir flag
+	llm            Client
+	cfg            LoopConfig
+	rpc            controlSender
+	logger         *log.Logger
+	history        *History // nil → stateless (MemoryEnabled=false)
+	answers        *answerBroker
+	workspaceRoot  string // global default for tools + /cd picker scope
+	cfgPermission  string // global default permission mode (from config)
+	client         *miniclient.Client // non-nil → CLI subprocess mode (P3)
+	historyDir     string             // state dir for CLI's --state-dir flag
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -60,12 +61,7 @@ type Handler struct {
 	closeOnce sync.Once
 }
 
-// New wires the handler. llm is the LLM client (HTTPClient in production,
-// Fake in tests); pass nil when client (CLI mode) is used instead. rpc emits
-// Controls back to the frontend. history may be nil to disable multi-turn
-// memory. client is non-nil for CLI subprocess mode (P3): each turn forks
-// miniagent-cli instead of running the loop in-process.
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client) *Handler {
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client, cfgPermission string) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -77,6 +73,7 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		history:       history,
 		answers:       newAnswerBroker(),
 		workspaceRoot: workspaceRoot,
+		cfgPermission: cfgPermission,
 		client:        client,
 		cancelBy:      make(map[string]*promptCancel),
 	}
@@ -268,18 +265,21 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	start := time.Now()
 	model := h.activeModel(chatID)
 	workdir := h.activeDir(chatID)
+	perm := h.activePermission(chatID)
 	h.logger.Info("miniagent-cli turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
 		"model", model,
-		"workdir", workdir)
+		"workdir", workdir,
+		"permission", perm)
 
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
-		Prompt:   prompt,
-		Model:    model,
-		Workdir:  workdir,
-		ChatID:   chatID,
-		StateDir: h.historyDir,
+		Prompt:     prompt,
+		Model:      model,
+		Workdir:    workdir,
+		ChatID:     chatID,
+		StateDir:   h.historyDir,
+		Permission: perm,
 	})
 	if err != nil {
 		h.logger.Warn("miniagent-cli start failed",
@@ -520,6 +520,15 @@ func (h *Handler) activeDir(chatID string) string {
 		return d
 	}
 	return h.workspaceRoot
+}
+
+// activePermission returns the permission mode this chat should use: the
+// per-chat pin (from .perm file) if set, otherwise the global default.
+func (h *Handler) activePermission(chatID string) string {
+	if p := h.history.Permission(chatID); p != "" {
+		return p
+	}
+	return h.cfgPermission
 }
 
 // toolsForDir returns a Tool slice with WorkspaceRoot-bearing tools cloned

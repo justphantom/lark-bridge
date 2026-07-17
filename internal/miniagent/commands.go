@@ -38,6 +38,7 @@ var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title,
 	"/model":        (*Handler).cmdModel,
 	"/models":       (*Handler).cmdModels,
 	"/cd":           (*Handler).cmdDirectory,
+	"/perm":         (*Handler).cmdPermission,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -129,10 +130,11 @@ func (h *Handler) cmdCurrent(chatID, _ string) (level, title, body string) {
 	sid := h.history.Current(chatID)
 	cur := h.activeModel(chatID)
 	dir := h.activeDir(chatID)
+	perm := h.activePermission(chatID)
 	if sid == "" {
-		return "info", "当前状态", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s\n工作目录：%s", cur, dir)
+		return "info", "当前状态", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s\n工作目录：%s\n权限：%s", cur, dir, perm)
 	}
-	return "info", "当前状态", fmt.Sprintf("活动会话：%s\n模型：%s\n工作目录：%s", sid, cur, dir)
+	return "info", "当前状态", fmt.Sprintf("活动会话：%s\n模型：%s\n工作目录：%s\n权限：%s", sid, cur, dir, perm)
 }
 
 // cmdModel pins or clears the per-chat model:
@@ -329,4 +331,35 @@ func scanSubdirs(root string) []string {
 		}
 	}
 	return dirs
+}
+
+// cmdPermission pins or clears the per-chat permission mode:
+//   /perm              → show current + available modes
+//   /perm plan         → read-only (read_file + webfetch only)
+//   /perm default      → full tools with workspace bounds + blocklist
+//   /perm free         → full tools without limits
+//   /perm clear        → restore global default
+func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) {
+	if h.history == nil {
+		return "warning", "权限", "记忆未启用，无法设置权限模式。"
+	}
+	if arg == "" {
+		cur := h.activePermission(chatID)
+		return "info", "当前权限", fmt.Sprintf("当前权限模式：%s\n\n可选：\n/perm plan（只读）\n/perm default（受限写）\n/perm free（无限制）\n/perm clear（恢复默认）", cur)
+	}
+	valid := map[string]bool{"plan": true, "default": true, "free": true, "clear": true}
+	if !valid[arg] {
+		return "warning", "权限", fmt.Sprintf("未知模式 %q。可选：plan / default / free / clear", arg)
+	}
+	mode := arg
+	if arg == "clear" {
+		mode = ""
+	}
+	if err := h.history.SetPermission(chatID, mode); err != nil {
+		return "error", "权限", "设置失败：" + err.Error()
+	}
+	if mode == "" {
+		return "success", "已恢复默认", fmt.Sprintf("已清除自定义权限，将使用全局默认 %s。", h.cfgPermission)
+	}
+	return "success", "已切换权限", fmt.Sprintf("已切换到权限模式 %s（下次提问生效）。", mode)
 }

@@ -170,13 +170,16 @@ type MiniAgent struct {
 	// {state_dir}/miniagent/history/). nil/unset → enabled. Set false to
 	// run stateless (each prompt independent, like P1).
 	MemoryEnabled *bool `json:"memory_enabled,omitempty"`
-	// SecurityLevel controls how much the tools restrict the LLM:
-	//   "" / "default" — full security (workspace path bounds, shell
-	//     blocklist, cwd lock, env isolation, webfetch redirect cap).
-	//   "free" — tools skip path/cwd/blocklist/redirect limits so the LLM
-	//     can operate on the full filesystem. API key env isolation and
-	//     output truncation are ALWAYS enforced regardless of level.
-	SecurityLevel string `json:"security_level,omitempty"`
+	// Permission controls the tool execution policy (aligned with claude's
+	// permission_mode):
+	//   "plan"   — read-only (read_file + webfetch only; no write/shell)
+	//   "default"— full tools with workspace bounds + shell blocklist
+	//   "free"   — full tools without path/cwd/blocklist limits
+	// Env key isolation and output truncation are ALWAYS enforced.
+	// Empty → "default". Backward compat: if unset, falls back to
+	// SecurityLevel ("default"/"free" map directly).
+	Permission    string `json:"permission,omitempty"`
+	SecurityLevel string `json:"security_level,omitempty"` // deprecated, use Permission
 }
 
 // ComponentLogLevel configures per-component log level overrides.

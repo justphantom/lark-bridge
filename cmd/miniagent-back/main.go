@@ -86,12 +86,12 @@ func run(cfgPath string) error {
 		cliPath = filepath.Join(cfg.DeployMonitor.ProjectRoot, "bin", "miniagent-cli")
 	}
 	client := miniclient.New(miniclient.Config{
-		CLIPath:       cliPath,
-		APIKey:        cfg.MiniAgent.APIKey,
-		BaseURL:       cfg.MiniAgent.BaseURL,
-		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
-		MaxTokens:     cfg.MiniAgent.MaxTokens,
-		SecurityLevel: cfg.MiniAgent.SecurityLevel,
+		CLIPath:      cliPath,
+		APIKey:       cfg.MiniAgent.APIKey,
+		BaseURL:      cfg.MiniAgent.BaseURL,
+		SystemPrompt: cfg.MiniAgent.SystemPrompt,
+		MaxTokens:    cfg.MiniAgent.MaxTokens,
+		Permission:   cfg.MiniAgent.Permission,
 	}, logger)
 
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
@@ -99,7 +99,7 @@ func run(cfgPath string) error {
 	if memoryEnabled {
 		history = miniagent.NewHistory(cfg.StateDir, logger)
 	}
-	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client)
+	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission)
 	h.SetHistoryDir(cfg.StateDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -112,7 +112,7 @@ func run(cfgPath string) error {
 		"cli_path", cliPath,
 		"memory_enabled", memoryEnabled,
 		"workspace_root", cfg.MiniAgent.WorkspaceRoot,
-		"security_level", cfg.MiniAgent.SecurityLevel)
+		"permission", cfg.MiniAgent.Permission)
 
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
