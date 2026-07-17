@@ -85,7 +85,31 @@ type HTTPClient struct {
 	Logger  *log.Logger
 }
 
+// retryableStatus reports whether an HTTP status merits a bounded retry
+// (transient server/load conditions). 429 is rate-limiting; 500/502/503/504
+// are gateway/availability blips. Other 4xx are request bugs — retrying
+// cannot help.
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, // 429
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout:      // 504
+		return true
+	}
+	return false
+}
+
+// retryDelays is the fixed backoff schedule for LLM retries: ~1s, ~2s, ~4s.
+// Bounded (not exponential-forever) because a stuck endpoint should fail the
+// turn, not hang it; the user can resend. Mirrors backendrpc's bounded
+// backoff style but caps at 3 retries since each LLM call already costs.
+var retryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
 // Do posts req to {BaseURL}/v1/chat/completions and parses the response.
+// Transient failures (429/5xx) are retried with bounded backoff up to
+// len(retryDelays) times; the wait observes ctx so abort/close interrupt it.
 func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	if c.APIKey == "" {
 		return Response{}, fmt.Errorf("miniagent: api_key is empty")
@@ -111,31 +135,86 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	logger.Debug("miniagent http request",
 		"url", url, "model", req.Model,
 		"messages", len(req.Messages), "body_bytes", len(body))
+
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		raw, status, err := c.doOnce(ctx, client, url, body)
+		if err == nil && status == http.StatusOK {
+			logger.Debug("miniagent http response", "status", status, "body_bytes", len(raw), "attempt", attempt)
+			return parseChatResponse(raw)
+		}
+		// Surface the concrete failure.
+		if err != nil {
+			lastErr = fmt.Errorf("llm request: %w", err)
+		} else {
+			lastErr = fmt.Errorf("llm returned %d: %s", status, truncate(string(raw), 500, "…"))
+		}
+		// Retry only transient HTTP statuses (not transport errors, which
+		// tend to persist; not non-retryable 4xx). Transport errors here are
+		// things like a dead host — one quick retry is reasonable but we
+		// treat them as lastErr and fall through, since distinguishing
+		// "transient dial" from "config wrong" is unreliable.
+		if err != nil || !retryableStatus(status) || attempt >= len(retryDelays) {
+			if err != nil {
+				logger.Warn("miniagent http transport failed", log.FieldError, err, "url", url)
+			} else {
+				logger.Warn("miniagent http non-200 giving up",
+					"status", status, "body_len", len(raw), "attempts", attempt+1)
+			}
+			return Response{}, lastErr
+		}
+		delay := retryDelays[attempt]
+		// Honor Retry-After when the endpoint provides it (429 often does),
+		// clamped to the same cap so a hostile/misconfigured header cannot
+		// stall the turn arbitrarily.
+		if ra := parseRetryAfter(raw); ra > 0 && ra < delay {
+			delay = ra
+		}
+		logger.Warn("miniagent http retryable status, backing off",
+			"status", status, "attempt", attempt+1, "backoff", delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
+		}
+	}
+}
+
+// doOnce performs a single POST and returns the raw response body, the HTTP
+// status (0 on transport error), and the error. It is the unit of retry.
+func (c *HTTPClient) doOnce(ctx context.Context, client *http.Client, url string, body []byte) (raw []byte, status int, err error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return Response{}, fmt.Errorf("build request: %w", err)
+		return nil, 0, fmt.Errorf("build request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		logger.Warn("miniagent http transport failed", log.FieldError, err, "url", url)
-		return Response{}, fmt.Errorf("llm request: %w", err)
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return Response{}, fmt.Errorf("read response: %w", err)
+	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if rerr != nil {
+		return raw, resp.StatusCode, fmt.Errorf("read response: %w", rerr)
 	}
-	if resp.StatusCode != http.StatusOK {
-		logger.Warn("miniagent http non-200",
-			"status", resp.StatusCode, "body_len", len(raw),
-			"body_preview", truncate(string(raw), 200, "…"))
-		return Response{}, fmt.Errorf("llm returned %d: %s", resp.StatusCode, truncate(string(raw), 500, "…"))
+	return raw, resp.StatusCode, nil
+}
+
+// parseRetryAfter extracts a Retry-After hint from an error response body.
+// OpenAI-compatible endpoints usually echo it as a top-level JSON field when
+// 429; returns 0 if absent/unparseable so the caller falls back to its own
+// schedule. body is the already-read non-200 response body.
+func parseRetryAfter(body []byte) time.Duration {
+	var v struct {
+		Error struct {
+			RetryAfter float64 `json:"retry_after"` // seconds (some endpoints)
+		} `json:"error"`
 	}
-	logger.Debug("miniagent http response", "status", resp.StatusCode, "body_bytes", len(raw))
-	return parseChatResponse(raw)
+	if json.Unmarshal(body, &v) == nil && v.Error.RetryAfter > 0 {
+		return time.Duration(v.Error.RetryAfter * float64(time.Second))
+	}
+	return 0
 }
 
 // chatMessage is the OpenAI wire format for one message.
