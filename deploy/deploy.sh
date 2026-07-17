@@ -424,7 +424,21 @@ sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back lark-goo
 # `make deploy` → 本脚本 → 大量 `sudo systemctl ...`。systemd 无 TTY，sudo 一旦
 # 需要密码就会挂起直到 monitor 的 10 分钟超时，部署静默失败。故 $RUN_USER 必须对
 # systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo（或配 /etc/sudoers.d 条目）。
-# 验证：sudo -n -l | grep systemctl，或直接以该用户 `sudo -n systemctl is-active ...`。
+# 这里主动探测一次免密 sudo（monitor 真实路径），失败则明确告警，避免远程 /deploy
+# 静默挂死 10 分钟才超时。
+deploy_sudo_check() {
+    # sudo -n 非交互，无免密配置时立即失败而非挂起等密码
+    if sudo -u "$RUN_USER" sudo -n systemctl is-active lark-feishu-front >/dev/null 2>&1; then
+        info "$RUN_USER 具备免密 sudo（remote /deploy 可用）"
+    else
+        warn "$RUN_USER 无免密 sudo，remote /deploy 将挂起至超时失败"
+        warn "  修复：配 /etc/sudoers.d/lark-bridge，例如："
+        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/chmod, /usr/bin/chown, /usr/bin/sed, /usr/bin/tee, /usr/bin/rm, /usr/bin/mv"
+        warn "  （仅授予本脚本用到的命令，遵循最小权限）"
+    fi
+}
+deploy_sudo_check
+
 if ! systemctl is-enabled --quiet lark-deploy-monitor 2>/dev/null; then
     info "首次部署：enable + start lark-deploy-monitor"
     sudo systemctl enable lark-deploy-monitor 2>/dev/null || true
