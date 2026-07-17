@@ -50,7 +50,7 @@ func TestParseCommand(t *testing.T) {
 // lazy-bind command tests.
 func newCmdTestHandler(t *testing.T) (*Handler, *router.Router) {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}

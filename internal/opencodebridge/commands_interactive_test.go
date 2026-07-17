@@ -264,7 +264,7 @@ func TestDrainAnswers_OnClose(t *testing.T) {
 
 func newPickerHandler(t *testing.T) (*Handler, *router.Router) {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -274,7 +274,7 @@ func newPickerHandler(t *testing.T) (*Handler, *router.Router) {
 
 func newPickerHandlerWithAgent(t *testing.T, agent opencodeAPI) (*Handler, *router.Router) {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}

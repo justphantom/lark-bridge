@@ -13,7 +13,7 @@ import (
 // no rpc/agent, suitable for testing the pending-answer routing directly.
 func newInteractiveTestHandler(t *testing.T) *Handler {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}

@@ -119,7 +119,7 @@ func TestHandleEvent_PromptEmitsTerminal(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -154,7 +154,7 @@ func TestHandleEvent_SkillPromptBypassesSlashCommand(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -179,7 +179,7 @@ func TestRunPrompt_TimeoutFires(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingOpencode{}, client, HandlerConfig{
 		StateDir:      t.TempDir(),
 		PromptTimeout: 100 * time.Millisecond,
@@ -213,7 +213,7 @@ func TestRunPrompt_UserCancelShowsCancelled(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingOpencode{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())

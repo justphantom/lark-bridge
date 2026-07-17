@@ -10,7 +10,7 @@ import (
 // binding for chatID, so Set* accessors have a target to mutate.
 func newTestRouter(t *testing.T, chatID string) *Router {
 	t.Helper()
-	r, err := New(nil, "", log.Nop())
+	r, err := New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 // TestSetMethods_NoOpOnMissingBinding verifies Set* is a no-op when the binding
 // does not exist (does not panic, does not create a binding).
 func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
-	r, err := New(nil, "", log.Nop())
+	r, err := New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestAllBindings_IsSnapshot(t *testing.T) {
 
 // TestTitleOf verifies TitleOf returns the title or empty string.
 func TestTitleOf(t *testing.T) {
-	r, err := New(nil, "", log.Nop())
+	r, err := New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}

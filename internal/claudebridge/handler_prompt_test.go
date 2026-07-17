@@ -33,7 +33,7 @@ func (closedStreamClaude) Run(_ context.Context, _ claude.RunOptions) (<-chan cl
 // runPrompt to completion in tests.
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -107,7 +107,7 @@ func (panicClaude) Run(context.Context, claude.RunOptions) (<-chan claude.Event,
 // to the caller) and the panic is logged. rpc is nil so the post-recover
 // emit is a no-op; the point is that the process survives.
 func TestRunPromptRecoversPanic(t *testing.T) {
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestRunPrompt_TimeoutFires(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
 		StateDir:      t.TempDir(),
 		PromptTimeout: 100 * time.Millisecond,
@@ -185,7 +185,7 @@ func TestRunPrompt_UserCancelShowsCancelled(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())

@@ -105,7 +105,7 @@ func TestHandleEvent_PromptEmitsTerminal(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -132,7 +132,7 @@ func TestHandleEvent_AbortNoOpOnIdleChat(t *testing.T) {
 	client, _, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{}, log.Nop())
 
 	ev := &protocol.Event{
@@ -150,7 +150,7 @@ func TestHandleEvent_PingIsNoOp(t *testing.T) {
 	client, _, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{}, log.Nop())
 
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePing}); err != nil {
@@ -168,7 +168,7 @@ func TestHandleEvent_SkillPromptBypassesSlashCommand(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -193,7 +193,7 @@ func TestHandleEvent_UnknownTypeReturnsError(t *testing.T) {
 	client, _, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{}, log.Nop())
 
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: "bogus"}); err == nil {
@@ -225,7 +225,7 @@ func TestClose_WaitsForInFlightPrompt(t *testing.T) {
 	client, _, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())

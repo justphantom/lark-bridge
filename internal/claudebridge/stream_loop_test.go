@@ -101,7 +101,7 @@ func TestStreamRun_ToolResultNameCorrelatedByFeed(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -153,7 +153,7 @@ func TestStreamRun_TaskProgressFoldedIntoToolRow(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())
@@ -220,7 +220,7 @@ func TestStreamRun_UnknownEventNotFatal(t *testing.T) {
 	client, reg, cleanup := connectTestRPC(t)
 	defer cleanup()
 
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
 		StateDir: t.TempDir(),
 	}, log.Nop())

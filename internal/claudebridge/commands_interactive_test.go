@@ -20,7 +20,7 @@ import (
 // exercising the same routing the IPC path would.
 func newPickerTestHandler(t *testing.T, modelOpts, permOpts, effortOpts []string) (*Handler, *router.Router) {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -298,7 +298,7 @@ func (f settingsFakeAgent) ListSettings(context.Context) ([]string, error) {
 // /settings picker can be exercised end to end.
 func newSettingsPickerHandler(t *testing.T, paths []string) (*Handler, *router.Router) {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}

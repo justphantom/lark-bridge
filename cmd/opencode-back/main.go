@@ -81,7 +81,7 @@ func run(cfgPath string) error {
 	// CLI mode never calls GetOrCreate (sessions are bound lazily from the
 	// first run's session event), so the router's SessionCreator is nil --
 	// mirroring claude-back.
-	r, err := router.New(nil, cfg.RouterPath,
+	r, err := router.New(cfg.RouterPath,
 		componentLogger(cfg, baseLevel, output, "router"))
 	if err != nil {
 		return fmt.Errorf("router: %w", err)

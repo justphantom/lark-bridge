@@ -9,7 +9,6 @@
 package router
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -34,19 +33,10 @@ type Binding struct {
 	SettingsFile   string `json:"settingsFile,omitempty"`   // claude
 }
 
-// SessionCreator is implemented by adapter types around the opencode client.
-// The router calls CreateSessionInDirectory when it needs to open a new
-// session for a chat (opencode GetOrCreate path). claude-back passes nil
-// because it never calls GetOrCreate.
-type SessionCreator interface {
-	CreateSessionInDirectory(ctx context.Context, title, directory string) (id, realDir string, err error)
-}
-
 // Router is safe for concurrent use.
 type Router struct {
 	mu          sync.RWMutex
 	bindings    map[string]Binding
-	create      SessionCreator
 	persistPath string
 	saveMu      sync.Mutex
 	logger      *log.Logger
@@ -65,23 +55,18 @@ type Router struct {
 	closeOnce sync.Once
 }
 
-// New returns a router backed by the given SessionCreator.
-// If persistPath is non-empty, bindings are loaded from disk on startup and
-// saved automatically on every mutation. Returns error if load fails.
+// New returns a router that persists bindings to persistPath (loaded on
+// startup, saved on every mutation). persistPath="" → in-memory only.
 //
 // logger is read by load()/save() (the latter runs on the saveLoop goroutine
 // started here), so it MUST be supplied at construction — setting it after
 // New returns races saveLoop. A nil logger falls back to a no-op logger.
-//
-// create may be nil for backends that never call GetOrCreate (claude-back:
-// it binds sessions lazily and only uses Bind/Lookup).
-func New(create SessionCreator, persistPath string, logger *log.Logger) (*Router, error) {
+func New(persistPath string, logger *log.Logger) (*Router, error) {
 	if logger == nil {
 		logger = log.Nop()
 	}
 	r := &Router{
 		bindings:    make(map[string]Binding),
-		create:      create,
 		persistPath: persistPath,
 		logger:      logger,
 	}

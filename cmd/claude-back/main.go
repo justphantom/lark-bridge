@@ -73,7 +73,7 @@ func run(cfgPath string) error {
 
 	// Claude-back uses a nil SessionCreator: sessions are bound lazily and
 	// only Bind/Lookup/Set* are exercised (never GetOrCreate).
-	r, err := router.New(nil, cfg.RouterPath, logger)
+	r, err := router.New(cfg.RouterPath, logger)
 	if err != nil {
 		return fmt.Errorf("router: %w", err)
 	}

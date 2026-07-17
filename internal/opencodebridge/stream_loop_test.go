@@ -116,7 +116,7 @@ func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
 	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}`
 
 	events := parseLines(t, toolStep, toolStep, stopStep)
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
@@ -143,7 +143,7 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}`
 
 	events := parseLines(t, stopStep)
-	r, _ := router.New(nil, "", log.Nop())
+	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 

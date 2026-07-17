@@ -17,7 +17,7 @@ import (
 // completion in tests.
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
@@ -92,7 +92,7 @@ func (panicOpencode) Run(context.Context, opencode.RunOptions) (<-chan opencode.
 // to the caller) and the panic is logged. rpc is nil so the post-recover
 // emit is a no-op; the point is that the process survives.
 func TestRunPromptRecoversPanic(t *testing.T) {
-	r, err := router.New(nil, "", log.Nop())
+	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
