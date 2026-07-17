@@ -47,6 +47,7 @@ type Handler struct {
 	rpc     controlSender
 	logger  *log.Logger
 	history *History // nil → stateless (MemoryEnabled=false)
+	answers *answerBroker
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -68,6 +69,7 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		rpc:      rpc,
 		logger:   logger,
 		history:  history,
+		answers:  newAnswerBroker(),
 		cancelBy: make(map[string]*promptCancel),
 	}
 }
@@ -118,6 +120,7 @@ func (h *Handler) Close() {
 			pc.cancel()
 		}
 		h.cancelMu.Unlock()
+		h.answers.Drain()
 		done := make(chan struct{})
 		go func() {
 			h.wg.Wait()
@@ -162,6 +165,14 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		}
 		if h.abortChat(ev.Abort.ChatID) {
 			h.logger.Info("miniagent abort requested", log.FieldChatID, ev.Abort.ChatID)
+		}
+		return nil
+	}
+	// TypeAnswer: the frontend relays a card click from an interactive picker
+	// (e.g. /model). Route it to the goroutine blocked in askAndWait.
+	if ev.Type == protocol.TypeAnswer {
+		if ev.Answer != nil && ev.Answer.RequestID != "" {
+			h.answers.Deliver(ev.Answer.RequestID, ev.Answer)
 		}
 		return nil
 	}

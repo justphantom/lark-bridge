@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hu/lark-bridge/internal/protocol"
 )
 
 // Session management commands. These mirror the claude backend's /session-*
@@ -75,6 +77,11 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, prompt strin
 	}
 	fn := sessionCmds[fields[0]]
 	level, title, body := fn(h, chatID, arg)
+	// "async" is a sentinel: the command launched its own goroutine and
+	// emitted its own notices, so handleSessionCommand must not send another.
+	if level == "async" {
+		return nil
+	}
 	return h.notify(ctx, chatID, level, title, body)
 }
 
@@ -133,8 +140,40 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 		return "warning", "模型", "记忆未启用，无法设置模型。"
 	}
 	if arg == "" {
-		cur := h.activeModel(chatID)
-		return "info", "当前模型", fmt.Sprintf("当前模型：%s\n\n用法：\n/model <ID> 切换\n/model clear 恢复默认\n/models 查看可用列表", cur)
+		// No arg → interactive picker (async, like opencode-back's runModelPicker).
+		// ListModels may take tens of seconds, and askAndWait blocks for a human
+		// click; both must run off the SSE event loop. Emit a "loading" notice
+		// immediately, then launch a goroutine that fetches models, emits a
+		// selection card, waits for the user's click, and applies it.
+		lister, ok := h.llm.(ModelLister)
+		if !ok {
+			return "warning", "模型", "当前 LLM 客户端不支持列模型。用 /model <ID> 直接指定。"
+		}
+		h.sendCtrl(&protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: chatID,
+			Notice: &protocol.NoticePayload{Level: "info", Title: "正在加载模型列表", Message: "正在获取可用模型，请稍候…"},
+		})
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			models, err := lister.ListModels(ctx)
+			if err != nil {
+				h.notify(ctx, chatID, "error", "选择失败", "获取模型列表失败："+err.Error())
+				return
+			}
+			choice, err := h.askAndWait(ctx, chatID, "模型", models)
+			if err != nil {
+				h.notify(ctx, chatID, "warning", "选择失败", err.Error())
+				return
+			}
+			if err := h.history.SetModel(chatID, choice); err != nil {
+				h.notify(ctx, chatID, "error", "模型", "设置失败："+err.Error())
+				return
+			}
+			h.notify(ctx, chatID, "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
+		}()
+		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
 	if arg == "clear" {
 		if err := h.history.SetModel(chatID, ""); err != nil {
