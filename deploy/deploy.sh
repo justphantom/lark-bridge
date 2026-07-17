@@ -147,12 +147,16 @@ wait_listen() {
 
 # 生成单个 systemd unit
 #   $1=unit 名  $2=描述  $3=二进制名  $4=配置文件名  $5=依赖 unit（可空，仅 feishu-front 留空）
+#   $6=额外的 Environment= 行（可空，多行用 $'\n' 分隔）
 # 用 Wants= 而非 Requires=：前端崩溃时后端不被连带停止，in-flight Claude 对话
 # 继续运行，backendrpc.Run 的重连机制在前端恢复后重新接上 SSE。
 write_unit() {
-    local unit="$1" desc="$2" binary="$3" config="$4" requires="${5:-}"
+    local unit="$1" desc="$2" binary="$3" config="$4" requires="${5:-}" extra_env="${6:-}"
     local deps="After=network.target"
     [[ -n "$requires" ]] && deps="After=$requires.service"$'\n'"Wants=$requires.service"
+    # extra_env 非空时尾部补一个换行，使 heredoc 里 ExecStart 独立成行；空则留空。
+    local env_block=""
+    [[ -n "$extra_env" ]] && env_block="$extra_env"$'\n'
     sudo tee "/etc/systemd/system/$unit.service" > /dev/null <<EOF
 [Unit]
 Description=lark-bridge $desc
@@ -160,7 +164,7 @@ $deps
 
 [Service]
 EnvironmentFile=$CONFIG_DIR/.env
-ExecStart=$DEPLOY_DIR/$binary -config $CONFIG_DIR/$config
+${env_block}ExecStart=$DEPLOY_DIR/$binary -config $CONFIG_DIR/$config
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
@@ -347,8 +351,33 @@ write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-co
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
 write_unit lark-peri-back      lark-peri-back      lark-peri-back      peri-config.json     lark-feishu-front
-write_unit lark-goose-back     lark-goose-back     lark-goose-back     goose-config.json    lark-feishu-front
+# goose 把 API key 存在用户 D-Bus keyring（登录会话独有）或 ~/.config/goose/
+# secrets.yaml。systemd 启动不带 D-Bus 会话环境 → 读不到 keyring → 本地代理 401。
+# GOOSE_DISABLE_KEYRING=true 强制 goose 走文件存储（secrets.yaml），绕过 keyring。
+# 凭证文件需运维用 `goose configure` 预先生成（见下方 deploy_goose_secret_check）。
+write_unit lark-goose-back     lark-goose-back     lark-goose-back     goose-config.json    lark-feishu-front \
+    "Environment=GOOSE_DISABLE_KEYRING=true"
 write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
+
+# goose 凭证检测：GOOSE_DISABLE_KEYRING=true 下 goose 从 ~/.config/goose/secrets.yaml
+# 读 key。该文件需运维预先以 RUN_USER 身份运行 `goose configure` 生成（交互式，无法
+# 在本脚本内完成）。缺失则 goose-back 必 401（已实测）——仅告警不中止，让运维先完成
+# 其他部署再补凭证；明确给出修复命令避免无方向排查。
+deploy_goose_secret_check() {
+    local home_dir
+    home_dir="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+    [[ -n "$home_dir" ]] || { warn "无法解析 $RUN_USER 的 home 目录，跳过 goose 凭证检查"; return; }
+    local secret="$home_dir/.config/goose/secrets.yaml"
+    if [[ ! -s "$secret" ]]; then
+        warn "goose 凭证缺失：$secret 不存在或为空"
+        warn "  goose-back 将无法认证（401）。请以 $RUN_USER 身份执行："
+        warn "    sudo -u $RUN_USER goose configure   # 选 openai provider 填 API key"
+        warn "  生成的 secrets.yaml 即为 GOOSE_DISABLE_KEYRING=true 时的凭证来源"
+    else
+        info "goose 凭证就绪：$secret"
+    fi
+}
+deploy_goose_secret_check
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
