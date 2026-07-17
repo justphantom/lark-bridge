@@ -10,36 +10,51 @@ import (
 )
 
 // maxIterations bounds the ReAct loop so a misbehaving LLM cannot cycle
-// forever burning tokens. P0 exits on the first call (no tools wired), so
-// this only bites once P1 introduces tools.
+// forever burning tokens.
 const maxIterations = 20
 
-// EmitFunc receives out-of-band signals from the loop as it runs: each
-// tool_use (when the LLM asks for a tool) and each tool_result (after
-// execution). P0 has no tools, so nothing fires; the signature is here so
-// P1 wires the protocol.TypeToolUse / TypeToolResult emits without changing
-// loop.Run's callers.
-//
-// promptID scopes the emit to the in-flight turn. kind is "tool_use" |
-// "tool_result" | "thinking"; name/payload carry the tool name and a summary.
-type EmitFunc func(promptID, kind, name, payload string)
+// SignalKind tags what a Signal reports to the handler.
+type SignalKind string
+
+const (
+	SignalToolUse    SignalKind = "tool_use"    // LLM requested a tool call
+	SignalToolResult SignalKind = "tool_result" // tool finished (ok or error)
+)
+
+// Signal is one out-of-band event the loop fires so the handler can emit a
+// matching Control (TypeToolUse / TypeToolResult) to the frontend. Name is
+// the tool name; Input is the LLM's argument summary (for tool_use) or the
+// call's path/input summary (for tool_result); Output is the tool's result
+// text (tool_result only); IsError marks a failed call.
+type Signal struct {
+	Kind    SignalKind
+	Name    string
+	Input   string
+	Output  string
+	IsError bool
+}
+
+// EmitFunc receives out-of-band signals from the loop as it runs. promptID
+// scopes the signal to the in-flight turn. May be nil (tests).
+type EmitFunc func(promptID string, sig Signal)
 
 // Result is what loop.Run returns to the handler: the terminal assistant
 // text plus the cumulative token usage across every LLM call this run.
 type Result struct {
 	Text  string
 	Usage Usage
-	Steps int // number of LLM calls made (1 in P0)
+	Steps int // number of LLM calls made
 }
 
-// Run drives the ReAct loop for one turn. P0: a single LLM call with the
-// user's prompt; if the LLM asks for a tool, the loop returns an error
-// (tools land in P1). P1+: tool_calls trigger execution + emit + another
-// LLM call, bounded by maxIterations.
+// Run drives the ReAct loop for one turn.
+//   - LLM returns plain text → loop terminates with that text.
+//   - LLM returns tool_calls → loop executes each via cfg.Tools, emits
+//     ToolUse/ToolResult signals, appends the assistant tool_calls message
+//     plus one tool message per call, and continues. Bounded by
+//     maxIterations.
 //
-// ctx bounds the whole turn (cancelled on /abort or process shutdown).
-// promptID scopes emits to this turn. logger may be nil (tests). emit may
-// be nil (tests).
+// ctx bounds the whole turn. promptID scopes emits. logger may be nil.
+// emit may be nil.
 func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt string, emit EmitFunc, logger *log.Logger) (Result, error) {
 	if llm == nil {
 		return Result{}, errors.New("miniagent: llm client is nil")
@@ -47,6 +62,20 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 	if logger == nil {
 		logger = log.Nop()
 	}
+	// Advertise the tools' schemas to the LLM on every call (cheap).
+	toolSpecs := make([]ToolSpec, 0, len(cfg.Tools))
+	toolByName := make(map[string]Tool, len(cfg.Tools))
+	for _, t := range cfg.Tools {
+		spec := t.Spec()
+		toolSpecs = append(toolSpecs, spec)
+		toolByName[spec.Name] = t
+	}
+	emitSignal := func(sig Signal) {
+		if emit != nil {
+			emit(promptID, sig)
+		}
+	}
+
 	msgs := []Message{{Role: "user", Content: userPrompt}}
 	var total Usage
 	for step := 1; step <= maxIterations; step++ {
@@ -63,7 +92,7 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 			System:    cfg.System,
 			Messages:  msgs,
 			MaxTokens: cfg.MaxTokens,
-			Tools:     cfg.Tools,
+			Tools:     toolSpecs,
 		})
 		callDur := time.Since(callStart)
 		if err != nil {
@@ -87,25 +116,39 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 				log.FieldPromptID, promptID, "step", step, "total_steps", step)
 			return Result{Text: resp.Text, Usage: total, Steps: step}, nil
 		}
-		// P0: no tools wired. Surface as an error so the handler emits
-		// TypeError instead of silently dropping the turn. P1 replaces this
-		// branch with: dispatch each call → emit tool_use/tool_result →
-		// append assistant(tool_calls) + tool(role=tool) messages → continue.
-		logger.Warn("miniagent tool calls rejected (P0)",
-			log.FieldPromptID, promptID, "step", step, "tool_calls", len(resp.ToolCalls))
-		return Result{Usage: total, Steps: step}, fmt.Errorf("miniagent: tool calls not yet supported (P0); LLM requested %d call(s)", len(resp.ToolCalls))
+
+		// Tool branch: record the assistant's tool_calls verbatim, then
+		// execute each and append a tool-role message carrying the result.
+		// OpenAI requires tool_call_id on each tool message to match the
+		// assistant's call id; a missing/mismatched id yields a 400.
+		msgs = append(msgs, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
+		for _, tc := range resp.ToolCalls {
+			emitSignal(Signal{Kind: SignalToolUse, Name: tc.Name, Input: tc.Args})
+			tool, ok := toolByName[tc.Name]
+			var tres ToolResult
+			if !ok {
+				tres = ToolResult{IsError: true, Output: fmt.Sprintf("未知工具 %q", tc.Name)}
+			} else {
+				tres = tool.Call(ctx, tc.Args)
+			}
+			logger.Info("miniagent tool executed",
+				log.FieldPromptID, promptID, "step", step,
+				"tool", tc.Name, "is_error", tres.IsError,
+				"output_len", len(tres.Output))
+			emitSignal(Signal{Kind: SignalToolResult, Name: tc.Name, Input: tc.Args, Output: tres.Output, IsError: tres.IsError})
+			msgs = append(msgs, Message{Role: "tool", ToolCallID: tc.ID, Content: tres.Output})
+		}
 	}
 	logger.Warn("miniagent loop exhausted max iterations",
 		log.FieldPromptID, promptID, "max", maxIterations)
 	return Result{Usage: total, Steps: maxIterations}, errors.New("miniagent: max iterations exceeded")
 }
 
-// LoopConfig carries the per-turn LLM parameters. The handler builds it
-// from config.MiniAgent once at startup; memory (P2) appends to Messages
-// outside this struct.
+// LoopConfig carries the per-turn LLM parameters. Tools is the executable
+// tool set (each Tool also contributes its Spec to the LLM schema).
 type LoopConfig struct {
 	Model     string
 	System    string
 	MaxTokens int
-	Tools     []ToolSpec
+	Tools     []Tool
 }

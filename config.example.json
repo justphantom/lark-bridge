@@ -32,11 +32,12 @@
   },
 
   "miniagent": {
-    "api_key":       "${MINIAGENT_API_KEY}",
-    "base_url":      "${MINIAGENT_BASE_URL}",
-    "model":         "${MINIAGENT_DEFAULT_MODEL}",
-    "system_prompt": "你是一个简洁的助手，回答通常不超过 500 字。",
-    "max_tokens":    4096
+    "api_key":         "${MINIAGENT_API_KEY}",
+    "base_url":        "${MINIAGENT_BASE_URL}",
+    "model":           "${MINIAGENT_DEFAULT_MODEL}",
+    "system_prompt":   "你是一个简洁的助手，回答通常不超过 500 字。",
+    "max_tokens":      4096,
+    "workspace_root":  "${WORKSPACE_ROOT}"
   },
 
   "deploy_monitor": {

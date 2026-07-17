@@ -119,15 +119,40 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 	}
 }
 
-// emitHook returns an EmitFunc that logs each loop signal (tool_use /
-// tool_result / thinking) for triage. P0 fires no signals (no tools); the
-// hook is in place so P1's tool emits are observable from the start.
+// emitHook returns an EmitFunc that turns loop tool signals into frontend
+// Controls (TypeToolUse when the LLM asks for a tool, TypeToolResult after
+// execution) so the user sees the agent working. Both use the turn's
+// promptID so the frontend folds them into the same card. Emits are
+// best-effort: a failure is logged but never fails the turn.
 func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
-	return func(_, kind, name, payload string) {
-		h.logger.Debug("miniagent loop signal",
-			log.FieldChatID, chatID,
-			log.FieldPromptID, promptID,
-			"kind", kind, "name", name)
+	return func(_ string, sig Signal) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var ctrl *protocol.Control
+		switch sig.Kind {
+		case SignalToolUse:
+			ctrl = &protocol.Control{
+				Type:     protocol.TypeToolUse,
+				PromptID: promptID,
+				ChatID:   chatID,
+				ToolUse:  &protocol.ToolUsePayload{Name: sig.Name, Input: sig.Input},
+			}
+		case SignalToolResult:
+			ctrl = &protocol.Control{
+				Type:       protocol.TypeToolResult,
+				PromptID:   promptID,
+				ChatID:     chatID,
+				ToolResult: &protocol.ToolResultPayload{Name: sig.Name, Input: sig.Input, Output: sig.Output, IsError: sig.IsError},
+			}
+		default:
+			h.logger.Debug("miniagent unknown signal kind", "kind", sig.Kind)
+			return
+		}
+		if err := h.rpc.SendControl(ctx, ctrl); err != nil {
+			h.logger.Warn("miniagent emit signal failed",
+				log.FieldChatID, chatID, log.FieldPromptID, promptID,
+				"kind", sig.Kind, log.FieldError, err)
+		}
 	}
 }
 

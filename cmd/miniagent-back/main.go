@@ -82,10 +82,17 @@ func run(cfgPath string) error {
 		BaseURL: cfg.MiniAgent.BaseURL,
 		Logger:  logger,
 	}
+	// Tools: read_file only registers when workspace_root is set (empty
+	// means disabled; the LLM never sees the tool). Add future tools here.
+	var tools []miniagent.Tool
+	if cfg.MiniAgent.WorkspaceRoot != "" {
+		tools = append(tools, miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot})
+	}
 	h := miniagent.New(llm, miniagent.LoopConfig{
 		Model:     cfg.MiniAgent.Model,
 		System:    cfg.MiniAgent.SystemPrompt,
 		MaxTokens: cfg.MiniAgent.MaxTokens,
+		Tools:     tools,
 	}, rpc, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -95,7 +102,9 @@ func run(cfgPath string) error {
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
 		"base_url", cfg.MiniAgent.BaseURL,
-		"model", cfg.MiniAgent.Model)
+		"model", cfg.MiniAgent.Model,
+		"tools", len(tools),
+		"workspace_root", cfg.MiniAgent.WorkspaceRoot)
 
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)

@@ -161,6 +161,11 @@ type MiniAgent struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// WorkspaceRoot bounds read_file to paths under this directory (after
+	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
+	// call it). Recommended: ${WORKSPACE_ROOT} so it shares the same env
+	// var as claude-back / opencode-back.
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

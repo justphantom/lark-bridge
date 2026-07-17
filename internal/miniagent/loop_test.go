@@ -62,19 +62,85 @@ func TestRun_TextOnlyReturnsImmediately(t *testing.T) {
 	}
 }
 
-// TestRun_ToolCallRejectedInP0 verifies that a tool-call response fails the
-// turn in P0 (no tools wired) rather than silently looping.
-func TestRun_ToolCallRejectedInP0(t *testing.T) {
-	llm := &fakeLLM{responses: []Response{{
-		Text:      "",
-		ToolCalls: []ToolCall{{ID: "c1", Name: "read_file", Args: "{}"}},
-	}}}
-	_, err := Run(context.Background(), llm, LoopConfig{}, "p1", "read x", nil, nil)
-	if err == nil {
-		t.Fatal("expected error for tool call in P0, got nil")
+// fakeTool is a test Tool that returns a canned result and records its calls.
+type fakeTool struct {
+	name   string
+	result ToolResult
+	calls  []string
+}
+
+func (f *fakeTool) Spec() ToolSpec { return ToolSpec{Name: f.name, Parameters: map[string]any{"type": "object"}} }
+func (f *fakeTool) Call(_ context.Context, args string) ToolResult {
+	f.calls = append(f.calls, args)
+	return f.result
+}
+
+// TestRun_ReActToolThenText verifies the full ReAct 2-step path: LLM asks
+// for a tool (step 1) → tool executes → result fed back → LLM replies
+// with text (step 2) → loop terminates with that text.
+func TestRun_ReActToolThenText(t *testing.T) {
+	tool := &fakeTool{name: "read_file", result: ToolResult{Output: "FILE=hello"}}
+	llm := &fakeLLM{responses: []Response{
+		{ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Args: `{"path":"a"}`}}},
+		{Text: "the file says hello", Usage: Usage{InputTokens: 4, OutputTokens: 5}},
+	}}
+	var signals []Signal
+	emit := func(_ string, s Signal) { signals = append(signals, s) }
+
+	res, err := Run(context.Background(), llm, LoopConfig{Tools: []Tool{tool}}, "p1", "read a", emit, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("error = %v, want contains 'not yet supported'", err)
+	if res.Text != "the file says hello" {
+		t.Errorf("Text = %q", res.Text)
+	}
+	if res.Steps != 2 {
+		t.Errorf("Steps = %d, want 2", res.Steps)
+	}
+	if len(tool.calls) != 1 || tool.calls[0] != `{"path":"a"}` {
+		t.Errorf("tool calls = %v, want one call with args", tool.calls)
+	}
+	// Expect exactly one tool_use and one tool_result signal.
+	if len(signals) != 2 {
+		t.Fatalf("signals = %d, want 2", len(signals))
+	}
+	if signals[0].Kind != SignalToolUse || signals[0].Name != "read_file" {
+		t.Errorf("signal[0] = %+v, want tool_use/read_file", signals[0])
+	}
+	if signals[1].Kind != SignalToolResult || signals[1].Output != "FILE=hello" {
+		t.Errorf("signal[1] = %+v, want tool_result with output", signals[1])
+	}
+}
+
+// TestRun_UnknownToolYieldsErrorResult verifies that an unregistered tool
+// name produces an IsError tool result and the loop continues (does not
+// crash); the LLM's next response terminates.
+func TestRun_UnknownToolYieldsErrorResult(t *testing.T) {
+	llm := &fakeLLM{responses: []Response{
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "no_such", Args: "{}"}}},
+		{Text: "ok"},
+	}}
+	var signals []Signal
+	emit := func(_ string, s Signal) { signals = append(signals, s) }
+	res, err := Run(context.Background(), llm, LoopConfig{}, "p1", "x", emit, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Steps != 2 {
+		t.Errorf("Steps = %d, want 2", res.Steps)
+	}
+	// The tool_result signal must flag IsError for the unknown tool.
+	var tr Signal
+	for _, s := range signals {
+		if s.Kind == SignalToolResult {
+			tr = s
+		}
+	}
+	if tr.Name == "" {
+		t.Fatal("no tool_result signal emitted")
+	}
+	if !tr.IsError {
+		t.Errorf("unknown tool result IsError = false, want true")
 	}
 }
 
