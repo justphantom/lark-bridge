@@ -70,6 +70,11 @@ func (h *History) Load(chatID string) []Message {
 		}
 		msgs = append(msgs, m)
 	}
+	if err := sc.Err(); err != nil {
+		// A read failure (e.g. a line overrunning the scanner buffer) is not
+		// normal EOF; surface it so the operator notices silent history loss.
+		h.logger.Warn("miniagent history: read error", log.FieldError, err)
+	}
 	return h.trim(msgs)
 }
 

@@ -90,8 +90,14 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	if c.APIKey == "" {
 		return Response{}, fmt.Errorf("miniagent: api_key is empty")
 	}
-	if c.HTTP == nil {
-		c.HTTP = &http.Client{Timeout: 120 * time.Second}
+	// Read c.HTTP into a local once; never write it back here. The lazy-init
+	// pattern (c.HTTP = ...) raced when multiple chats called Do concurrently
+	// before the first assignment landed. Production sets HTTP at construction
+	// (main.go); this fallback covers direct `HTTPClient{}` construction in
+	// tests without mutating the shared field.
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 120 * time.Second}
 	}
 	logger := c.Logger
 	if logger == nil {
@@ -112,7 +118,7 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		logger.Warn("miniagent http transport failed", log.FieldError, err, "url", url)
 		return Response{}, fmt.Errorf("llm request: %w", err)
@@ -166,9 +172,12 @@ func buildChatBody(req Request) ([]byte, error) {
 		msgs = append(msgs, cm)
 	}
 	payload := map[string]any{
-		"model":       req.Model,
-		"messages":    msgs,
-		"max_tokens":  req.MaxTokens,
+		"model":    req.Model,
+		"messages": msgs,
+	}
+	// Only send max_tokens when set; some providers reject max_tokens:0.
+	if req.MaxTokens > 0 {
+		payload["max_tokens"] = req.MaxTokens
 	}
 	if len(req.Tools) > 0 {
 		funcs := make([]map[string]any, 0, len(req.Tools))

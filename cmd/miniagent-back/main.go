@@ -15,9 +15,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hu/lark-bridge/internal/backendrpc"
 	"github.com/hu/lark-bridge/internal/config"
@@ -80,6 +82,7 @@ func run(cfgPath string) error {
 		APIKey:  cfg.MiniAgent.APIKey,
 		BaseURL: cfg.MiniAgent.BaseURL,
 		Logger:  logger,
+		HTTP:    &http.Client{Timeout: 120 * time.Second},
 	}
 	// Tools register only when workspace_root is set (empty = disabled; the
 	// LLM never sees them). All three are bounded to workspace_root:

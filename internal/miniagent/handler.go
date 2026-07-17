@@ -198,9 +198,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 	// LLM actually sees, so unbounded growth only costs disk, not context.
 	h.history.Append(chatID, result.History)
 
-	emitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := h.rpc.SendControl(emitCtx, &protocol.Control{
+	h.sendCtrl(&protocol.Control{
 		Type:     protocol.TypeResult,
 		PromptID: promptID,
 		ChatID:   chatID,
@@ -212,10 +210,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 			TotalTokens: result.Usage.InputTokens + result.Usage.OutputTokens,
 			SessionID:   "", // P0 is stateless; P2 memory supplies this.
 		},
-	}); err != nil {
-		h.logger.Warn("miniagent emit result failed",
-			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
-	}
+	})
 }
 
 // emitHook returns an EmitFunc that turns loop tool signals into frontend
@@ -225,8 +220,6 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 // best-effort: a failure is logged but never fails the turn.
 func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
 	return func(_ string, sig Signal) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		var ctrl *protocol.Control
 		switch sig.Kind {
 		case SignalToolUse:
@@ -247,28 +240,34 @@ func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
 			h.logger.Debug("miniagent unknown signal kind", "kind", sig.Kind)
 			return
 		}
-		if err := h.rpc.SendControl(ctx, ctrl); err != nil {
-			h.logger.Warn("miniagent emit signal failed",
-				log.FieldChatID, chatID, log.FieldPromptID, promptID,
-				"kind", sig.Kind, log.FieldError, err)
-		}
+		h.sendCtrl(ctrl)
+	}
+}
+
+// sendCtrl emits one Control on a fresh 10s ctx (decoupled from any turn ctx
+// so terminal/status emits still land after the turn ctx is cancelled) and
+// logs a Warn on failure. chatID/promptID are recorded for triage. Used by
+// the terminal Result, tool signals, and error emits; notify is the
+// exception since it rides the caller's ctx.
+func (h *Handler) sendCtrl(ctrl *protocol.Control) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.rpc.SendControl(ctx, ctrl); err != nil {
+		h.logger.Warn("miniagent emit failed",
+			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
+			log.FieldControlType, ctrl.Type, log.FieldError, err)
 	}
 }
 
 // emitError sends a terminal TypeError so the frontend surfaces the failure
 // instead of leaving the turn card hanging.
 func (h *Handler) emitError(chatID, promptID, message string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := h.rpc.SendControl(ctx, &protocol.Control{
+	h.sendCtrl(&protocol.Control{
 		Type:     protocol.TypeError,
 		PromptID: promptID,
 		ChatID:   chatID,
 		Error:    &protocol.ErrorPayload{Message: message, Recoverable: true},
-	}); err != nil {
-		h.logger.Warn("miniagent emit error failed",
-			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
-	}
+	})
 }
 
 // notify emits a non-terminal Notice (e.g. empty-prompt warning).
