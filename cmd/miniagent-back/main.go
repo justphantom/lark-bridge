@@ -112,7 +112,7 @@ func run(cfgPath string) error {
 		System:    cfg.MiniAgent.SystemPrompt,
 		MaxTokens: cfg.MiniAgent.MaxTokens,
 		Tools:     tools,
-	}, rpc, logger, history)
+	}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

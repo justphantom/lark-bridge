@@ -42,12 +42,13 @@ const closeGrace = 5 * time.Second
 // turn (which would race on the LLM, the history jsonl, and the emit
 // ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm     Client
-	cfg     LoopConfig
-	rpc     controlSender
-	logger  *log.Logger
-	history *History // nil → stateless (MemoryEnabled=false)
-	answers *answerBroker
+	llm           Client
+	cfg           LoopConfig
+	rpc           controlSender
+	logger        *log.Logger
+	history       *History // nil → stateless (MemoryEnabled=false)
+	answers       *answerBroker
+	workspaceRoot string // global default for tools + /cd picker scope
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -59,18 +60,19 @@ type Handler struct {
 // New wires the handler. llm is the LLM client (HTTPClient in production,
 // Fake in tests). rpc emits Controls back to the frontend. history may be
 // nil to disable multi-turn memory.
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History) *Handler {
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
 	return &Handler{
-		llm:      llm,
-		cfg:      cfg,
-		rpc:      rpc,
-		logger:   logger,
-		history:  history,
-		answers:  newAnswerBroker(),
-		cancelBy: make(map[string]*promptCancel),
+		llm:           llm,
+		cfg:           cfg,
+		rpc:           rpc,
+		logger:        logger,
+		history:       history,
+		answers:       newAnswerBroker(),
+		workspaceRoot: workspaceRoot,
+		cancelBy:      make(map[string]*promptCancel),
 	}
 }
 
@@ -241,14 +243,18 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 	// Load history for this chat (nil on first turn or when memory is off).
 	// The loop sees prior turns and returns the new messages in result.History.
 	hist := h.history.Load(chatID)
-	// Resolve the per-chat model: .model file overrides the global default.
-	// LoopConfig is a value type, so copy + override is safe for concurrency.
+	// Resolve per-chat overrides: .model pin and .dir pin both override the
+	// global defaults. LoopConfig is a value type; cfg.Tools is rebuilt only
+	// when dir differs from workspace_root (toolsForDir zero-allocs otherwise).
 	cfg := h.cfg
 	cfg.Model = h.activeModel(chatID)
+	dir := h.activeDir(chatID)
+	cfg.Tools = h.toolsForDir(dir)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
 		"model", cfg.Model,
+		"workdir", dir,
 		"history_msgs", len(hist),
 		"prompt_preview", truncate(prompt, 80, "…"))
 
@@ -380,4 +386,40 @@ func (h *Handler) activeModel(chatID string) string {
 		return m
 	}
 	return h.cfg.Model
+}
+
+// activeDir returns the working directory this chat should use: the per-chat
+// pin (from .dir file) if set, otherwise the global workspace_root.
+func (h *Handler) activeDir(chatID string) string {
+	if d := h.history.Directory(chatID); d != "" {
+		return d
+	}
+	return h.workspaceRoot
+}
+
+// toolsForDir returns a Tool slice with WorkspaceRoot-bearing tools cloned
+// to use dir instead of the global root. WebFetch (no WorkspaceRoot) is
+// passed through. If dir equals workspaceRoot, the original slice is returned
+// unchanged (zero-alloc common path).
+func (h *Handler) toolsForDir(dir string) []Tool {
+	if dir == "" || dir == h.workspaceRoot {
+		return h.cfg.Tools
+	}
+	out := make([]Tool, 0, len(h.cfg.Tools))
+	for _, t := range h.cfg.Tools {
+		switch v := t.(type) {
+		case ReadFile:
+			v.WorkspaceRoot = dir
+			out = append(out, v)
+		case WriteFile:
+			v.WorkspaceRoot = dir
+			out = append(out, v)
+		case Shell:
+			v.WorkspaceRoot = dir
+			out = append(out, v)
+		default:
+			out = append(out, t) // WebFetch etc — no WorkspaceRoot
+		}
+	}
+	return out
 }

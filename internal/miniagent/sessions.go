@@ -276,6 +276,62 @@ func (h *History) modelPath(chatID string) string {
 	return filepath.Join(h.dir, sanitizeChatID(chatID)+".model")
 }
 
+// Directory returns the per-chat pinned working directory, or "" when none
+// is set (the caller falls back to the global workspace_root). The directory
+// bounds read_file/write_file/shell to a sub-tree under WORKSPACE_ROOT so
+// different chats can work on different projects.
+func (h *History) Directory(chatID string) string {
+	if h == nil {
+		return ""
+	}
+	b, err := os.ReadFile(h.dirPath(chatID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SetDir pins a working directory for chatID (atomic temp+rename). An empty
+// dir clears the pin (removes the .dir file). The caller MUST validate that
+// dir is under WORKSPACE_ROOT before calling — this method stores verbatim.
+func (h *History) SetDir(chatID, dir string) error {
+	if h == nil {
+		return errors.New("miniagent: memory disabled")
+	}
+	if dir == "" {
+		_ = os.Remove(h.dirPath(chatID))
+		return nil
+	}
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return err
+	}
+	target := h.dirPath(chatID)
+	tmp, err := os.CreateTemp(h.dir, ".dir-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(dir); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+func (h *History) dirPath(chatID string) string {
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+".dir")
+}
+
 func (h *History) sessionPath(chatID, sid string) string {
 	return filepath.Join(h.dir, sanitizeChatID(chatID)+"__"+sid+".jsonl")
 }

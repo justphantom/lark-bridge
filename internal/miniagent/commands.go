@@ -3,6 +3,8 @@ package miniagent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +37,7 @@ var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title,
 	"/current":      (*Handler).cmdCurrent,
 	"/model":        (*Handler).cmdModel,
 	"/models":       (*Handler).cmdModels,
+	"/cd":           (*Handler).cmdDirectory,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -125,10 +128,11 @@ func (h *Handler) cmdSessionDel(chatID, arg string) (level, title, body string) 
 func (h *Handler) cmdCurrent(chatID, _ string) (level, title, body string) {
 	sid := h.history.Current(chatID)
 	cur := h.activeModel(chatID)
+	dir := h.activeDir(chatID)
 	if sid == "" {
-		return "info", "当前会话", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s", cur)
+		return "info", "当前状态", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s\n工作目录：%s", cur, dir)
 	}
-	return "info", "当前会话", fmt.Sprintf("活动会话：%s\n模型：%s", sid, cur)
+	return "info", "当前状态", fmt.Sprintf("活动会话：%s\n模型：%s\n工作目录：%s", sid, cur, dir)
 }
 
 // cmdModel pins or clears the per-chat model:
@@ -237,4 +241,92 @@ func (h *Handler) renderSessionList(chatID string) (level, title, body string) {
 	}
 	sb.WriteString("\n/session-use <ID> 切换，/session-del <ID> 删除。")
 	return "info", "会话", sb.String()
+}
+
+// cmdDirectory pins/clears/selects the per-chat working directory:
+//   /cd            → interactive picker (scan WORKSPACE_ROOT subdirs)
+//   /cd clear      → clear pin (fall back to global workspace_root)
+//   /cd <path>     → pin directly (must be under WORKSPACE_ROOT)
+func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
+	if h.workspaceRoot == "" {
+		return "warning", "工作目录", "未配置 workspace_root，无法设置工作目录。"
+	}
+	root, err := filepath.Abs(h.workspaceRoot)
+	if err != nil {
+		return "error", "工作目录", "解析 workspace_root 失败：" + err.Error()
+	}
+	if arg == "" {
+		// Interactive picker: scan WORKSPACE_ROOT for subdirectories.
+		h.sendCtrl(&protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: chatID,
+			Notice: &protocol.NoticePayload{Level: "info", Title: "正在扫描目录", Message: "正在获取工作目录列表，请稍候…"},
+		})
+		go func() {
+			dirs := scanSubdirs(root)
+			if len(dirs) == 0 {
+				h.notify(context.Background(), chatID, "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
+				return
+			}
+			// Show basename in the card; resolve back to full path on click.
+			names := make([]string, len(dirs))
+			for i, d := range dirs {
+				names[i] = filepath.Base(d)
+			}
+			choice, err := h.askAndWait(context.Background(), chatID, "目录", names)
+			if err != nil {
+				h.notify(context.Background(), chatID, "warning", "选择失败", err.Error())
+				return
+			}
+			// Resolve basename → full path.
+			dir := ""
+			for _, d := range dirs {
+				if filepath.Base(d) == choice {
+					dir = d
+					break
+				}
+			}
+			if dir == "" {
+				h.notify(context.Background(), chatID, "error", "工作目录", "选中的目录不存在。")
+				return
+			}
+			if err := h.history.SetDir(chatID, dir); err != nil {
+				h.notify(context.Background(), chatID, "error", "工作目录", "设置失败："+err.Error())
+				return
+			}
+			h.notify(context.Background(), chatID, "success", "已切换目录", "工作目录已切换到 "+dir+"（下次提问生效）。")
+		}()
+		return "async", "", ""
+	}
+	if arg == "clear" {
+		if err := h.history.SetDir(chatID, ""); err != nil {
+			return "error", "工作目录", "清除失败：" + err.Error()
+		}
+		return "success", "已恢复默认", "已清除自定义工作目录，将使用全局 " + root + "。"
+	}
+	// /cd <path>: resolve and validate under WORKSPACE_ROOT.
+	dir, err := resolveUnderRoot(root, arg)
+	if err != nil {
+		return "error", "工作目录", err.Error()
+	}
+	if err := h.history.SetDir(chatID, dir); err != nil {
+		return "error", "工作目录", "设置失败：" + err.Error()
+	}
+	return "success", "已切换目录", "工作目录已切换到 " + dir + "（下次提问生效）。"
+}
+
+// scanSubdirs returns the absolute paths of immediate subdirectories under
+// root, sorted by name. Used by the /cd picker.
+func scanSubdirs(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(root, e.Name()))
+		}
+	}
+	return dirs
 }
