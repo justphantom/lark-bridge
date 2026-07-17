@@ -246,7 +246,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		// conversation log.
 		if errors.Is(err, context.Canceled) {
 			h.logger.Info("miniagent turn aborted",
-				log.FieldChatID, chatID, log.FieldPromptID, promptID, "duration", time.Since(start))
+				log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
 			h.sendCtrl(&protocol.Control{
 				Type:     protocol.TypeNotice,
 				PromptID: promptID,
@@ -259,7 +259,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
 			log.FieldError, err,
-			"duration", time.Since(start))
+			log.FieldDuration, time.Since(start).Milliseconds())
 		h.sendCtrl(&protocol.Control{
 			Type:     protocol.TypeError,
 			PromptID: promptID,
@@ -274,7 +274,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		"steps", result.Steps,
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens,
-		"duration", time.Since(start))
+		log.FieldDuration, time.Since(start).Milliseconds())
 
 	// Persist this turn's new messages so the next turn remembers context.
 	// The file is append-only (old turns stay on disk); Load trims what the

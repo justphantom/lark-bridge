@@ -130,14 +130,14 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		if err != nil {
 			logger.Warn("miniagent llm call failed",
 				log.FieldPromptID, promptID, "step", step,
-				log.FieldError, err, "duration", callDur)
+				log.FieldError, err, log.FieldDuration, callDur.Milliseconds())
 			return Result{Usage: total, Steps: step - 1}, fmt.Errorf("llm call %d: %w", step, err)
 		}
 		total.InputTokens += resp.Usage.InputTokens
 		total.OutputTokens += resp.Usage.OutputTokens
 		logger.Info("miniagent llm call done",
 			log.FieldPromptID, promptID, "step", step,
-			"duration", callDur,
+			log.FieldDuration, callDur.Milliseconds(),
 			"input_tokens", resp.Usage.InputTokens,
 			"output_tokens", resp.Usage.OutputTokens,
 			"tool_calls", len(resp.ToolCalls),
