@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -77,6 +78,28 @@ func New(level *LevelVar, w io.Writer, component string) *Logger {
 // NewJSON creates a new JSON logger.
 func NewJSON(level *LevelVar, w io.Writer, component string) *Logger {
 	return newLogger(slog.NewJSONHandler(w, handlerOpts(level)), component)
+}
+
+// NewFromConfig builds a logger from the four scalar log settings every
+// binary's main reads from config: level/output/format strings plus the
+// component tag. output "stdout" → os.Stdout, anything else → os.Stderr.
+// format "json" → JSON handler, anything else → text. Extracted so the
+// four non-opencode main.go files stop duplicating the same 12 lines
+// modulo the component string; opencode-back keeps its own because it
+// layers per-component level overrides on top.
+func NewFromConfig(level, output, format, component string) (*Logger, error) {
+	lvl, err := FromString(level)
+	if err != nil {
+		return nil, err
+	}
+	var w io.Writer = os.Stderr
+	if output == "stdout" {
+		w = os.Stdout
+	}
+	if format == "json" {
+		return NewJSON(lvl, w, component), nil
+	}
+	return New(lvl, w, component), nil
 }
 
 // newLogger wraps a handler, attaching the component tag when set.

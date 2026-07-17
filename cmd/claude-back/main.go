@@ -9,7 +9,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -142,16 +141,5 @@ func run(cfgPath string) error {
 
 // buildLogger builds the component logger from cfg.
 func buildLogger(cfg *config.Config) (*log.Logger, error) {
-	lvl, err := log.FromString(cfg.LogLevel)
-	if err != nil {
-		return nil, err
-	}
-	var w io.Writer = os.Stderr
-	if cfg.LogOutput == "stdout" {
-		w = os.Stdout
-	}
-	if cfg.LogFormat == "json" {
-		return log.NewJSON(lvl, w, "claude-back"), nil
-	}
-	return log.New(lvl, w, "claude-back"), nil
+	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "claude-back")
 }

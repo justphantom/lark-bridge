@@ -14,7 +14,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -116,16 +115,5 @@ func (execCommander) Run(ctx context.Context, dir, target string) ([]byte, error
 }
 
 func buildLogger(cfg *config.Config) (*log.Logger, error) {
-	lvl, err := log.FromString(cfg.LogLevel)
-	if err != nil {
-		return nil, err
-	}
-	var w io.Writer = os.Stderr
-	if cfg.LogOutput == "stdout" {
-		w = os.Stdout
-	}
-	if cfg.LogFormat == "json" {
-		return log.NewJSON(lvl, w, "deploy-monitor"), nil
-	}
-	return log.New(lvl, w, "deploy-monitor"), nil
+	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "deploy-monitor")
 }
