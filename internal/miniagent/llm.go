@@ -74,6 +74,14 @@ type Client interface {
 	Do(ctx context.Context, req Request) (Response, error)
 }
 
+// ModelLister is optionally implemented by a Client that can enumerate
+// available models (e.g. HTTPClient calls GET /v1/models). The /models
+// command type-asserts to this; a Client that does not implement it (tests)
+// gets a "not supported" reply.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]string, error)
+}
+
 // HTTPClient calls an OpenAI-compatible chat completions endpoint via
 // net/http. BaseURL must NOT end with a slash or /v1; the path is appended.
 // Logger is optional (nil → no HTTP-level logs); the loop logs call results
@@ -221,6 +229,48 @@ func parseRetryAfter(body []byte) time.Duration {
 		return time.Duration(v.Error.RetryAfter * float64(time.Second))
 	}
 	return 0
+}
+
+// ListModels calls GET {BaseURL}/v1/models and returns the model ids. Used by
+// the /models command so the user sees what the endpoint actually offers.
+func (c *HTTPClient) ListModels(ctx context.Context) ([]string, error) {
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	url := strings.TrimRight(c.BaseURL, "/") + "/v1/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+	defer func() {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list models: %d", resp.StatusCode)
+	}
+	var v struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, fmt.Errorf("parse models: %w", err)
+	}
+	out := make([]string, 0, len(v.Data))
+	for _, m := range v.Data {
+		if m.ID != "" {
+			out = append(out, m.ID)
+		}
+	}
+	return out, nil
 }
 
 // chatMessage is the OpenAI wire format for one message.

@@ -230,14 +230,18 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 	// Load history for this chat (nil on first turn or when memory is off).
 	// The loop sees prior turns and returns the new messages in result.History.
 	hist := h.history.Load(chatID)
+	// Resolve the per-chat model: .model file overrides the global default.
+	// LoopConfig is a value type, so copy + override is safe for concurrency.
+	cfg := h.cfg
+	cfg.Model = h.activeModel(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
-		"model", h.cfg.Model,
+		"model", cfg.Model,
 		"history_msgs", len(hist),
 		"prompt_preview", truncate(prompt, 80, "…"))
 
-	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, hist, h.emitHook(chatID, promptID), h.logger)
+	result, err := Run(ctx, h.llm, cfg, promptID, prompt, hist, h.emitHook(chatID, promptID), h.logger)
 	if err != nil {
 		// ctx.Canceled means the turn was aborted (user /session-abort or
 		// Close). Surface as an info notice rather than a scary error; the
@@ -287,7 +291,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		ChatID:   chatID,
 		Result: &protocol.ResultPayload{
 			Text:        result.Text,
-			Model:       h.cfg.Model,
+			Model:       cfg.Model,
 			Tokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
 			Duration:    time.Since(start),
 			Steps:       result.Steps,
@@ -356,4 +360,13 @@ func (h *Handler) notify(_ context.Context, chatID, level, title, message string
 		ChatID: chatID,
 		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
+}
+
+// activeModel returns the model this chat should use: the per-chat pin
+// (from .model file) if set, otherwise the global default (cfg.Model).
+func (h *Handler) activeModel(chatID string) string {
+	if m := h.history.Model(chatID); m != "" {
+		return m
+	}
+	return h.cfg.Model
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Session management commands. These mirror the claude backend's /session-*
@@ -30,6 +31,8 @@ var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title,
 	"/session-use":  (*Handler).cmdSessionUse,
 	"/session-del":  (*Handler).cmdSessionDel,
 	"/current":      (*Handler).cmdCurrent,
+	"/model":        (*Handler).cmdModel,
+	"/models":       (*Handler).cmdModels,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -114,10 +117,64 @@ func (h *Handler) cmdSessionDel(chatID, arg string) (level, title, body string) 
 
 func (h *Handler) cmdCurrent(chatID, _ string) (level, title, body string) {
 	sid := h.history.Current(chatID)
+	cur := h.activeModel(chatID)
 	if sid == "" {
-		return "info", "当前会话", "当前无活动会话（首次提问后将自动创建）。"
+		return "info", "当前会话", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s", cur)
 	}
-	return "info", "当前会话", fmt.Sprintf("活动会话：%s\n模型：%s", sid, h.cfg.Model)
+	return "info", "当前会话", fmt.Sprintf("活动会话：%s\n模型：%s", sid, cur)
+}
+
+// cmdModel pins or clears the per-chat model:
+//   /model            → show current + usage
+//   /model clear      → clear pin (fall back to global default)
+//   /model <id>       → pin <id> for this chat
+func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
+	if h.history == nil {
+		return "warning", "模型", "记忆未启用，无法设置模型。"
+	}
+	if arg == "" {
+		cur := h.activeModel(chatID)
+		return "info", "当前模型", fmt.Sprintf("当前模型：%s\n\n用法：\n/model <ID> 切换\n/model clear 恢复默认\n/models 查看可用列表", cur)
+	}
+	if arg == "clear" {
+		if err := h.history.SetModel(chatID, ""); err != nil {
+			return "error", "模型", "清除模型失败：" + err.Error()
+		}
+		return "success", "已恢复默认", fmt.Sprintf("已清除自定义模型，将使用全局默认 %s。", h.cfg.Model)
+	}
+	if err := h.history.SetModel(chatID, arg); err != nil {
+		return "error", "模型", "设置模型失败：" + err.Error()
+	}
+	return "success", "已切换模型", fmt.Sprintf("已切换到模型 %s（下次提问生效）。", arg)
+}
+
+// cmdModels lists available models from the LLM endpoint (GET /v1/models).
+func (h *Handler) cmdModels(chatID, _ string) (level, title, body string) {
+	lister, ok := h.llm.(ModelLister)
+	if !ok {
+		return "warning", "模型列表", "当前 LLM 客户端不支持列模型。"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	models, err := lister.ListModels(ctx)
+	if err != nil {
+		return "error", "模型列表", "获取失败：" + err.Error()
+	}
+	if len(models) == 0 {
+		return "info", "模型列表", "端点未返回任何模型。"
+	}
+	cur := h.activeModel(chatID)
+	var sb strings.Builder
+	sb.WriteString("可用模型：\n")
+	for _, m := range models {
+		mark := "  "
+		if m == cur {
+			mark = "→ "
+		}
+		sb.WriteString(mark + m + "\n")
+	}
+	sb.WriteString("\n/model <ID> 切换。")
+	return "info", "模型列表", sb.String()
 }
 
 // renderSessionList builds the /session-list body: oldest first, the active

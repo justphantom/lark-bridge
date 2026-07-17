@@ -223,6 +223,59 @@ func (h *History) writeCur(chatID, sid string) error {
 	return nil
 }
 
+// Model returns the per-chat pinned model id, or "" when none is set (the
+// caller falls back to the global default). Read from the .model file.
+func (h *History) Model(chatID string) string {
+	if h == nil {
+		return ""
+	}
+	b, err := os.ReadFile(h.modelPath(chatID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SetModel pins model for chatID (atomic temp+rename, same pattern as
+// writeCur). An empty model clears the pin (removes the .model file).
+func (h *History) SetModel(chatID, model string) error {
+	if h == nil {
+		return errors.New("miniagent: memory disabled")
+	}
+	if model == "" {
+		_ = os.Remove(h.modelPath(chatID))
+		return nil
+	}
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return err
+	}
+	target := h.modelPath(chatID)
+	tmp, err := os.CreateTemp(h.dir, ".model-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(model); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
+func (h *History) modelPath(chatID string) string {
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+".model")
+}
+
 func (h *History) sessionPath(chatID, sid string) string {
 	return filepath.Join(h.dir, sanitizeChatID(chatID)+"__"+sid+".jsonl")
 }

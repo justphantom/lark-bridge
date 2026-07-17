@@ -183,3 +183,60 @@ func TestHistory_SessionPathSanitized(t *testing.T) {
 		t.Errorf("basename contains '/', path traversal possible: %s", base)
 	}
 }
+
+// === Per-chat model tests ===
+
+// TestModel_DefaultEmpty verifies a fresh chat has no pinned model.
+func TestModel_DefaultEmpty(t *testing.T) {
+	h := newTestHistory(t)
+	if got := h.Model("chat-new"); got != "" {
+		t.Errorf("Model new chat = %q, want empty", got)
+	}
+}
+
+// TestModel_SetThenGet verifies SetModel persists and Model reads it back.
+func TestModel_SetThenGet(t *testing.T) {
+	h := newTestHistory(t)
+	if err := h.SetModel("c1", "kimi-for-coding"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if got := h.Model("c1"); got != "kimi-for-coding" {
+		t.Errorf("Model = %q, want kimi-for-coding", got)
+	}
+}
+
+// TestModel_DistinctChats verifies each chat has its own model pin.
+func TestModel_DistinctChats(t *testing.T) {
+	h := newTestHistory(t)
+	_ = h.SetModel("a", "gpt-4o")
+	_ = h.SetModel("b", "kimi-for-coding")
+	if got := h.Model("a"); got != "gpt-4o" {
+		t.Errorf("chat a = %q", got)
+	}
+	if got := h.Model("b"); got != "kimi-for-coding" {
+		t.Errorf("chat b = %q", got)
+	}
+}
+
+// TestModel_Clear verifies SetModel("") removes the pin.
+func TestModel_Clear(t *testing.T) {
+	h := newTestHistory(t)
+	_ = h.SetModel("c", "gpt-4o")
+	if err := h.SetModel("c", ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := h.Model("c"); got != "" {
+		t.Errorf("after clear Model = %q, want empty", got)
+	}
+}
+
+// TestModel_NilSafe verifies nil History (memory off) Model returns "".
+func TestModel_NilSafe(t *testing.T) {
+	var h *History
+	if got := h.Model("x"); got != "" {
+		t.Errorf("nil Model = %q, want empty", got)
+	}
+	if err := h.SetModel("x", "m"); err == nil {
+		t.Error("nil SetModel should error")
+	}
+}
