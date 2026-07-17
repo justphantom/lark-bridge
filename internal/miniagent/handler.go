@@ -79,6 +79,24 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 	}
 }
 
+// RunningSession describes one in-flight turn for the /running card.
+type RunningSession struct {
+	ChatID   string
+	Duration time.Duration
+}
+
+// RunningSessions snapshots all in-flight turns.
+func (h *Handler) RunningSessions() []RunningSession {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	now := time.Now()
+	out := make([]RunningSession, 0, len(h.cancelBy))
+	for chatID, pc := range h.cancelBy {
+		out = append(out, RunningSession{ChatID: chatID, Duration: now.Sub(pc.startTime)})
+	}
+	return out
+}
+
 // SetHistoryDir sets the state directory passed to miniagent-cli as
 // --state-dir so the CLI subprocess can load/save per-chat history.
 func (h *Handler) SetHistoryDir(dir string) {

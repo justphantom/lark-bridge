@@ -39,6 +39,8 @@ var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title,
 	"/models":       (*Handler).cmdModels,
 	"/cd":           (*Handler).cmdDirectory,
 	"/perm":         (*Handler).cmdPermission,
+	"/help":         (*Handler).cmdHelp,
+	"/running":      (*Handler).cmdRunning,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -362,4 +364,69 @@ func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) 
 		return "success", "已恢复默认", fmt.Sprintf("已清除自定义权限，将使用全局默认 %s。", h.cfgPermission)
 	}
 	return "success", "已切换权限", fmt.Sprintf("已切换到权限模式 %s（下次提问生效）。", mode)
+}
+
+// cmdHelp lists all available commands with brief descriptions.
+func (h *Handler) cmdHelp(_, _ string) (level, title, body string) {
+	var sb strings.Builder
+	sb.WriteString("可用命令：\n\n")
+	sb.WriteString("/current        显示当前会话/模型/目录/权限\n")
+	sb.WriteString("/model          切换模型（弹出选择卡）\n")
+	sb.WriteString("/model <id>     直接指定模型\n")
+	sb.WriteString("/model clear    恢复默认模型\n")
+	sb.WriteString("/models         列出可用模型\n")
+	sb.WriteString("/cd             切换工作目录（弹出选择卡）\n")
+	sb.WriteString("/cd <path>     直接指定目录\n")
+	sb.WriteString("/cd clear       恢复默认目录\n")
+	sb.WriteString("/perm           显示当前权限模式\n")
+	sb.WriteString("/perm plan     只读（不能写文件/执行命令）\n")
+	sb.WriteString("/perm default   受限写（路径限制+黑名单）\n")
+	sb.WriteString("/perm free      无限制\n")
+	sb.WriteString("/perm clear     恢复默认权限\n")
+	sb.WriteString("/session-new    开启新会话\n")
+	sb.WriteString("/session-list   列出所有会话\n")
+	sb.WriteString("/session-use <id> 切换到指定会话\n")
+	sb.WriteString("/session-del [id] 删除会话\n")
+	sb.WriteString("/session-abort  中止当前任务\n")
+	sb.WriteString("/running        显示运行中的会话\n")
+	sb.WriteString("/help           显示本帮助\n")
+	sb.WriteString("\n直接发送消息即可与 AI 对话。")
+	return "info", "帮助", sb.String()
+}
+
+// cmdRunning lists all currently active turns across all chats.
+func (h *Handler) cmdRunning(_, _ string) (level, title, body string) {
+	sessions := h.RunningSessions()
+	if len(sessions) == 0 {
+		return "info", "运行中会话", "当前没有运行中的会话。"
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔄 **运行中会话** (%d)\n\n", len(sessions)))
+	for _, s := range sessions {
+		sb.WriteString(fmt.Sprintf("- 群ID：`%s`（运行 %s）\n", s.ChatID, formatDuration(s.Duration)))
+	}
+	sb.WriteString("\n💡 如需中止，请到对应群内发送 `/session-abort`")
+	return "info", "运行中会话", sb.String()
+}
+
+// formatDuration formats elapsed time with Chinese suffixes.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%d秒", int(d.Seconds()))
+	case d < time.Hour:
+		minutes := int(d.Minutes())
+		seconds := int(d.Seconds()) % 60
+		if seconds > 0 {
+			return fmt.Sprintf("%d分%d秒", minutes, seconds)
+		}
+		return fmt.Sprintf("%d分钟", minutes)
+	default:
+		hours := int(d.Hours())
+		minutes := int(d.Minutes()) % 60
+		if minutes > 0 {
+			return fmt.Sprintf("%d小时%d分", hours, minutes)
+		}
+		return fmt.Sprintf("%d小时", hours)
+	}
 }
