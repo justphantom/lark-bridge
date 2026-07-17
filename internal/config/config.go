@@ -147,12 +147,14 @@ type MiniAgent struct {
 	// pull from the environment (config.Load expands it); writing the key
 	// literally in the config file is discouraged.
 	APIKey string `json:"api_key,omitempty"`
-	// BaseURL is the OpenAI-compatible root (no /v1/... suffix). Empty →
-	// https://api.openai.com. Set to a compatible provider's root (e.g.
-	// https://api.deepseek.com) to redirect.
+	// BaseURL is the OpenAI-compatible root (no /v1/... suffix), e.g.
+	// "https://api.openai.com" or a compatible provider's root like
+	// "https://api.deepseek.com". Required: use ${MINIAGENT_BASE_URL} in
+	// the config (config.Load rejects an unset/empty ${VAR}).
 	BaseURL string `json:"base_url,omitempty"`
 	// Model is the model id passed as the request "model" field (e.g.
-	// "gpt-4o", "deepseek-chat"). Empty → "gpt-4o-mini" in config_defaults.
+	// "gpt-4o", "deepseek-chat"). Required: use ${MINIAGENT_DEFAULT_MODEL}
+	// in the config (config.Load rejects an unset/empty ${VAR}).
 	Model string `json:"model,omitempty"`
 	// SystemPrompt is prepended to every turn as the system message. Empty
 	// → a concise default assistant persona in config_defaults.

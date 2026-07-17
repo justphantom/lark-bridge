@@ -75,12 +75,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}
-	if cfg.MiniAgent.BaseURL == "" {
-		cfg.MiniAgent.BaseURL = "https://api.openai.com"
-	}
-	if cfg.MiniAgent.Model == "" {
-		cfg.MiniAgent.Model = "gpt-4o-mini"
-	}
 	if cfg.MiniAgent.SystemPrompt == "" {
 		cfg.MiniAgent.SystemPrompt = "你是一个简洁的助手，回答通常不超过 500 字。"
 	}
