@@ -108,7 +108,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 		byName[name] = p
 	}
 
-	choice, err := h.askAndWait(chatID, "", "settings 文件", "选择 settings 文件", func(_ context.Context) ([]string, error) {
+	choice, err := h.AskAndWait(chatID, "", "settings 文件", "选择 settings 文件", func(_ context.Context) ([]string, error) {
 		return options, nil
 	}, false)
 	if err != nil {

@@ -45,7 +45,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 // Handled so the dispatcher skips its default Notice (the confirmation is
 // already emitted by emitNotice, and the dispatcher's ctx may have expired).
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
-	choice, err := h.askAndWait(chatID, "", "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
+	choice, err := h.AskAndWait(chatID, "", "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}

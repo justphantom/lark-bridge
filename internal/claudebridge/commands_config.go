@@ -68,7 +68,7 @@ func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string)
 // runPermPicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
 func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
-	choice, err := h.askAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
+	choice, err := h.AskAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -151,7 +151,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 		byName[name] = p
 	}
 
-	choice, err := h.askAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
+	choice, err := h.AskAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}

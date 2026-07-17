@@ -76,7 +76,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 		byName[name] = d
 	}
 
-	choice, err := h.askAndWait(chatID, "", "目录", "选择工作目录", bridgebase.StaticOptions(options), false)
+	choice, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", bridgebase.StaticOptions(options), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}

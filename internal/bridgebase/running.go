@@ -7,6 +7,52 @@ import (
 	"time"
 )
 
+// RunningSessions snapshots all in-flight prompt turns for the /running card.
+// It copies (chatID, *PromptCancel) under CancelMu, then releases the lock
+// before querying the router — the router takes its own lock internally, so
+// holding CancelMu across router.Lookup would risk an AB-BA deadlock against
+// paths that take the locks in the opposite order.
+//
+// Model/Agent come from the router binding; backends without an agent concept
+// leave binding.Agent empty and RunningSession.Agent renders as nothing.
+func (c *Core) RunningSessions() []RunningSession {
+	c.CancelMu.Lock()
+	type entry struct {
+		chatID string
+		pc     *PromptCancel
+	}
+	entries := make([]entry, 0, len(c.CancelByChat))
+	for chatID, pc := range c.CancelByChat {
+		entries = append(entries, entry{chatID: chatID, pc: pc})
+	}
+	c.CancelMu.Unlock()
+
+	now := time.Now()
+	sessions := make([]RunningSession, 0, len(entries))
+	for _, e := range entries {
+		title := c.Router.TitleOf(e.chatID)
+		if title == "" {
+			title = "(未命名群组)"
+		}
+		binding, ok := c.Router.Lookup(e.chatID)
+		session := RunningSession{
+			ChatID:    e.chatID,
+			Title:     title,
+			StartTime: e.pc.StartTime,
+			Duration:  now.Sub(e.pc.StartTime),
+			Model:     "默认",
+		}
+		if ok {
+			if binding.ModelSpec != "" {
+				session.Model = binding.ModelSpec
+			}
+			session.Agent = binding.Agent
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
 // RunningSession describes one in-flight prompt turn for the /running card.
 type RunningSession struct {
 	ChatID    string

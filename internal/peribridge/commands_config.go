@@ -143,7 +143,7 @@ func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
 	if len(opts) == 0 {
 		opts = defaultPermissionOptions
 	}
-	choice, err := h.askAndWait(chatID, "", "权限模式", "选择权限模式", func(_ context.Context) ([]string, error) {
+	choice, err := h.AskAndWait(chatID, "", "权限模式", "选择权限模式", func(_ context.Context) ([]string, error) {
 		return opts, nil
 	}, false)
 	if err != nil {
@@ -224,7 +224,7 @@ func (h *Handler) runEffortPicker(chatID, oldLevel string) commandResult {
 	if len(opts) == 0 {
 		opts = defaultEffortOptions
 	}
-	choice, err := h.askAndWait(chatID, "", "推理级别", "选择推理级别", func(_ context.Context) ([]string, error) {
+	choice, err := h.AskAndWait(chatID, "", "推理级别", "选择推理级别", func(_ context.Context) ([]string, error) {
 		return opts, nil
 	}, false)
 	if err != nil {

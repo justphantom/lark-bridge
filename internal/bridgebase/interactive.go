@@ -181,3 +181,20 @@ func EmitNotice(appCtx context.Context, emit EmitFunc, chatID, level, title, bod
 		Notice: np,
 	})
 }
+
+// AskAndWait is the receiver form of the package-level AskAndWait, binding
+// the Core's appCtx, answer broker, and emit. It is the single entry point
+// every bridge's interactive picker uses.
+func (c *Core) AskAndWait(
+	chatID, replyToID, kind, label string,
+	listFn func(context.Context) ([]string, error),
+	allowCustom bool,
+) (string, error) {
+	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
+}
+
+// EmitNotice is the receiver form of the package-level EmitNotice, binding
+// the Core's appCtx and emit.
+func (c *Core) EmitNotice(chatID, level, title, body string, extra ...string) error {
+	return EmitNotice(c.AppCtx, c.Emit, chatID, level, title, body, extra...)
+}

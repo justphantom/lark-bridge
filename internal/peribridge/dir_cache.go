@@ -49,7 +49,7 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) 
 
 // runDirPicker drives the interactive directory selection.
 func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
-	choice, err := h.askAndWait(chatID, "", "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
+	choice, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
 		dirs, err := h.DirCache.List()
 		if err != nil {
 			return nil, err
