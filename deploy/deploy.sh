@@ -350,7 +350,7 @@ info "生成 systemd unit 文件（User=$RUN_USER）..."
 write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
-write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front
+write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front "" true
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
