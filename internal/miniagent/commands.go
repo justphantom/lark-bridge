@@ -21,6 +21,17 @@ import (
 // Commands are dispatched inline from HandleEvent (before the LLM turn) and
 // the reply is emitted as a single TypeNotice.
 
+// sessionCmds is the single source of truth for command names → handlers.
+// Adding a command means adding one entry here (and the method); isSession
+// recognition and dispatch both read this table.
+var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title, body string){
+	"/session-new":  (*Handler).cmdSessionNew,
+	"/session-list": (*Handler).cmdSessionList,
+	"/session-use":  (*Handler).cmdSessionUse,
+	"/session-del":  (*Handler).cmdSessionDel,
+	"/current":      (*Handler).cmdCurrent,
+}
+
 // isSessionCommand reports whether prompt is one this handler owns. It never
 // panics on a bare "/" — strings.Fields collapses that to nothing.
 func isSessionCommand(prompt string) bool {
@@ -31,11 +42,8 @@ func isSessionCommand(prompt string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	switch fields[0] {
-	case "/session-new", "/session-list", "/session-use", "/session-del", "/current":
-		return true
-	}
-	return false
+	_, ok := sessionCmds[fields[0]]
+	return ok
 }
 
 // handleSessionCommand reserves the per-chat turn slot (so it cannot race with
@@ -57,58 +65,59 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, prompt strin
 	}
 	defer h.endTurn(chatID, mine)
 
-	level, title, body := h.dispatchSession(chatID, prompt)
-	return h.notify(ctx, chatID, level, title, body)
-}
-
-// dispatchSession parses and runs one session command, returning the Notice
-// level/title/body. history is non-nil (guarded by the caller).
-func (h *Handler) dispatchSession(chatID, prompt string) (level, title, body string) {
 	fields := strings.Fields(prompt)
-	cmd := fields[0]
 	arg := ""
 	if len(fields) > 1 {
 		arg = fields[1]
 	}
-	switch cmd {
-	case "/session-new":
-		sid, err := h.history.NewSession(chatID)
-		if err != nil {
-			return "error", "会话", "新建会话失败：" + err.Error()
-		}
-		return "success", "已开启新会话",
-			fmt.Sprintf("新会话已创建（%s）。旧会话仍保留，可用 /session-list 查看、/session-use 切回。", sid)
+	fn := sessionCmds[fields[0]]
+	level, title, body := fn(h, chatID, arg)
+	return h.notify(ctx, chatID, level, title, body)
+}
 
-	case "/session-list":
-		return h.renderSessionList(chatID)
+// Per-command handlers. Each returns the Notice level/title/body. history is
+// non-nil (guarded by handleSessionCommand).
 
-	case "/session-use":
-		if arg == "" {
-			return "warning", "会话", "用法：/session-use <会话ID>。先用 /session-list 查看可用会话。"
-		}
-		if err := h.history.UseSession(chatID, arg); err != nil {
-			return "error", "会话", err.Error()
-		}
-		return "success", "已切换会话", fmt.Sprintf("已切换到会话 %s。", arg)
-
-	case "/session-del":
-		if err := h.history.DeleteSession(chatID, arg); err != nil {
-			return "error", "会话", err.Error()
-		}
-		which := arg
-		if which == "" {
-			which = "当前活动会话"
-		}
-		return "success", "已删除", fmt.Sprintf("已删除会话 %s。", which)
-
-	case "/current":
-		sid := h.history.Current(chatID)
-		if sid == "" {
-			return "info", "当前会话", "当前无活动会话（首次提问后将自动创建）。"
-		}
-		return "info", "当前会话", fmt.Sprintf("活动会话：%s\n模型：%s", sid, h.cfg.Model)
+func (h *Handler) cmdSessionNew(chatID, _ string) (level, title, body string) {
+	sid, err := h.history.NewSession(chatID)
+	if err != nil {
+		return "error", "会话", "新建会话失败：" + err.Error()
 	}
-	return "warning", "会话", "未知命令：" + cmd
+	return "success", "已开启新会话",
+		fmt.Sprintf("新会话已创建（%s）。旧会话仍保留，可用 /session-list 查看、/session-use 切回。", sid)
+}
+
+func (h *Handler) cmdSessionList(chatID, _ string) (level, title, body string) {
+	return h.renderSessionList(chatID)
+}
+
+func (h *Handler) cmdSessionUse(chatID, arg string) (level, title, body string) {
+	if arg == "" {
+		return "warning", "会话", "用法：/session-use <会话ID>。先用 /session-list 查看可用会话。"
+	}
+	if err := h.history.UseSession(chatID, arg); err != nil {
+		return "error", "会话", err.Error()
+	}
+	return "success", "已切换会话", fmt.Sprintf("已切换到会话 %s。", arg)
+}
+
+func (h *Handler) cmdSessionDel(chatID, arg string) (level, title, body string) {
+	if err := h.history.DeleteSession(chatID, arg); err != nil {
+		return "error", "会话", err.Error()
+	}
+	which := arg
+	if which == "" {
+		which = "当前活动会话"
+	}
+	return "success", "已删除", fmt.Sprintf("已删除会话 %s。", which)
+}
+
+func (h *Handler) cmdCurrent(chatID, _ string) (level, title, body string) {
+	sid := h.history.Current(chatID)
+	if sid == "" {
+		return "info", "当前会话", "当前无活动会话（首次提问后将自动创建）。"
+	}
+	return "info", "当前会话", fmt.Sprintf("活动会话：%s\n模型：%s", sid, h.cfg.Model)
 }
 
 // renderSessionList builds the /session-list body: oldest first, the active
