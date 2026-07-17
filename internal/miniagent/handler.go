@@ -79,7 +79,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
 		"model", h.cfg.Model,
-		"prompt_preview", truncateForLog(prompt, 80))
+		"prompt_preview", truncate(prompt, 80, "…"))
 
 	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, h.emitHook(chatID, promptID), h.logger)
 	if err != nil {
@@ -181,13 +181,4 @@ func (h *Handler) notify(ctx context.Context, chatID, level, title, message stri
 	})
 }
 
-// truncateForLog clamps a string to n runes for log previews so a long
-// prompt does not flood the journal.
-func truncateForLog(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}
 

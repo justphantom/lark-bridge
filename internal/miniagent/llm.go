@@ -125,8 +125,8 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("miniagent http non-200",
 			"status", resp.StatusCode, "body_len", len(raw),
-			"body_preview", truncate(string(raw), 200))
-		return Response{}, fmt.Errorf("llm returned %d: %s", resp.StatusCode, truncate(string(raw), 500))
+			"body_preview", truncate(string(raw), 200, "…"))
+		return Response{}, fmt.Errorf("llm returned %d: %s", resp.StatusCode, truncate(string(raw), 500, "…"))
 	}
 	logger.Debug("miniagent http response", "status", resp.StatusCode, "body_bytes", len(raw))
 	return parseChatResponse(raw)
@@ -218,11 +218,4 @@ func parseChatResponse(raw []byte) (Response, error) {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Fn.Name, Args: tc.Fn.Args})
 	}
 	return out, nil
-}
-
-func truncate(s string, n int) string {
-	if n <= 0 || len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

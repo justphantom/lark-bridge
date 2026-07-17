@@ -101,7 +101,7 @@ func TestReadFile_Truncates(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Output)
 	}
-	if !strings.Contains(res.Output, "已截断") {
+	if !strings.Contains(res.Output, "…") {
 		t.Errorf("Output missing truncation marker; len=%d", len(res.Output))
 	}
 }

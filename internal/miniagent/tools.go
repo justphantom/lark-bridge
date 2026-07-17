@@ -141,7 +141,7 @@ func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("读取 %q 失败：%v", a.Path, err)}
 	}
-	return ToolResult{Output: truncateToLimit(string(data), maxReadFileChars)}
+	return ToolResult{Output: truncate(string(data), maxReadFileChars, "…")}
 }
 
 // resolveUnderRoot cleans p and ensures the result stays under root. It
@@ -166,8 +166,10 @@ func resolveUnderRoot(root, p string) (string, error) {
 	return full, nil
 }
 
-// truncateToLimit clamps s to n runes and appends a marker when it truncated.
-func truncateToLimit(s string, n int) string {
+// truncate clamps s to n runes and appends marker when it truncated. rune-
+// based so multibyte content (中文) is never split mid-character. n<=0 means
+// no limit. marker is "" for a silent cut, or a visible suffix like "…".
+func truncate(s string, n int, marker string) string {
 	if n <= 0 {
 		return s
 	}
@@ -175,7 +177,7 @@ func truncateToLimit(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n]) + "\n…(已截断，共 " + fmt.Sprintf("%d", len(r)) + " 字符)"
+	return string(r[:n]) + marker
 }
 
 // shellArgs is the LLM-supplied argument object for shell.
@@ -245,7 +247,7 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 	cmd := exec.CommandContext(runCtx, "sh", "-c", a.Command)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
-	body := truncateToLimit(string(out), maxShellOutputChars)
+	body := truncate(string(out), maxShellOutputChars, "…")
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return ToolResult{IsError: true, Output: body + fmt.Sprintf("\n⏱ 命令超时（>%s），已终止。", shellTimeout)}
@@ -413,7 +415,7 @@ func (w WebFetch) Call(ctx context.Context, args string) ToolResult {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("读取响应失败：%v", err)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ToolResult{IsError: true, Output: fmt.Sprintf("%s 返回 %d：%s", a.URL, resp.StatusCode, truncateToLimit(string(body), 200))}
+		return ToolResult{IsError: true, Output: fmt.Sprintf("%s 返回 %d：%s", a.URL, resp.StatusCode, truncate(string(body), 200, "…"))}
 	}
 
 	ctype := resp.Header.Get("Content-Type")
@@ -422,12 +424,12 @@ func (w WebFetch) Call(ctx context.Context, args string) ToolResult {
 		if perr != nil {
 			// Fall back to raw body rather than failing the whole call:
 			// the LLM may still glean something from partial markup.
-			return ToolResult{Output: truncateToLimit(string(body), maxWebFetchChars)}
+			return ToolResult{Output: truncate(string(body), maxWebFetchChars, "…")}
 		}
-		return ToolResult{Output: truncateToLimit(text, maxWebFetchChars)}
+		return ToolResult{Output: truncate(text, maxWebFetchChars, "…")}
 	}
 	// Non-HTML (plain text, json, etc.) returned as-is.
-	return ToolResult{Output: truncateToLimit(string(body), maxWebFetchChars)}
+	return ToolResult{Output: truncate(string(body), maxWebFetchChars, "…")}
 }
 
 // isHTTPURL reports whether u starts with an http:// or https:// scheme
