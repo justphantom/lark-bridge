@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/cliutil"
 	"github.com/hu/lark-bridge/internal/log"
 )
 
@@ -95,18 +96,7 @@ type RunOptions struct {
 
 // IsReady verifies the CLI is installed by running `<cliPath> --version`.
 func (c *Client) IsReady(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
-	defer cancel()
-	// #nosec G204 -- cliPath from trusted config.
-	cmd := exec.CommandContext(ctx, c.cliPath, "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("peri CLI not ready (%s --version): %w", c.cliPath, err)
-	}
-	c.logger.Info("peri CLI ready",
-		"cli_path", c.cliPath,
-		"version", strings.TrimSpace(string(out)))
-	return nil
+	return cliutil.CheckVersion(ctx, c.cliPath, "peri", readyTimeout, c.logger)
 }
 
 // Run starts one peri subprocess for opts and returns a channel of parsed

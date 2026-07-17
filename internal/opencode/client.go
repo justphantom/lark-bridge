@@ -12,11 +12,11 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/cliutil"
 	"github.com/hu/lark-bridge/internal/log"
 )
 
@@ -110,18 +110,7 @@ type RunOptions struct {
 // IsReady verifies the CLI is installed and invocable by running
 // `<cliPath> --version`. Returns an error suitable for a startup health gate.
 func (c *Client) IsReady(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
-	defer cancel()
-	// #nosec G204 -- c.cliPath comes from the trusted config file, not user input.
-	cmd := exec.CommandContext(ctx, c.cliPath, "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("opencode CLI not ready (%s --version): %w", c.cliPath, err)
-	}
-	c.logger.Info("opencode CLI ready",
-		"cli_path", c.cliPath,
-		"version", strings.TrimSpace(string(out)))
-	return nil
+	return cliutil.CheckVersion(ctx, c.cliPath, "opencode", readyTimeout, c.logger)
 }
 
 // Run starts one opencode CLI subprocess for opts and returns a channel of

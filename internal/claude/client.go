@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/cliutil"
 	"github.com/hu/lark-bridge/internal/config"
 	"github.com/hu/lark-bridge/internal/log"
 )
@@ -113,19 +114,8 @@ type RunOptions struct {
 // `<cliPath> --version`. Returns an error suitable for a startup health
 // gate.
 func (c *Client) IsReady(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
-	defer cancel()
-	// #nosec G204 -- c.cliPath comes from the trusted config file, not user input.
-	cmd := exec.CommandContext(ctx, c.cliPath, "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("claude CLI not ready (%s --version): %w", c.cliPath, err)
-	}
-	c.logger.Info("claude CLI ready",
-		"cli_path", c.cliPath,
-		log.FieldPermissionMode, c.permissionMode,
-		"version", strings.TrimSpace(string(out)))
-	return nil
+	return cliutil.CheckVersion(ctx, c.cliPath, "claude", readyTimeout, c.logger,
+		log.FieldPermissionMode, c.permissionMode)
 }
 
 // Run starts one Claude Code CLI subprocess for opts and returns a
