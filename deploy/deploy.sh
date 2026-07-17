@@ -55,9 +55,8 @@ stop_services() {
     sleep 1
 
     # 仍存活的进程：SIGKILL 连同 cgroup 内子进程一并清理。systemd 的
-    # cgroup kill 已覆盖单元内所有子进程，无需再 pgrep 兜底——后者会
-    # 误伤 deploy-monitor（其 cmdline 含 $DEPLOY_DIR/ 前缀，正是它 fork
-    # 出本次 make deploy，被杀会连带终结整个部署脚本进程树）。
+    # cgroup kill 已覆盖单元内所有子进程，无需再 pgrep 兜底——后者可能
+    # 误伤 deploy-monitor（它可能正 fork 出本次 make deploy 进程树）。
     for svc in "${SERVICES[@]}"; do
         local pid
         pid="$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)"
@@ -157,10 +156,10 @@ write_unit() {
     # extra_env 非空时尾部补一个换行，使 heredoc 里 ExecStart 独立成行；空则留空。
     local env_block=""
     [[ -n "$extra_env" ]] && env_block="$extra_env"$'\n'
-    # privileged=true 时整个沙箱块省略：deploy-monitor 跑 `make deploy`，要
-    # sudo 提权写 /etc/systemd/system、跑 systemctl，NoNewPrivileges 会禁止
-    # sudo 的 setuid 提权导致远程 /deploy 必失败（"no new privileges" flag is
-    # set）。沙箱是为不需要提权的 backend 准备的，不适用于它。
+    # privileged=true 时整个沙箱块省略：供需要 sudo 提权的单元用（如
+    # deploy-monitor 跑 `make deploy` 时要 systemctl/cp 到 /etc）。沙箱的
+    # NoNewPrivileges 会禁止 sudo 的 setuid 提权，故提权单元必须绕过沙箱。
+    # 当前 4 个业务服务都不需要提权，此参数留作 upgrade-monitor.sh 的 unit 使用。
     local sandbox=""
     if [[ "$privileged" != "true" ]]; then
         sandbox='# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
@@ -218,13 +217,13 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
-[[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
-# 五个进程各用独立 config：claude/opencode/miniagent/deploy-monitor/feishu-config.json。
+# 四个进程各用独立 config：claude/opencode/miniagent/feishu-config.json。
 # 都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
-# 各 backend 必须用不同的 router_path（feishu-front 与 deploy-monitor 除外），否则
+# 各 backend 必须用不同的 router_path（feishu-front 除外），否则
 # 写同一文件互相覆盖。
+# deploy-monitor 的 config/unit 由 upgrade-monitor.sh 独立管理，不在此流程内。
 #
 # 所有 sed 在临时副本上操作，repo 里的源 config 不被污染（git 不变 dirty）。
 info "准备配置文件..."
@@ -284,28 +283,10 @@ cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "miniagent-1",|' "$STAGE/miniagent-config.json"
 inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json"
 
-# deploy-monitor：独立 backend_id，无 session/router 需求；注入 deploy_monitor 块
-# 指向 repo 根。monitor 不参与本脚本的 stop/start（见 SERVICES 数组），其二进制更新需单独重启。
-cp "$STAGE/claude-config.json" "$STAGE/deploy-monitor-config.json"
-sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "deploy-monitor-1",|' "$STAGE/deploy-monitor-config.json"
-sed -i '/"router_path"/d' "$STAGE/deploy-monitor-config.json"
-# 注入 deploy_monitor 块必须用「先删后插」而非直接 a\ 追加。base config 可能已含
-# deploy_monitor 块——例如无 claude-config.json 时从 config.example.json 派生，其带
-# 占位 project_root（/home/user/ZCodeProject/...）。直接在 backend_id 后追加会产生两
-# 个 deploy_monitor 键；Go encoding/json 对重复键静默取最后一个，而原块在后，于是占位
-# 路径覆盖注入值 → monitor 指向不存在的目录，首次远程 /deploy 必失败。故先范围删除
-# 既有 deploy_monitor 块（键行到其后首个 } 闭合行；deploy_monitor 当前为扁平对象无嵌套
-# }, 首个 } 即其闭合），再注入唯一的新块。deploy_target 显式给出（config_defaults 亦有兜底）。
-sed -i '/"deploy_monitor"[[:space:]]*:/,/^[[:space:]]*}/d' "$STAGE/deploy-monitor-config.json"
-sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'", "deploy_target": "deploy"},' "$STAGE/deploy-monitor-config.json"
-# 校验注入成功（sed 在锚点不匹配时静默返回 0，须显式确认；与 inject_router_path 同模式）
-grep -q '"deploy_monitor"[[:space:]]*:[[:space:]]*{"project_root"' "$STAGE/deploy-monitor-config.json" \
-    || fail "deploy_monitor 注入失败：$STAGE/deploy-monitor-config.json 缺少 backend_id（注入锚点缺失），monitor 的 project_root 将为空"
-
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config / opencode-config / miniagent-config / deploy-monitor-config / feishu-config 已生成"
+info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
@@ -320,10 +301,9 @@ info "复制二进制和配置..."
 
 # 二进制用「写临时文件 + 原子 rename」更新，而非直接 cp 覆盖。rename(2) 替换
 # 路径不触发 ETXTBSY——运行中的进程继续持有旧 inode，直到被重启才换上新文件。
-# 因此连正在运行的 deploy-monitor 也能就地更新其磁盘二进制：它本次部署保持存活
-# 以发送完成通知，下次手动 restart 即生效。这消除了原先「monitor 运行中就跳过其
-# 二进制更新、需手动 cp」的限制。临时文件落在同一 $DEPLOY_DIR，确保 mv 是同卷
-# rename（原子、不跨设备）。业务服务已在 stop_services 停止，rename 同样安全。
+# 临时文件落在同一 $DEPLOY_DIR，确保 mv 是同卷 rename（原子、不跨设备）。
+# 业务服务已在 stop_services 停止，rename 同样安全。
+# 注意：deploy-monitor 的二进制不在此流程内——它由 upgrade-monitor.sh 独立管理。
 for f in "$BIN_DIR"/*; do
     [[ -f "$f" ]] || continue
     name="$(basename "$f")"
@@ -336,7 +316,6 @@ sudo chmod 755 "$DEPLOY_DIR"/*
 sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
 sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
 sudo cp "$STAGE/miniagent-config.json"     "$CONFIG_DIR/"
-sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
@@ -371,7 +350,6 @@ write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-co
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
 write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front
-write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front "" true
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
@@ -387,21 +365,12 @@ wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法
 # 端口已通，再起三个 CLI backend（并行，互不依赖）
 sudo systemctl start lark-claude-back lark-opencode-back lark-miniagent-back
 
-# deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
-# 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程
-# 全程存活以发送部署完成通知。其磁盘二进制已随上面 rename 步骤就地更新，但运行中
-# 进程仍持旧 inode，需运维手动 systemctl restart lark-deploy-monitor 才换上新版本。
-#
-# ⚠ 运行前提：monitor 以非 root 的 $RUN_USER 运行，收到 /deploy 时执行
-# `make deploy` → 本脚本 → 大量 `sudo systemctl ...`。systemd 无 TTY，sudo 一旦
-# 需要密码就会挂起直到 monitor 的 10 分钟超时，部署静默失败。故 $RUN_USER 必须对
-# systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo（或配 /etc/sudoers.d 条目）。
-# 这里主动探测一次免密 sudo（monitor 真实路径），失败则明确告警，避免远程 /deploy
-# 静默挂死 10 分钟才超时。
+# ⚠ 运行前提：$RUN_USER 必须对 systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo，
+# 否则远程 /deploy（经 deploy-monitor 触发本脚本）会在 sudo 处挂起至超时。
+# 这里主动探测一次免密 sudo，失败则告警。
 deploy_sudo_check() {
-    # sudo -n 非交互，无免密配置时立即失败而非挂起等密码
     if sudo -u "$RUN_USER" sudo -n systemctl is-active lark-feishu-front >/dev/null 2>&1; then
-        info "$RUN_USER 具备免密 sudo（remote /deploy 可用）"
+        info "$RUN_USER 具备免密 sudo"
     else
         warn "$RUN_USER 无免密 sudo，remote /deploy 将挂起至超时失败"
         warn "  修复：配 /etc/sudoers.d/lark-bridge，例如："
@@ -410,14 +379,6 @@ deploy_sudo_check() {
     fi
 }
 deploy_sudo_check
-
-if ! systemctl is-enabled --quiet lark-deploy-monitor 2>/dev/null; then
-    info "首次部署：enable + start lark-deploy-monitor"
-    sudo systemctl enable lark-deploy-monitor 2>/dev/null || true
-    sudo systemctl start lark-deploy-monitor
-else
-    info "lark-deploy-monitor 已 enabled，保持运行（不重启）"
-fi
 
 # ── 步骤 6：验证（轮询 is-active，替代固定 sleep）─────
 info "验证..."

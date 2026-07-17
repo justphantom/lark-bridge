@@ -17,7 +17,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-check test vet fmt clean deploy
+.PHONY: build build-check test vet fmt clean deploy upgrade-monitor
 
 # Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
@@ -58,5 +58,13 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
+# Note: deploy.sh only manages the 4 business services. lark-deploy-monitor
+# is managed independently by upgrade-monitor.sh (it triggers deploy, so
+# self-managing would be a circular dependency).
 deploy:
 	./deploy/deploy.sh $(ARGS)
+
+# upgrade-monitor builds and restarts ONLY lark-deploy-monitor, decoupled
+# from deploy.sh. Use --init for first-time install (creates config + unit).
+upgrade-monitor:
+	./deploy/upgrade-monitor.sh $(ARGS)

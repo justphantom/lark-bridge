@@ -5,14 +5,15 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-        ┌───────────┬───────────┬──────────────┬──────────────┐
-   claude-back  opencode-back  miniagent-back  deploy-monitor
-   (Claude CLI) (opencode CLI) (LLM API 直调)  (make deploy)
+        ┌───────────┬───────────┬──────────────┐    ┌──────────────┐
+   claude-back  opencode-back  miniagent-back      deploy-monitor
+   (Claude CLI) (opencode CLI) (LLM API 直调)      (make deploy)
+                                                    ↑ 独立部署
 ```
 
-前端 feishu-front + 三个 agent 后端（claude/opencode/miniagent）+ deploy-monitor，
-共五个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
-（不同 backend_id / router_path），手启动方式下也可共用一份。
+前端 feishu-front + 三个 agent 后端（claude/opencode/miniagent）由 `make deploy`
+管理（4 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**（`make
+upgrade-monitor`），避免「部署脚本管自己的触发者」循环依赖。
 
 ## 前置条件
 
@@ -29,7 +30,7 @@
 ```bash
 make build
 # 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#       bin/lark-miniagent-back, bin/lark-deploy-monitor
+#       bin/lark-miniagent-back（deploy-monitor 由 upgrade-monitor.sh 单独构建）
 ```
 
 ## 2. 准备配置
@@ -179,8 +180,24 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back lark-deploy-monitor
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back
 ```
+
+## 6.5. deploy-monitor 部署（独立）
+
+deploy-monitor 是「部署触发者」（收到飞书群 `/deploy` → `make deploy`），
+**不由 deploy.sh 管理**，避免循环依赖。它有自己的部署脚本：
+
+```bash
+# 首次安装（生成 config + unit + enable + start）
+make upgrade-monitor ARGS=--init
+
+# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
+make upgrade-monitor
+```
+
+升级时 monitor 短暂离线（systemd restart 期间无法响应 `/deploy`）。monitor 代码
+极少变更，这个代价可接受。
 
 ## 7. 验证
 
