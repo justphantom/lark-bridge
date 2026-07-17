@@ -164,10 +164,8 @@ func (s *ProgressState) AddToolResult(name, desc, output string, isError, isSuba
 	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1, isSubagent: isSubagent})
 }
 
-// AddProgress counts a step. The desc is currently unused but kept on the
-// signature so callers do not need to change if the progress card starts
-// surfacing step descriptions.
-func (s *ProgressState) AddProgress(desc string) {
+// AddProgress counts a step.
+func (s *ProgressState) AddProgress() {
 	s.stepCount++
 }
 

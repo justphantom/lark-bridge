@@ -83,7 +83,7 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 	case protocol.TypeToolResult:
 		state.AddToolResult(ctrl.ToolResult.Name, ctrl.ToolResult.Input, ctrl.ToolResult.Output, ctrl.ToolResult.IsError, ctrl.ToolResult.IsSubagent, ctrl.ToolResult.TaskID)
 	case protocol.TypeProgress:
-		state.AddProgress(ctrl.Progress.Description)
+		state.AddProgress()
 	}
 	// Clone under the lock so the expensive Render+Marshal runs outside
 	// progressMu — otherwise concurrent turns serialise on each render.

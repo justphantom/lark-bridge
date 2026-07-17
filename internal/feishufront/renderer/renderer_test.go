@@ -75,7 +75,7 @@ func TestProgressRender(t *testing.T) {
 	s.AddThinking("reasoning")
 	s.AddToolUse("bash", "ls", false, "")
 	s.AddToolResult("bash", "", "file.txt", false, false, "")
-	s.AddProgress("working")
+	s.AddProgress()
 	b, err := s.Render(hdr(), ftr())
 	card := parse(t, b, err)
 	body := card["body"].(map[string]any)
