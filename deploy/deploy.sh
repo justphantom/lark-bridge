@@ -326,18 +326,11 @@ sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
-# .env 含真实凭证，仅首次部署写入；后续部署保留现有的 .env 不覆盖。
-# 但 IPC_ADDR / STATE_DIR 是部署参数（可随部署变更），非凭证——每次部署
-# 都强制同步为本次值，否则 config 模板里的 ${IPC_ADDR} / ${STATE_DIR} 会
-# 展开成旧值，state 目录与 IPC 地址对不上。用 sed 幂等更新：键存在则改，
-# 不存在则追加。
-if [[ ! -f "$CONFIG_DIR/.env" ]]; then
-    sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
-    info "首次部署：已写入 .env"
-else
-    info "保留现有 .env（不覆盖凭证，仅同步部署参数）"
-fi
-# 幂等更新部署参数键。grep -q 判断存在性，存在用 sed 改整行，不存在追加。
+# .env 以 repo 根目录的为唯一真源：每次部署先在 repo 根 .env 上同步本次
+# 部署参数（IPC_ADDR / STATE_DIR），再整文件覆盖到 CONFIG_DIR/.env。运维改
+# 了 .env 的任何键（凭证、模型、工作区等）重新部署即生效；不再保留
+# CONFIG_DIR 上的旧 .env。
+# update_env_key 幂等更新一个键：存在用 sed 改整行，不存在追加。
 update_env_key() {
     local key="$1" val="$2" file="$3"
     if sudo grep -q "^${key}=" "$file"; then
@@ -346,9 +339,13 @@ update_env_key() {
         echo "${key}=${val}" | sudo tee -a "$file" > /dev/null
     fi
 }
-update_env_key IPC_ADDR "$IPC_ADDR" "$CONFIG_DIR/.env"
-update_env_key STATE_DIR "$STATE_DIR" "$CONFIG_DIR/.env"
+# 先同步部署参数到 repo 根 .env，否则整文件覆盖后 CONFIG_DIR/.env 会丢这两项，
+# config 模板里的 ${IPC_ADDR} / ${STATE_DIR} 展开会失败。
+update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
+update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
+sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
+info "已覆盖 $CONFIG_DIR/.env（以 repo 根 .env 为真源）"
 
 info "修复目录和文件权限 → owner=$RUN_USER"
 sudo chown -R "$RUN_USER:$RUN_USER" "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
