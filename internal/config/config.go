@@ -44,8 +44,6 @@ type Config struct {
 	// —— 后端运行时：各后端按需 ——
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
-	Peri          Peri          `json:"peri,omitempty"`           // peri-back 用
-	Goose         Goose         `json:"goose,omitempty"`          // goose-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 
 	// —— 日志：共用 ——
@@ -129,77 +127,6 @@ type Opencode struct {
 	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
 }
 
-// Peri holds settings for the local peri CLI subprocess that acts as the
-// agent backend. The peri-back binary shells out to the `peri` CLI in print
-// mode per turn and reads an NDJSON event flow from stdout.
-//
-// peri print mode has NO session persistence: each turn is stateless. This is
-// an accepted design constraint (no multi-turn continuity, no /model or
-// /agent pickers — peri has no list subcommands, models are configured in
-// ~/.peri/settings.json).
-type Peri struct {
-	// CLIPath is the path to the peri binary (default "peri").
-	CLIPath string `json:"cli_path,omitempty"`
-	// DefaultDirectory is the base dir for per-chat working dirs.
-	DefaultDirectory string `json:"default_directory,omitempty"`
-	// MaxConcurrent caps parallel peri subprocesses (default 4).
-	MaxConcurrent int `json:"max_concurrent,omitempty"`
-	// MaxTurns caps the agentic turns per run (passed as --max-turns). <=0 → 1.
-	// One turn = one model call; tool-using tasks need more.
-	MaxTurns int `json:"max_turns,omitempty"`
-	// StreamHistory caps how many recent raw stream-json captures are kept
-	// under {state_dir}/streams. <=0/unset → 50 (matches claude/opencode).
-	// Set to a negative value to disable archiving entirely.
-	StreamHistory int `json:"stream_history,omitempty"`
-
-	// PermissionOptions lists the modes offered in the interactive /perm
-	// picker card. nil/unset → [bypass, accept-edit, auto-mode]. "default" is
-	// intentionally excluded by default: it enables HITL approval which
-	// deadlocks the non-interactive -p subprocess.
-	PermissionOptions []string `json:"permission_options,omitempty"`
-	// EffortOptions lists the levels offered in the interactive /effort picker
-	// card. nil/unset → [low, medium, high, max] (peri's documented values).
-	EffortOptions []string `json:"effort_options,omitempty"`
-	// SettingsDir is the directory scanned for the interactive /settings
-	// picker (*.json files). Empty/unset → ~/.peri at runtime via
-	// os.UserHomeDir.
-	SettingsDir string `json:"settings_dir,omitempty"`
-}
-
-// Goose holds settings for the local goose CLI subprocess that acts as the
-// agent backend. The goose-back binary shells out to `goose run -i -
-// --output-format stream-json` per turn and reads an NDJSON event flow from
-// stdout.
-//
-// goose sessions persist in a global SQLite DB and resume by --name; the
-// bridge stores the per-chat anchor ("feishu:<chatID>") in the router binding.
-type Goose struct {
-	// CLIPath is the path to the goose binary (default "goose").
-	CLIPath string `json:"cli_path,omitempty"`
-	// DefaultDirectory is the base dir for per-chat working dirs.
-	DefaultDirectory string `json:"default_directory,omitempty"`
-	// MaxConcurrent caps parallel goose subprocesses (default 4).
-	MaxConcurrent int `json:"max_concurrent,omitempty"`
-	// MaxTurns caps the agentic turns per run (passed as --max-turns). <=0 → 1.
-	MaxTurns int `json:"max_turns,omitempty"`
-	// StreamHistory caps how many recent raw stream-json captures are kept
-	// under {state_dir}/streams. <=0/unset → 50 (matches the other backends).
-	// Set to a negative value to disable archiving entirely.
-	StreamHistory int `json:"stream_history,omitempty"`
-
-	// ModelOptions lists the models offered in the interactive /model picker
-	// card. nil/unset → a small default set; the picker also offers a custom-
-	// input box so any model name can be typed.
-	ModelOptions []string `json:"model_options,omitempty"`
-	// PermissionOptions/EffortOptions are retained for HandlerConfig parity but
-	// goose has no --permission-mode or --effort CLI flag, so goose-back does
-	// not register /perm or /effort commands. They are unused; kept only so
-	// the merged config struct (shared across binaries) loads a config file
-	// carrying them without error.
-	PermissionOptions []string `json:"permission_options,omitempty"`
-	EffortOptions     []string `json:"effort_options,omitempty"`
-}
-
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which
 // receives /deploy prompts and runs `make <DeployTarget>` in ProjectRoot.
 type DeployMonitor struct {
@@ -214,7 +141,6 @@ type DeployMonitor struct {
 type ComponentLogLevel struct {
 	Router        string `json:"router,omitempty"`
 	Opencode      string `json:"opencode,omitempty"`
-	Peri          string `json:"peri,omitempty"`
 	Feishu        string `json:"feishu,omitempty"`
 	Bridge        string `json:"bridge,omitempty"`
 	Dedup         string `json:"dedup,omitempty"`

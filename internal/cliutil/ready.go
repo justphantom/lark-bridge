@@ -1,7 +1,7 @@
 // Package cliutil holds subprocess helpers shared by the CLI-backed
-// backends (claude, goose, opencode, peri). Currently only the --version
-// readiness probe, which every backend's IsReady duplicated verbatim
-// modulo the backend name and a few log fields.
+// backends (claude, opencode). Currently only the --version readiness
+// probe, which every backend's IsReady duplicated verbatim modulo the
+// backend name and a few log fields.
 package cliutil
 
 import (

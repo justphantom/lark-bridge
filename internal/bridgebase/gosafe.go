@@ -1,5 +1,5 @@
-// Package bridgebase holds the pieces every backend bridge (claude, opencode,
-// peri) shares: the panic-safe goroutine launcher, the interactive-card answer
+// Package bridgebase holds the pieces every backend bridge (claude, opencode)
+// shares: the panic-safe goroutine launcher, the interactive-card answer
 // broker, and the <think>-block stripper. Each bridge used to carry its own
 // byte-for-byte copy of these; they live here now so a fix applies once and
 // the three bridges cannot drift apart.

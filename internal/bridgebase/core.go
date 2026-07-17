@@ -119,7 +119,7 @@ type Core struct {
 	emitSem chan struct{}
 
 	// Usage records per-session token/cost totals. nil when not wired (e.g.
-	// unit tests, or stateless backends like peri that emit no usage).
+	// unit tests).
 	Usage *usage.Store
 
 	closeOnce sync.Once

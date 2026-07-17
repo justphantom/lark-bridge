@@ -31,25 +31,6 @@
     "list_cache_ttl":    3600
   },
 
-  "peri": {
-    "cli_path":          "peri",
-    "default_directory": "${STATE_DIR}/peri",
-    "max_concurrent":    4,
-    "max_turns":         10,
-    "stream_history":    50,
-    "permission_options": ["bypass", "accept-edit", "auto-mode"],
-    "effort_options":     ["low", "medium", "high", "max"]
-  },
-
-  "goose": {
-    "cli_path":          "goose",
-    "default_directory": "${STATE_DIR}/goose",
-    "max_concurrent":    4,
-    "max_turns":         10,
-    "stream_history":    50,
-    "model_options":     ["gpt-4o", "claude-sonnet-4-5", "kimi-for-coding"]
-  },
-
   "deploy_monitor": {
     "project_root":  "/home/user/ZCodeProject/lark-bridge",
     "deploy_target": "deploy"

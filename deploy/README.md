@@ -5,13 +5,13 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-        ┌───────────┬───────────┬───────────┬───────────┬──────────────┐
-   claude-back  opencode-back  peri-back  goose-back  deploy-monitor
-   (Claude CLI) (opencode CLI) (peri CLI) (goose CLI) (make deploy)
+        ┌───────────┬───────────┬──────────────┐
+   claude-back  opencode-back  deploy-monitor
+   (Claude CLI) (opencode CLI) (make deploy)
 ```
 
-前端 feishu-front + 四个 CLI 后端（claude/opencode/peri/goose）+ deploy-monitor，
-共六个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
+前端 feishu-front + 两个 CLI 后端（claude/opencode）+ deploy-monitor，
+共四个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
 （不同 backend_id / router_path），手启动方式下也可共用一份。
 
 ## 前置条件
@@ -21,8 +21,6 @@
 | Go | 1.25+ |
 | Claude CLI | `claude` 在 PATH 中（仅 claude-back） |
 | opencode | `opencode` CLI 在 PATH 中（仅 opencode-back） |
-| peri | `peri` CLI 在 PATH 中（仅 peri-back） |
-| goose | `goose` CLI 在 PATH 中（仅 goose-back） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
 
 ## 1. 构建
@@ -30,7 +28,7 @@
 ```bash
 make build
 # 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#       bin/lark-peri-back, bin/lark-goose-back, bin/lark-deploy-monitor
+#       bin/lark-deploy-monitor
 ```
 
 ## 2. 准备配置
@@ -41,7 +39,7 @@ cp deploy/env.example .env
 # 编辑 .env，填入真实凭证
 # 生成 IPC_SECRET：openssl rand -hex 32
 
-# 方式 A：单文件（三个进程共享，各自只读需要的字段）
+# 方式 A：单文件（进程共享，各自只读需要的字段）
 cp config.example.json claude-config.json
 # 编辑 backend_id / frontend_url / state_dir
 # feishu/opencode 各自再复制一份（或直接共用 claude-config.json）
@@ -50,13 +48,12 @@ cp config.example.json claude-config.json
 # deploy/feishu-config.json   — 飞书凭证 + ipc_secret + state_dir
 # deploy/claude-config.json   — backend_id + frontend_url + claude 配置
 # deploy/opencode-config.json — backend_id + frontend_url + opencode 配置
-# deploy/peri-config.json     — backend_id + frontend_url + peri 配置
 ```
 
 ## 3. 创建 state 目录
 
 ```bash
-mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode /var/lib/lark-bridge/peri /var/lib/lark-bridge/goose
+mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode
 ```
 
 ## 4. 启动
@@ -74,12 +71,6 @@ set -a; source .env; set +a
 
 # opencode 后端（可选）
 ./bin/lark-opencode-back -config opencode-config.json &
-
-# peri 后端（可选）
-./bin/lark-peri-back -config peri-config.json &
-
-# goose 后端（可选）
-./bin/lark-goose-back -config goose-config.json &
 ```
 
 新群首次发消息时会提示"未绑定后端"，需用户发送 `/backend use {id}` 绑定。
@@ -97,7 +88,6 @@ set -a; source .env; set +a
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `claude.default_directory` | claude-back | 每个群的工作目录基路径 |
 | `opencode.default_directory` | opencode-back | 每个群的工作目录基路径 |
-| `peri.default_directory` | peri-back | 每个群的工作目录基路径 |
 
 ### 机密字段
 
@@ -126,10 +116,6 @@ set -a; source .env; set +a
 | `opencode.max_concurrent` | `4` |
 | `opencode.stream_history` | `50` |
 | `opencode.list_cache_ttl` | `3600` |
-| `peri.cli_path` | `peri` |
-| `peri.max_concurrent` | `4` |
-| `peri.max_turns` | `1` |
-| `peri.stream_history` | `50` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}`（当前仅 opencode-back 生效） |
@@ -188,7 +174,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back lark-deploy-monitor
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-deploy-monitor
 ```
 
 ## 7. 验证
@@ -200,7 +186,7 @@ curl -s localhost:6060/v1/events  # 应返回 401（鉴权拦截）
 # 日志
 journalctl -u lark-feishu-front -f
 journalctl -u lark-claude-back -f
-journalctl -u lark-peri-back -f
+journalctl -u lark-opencode-back -f
 
 # 在飞书群里 @机器人 发消息，观察日志输出
 ```

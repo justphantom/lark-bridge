@@ -44,7 +44,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back)
+SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back)
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -172,7 +172,7 @@ User=$RUN_USER
 # 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
 #   NoNewPrivileges      禁 setuid 提权（backend 不需要）
 #   ProtectSystem=full   /usr /boot 只读；/var/lib(state_dir) 与 /home 仍可写
-#                        （不用 strict：claude 写 ~/.claude、goose 读 ~/.config/goose）
+#                        （不用 strict：claude 写 ~/.claude、opencode 读 ~/.config）
 #   ProtectHome 不设：backend 依赖用户 home 下的 CLI 配置与缓存
 #   PrivateTmp           独立 /tmp 命名空间，不共享系统 tmp
 #   ProtectKernel*       禁止改内核运行时/模块/日志/cgroup
@@ -210,12 +210,10 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-feishu-front" ]]   || fail "构建产物缺失：lark-feishu-front"
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
-[[ -x "$BIN_DIR/lark-peri-back" ]]      || fail "构建产物缺失：lark-peri-back"
-[[ -x "$BIN_DIR/lark-goose-back" ]]     || fail "构建产物缺失：lark-goose-back"
 [[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
-# 六个进程各用独立 config：claude/opencode/peri/goose/deploy-monitor/feishu-config.json。
+# 四个进程各用独立 config：claude/opencode/deploy-monitor/feishu-config.json。
 # 都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
 # 各 backend 必须用不同的 router_path（feishu-front 与 deploy-monitor 除外），否则
 # 写同一文件互相覆盖。
@@ -250,9 +248,9 @@ fi
 # 步骤 3 的 .env 写入），无需 sed 改 JSON——既消除字面量替换的元字符转义陷阱，也避免
 # sed 静默失败导致 state 分裂。
 
-# 各 backend（claude/opencode/peri/goose）注入独立 router_path。四者共享同一个
+# 各 backend（claude/opencode）注入独立 router_path。两者共享同一个
 # state_dir，若用默认的同一 router.v5.json 会互相覆盖会话绑定，故部署脚本
-# 显式拆为 claude/opencode/peri/goose-router.json（文件名仅本脚本约定，
+# 显式拆为 claude/opencode-router.json（文件名仅本脚本约定，
 # 与 config 默认的 router.v5.json 不同；router_path 字段本身可配）。
 #
 # 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后追加。若
@@ -272,16 +270,6 @@ inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
-
-# peri-back：独立 backend_id + 独立 router_path
-cp "$STAGE/claude-config.json" "$STAGE/peri-config.json"
-sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "peri-1",|' "$STAGE/peri-config.json"
-inject_router_path "$STAGE/peri-config.json" "$STATE_DIR/peri-router.json"
-
-# goose-back：独立 backend_id + 独立 router_path（同 peri 模式）
-cp "$STAGE/claude-config.json" "$STAGE/goose-config.json"
-sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "goose-1",|' "$STAGE/goose-config.json"
-inject_router_path "$STAGE/goose-config.json" "$STATE_DIR/goose-router.json"
 
 # deploy-monitor：独立 backend_id，无 session/router 需求；注入 deploy_monitor 块
 # 指向 repo 根。monitor 不参与本脚本的 stop/start（见 SERVICES 数组），其二进制更新需单独重启。
@@ -304,13 +292,13 @@ grep -q '"deploy_monitor"[[:space:]]*:[[:space:]]*{"project_root"' "$STAGE/deplo
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config / opencode-config / peri-config / goose-config / deploy-monitor-config / feishu-config 已生成"
+info "claude-config / opencode-config / deploy-monitor-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
-# STATE_DIR/{claude,opencode,peri,goose} 是四个 backend 的 default_directory，
+# STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
 # per-chat 工作目录在运行时由 MkdirAll 在其下自动创建。
 info "创建系统目录..."
-sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/peri" "$STATE_DIR/goose"
+sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode"
 
 # 必须先停服务，否则覆盖二进制会 "Text file busy"
 stop_services
@@ -334,8 +322,6 @@ sudo chmod 755 "$DEPLOY_DIR"/*
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
 sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
 sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
-sudo cp "$STAGE/peri-config.json"          "$CONFIG_DIR/"
-sudo cp "$STAGE/goose-config.json"         "$CONFIG_DIR/"
 sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
@@ -373,34 +359,7 @@ info "生成 systemd unit 文件（User=$RUN_USER）..."
 write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
-write_unit lark-peri-back      lark-peri-back      lark-peri-back      peri-config.json     lark-feishu-front
-# goose 把 API key 存在用户 D-Bus keyring（登录会话独有）或 ~/.config/goose/
-# secrets.yaml。systemd 启动不带 D-Bus 会话环境 → 读不到 keyring → 本地代理 401。
-# GOOSE_DISABLE_KEYRING=true 强制 goose 走文件存储（secrets.yaml），绕过 keyring。
-# 凭证文件需运维用 `goose configure` 预先生成（见下方 deploy_goose_secret_check）。
-write_unit lark-goose-back     lark-goose-back     lark-goose-back     goose-config.json    lark-feishu-front \
-    "Environment=GOOSE_DISABLE_KEYRING=true"
 write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
-
-# goose 凭证检测：GOOSE_DISABLE_KEYRING=true 下 goose 从 ~/.config/goose/secrets.yaml
-# 读 key。该文件需运维预先以 RUN_USER 身份运行 `goose configure` 生成（交互式，无法
-# 在本脚本内完成）。缺失则 goose-back 必 401（已实测）——仅告警不中止，让运维先完成
-# 其他部署再补凭证；明确给出修复命令避免无方向排查。
-deploy_goose_secret_check() {
-    local home_dir
-    home_dir="$(getent passwd "$RUN_USER" | cut -d: -f6)"
-    [[ -n "$home_dir" ]] || { warn "无法解析 $RUN_USER 的 home 目录，跳过 goose 凭证检查"; return; }
-    local secret="$home_dir/.config/goose/secrets.yaml"
-    if [[ ! -s "$secret" ]]; then
-        warn "goose 凭证缺失：$secret 不存在或为空"
-        warn "  goose-back 将无法认证（401）。请以 $RUN_USER 身份执行："
-        warn "    sudo -u $RUN_USER goose configure   # 选 openai provider 填 API key"
-        warn "  生成的 secrets.yaml 即为 GOOSE_DISABLE_KEYRING=true 时的凭证来源"
-    else
-        info "goose 凭证就绪：$secret"
-    fi
-}
-deploy_goose_secret_check
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
@@ -414,7 +373,7 @@ wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
 wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 
 # 端口已通，再起四个 backend（并行，互不依赖）
-sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back lark-goose-back
+sudo systemctl start lark-claude-back lark-opencode-back
 
 # deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
 # 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程

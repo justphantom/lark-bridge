@@ -72,33 +72,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Opencode.ListCacheTTL == 0 {
 		cfg.Opencode.ListCacheTTL = 3600
 	}
-	if cfg.Peri.CLIPath == "" {
-		cfg.Peri.CLIPath = "peri"
-	}
-	if cfg.Peri.MaxConcurrent == 0 {
-		cfg.Peri.MaxConcurrent = 4
-	}
-	if cfg.Peri.MaxTurns == 0 {
-		cfg.Peri.MaxTurns = 1
-	}
-	if cfg.Peri.StreamHistory <= 0 {
-		cfg.Peri.StreamHistory = 50
-	}
-	if cfg.Goose.CLIPath == "" {
-		cfg.Goose.CLIPath = "goose"
-	}
-	if cfg.Goose.MaxConcurrent == 0 {
-		cfg.Goose.MaxConcurrent = 4
-	}
-	if cfg.Goose.MaxTurns == 0 {
-		// goose defaults to asking "continue?" after one turn; an agentic task
-		// needs more headroom, so 10 mirrors the peri/opencode default rather
-		// than the CLI's 1.
-		cfg.Goose.MaxTurns = 10
-	}
-	if cfg.Goose.StreamHistory <= 0 {
-		cfg.Goose.StreamHistory = 50
-	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}

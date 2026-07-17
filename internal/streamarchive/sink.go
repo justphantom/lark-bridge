@@ -1,7 +1,7 @@
 // Package streamarchive writes per-run raw stream archives to disk with
-// bounded retention. Each backend (claude/opencode/peri) lands its run
-// captures under {stateDir}/streams/{backend}/, pruned independently so a
-// burst in one backend never evicts another's recent archives.
+// bounded retention. Each backend (claude/opencode) lands its run captures
+// under {stateDir}/streams/{backend}/, pruned independently so a burst in
+// one backend never evicts another's recent archives.
 //
 // The sink is best-effort: any setup failure (mkdir, open) returns nil and is
 // logged by the caller, so archiving never fails a run.
@@ -34,8 +34,8 @@ const fileTimeLayout = "20060102T150405.000000000"
 // Returns (nil, nil) when archiving is disabled (history<=0 or stateDir==""),
 // or when setup fails — archiving is best-effort. The returned closer closes
 // the file; callers defer it. backend is the subdirectory name (e.g. "claude",
-// "opencode", "peri"); it is sanitized so an unexpected value cannot escape
-// the streams root.
+// "opencode"); it is sanitized so an unexpected value cannot escape the
+// streams root.
 func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, history int) (io.Writer, func() error) {
 	if history <= 0 || stateDir == "" {
 		return nil, nil

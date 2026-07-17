@@ -32,13 +32,13 @@ func TestSanitizeName(t *testing.T) {
 func TestNewSink_Disabled(t *testing.T) {
 	dir := t.TempDir()
 	lg := log.Nop()
-	if w, c := NewSink(lg, dir, "peri", "c", "r", 0); w != nil || c != nil {
+	if w, c := NewSink(lg, dir, "claude", "c", "r", 0); w != nil || c != nil {
 		t.Error("history=0 should disable")
 	}
-	if w, c := NewSink(lg, dir, "peri", "c", "r", -1); w != nil || c != nil {
+	if w, c := NewSink(lg, dir, "claude", "c", "r", -1); w != nil || c != nil {
 		t.Error("history<0 should disable")
 	}
-	if w, c := NewSink(lg, "", "peri", "c", "r", 50); w != nil || c != nil {
+	if w, c := NewSink(lg, "", "claude", "c", "r", 50); w != nil || c != nil {
 		t.Error("empty stateDir should disable")
 	}
 }
@@ -48,7 +48,7 @@ func TestNewSink_Disabled(t *testing.T) {
 func TestNewSink_CreatesPerBackendDir(t *testing.T) {
 	stateDir := t.TempDir()
 	lg := log.Nop()
-	w, closeSink := NewSink(lg, stateDir, "peri", "chat-1", "reply-9", 50)
+	w, closeSink := NewSink(lg, stateDir, "claude", "chat-1", "reply-9", 50)
 	if w == nil || closeSink == nil {
 		t.Fatal("NewSink returned nil with archiving enabled")
 	}
@@ -59,11 +59,11 @@ func TestNewSink_CreatesPerBackendDir(t *testing.T) {
 		t.Fatalf("closeSink: %v", err)
 	}
 
-	// File must be under streams/peri/, named with chat + reply segments.
-	periDir := filepath.Join(stateDir, "streams", "peri")
-	entries, err := os.ReadDir(periDir)
+	// File must be under streams/claude/, named with chat + reply segments.
+	backendDir := filepath.Join(stateDir, "streams", "claude")
+	entries, err := os.ReadDir(backendDir)
 	if err != nil {
-		t.Fatalf("ReadDir peri: %v", err)
+		t.Fatalf("ReadDir claude: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(entries))
@@ -79,7 +79,7 @@ func TestNewSink_CreatesPerBackendDir(t *testing.T) {
 func TestNewSink_BackendIsolation(t *testing.T) {
 	stateDir := t.TempDir()
 	lg := log.Nop()
-	for _, b := range []string{"claude", "opencode", "peri"} {
+	for _, b := range []string{"claude", "opencode"} {
 		w, c := NewSink(lg, stateDir, b, "c", "r", 50)
 		if w == nil {
 			t.Fatalf("NewSink %s nil", b)
@@ -87,7 +87,7 @@ func TestNewSink_BackendIsolation(t *testing.T) {
 		_, _ = w.Write([]byte("{}\n"))
 		_ = c()
 	}
-	for _, b := range []string{"claude", "opencode", "peri"} {
+	for _, b := range []string{"claude", "opencode"} {
 		entries, err := os.ReadDir(filepath.Join(stateDir, "streams", b))
 		if err != nil {
 			t.Errorf("backend %s dir missing: %v", b, err)
@@ -148,15 +148,15 @@ func TestPrune_NewSinkIntegration(t *testing.T) {
 	lg := log.Nop()
 	// history=3 → each NewSink prunes to keep 2 before adding 1 (net 3 cap).
 	for i := 0; i < 6; i++ {
-		w, c := NewSink(lg, stateDir, "peri", "c", "r", 3)
+		w, c := NewSink(lg, stateDir, "claude", "c", "r", 3)
 		if w == nil {
 			t.Fatal("nil sink")
 		}
 		_, _ = w.Write([]byte("{}\n"))
 		_ = c()
 	}
-	periDir := filepath.Join(stateDir, "streams", "peri")
-	entries, _ := os.ReadDir(periDir)
+	backendDir := filepath.Join(stateDir, "streams", "claude")
+	entries, _ := os.ReadDir(backendDir)
 	if len(entries) > 3 {
 		t.Errorf("expected ≤3 files after 6 writes with history=3, got %d", len(entries))
 	}

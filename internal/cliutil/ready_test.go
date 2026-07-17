@@ -76,7 +76,7 @@ func TestCheckVersion_ContextCancelled(t *testing.T) {
 }
 
 // TestCheckVersion_ExtraFieldsOptional verifies the zero-extraFields form
-// still works (goose/opencode/peri pass none).
+// still works (opencode passes none).
 func TestCheckVersion_ExtraFieldsOptional(t *testing.T) {
 	bin := versionBin(t)
 	var buf bytes.Buffer
