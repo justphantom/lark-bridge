@@ -96,12 +96,20 @@ func run(cfgPath string) error {
 		)
 	}
 	tools = append(tools, miniagent.WebFetch{})
+	// MemoryEnabled defaults to true (nil/unset → on); only an explicit
+	// false disables history. NewHistory(nil dir) still works — the History
+	// methods are nil-safe.
+	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
+	var history *miniagent.History
+	if memoryEnabled {
+		history = miniagent.NewHistory(cfg.StateDir, logger)
+	}
 	h := miniagent.New(llm, miniagent.LoopConfig{
 		Model:     cfg.MiniAgent.Model,
 		System:    cfg.MiniAgent.SystemPrompt,
 		MaxTokens: cfg.MiniAgent.MaxTokens,
 		Tools:     tools,
-	}, rpc, logger)
+	}, rpc, logger, history)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -110,6 +118,7 @@ func run(cfgPath string) error {
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
 		"base_url", cfg.MiniAgent.BaseURL,
+		"memory_enabled", memoryEnabled,
 		"model", cfg.MiniAgent.Model,
 		"tools", len(tools),
 		"workspace_root", cfg.MiniAgent.WorkspaceRoot)

@@ -38,7 +38,7 @@ func (c *captureSender) Controls() []*protocol.Control {
 func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 	llm := &fakeLLM{responses: []Response{{Text: "answer", Usage: Usage{InputTokens: 5, OutputTokens: 7}}}}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop())
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "hi"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -75,7 +75,7 @@ func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 	llm := &fakeLLM{errs: []error{errBoom}}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{}, rpc, log.Nop())
+	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "x"}}
 	_ = h.HandleEvent(context.Background(), ev)
@@ -106,7 +106,7 @@ func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 func TestHandleEvent_EmptyPromptNotices(t *testing.T) {
 	llm := &fakeLLM{}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{}, rpc, log.Nop())
+	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p3", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "   "}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -123,7 +123,7 @@ func TestHandleEvent_EmptyPromptNotices(t *testing.T) {
 
 // TestHandleEvent_NonPromptIgnored verifies non-Prompt events are dropped.
 func TestHandleEvent_NonPromptIgnored(t *testing.T) {
-	h := New(&fakeLLM{}, LoopConfig{}, &captureSender{}, log.Nop())
+	h := New(&fakeLLM{}, LoopConfig{}, &captureSender{}, log.Nop(), nil)
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePing}); err != nil {
 		t.Errorf("HandleEvent: %v", err)
 	}

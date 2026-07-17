@@ -17,22 +17,25 @@ type controlSender interface {
 }
 
 // Handler owns the per-process agent state: the LLM client, the emit
-// channel, and the loop config derived from config.MiniAgent. One Handler
-// per process; each turn runs on its own goroutine.
+// channel, the loop config derived from config.MiniAgent, and the optional
+// per-chat history. One Handler per process; each turn runs on its own
+// goroutine.
 type Handler struct {
-	llm    Client
-	cfg    LoopConfig
-	rpc    controlSender
-	logger *log.Logger
+	llm     Client
+	cfg     LoopConfig
+	rpc     controlSender
+	logger  *log.Logger
+	history *History // nil → stateless (MemoryEnabled=false)
 }
 
 // New wires the handler. llm is the LLM client (HTTPClient in production,
-// Fake in tests). rpc emits Controls back to the frontend.
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger) *Handler {
+// Fake in tests). rpc emits Controls back to the frontend. history may be
+// nil to disable multi-turn memory.
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
-	return &Handler{llm: llm, cfg: cfg, rpc: rpc, logger: logger}
+	return &Handler{llm: llm, cfg: cfg, rpc: rpc, logger: logger, history: history}
 }
 
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
@@ -75,13 +78,17 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 // terminal emit so it still lands after the prompt ctx is cancelled.
 func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
+	// Load history for this chat (nil on first turn or when memory is off).
+	// The loop sees prior turns and returns the new messages in result.History.
+	hist := h.history.Load(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
 		"model", h.cfg.Model,
+		"history_msgs", len(hist),
 		"prompt_preview", truncate(prompt, 80, "…"))
 
-	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, h.emitHook(chatID, promptID), h.logger)
+	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, hist, h.emitHook(chatID, promptID), h.logger)
 	if err != nil {
 		h.logger.Warn("miniagent turn failed",
 			log.FieldChatID, chatID,
@@ -98,6 +105,11 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens,
 		"duration", time.Since(start))
+
+	// Persist this turn's new messages so the next turn remembers context.
+	// The file is append-only (old turns stay on disk); Load trims what the
+	// LLM actually sees, so unbounded growth only costs disk, not context.
+	h.history.Append(chatID, result.History)
 
 	emitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -37,7 +37,8 @@
     "model":           "${MINIAGENT_DEFAULT_MODEL}",
     "system_prompt":   "你是一个简洁的助手，回答通常不超过 500 字。",
     "max_tokens":      4096,
-    "workspace_root":  "${WORKSPACE_ROOT}"
+    "workspace_root":  "${WORKSPACE_ROOT}",
+    "memory_enabled":  true
   },
 
   "deploy_monitor": {

@@ -166,6 +166,10 @@ type MiniAgent struct {
 	// call it). Recommended: ${WORKSPACE_ROOT} so it shares the same env
 	// var as claude-back / opencode-back.
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	// MemoryEnabled toggles per-chat conversation history (jsonl under
+	// {state_dir}/miniagent/history/). nil/unset → enabled. Set false to
+	// run stateless (each prompt independent, like P1).
+	MemoryEnabled *bool `json:"memory_enabled,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

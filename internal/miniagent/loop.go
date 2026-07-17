@@ -40,10 +40,16 @@ type EmitFunc func(promptID string, sig Signal)
 
 // Result is what loop.Run returns to the handler: the terminal assistant
 // text plus the cumulative token usage across every LLM call this run.
+// History is the messages this turn added (the user message, any
+// assistant tool_call messages, the matching tool results, and the final
+// assistant text reply) — the handler persists it so the next turn carries
+// the conversation context. Empty on error (failed turns do not pollute
+// history).
 type Result struct {
-	Text  string
-	Usage Usage
-	Steps int // number of LLM calls made
+	Text    string
+	Usage   Usage
+	Steps   int // number of LLM calls made
+	History []Message
 }
 
 // Run drives the ReAct loop for one turn.
@@ -53,9 +59,11 @@ type Result struct {
 //     plus one tool message per call, and continues. Bounded by
 //     maxIterations.
 //
-// ctx bounds the whole turn. promptID scopes emits. logger may be nil.
-// emit may be nil.
-func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt string, emit EmitFunc, logger *log.Logger) (Result, error) {
+// history is the prior conversation loaded for this chat (nil for the first
+// turn or when memory is off); the userPrompt is appended to it to form the
+// messages sent to the LLM. ctx bounds the whole turn. promptID scopes
+// emits. logger/emit may be nil.
+func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt string, history []Message, emit EmitFunc, logger *log.Logger) (Result, error) {
 	if llm == nil {
 		return Result{}, errors.New("miniagent: llm client is nil")
 	}
@@ -76,7 +84,15 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		}
 	}
 
-	msgs := []Message{{Role: "user", Content: userPrompt}}
+	// msgs = loaded history + this turn's user message. newMsgs tracks only
+	// what this turn adds, so the handler can append it to history without
+	// re-saving the prior turns.
+	userMsg := Message{Role: "user", Content: userPrompt}
+	msgs := make([]Message, 0, len(history)+1)
+	msgs = append(msgs, history...)
+	msgs = append(msgs, userMsg)
+	newMsgs := []Message{userMsg}
+
 	var total Usage
 	for step := 1; step <= maxIterations; step++ {
 		if err := ctx.Err(); err != nil {
@@ -114,14 +130,18 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		if len(resp.ToolCalls) == 0 {
 			logger.Info("miniagent loop terminal (text reply)",
 				log.FieldPromptID, promptID, "step", step, "total_steps", step)
-			return Result{Text: resp.Text, Usage: total, Steps: step}, nil
+			finalMsg := Message{Role: "assistant", Content: resp.Text}
+			newMsgs = append(newMsgs, finalMsg)
+			return Result{Text: resp.Text, Usage: total, Steps: step, History: newMsgs}, nil
 		}
 
 		// Tool branch: record the assistant's tool_calls verbatim, then
 		// execute each and append a tool-role message carrying the result.
 		// OpenAI requires tool_call_id on each tool message to match the
 		// assistant's call id; a missing/mismatched id yields a 400.
-		msgs = append(msgs, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
+		assistantMsg := Message{Role: "assistant", ToolCalls: resp.ToolCalls}
+		msgs = append(msgs, assistantMsg)
+		newMsgs = append(newMsgs, assistantMsg)
 		for _, tc := range resp.ToolCalls {
 			emitSignal(Signal{Kind: SignalToolUse, Name: tc.Name, Input: tc.Args})
 			tool, ok := toolByName[tc.Name]
@@ -135,8 +155,13 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 				log.FieldPromptID, promptID, "step", step,
 				"tool", tc.Name, "is_error", tres.IsError,
 				"output_len", len(tres.Output))
+			// emit the FULL result to the frontend; feed only a trimmed copy
+			// back to the LLM / history so one huge tool_result cannot crowd
+			// out the rest of the conversation.
 			emitSignal(Signal{Kind: SignalToolResult, Name: tc.Name, Input: tc.Args, Output: tres.Output, IsError: tres.IsError})
-			msgs = append(msgs, Message{Role: "tool", ToolCallID: tc.ID, Content: tres.Output})
+			toolMsg := Message{Role: "tool", ToolCallID: tc.ID, Content: truncateToolResult(tres.Output)}
+			msgs = append(msgs, toolMsg)
+			newMsgs = append(newMsgs, toolMsg)
 		}
 	}
 	logger.Warn("miniagent loop exhausted max iterations",
