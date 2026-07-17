@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hu/lark-bridge/internal/log"
+	"github.com/hu/lark-bridge/internal/miniclient"
 	"github.com/hu/lark-bridge/internal/protocol"
 )
 
@@ -49,6 +50,8 @@ type Handler struct {
 	history       *History // nil → stateless (MemoryEnabled=false)
 	answers       *answerBroker
 	workspaceRoot string // global default for tools + /cd picker scope
+	client        *miniclient.Client // non-nil → CLI subprocess mode (P3)
+	historyDir    string             // state dir for CLI's --state-dir flag
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -58,9 +61,11 @@ type Handler struct {
 }
 
 // New wires the handler. llm is the LLM client (HTTPClient in production,
-// Fake in tests). rpc emits Controls back to the frontend. history may be
-// nil to disable multi-turn memory.
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string) *Handler {
+// Fake in tests); pass nil when client (CLI mode) is used instead. rpc emits
+// Controls back to the frontend. history may be nil to disable multi-turn
+// memory. client is non-nil for CLI subprocess mode (P3): each turn forks
+// miniagent-cli instead of running the loop in-process.
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -72,8 +77,15 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		history:       history,
 		answers:       newAnswerBroker(),
 		workspaceRoot: workspaceRoot,
+		client:        client,
 		cancelBy:      make(map[string]*promptCancel),
 	}
+}
+
+// SetHistoryDir sets the state directory passed to miniagent-cli as
+// --state-dir so the CLI subprocess can load/save per-chat history.
+func (h *Handler) SetHistoryDir(dir string) {
+	h.historyDir = dir
 }
 
 // startTurn reserves the per-chat turn slot. Returns (turnCtx, mine, false)
@@ -238,7 +250,120 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 // exactly one terminal Control (Result on success, Error on failure) so the
 // frontend closes the turn card. A fresh short-lived ctx is used for the
 // terminal emit so it still lands after the prompt ctx is cancelled.
+// runTurn dispatches one turn: CLI subprocess mode (client != nil) or
+// in-process loop mode (client == nil). Both share the same per-chat state
+// (session/model/dir) and lifecycle (startTurn/endTurn/abort/close).
 func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) {
+	if h.client != nil {
+		h.runViaCLI(ctx, promptID, chatID, prompt)
+		return
+	}
+	h.runViaLoop(ctx, promptID, chatID, prompt)
+}
+
+// runViaCLI forks miniagent-cli per turn, pumps its NDJSON stdout into
+// Controls. The CLI process owns the loop/tools/LLM/memory; the bridge
+// owns IPC + per-chat config + command dispatch.
+func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
+	start := time.Now()
+	model := h.activeModel(chatID)
+	workdir := h.activeDir(chatID)
+	h.logger.Info("miniagent-cli turn start",
+		log.FieldChatID, chatID,
+		log.FieldPromptID, promptID,
+		"model", model,
+		"workdir", workdir)
+
+	events, err := h.client.Run(ctx, miniclient.RunOptions{
+		Prompt:   prompt,
+		Model:    model,
+		Workdir:  workdir,
+		ChatID:   chatID,
+		StateDir: h.historyDir,
+	})
+	if err != nil {
+		h.logger.Warn("miniagent-cli start failed",
+			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeError,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Error:    &protocol.ErrorPayload{Message: "启动 miniagent-cli 失败：" + err.Error(), Recoverable: true},
+		})
+		return
+	}
+
+	var cancelled bool
+	for ev := range events {
+		if ev.IsTerminal {
+			if ev.Kind == miniclient.KindError && ctx.Err() != nil {
+				cancelled = true
+			}
+		}
+		h.emitCLIEvent(chatID, promptID, ev, start)
+	}
+	if cancelled {
+		h.logger.Info("miniagent-cli turn aborted",
+			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
+	}
+}
+
+// emitCLIEvent translates one miniclient.Event into a protocol.Control and
+// emits it to the frontend.
+func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, start time.Time) {
+	switch ev.Kind {
+	case miniclient.KindToolUse:
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeToolUse,
+			PromptID: promptID,
+			ChatID:   chatID,
+			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: ev.Input},
+		})
+	case miniclient.KindToolResult:
+		h.sendCtrl(&protocol.Control{
+			Type:       protocol.TypeToolResult,
+			PromptID:   promptID,
+			ChatID:     chatID,
+			ToolResult: &protocol.ToolResultPayload{Name: ev.Name, Input: ev.Input, Output: ev.Output, IsError: ev.IsError},
+		})
+	case miniclient.KindResult:
+		h.logger.Info("miniagent-cli turn done",
+			log.FieldChatID, chatID,
+			log.FieldPromptID, promptID,
+			"steps", ev.Steps,
+			"input_tokens", ev.InputTokens,
+			"output_tokens", ev.OutputTokens,
+			log.FieldDuration, time.Since(start).Milliseconds())
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeResult,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Result: &protocol.ResultPayload{
+				Text:        ev.Text,
+				Model:       ev.Model,
+				Tokens:      ev.InputTokens + ev.OutputTokens,
+				Duration:    time.Since(start),
+				Steps:       ev.Steps,
+				TotalTokens: ev.InputTokens + ev.OutputTokens,
+			},
+		})
+	case miniclient.KindError:
+		h.logger.Warn("miniagent-cli turn failed",
+			log.FieldChatID, chatID,
+			log.FieldPromptID, promptID,
+			log.FieldError, errors.New(ev.Message),
+			log.FieldDuration, time.Since(start).Milliseconds())
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeError,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Error:    &protocol.ErrorPayload{Message: ev.Message, Recoverable: true},
+		})
+	}
+}
+
+// runViaLoop runs the ReAct loop in-process (the original mode before P3).
+func (h *Handler) runViaLoop(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
 	// Load history for this chat (nil on first turn or when memory is off).
 	// The loop sees prior turns and returns the new messages in result.History.

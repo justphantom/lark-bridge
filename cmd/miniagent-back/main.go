@@ -15,15 +15,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/hu/lark-bridge/internal/backendrpc"
 	"github.com/hu/lark-bridge/internal/config"
 	"github.com/hu/lark-bridge/internal/log"
+	"github.com/hu/lark-bridge/internal/miniclient"
 	"github.com/hu/lark-bridge/internal/miniagent"
 	"github.com/hu/lark-bridge/internal/protocol"
 )
@@ -78,55 +78,39 @@ func run(cfgPath string) error {
 	rpc.SetLogger(logger)
 	defer rpc.Close()
 
-	llm := &miniagent.HTTPClient{
-		APIKey:  cfg.MiniAgent.APIKey,
-		BaseURL: cfg.MiniAgent.BaseURL,
-		Logger:  logger,
-		HTTP:    &http.Client{Timeout: 120 * time.Second},
+	// CLI subprocess mode: miniagent-back forks miniagent-cli per turn.
+	// The CLI binary lives alongside this binary in the deploy dir.
+	cliPath := filepath.Join(filepath.Dir(os.Args[0]), "miniagent-cli")
+	if _, err := os.Stat(cliPath); err != nil {
+		// Fallback: check repo bin dir (development mode).
+		cliPath = filepath.Join(cfg.DeployMonitor.ProjectRoot, "bin", "miniagent-cli")
 	}
-	// Tools: read_file/write_file/shell register when workspace_root is set
-	// (default mode) OR when security_level is "free" (then they operate
-	// without path/cwd restrictions). webfetch is URL-driven, always on.
-	// Env key isolation and output truncation are ALWAYS enforced.
-	unrestricted := cfg.MiniAgent.SecurityLevel == "free"
-	var tools []miniagent.Tool
-	if cfg.MiniAgent.WorkspaceRoot != "" || unrestricted {
-		tools = append(tools,
-			miniagent.ReadFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
-			miniagent.WriteFile{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
-			miniagent.Shell{WorkspaceRoot: cfg.MiniAgent.WorkspaceRoot, Unrestricted: unrestricted},
-		)
-	}
-	tools = append(tools, miniagent.WebFetch{})
-	// MemoryEnabled defaults to true (nil/unset → on); only an explicit
-	// false disables history. NewHistory(nil dir) still works — the History
-	// methods are nil-safe.
+	client := miniclient.New(miniclient.Config{
+		CLIPath:       cliPath,
+		APIKey:        cfg.MiniAgent.APIKey,
+		BaseURL:       cfg.MiniAgent.BaseURL,
+		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
+		MaxTokens:     cfg.MiniAgent.MaxTokens,
+		SecurityLevel: cfg.MiniAgent.SecurityLevel,
+	}, logger)
+
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
 	var history *miniagent.History
 	if memoryEnabled {
 		history = miniagent.NewHistory(cfg.StateDir, logger)
 	}
-	h := miniagent.New(llm, miniagent.LoopConfig{
-		Model:     cfg.MiniAgent.Model,
-		System:    cfg.MiniAgent.SystemPrompt,
-		MaxTokens: cfg.MiniAgent.MaxTokens,
-		Tools:     tools,
-	}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot)
+	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client)
+	h.SetHistoryDir(cfg.StateDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	// Close before stop/rpc.Close (LIFO): let in-flight turns wind down while
-	// IPC is still up so their final emit lands, then stop the signal ctx,
-	// then close the rpc.
 	defer h.Close()
 
-	logger.Info("miniagent ready",
+	logger.Info("miniagent ready (CLI mode)",
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
-		"base_url", cfg.MiniAgent.BaseURL,
+		"cli_path", cliPath,
 		"memory_enabled", memoryEnabled,
-		"model", cfg.MiniAgent.Model,
-		"tools", len(tools),
 		"workspace_root", cfg.MiniAgent.WorkspaceRoot,
 		"security_level", cfg.MiniAgent.SecurityLevel)
 

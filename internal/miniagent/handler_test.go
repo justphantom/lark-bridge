@@ -38,7 +38,7 @@ func (c *captureSender) Controls() []*protocol.Control {
 func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 	llm := &fakeLLM{responses: []Response{{Text: "answer", Usage: Usage{InputTokens: 5, OutputTokens: 7}}}}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "hi"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -80,7 +80,7 @@ func TestHandleEvent_EmitsStepsOnResult(t *testing.T) {
 		{Text: "done", Usage: Usage{InputTokens: 4, OutputTokens: 5}},
 	}}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m", Tools: []Tool{tool}}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m", Tools: []Tool{tool}}, rpc, log.Nop(), nil, "", nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-1", Text: "read a"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -101,7 +101,7 @@ func TestHandleEvent_EmitsStepsOnResult(t *testing.T) {
 func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 	llm := &fakeLLM{errs: []error{errBoom}}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil, "", nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "x"}}
 	_ = h.HandleEvent(context.Background(), ev)
@@ -132,7 +132,7 @@ func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 func TestHandleEvent_EmptyPromptNotices(t *testing.T) {
 	llm := &fakeLLM{}
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{}, rpc, log.Nop(), nil, "", nil)
 
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p3", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "   "}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
@@ -149,7 +149,7 @@ func TestHandleEvent_EmptyPromptNotices(t *testing.T) {
 
 // TestHandleEvent_NonPromptIgnored verifies non-Prompt events are dropped.
 func TestHandleEvent_NonPromptIgnored(t *testing.T) {
-	h := New(&fakeLLM{}, LoopConfig{}, &captureSender{}, log.Nop(), nil, "")
+	h := New(&fakeLLM{}, LoopConfig{}, &captureSender{}, log.Nop(), nil, "", nil)
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePing}); err != nil {
 		t.Errorf("HandleEvent: %v", err)
 	}
@@ -218,7 +218,7 @@ func waitControls(t *testing.T, rpc *captureSender, n int) []*protocol.Control {
 func TestHandleEvent_BusyRejectsSecond(t *testing.T) {
 	llm := newSlowLLM()
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	ev := func(pid string) *protocol.Event {
 		return &protocol.Event{Type: protocol.TypePrompt, PromptID: pid, Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}}
@@ -260,7 +260,7 @@ func TestHandleEvent_BusyRejectsSecond(t *testing.T) {
 func TestHandleEvent_DistinctChatsConcurrent(t *testing.T) {
 	llm1 := newSlowLLM()
 	rpc := &captureSender{}
-	h := New(llm1, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm1, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-a", Text: "hi"}})
 	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "chat-b", Text: "hi"}})
@@ -278,7 +278,7 @@ func TestHandleEvent_DistinctChatsConcurrent(t *testing.T) {
 func TestHandler_CloseWaitsForInFlight(t *testing.T) {
 	llm := newSlowLLM()
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
 	time.Sleep(20 * time.Millisecond) // let slowLLM.Do block
@@ -297,7 +297,7 @@ func TestHandler_CloseWaitsForInFlight(t *testing.T) {
 func TestAbort_StopsInFlightTurn(t *testing.T) {
 	llm := newSlowLLM()
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
 	time.Sleep(20 * time.Millisecond) // let slowLLM.Do block on release
@@ -338,7 +338,7 @@ func TestAbort_StopsInFlightTurn(t *testing.T) {
 func TestAbort_TypeAbortEvent(t *testing.T) {
 	llm := newSlowLLM()
 	rpc := &captureSender{}
-	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
 	time.Sleep(20 * time.Millisecond)
@@ -358,7 +358,7 @@ func TestAbort_TypeAbortEvent(t *testing.T) {
 // turn) replies with "无可中止" rather than erroring.
 func TestAbort_IdleReply(t *testing.T) {
 	rpc := &captureSender{}
-	h := New(&fakeLLM{}, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "")
+	h := New(&fakeLLM{}, LoopConfig{Model: "m"}, rpc, log.Nop(), nil, "", nil)
 
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/session-abort"}}); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
