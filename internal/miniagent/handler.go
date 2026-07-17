@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
 )
@@ -16,6 +15,16 @@ import (
 // Exists so tests substitute a fake capturing Controls instead of POSTing.
 type controlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
+}
+
+// promptCancel is the cancel entry of one in-flight turn, registered under
+// its chatID so busy-then-drop and Close can target exactly one chat. Local
+// type (mirroring bridgebase.PromptCancel) keeps miniagent independent of the
+// bridgebase package, which miniagent otherwise does not use.
+type promptCancel struct {
+	cancel    context.CancelFunc
+	startTime time.Time
+	chatID    string
 }
 
 // closeGrace bounds how long Close waits for in-flight turns to wind down
@@ -40,8 +49,8 @@ type Handler struct {
 	history *History // nil → stateless (MemoryEnabled=false)
 
 	cancelMu  sync.Mutex
-	cancelBy  map[string]*bridgebase.PromptCancel // chatID → in-flight turn
-	wg        sync.WaitGroup                      // tracks runTurn goroutines
+	cancelBy  map[string]*promptCancel // chatID → in-flight turn
+	wg        sync.WaitGroup           // tracks runTurn goroutines
 	closeOnce sync.Once
 }
 
@@ -58,7 +67,7 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		rpc:      rpc,
 		logger:   logger,
 		history:  history,
-		cancelBy: make(map[string]*bridgebase.PromptCancel),
+		cancelBy: make(map[string]*promptCancel),
 	}
 }
 
@@ -67,14 +76,14 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 // must NOT touch turnCtx/mine in that case. On success turnCtx is derived
 // from the process ctx so Close can cancel it, and the wg is incremented so
 // Close waits for this turn.
-func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *promptCancel, ok bool) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
 	if _, busy := h.cancelBy[chatID]; busy {
 		return nil, nil, false
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
-	mine = &bridgebase.PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID}
+	mine = &promptCancel{cancel: cancel, startTime: time.Now(), chatID: chatID}
 	h.cancelBy[chatID] = mine
 	h.wg.Add(1)
 	return turnCtx, mine, true
@@ -83,7 +92,7 @@ func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context
 // endTurn releases the per-chat slot only if it still points at mine (a
 // later Close or superceding turn may have already cleared it). Always
 // decrements wg to match startTurn's Add.
-func (h *Handler) endTurn(chatID string, mine *bridgebase.PromptCancel) {
+func (h *Handler) endTurn(chatID string, mine *promptCancel) {
 	h.cancelMu.Lock()
 	if cur, ok := h.cancelBy[chatID]; ok && cur == mine {
 		delete(h.cancelBy, chatID)
@@ -98,7 +107,7 @@ func (h *Handler) Close() {
 	h.closeOnce.Do(func() {
 		h.cancelMu.Lock()
 		for _, pc := range h.cancelBy {
-			pc.Cancel()
+			pc.cancel()
 		}
 		h.cancelMu.Unlock()
 		done := make(chan struct{})

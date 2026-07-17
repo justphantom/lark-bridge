@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/streamarchive"
 )
 
 // SessionInfo describes one stored session of a chat.
@@ -104,7 +103,7 @@ func (h *History) ListSessions(chatID string) ([]SessionInfo, error) {
 		}
 		return nil, err
 	}
-	prefix := streamarchive.SanitizeName(chatID) + "__"
+	prefix := sanitizeChatID(chatID) + "__"
 	cur := h.current(chatID)
 	var out []SessionInfo
 	for _, e := range entries {
@@ -200,13 +199,37 @@ func (h *History) writeCur(chatID, sid string) error {
 }
 
 func (h *History) sessionPath(chatID, sid string) string {
-	return filepath.Join(h.dir, streamarchive.SanitizeName(chatID)+"__"+sid+".jsonl")
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+"__"+sid+".jsonl")
 }
 
 func (h *History) legacyPath(chatID string) string {
-	return filepath.Join(h.dir, streamarchive.SanitizeName(chatID)+".jsonl")
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+".jsonl")
 }
 
 func (h *History) curPathFor(chatID string) string {
-	return filepath.Join(h.dir, streamarchive.SanitizeName(chatID)+".cur")
+	return filepath.Join(h.dir, sanitizeChatID(chatID)+".cur")
+}
+
+// sanitizeChatID collapses any character unsafe for a filename into '_' so a
+// chatID with an unexpected character cannot escape the history directory.
+// Local copy of streamarchive.SanitizeName so miniagent stays independent of
+// the archive package (it only needs this one helper).
+func sanitizeChatID(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "x"
+	}
+	return b.String()
 }
