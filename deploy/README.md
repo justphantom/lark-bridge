@@ -5,13 +5,13 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-        ┌───────────┬───────────┬──────────────┐
-   claude-back  opencode-back  deploy-monitor
-   (Claude CLI) (opencode CLI) (make deploy)
+        ┌───────────┬───────────┬──────────────┬──────────────┐
+   claude-back  opencode-back  miniagent-back  deploy-monitor
+   (Claude CLI) (opencode CLI) (LLM API 直调)  (make deploy)
 ```
 
-前端 feishu-front + 两个 CLI 后端（claude/opencode）+ deploy-monitor，
-共四个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
+前端 feishu-front + 三个 agent 后端（claude/opencode/miniagent）+ deploy-monitor，
+共五个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
 （不同 backend_id / router_path），手启动方式下也可共用一份。
 
 ## 前置条件
@@ -21,6 +21,7 @@
 | Go | 1.25+ |
 | Claude CLI | `claude` 在 PATH 中（仅 claude-back） |
 | opencode | `opencode` CLI 在 PATH 中（仅 opencode-back） |
+| miniagent | OpenAI 兼容 endpoint 的 API key（仅 miniagent-back，见 .env） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
 
 ## 1. 构建
@@ -28,7 +29,7 @@
 ```bash
 make build
 # 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#       bin/lark-deploy-monitor
+#       bin/lark-miniagent-back, bin/lark-deploy-monitor
 ```
 
 ## 2. 准备配置
@@ -71,6 +72,9 @@ set -a; source .env; set +a
 
 # opencode 后端（可选）
 ./bin/lark-opencode-back -config opencode-config.json &
+
+# miniagent 后端（可选）
+./bin/lark-miniagent-back -config miniagent-config.json &
 ```
 
 新群首次发消息时会提示"未绑定后端"，需用户发送 `/backend use {id}` 绑定。
@@ -88,6 +92,7 @@ set -a; source .env; set +a
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `claude.default_directory` | claude-back | 每个群的工作目录基路径 |
 | `opencode.default_directory` | opencode-back | 每个群的工作目录基路径 |
+| `miniagent.api_key` | miniagent-back | OpenAI 兼容 endpoint 的 API key（`${MINIAGENT_API_KEY}`） |
 
 ### 机密字段
 
@@ -174,7 +179,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-deploy-monitor
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back lark-deploy-monitor
 ```
 
 ## 7. 验证
@@ -187,6 +192,7 @@ curl -s localhost:6060/v1/events  # 应返回 401（鉴权拦截）
 journalctl -u lark-feishu-front -f
 journalctl -u lark-claude-back -f
 journalctl -u lark-opencode-back -f
+journalctl -u lark-miniagent-back -f
 
 # 在飞书群里 @机器人 发消息，观察日志输出
 ```

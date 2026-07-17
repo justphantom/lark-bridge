@@ -44,7 +44,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back)
+SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back)
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -210,10 +210,11 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-feishu-front" ]]   || fail "构建产物缺失：lark-feishu-front"
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
+[[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
 [[ -x "$BIN_DIR/lark-deploy-monitor" ]] || fail "构建产物缺失：lark-deploy-monitor"
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
-# 四个进程各用独立 config：claude/opencode/deploy-monitor/feishu-config.json。
+# 五个进程各用独立 config：claude/opencode/miniagent/deploy-monitor/feishu-config.json。
 # 都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
 # 各 backend 必须用不同的 router_path（feishu-front 与 deploy-monitor 除外），否则
 # 写同一文件互相覆盖。
@@ -248,9 +249,9 @@ fi
 # 步骤 3 的 .env 写入），无需 sed 改 JSON——既消除字面量替换的元字符转义陷阱，也避免
 # sed 静默失败导致 state 分裂。
 
-# 各 backend（claude/opencode）注入独立 router_path。两者共享同一个
+# 各 backend（claude/opencode/miniagent）注入独立 router_path。三者共享同一个
 # state_dir，若用默认的同一 router.v5.json 会互相覆盖会话绑定，故部署脚本
-# 显式拆为 claude/opencode-router.json（文件名仅本脚本约定，
+# 显式拆为 claude/opencode/miniagent-router.json（文件名仅本脚本约定，
 # 与 config 默认的 router.v5.json 不同；router_path 字段本身可配）。
 #
 # 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后追加。若
@@ -270,6 +271,11 @@ inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
+
+# miniagent-back：独立 backend_id + 独立 router_path（同 opencode 模式）
+cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
+sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "miniagent-1",|' "$STAGE/miniagent-config.json"
+inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json"
 
 # deploy-monitor：独立 backend_id，无 session/router 需求；注入 deploy_monitor 块
 # 指向 repo 根。monitor 不参与本脚本的 stop/start（见 SERVICES 数组），其二进制更新需单独重启。
@@ -292,7 +298,7 @@ grep -q '"deploy_monitor"[[:space:]]*:[[:space:]]*{"project_root"' "$STAGE/deplo
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config / opencode-config / deploy-monitor-config / feishu-config 已生成"
+info "claude-config / opencode-config / miniagent-config / deploy-monitor-config / feishu-config 已生成"
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
@@ -322,6 +328,7 @@ sudo chmod 755 "$DEPLOY_DIR"/*
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
 sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
 sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
+sudo cp "$STAGE/miniagent-config.json"     "$CONFIG_DIR/"
 sudo cp "$STAGE/deploy-monitor-config.json" "$CONFIG_DIR/"
 sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
 sudo chmod 600 "$CONFIG_DIR"/*.json
@@ -356,6 +363,7 @@ info "生成 systemd unit 文件（User=$RUN_USER）..."
 write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
 write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
 write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
+write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front
 write_unit lark-deploy-monitor lark-deploy-monitor lark-deploy-monitor deploy-monitor-config.json lark-feishu-front
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
@@ -369,8 +377,8 @@ sudo systemctl start lark-feishu-front
 wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
 wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 
-# 端口已通，再起四个 backend（并行，互不依赖）
-sudo systemctl start lark-claude-back lark-opencode-back
+# 端口已通，再起三个 CLI backend（并行，互不依赖）
+sudo systemctl start lark-claude-back lark-opencode-back lark-miniagent-back
 
 # deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
 # 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程
