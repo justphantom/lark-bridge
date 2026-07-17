@@ -39,6 +39,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-back ./cmd/opencode-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
+	go build -ldflags "$(LDFLAGS)" -o bin/miniagent-cli ./cmd/miniagent-cli
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
 vet:
