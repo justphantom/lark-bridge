@@ -217,6 +217,7 @@ make -C "$PROJECT_ROOT" build
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
+[[ -x "$BIN_DIR/miniagent-cli" ]]       || fail "构建产物缺失：miniagent-cli（miniagent-back 的子进程依赖）"
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
 # 四个进程各用独立 config：claude/opencode/miniagent/feishu-config.json。
