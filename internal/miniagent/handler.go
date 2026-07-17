@@ -336,8 +336,14 @@ func (h *Handler) sendCtrl(ctrl *protocol.Control) {
 	}
 }
 
-// notify emits a non-terminal Notice (e.g. empty-prompt warning).
-func (h *Handler) notify(ctx context.Context, chatID, level, title, message string) error {
+// notify emits a non-terminal Notice (e.g. empty-prompt warning, session
+// command reply). It uses a fresh short ctx rather than the caller's so a
+// slow IPC POST cannot block the SSE event loop (session commands run inline
+// in HandleEvent, on the event-loop goroutine). The ctx param is accepted
+// for signature stability but ignored — see sendCtrl for the same pattern.
+func (h *Handler) notify(_ context.Context, chatID, level, title, message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	return h.rpc.SendControl(ctx, &protocol.Control{
 		Type:   protocol.TypeNotice,
 		ChatID: chatID,

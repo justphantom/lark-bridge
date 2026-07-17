@@ -71,7 +71,7 @@ func (w WebFetch) Call(ctx context.Context, args string) ToolResult {
 
 	client := w.HTTP
 	if client == nil {
-		client = &http.Client{Timeout: webfetchTimeout}
+		client = webfetchDefaultClient()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
 	if err != nil {
@@ -111,6 +111,30 @@ func (w WebFetch) Call(ctx context.Context, args string) ToolResult {
 func isHTTPURL(u string) bool {
 	low := strings.ToLower(u)
 	return strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://")
+}
+
+// maxWebFetchRedirects caps redirect hops so a malicious page cannot send the
+// agent on a long chain (amplifying SSRF or stalling the turn). 3 covers the
+// common www→canonical reshuffle while staying tight.
+const maxWebFetchRedirects = 3
+
+// webfetchDefaultClient is the http.Client webfetch uses when WebFetch.HTTP is
+// nil. Its CheckRedirect limits hops to maxWebFetchRedirects AND requires every
+// hop to stay http/https — a redirect to file:// (or any non-http scheme)
+// would otherwise bypass the isHTTPURL gate that only checked the seed URL.
+func webfetchDefaultClient() *http.Client {
+	return &http.Client{
+		Timeout: webfetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxWebFetchRedirects {
+				return fmt.Errorf("webfetch: stopped after %d redirects", maxWebFetchRedirects)
+			}
+			if !isHTTPURL(req.URL.String()) {
+				return fmt.Errorf("webfetch: redirect to non-http(s) URL refused: %s", req.URL.Scheme)
+			}
+			return nil
+		},
+	}
 }
 
 // blockTags are HTML elements that force a line break in the extracted

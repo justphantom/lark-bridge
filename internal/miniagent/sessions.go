@@ -191,11 +191,36 @@ func (h *History) current(chatID string) string {
 	return strings.TrimSpace(string(b))
 }
 
+// writeCur stores the active session id for chatID atomically: write to a
+// sibling temp file then rename, so a crash mid-write cannot leave a
+// truncated/empty .cur that would make the next Load silently drop the
+// session. The temp file lives in the same directory as the target so the
+// rename is atomic on POSIX (same filesystem).
 func (h *History) writeCur(chatID, sid string) error {
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(h.curPathFor(chatID), []byte(sid), 0o644)
+	target := h.curPathFor(chatID)
+	tmp, err := os.CreateTemp(h.dir, ".cur-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.WriteString(sid); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 func (h *History) sessionPath(chatID, sid string) string {

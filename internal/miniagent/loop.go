@@ -153,8 +153,20 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		// execute each and append a tool-role message carrying the result.
 		// OpenAI requires tool_call_id on each tool message to match the
 		// assistant's call id; a missing/mismatched id yields a 400.
-		msgs = append(msgs, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
-		for _, tc := range resp.ToolCalls {
+		// Normalize malformed tool_calls so the assistant message and the
+		// tool-role replies we feed back stay paired (OpenAI 400s on a tool
+		// message whose tool_call_id has no match in the assistant turn).
+		// A missing ID gets a stable synth placeholder; an empty name is kept
+		// so toolByName lookup misses and the LLM gets a clean IsError.
+		calls := make([]ToolCall, len(resp.ToolCalls))
+		for i, tc := range resp.ToolCalls {
+			calls[i] = tc
+			if calls[i].ID == "" {
+				calls[i].ID = fmt.Sprintf("synth_%d_%d", step, i)
+			}
+		}
+		msgs = append(msgs, Message{Role: "assistant", ToolCalls: calls})
+		for _, tc := range calls {
 			emitSignal(Signal{Kind: SignalToolUse, Name: tc.Name, Input: tc.Args})
 			tool, ok := toolByName[tc.Name]
 			var tres ToolResult

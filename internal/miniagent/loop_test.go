@@ -119,6 +119,44 @@ func TestRun_ToolPanicRecovered(t *testing.T) {
 	}
 }
 
+// TestRun_EmptyToolCallIDSynthesized verifies a tool_call with an empty ID
+// gets a stable synth placeholder so the tool-role reply stays paired with
+// the assistant message (OpenAI 400s on an unpaired tool_call_id). The
+// loop must still terminate normally on the follow-up text reply.
+func TestRun_EmptyToolCallIDSynthesized(t *testing.T) {
+	tool := &fakeTool{name: "echo", result: ToolResult{Output: "echoed"}}
+	llm := &fakeLLM{responses: []Response{
+		// Empty ID and empty Args — both malformed but must not crash or 400.
+		{ToolCalls: []ToolCall{{ID: "", Name: "echo", Args: ""}}},
+		{Text: "done"},
+	}}
+	res, err := Run(context.Background(), llm, LoopConfig{Tools: []Tool{tool}}, "p1", "x", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "done" {
+		t.Errorf("Text = %q, want done", res.Text)
+	}
+	// The persisted History must carry a non-empty ToolCallID on the tool
+	// message and a matching ID on the assistant's ToolCalls.
+	var assistantTC ToolCall
+	var toolMsgID string
+	for _, m := range res.History {
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			assistantTC = m.ToolCalls[0]
+		}
+		if m.Role == "tool" {
+			toolMsgID = m.ToolCallID
+		}
+	}
+	if assistantTC.ID == "" {
+		t.Fatal("assistant tool_call ID empty — synth not applied")
+	}
+	if toolMsgID != assistantTC.ID {
+		t.Errorf("pairing broken: assistant ID %q vs tool ToolCallID %q", assistantTC.ID, toolMsgID)
+	}
+}
+
 // TestRun_ReActToolThenText verifies the full ReAct 2-step path: LLM asks
 // for a tool (step 1) → tool executes → result fed back → LLM replies
 // with text (step 2) → loop terminates with that text.

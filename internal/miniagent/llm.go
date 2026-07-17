@@ -191,6 +191,12 @@ func (c *HTTPClient) doOnce(ctx context.Context, client *http.Client, url string
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		// On some errors (redirect policy, auth negotiation) the http client
+		// returns a non-nil resp alongside err; its body must still be closed
+		// to avoid leaking the connection.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		return nil, 0, err
 	}
 	defer resp.Body.Close()

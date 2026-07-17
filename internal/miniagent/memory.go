@@ -142,17 +142,21 @@ func (h *History) trim(msgs []Message) []Message {
 	return msgs
 }
 
-// estimateTokens is a rough char/4 budget for the message list. It counts
-// content + tool_call args + tool_call_id; good enough to gate trimming
-// without pulling in a real tokenizer.
+// estimateTokens is a rough budget for the message list. Each message costs
+// a per-message overhead (role/structure wrappers, ~4 tokens) plus its
+// content/args rounded UP to a token-quarter, so a sea of short messages
+// ("ok", "yes") still accumulates and eventually triggers trim — without
+// the +4/ceil they'd each round to 0 and trim would never fire.
 func estimateTokens(msgs []Message) int {
+	const perMessageOverhead = 4
 	total := 0
 	for i := range msgs {
-		total += len(msgs[i].Content) / 4
+		total += perMessageOverhead
+		total += (len(msgs[i].Content) + 3) / 4
 		for _, tc := range msgs[i].ToolCalls {
-			total += len(tc.Args) / 4
+			total += (len(tc.Args) + 3) / 4
 		}
-		total += len(msgs[i].ToolCallID) / 4
+		total += (len(msgs[i].ToolCallID) + 3) / 4
 	}
 	return total
 }

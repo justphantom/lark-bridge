@@ -137,6 +137,31 @@ func TestHistory_TrimUnderCapNoop(t *testing.T) {
 	}
 }
 
+// TestHistory_TrimFiresOnManyShortMessages verifies the per-message overhead
+// in estimateTokens makes a sea of tiny messages eventually trip trim —
+// without the +4/ceil each "ok" would round to 0 tokens and trim would
+// never fire, letting the context window blow.
+func TestHistory_TrimFiresOnManyShortMessages(t *testing.T) {
+	h := newTestHistory(t)
+	// Build many short turns. Each message carries the +4 overhead, so a few
+	// hundred easily exceed maxHistoryTokens (6000) even with empty content.
+	var msgs []Message
+	for i := 0; i < 1000; i++ {
+		msgs = append(msgs,
+			Message{Role: "user", Content: "ok"},
+			Message{Role: "assistant", Content: "k"},
+		)
+	}
+	got := h.trim(msgs)
+	if len(got) >= len(msgs) {
+		t.Fatalf("trim did not fire: got %d, original %d", len(got), len(msgs))
+	}
+	// Must keep at least one turn (the most recent).
+	if len(got) < 2 {
+		t.Errorf("trim over-deleted: got %d msgs, want ≥2", len(got))
+	}
+}
+
 // TestHistory_SessionPathSanitized verifies a chatID with path separators
 // cannot escape the history dir. SanitizeName keeps '.' (so ".." survives as
 // a literal filename fragment) but collapses '/', which is what prevents the
