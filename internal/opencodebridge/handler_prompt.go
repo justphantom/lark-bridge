@@ -47,7 +47,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	// recover above, so Close's waitPrompts unblocks only when the goroutine
 	// has fully released its slot — including the subprocess kill on cancel.
 	defer h.Wg.Done()
-	defer h.endPrompt(chatID, mine)
+	defer h.EndPrompt(chatID, mine)
 	defer mine.Cancel()
 
 	// Re-read the binding here rather than trusting the snapshot the caller
@@ -192,46 +192,3 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 	}
 }
 
-// startPrompt tries to register a per-chat prompt slot derived from appCtx.
-// Busy-then-drop per chat: if a prompt is already in-flight for chatID the
-// new one is rejected (ok=false). ok=false callers MUST NOT touch the
-// returned ctx/mine (both nil).
-func (h *Handler) startPrompt(_ context.Context, chatID string) (ctx context.Context, mine *bridgebase.PromptCancel, ok bool) {
-	h.CancelMu.Lock()
-	defer h.CancelMu.Unlock()
-	if _, busy := h.CancelByChat[chatID]; busy {
-		return nil, nil, false
-	}
-	ctx, cancel := context.WithCancel(h.AppCtx)
-	mine = &bridgebase.PromptCancel{
-		Cancel:    cancel,
-		StartTime: time.Now(),
-		ChatID:    chatID,
-	}
-	h.CancelByChat[chatID] = mine
-	return ctx, mine, true
-}
-
-// endPrompt removes the per-chat cancel slot only if it still points at mine.
-func (h *Handler) endPrompt(chatID string, mine *bridgebase.PromptCancel) {
-	if mine == nil {
-		return
-	}
-	h.CancelMu.Lock()
-	defer h.CancelMu.Unlock()
-	if cur, ok := h.CancelByChat[chatID]; ok && cur == mine {
-		delete(h.CancelByChat, chatID)
-	}
-}
-
-// abortChat cancels the in-flight prompt for chatID, if any. Returns whether
-// one was cancelled. Used by the TypeAbort event.
-func (h *Handler) abortChat(chatID string) bool {
-	h.CancelMu.Lock()
-	defer h.CancelMu.Unlock()
-	if pc, ok := h.CancelByChat[chatID]; ok {
-		pc.Cancel()
-		return true
-	}
-	return false
-}

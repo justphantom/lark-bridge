@@ -45,7 +45,7 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) 
 		return commandResult{Body: "目录未变化，会话保留。"}, nil
 	}
 
-	h.abortChat(chatID)
+	h.AbortChat(chatID)
 	h.Router.SetDirectory(chatID, dir)
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
@@ -92,7 +92,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 	if old == "" {
 		old = "(默认)"
 	}
-	h.abortChat(chatID)
+	h.AbortChat(chatID)
 	h.Router.SetDirectory(chatID, dir)
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
@@ -108,7 +108,7 @@ func clearDirectory(h *Handler, chatID, oldDir string) commandResult {
 	if old == "" {
 		old = "(默认)"
 	}
-	h.abortChat(chatID)
+	h.AbortChat(chatID)
 	h.Router.SetDirectory(chatID, "")
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", "")

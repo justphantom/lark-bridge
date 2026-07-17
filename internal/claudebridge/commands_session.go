@@ -27,7 +27,7 @@ func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (c
 	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
 	}
-	h.abortChat(chatID)
+	h.AbortChat(chatID)
 	h.Router.SetSessionID(chatID, "")
 	h.Logger.Info("session reset (new conversation)", log.FieldChatID, chatID)
 	return commandResult{Body: "已重置会话上下文。工作目录保留，发送消息即开始新对话。"}, nil
@@ -35,7 +35,7 @@ func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (c
 
 // cmdSessionAbort cancels the in-flight Claude turn for this chat, if any.
 func (h *Handler) cmdSessionAbort(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if h.abortChat(chatID) {
+	if h.AbortChat(chatID) {
 		return commandResult{Body: "已中止当前 Claude 调用。"}, nil
 	}
 	return commandResult{Body: "当前没有正在执行的 Claude 调用。"}, nil
@@ -48,7 +48,7 @@ func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (c
 	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话绑定。"}, nil
 	}
-	h.abortChat(chatID)
+	h.AbortChat(chatID)
 	h.Router.Unbind(chatID)
 	h.Logger.Info("binding deleted", log.FieldChatID, chatID)
 	return commandResult{Body: "已删除会话绑定。下次提问将创建新会话与新目录。"}, nil

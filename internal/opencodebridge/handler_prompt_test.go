@@ -39,7 +39,7 @@ func TestRunPromptCancelsContext(t *testing.T) {
 		t.Fatalf("ensureBinding: %v", err)
 	}
 
-	promptCtx, mine, ok := h.startPrompt(context.Background(), "chat-1")
+	promptCtx, mine, ok := h.StartPrompt(context.Background(), "chat-1")
 	if !ok {
 		t.Fatal("startPrompt returned ok=false")
 	}
@@ -65,13 +65,13 @@ func TestRunPromptCancelsContext(t *testing.T) {
 func TestStartPromptBusy(t *testing.T) {
 	h := newTestHandler(t)
 
-	_, mine1, ok := h.startPrompt(context.Background(), "chat-busy")
+	_, mine1, ok := h.StartPrompt(context.Background(), "chat-busy")
 	if !ok {
 		t.Fatal("first startPrompt returned ok=false")
 	}
 	defer mine1.Cancel()
 
-	if _, _, ok2 := h.startPrompt(context.Background(), "chat-busy"); ok2 {
+	if _, _, ok2 := h.StartPrompt(context.Background(), "chat-busy"); ok2 {
 		t.Fatal("second startPrompt for busy chat should return ok=false")
 	}
 }
@@ -105,7 +105,7 @@ func TestRunPromptRecoversPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureBinding: %v", err)
 	}
-	promptCtx, mine, ok := h.startPrompt(context.Background(), "chat-panic")
+	promptCtx, mine, ok := h.StartPrompt(context.Background(), "chat-panic")
 	if !ok {
 		t.Fatal("startPrompt returned ok=false")
 	}

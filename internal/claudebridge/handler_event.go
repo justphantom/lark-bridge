@@ -36,7 +36,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return nil
 	case protocol.TypeAbort:
 		if ev.Abort != nil {
-			h.abortChat(ev.Abort.ChatID)
+			h.AbortChat(ev.Abort.ChatID)
 		}
 		return nil
 	case protocol.TypePing:
@@ -117,7 +117,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 		binding.SettingsFile = p.SettingsFile
 	}
 
-	promptCtx, mine, ok := h.startPrompt(ctx, chatID)
+	promptCtx, mine, ok := h.StartPrompt(ctx, chatID)
 	if !ok {
 		return h.emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,

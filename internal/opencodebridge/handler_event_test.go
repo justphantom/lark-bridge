@@ -229,7 +229,7 @@ func TestRunPrompt_UserCancelShowsCancelled(t *testing.T) {
 
 	// Give the prompt a moment to start, then abort.
 	time.Sleep(50 * time.Millisecond)
-	h.abortChat("c-cancel")
+	h.AbortChat("c-cancel")
 
 	controls := drainUntilTerminal(t, reg)
 	for _, c := range controls {
