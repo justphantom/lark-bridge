@@ -291,3 +291,80 @@ func TestHandler_CloseWaitsForInFlight(t *testing.T) {
 		t.Errorf("Close took %s, expected ≤ %s+slack", d, closeGrace)
 	}
 }
+
+// TestAbort_StopsInFlightTurn verifies /session-abort cancels an in-flight
+// turn and the turn emits a "已中止" notice (not a TypeError).
+func TestAbort_StopsInFlightTurn(t *testing.T) {
+	llm := newSlowLLM()
+	rpc := &captureSender{}
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
+	time.Sleep(20 * time.Millisecond) // let slowLLM.Do block on release
+
+	// /session-abort arrives as a prompt (user typed it). HandleEvent must
+	// abort the in-flight turn (not be rejected as busy) and reply with a
+	// success notice; the aborted turn then emits its own "已中止" notice.
+	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/session-abort"}}); err != nil {
+		t.Fatalf("abort HandleEvent: %v", err)
+	}
+
+	// Expect two notices: the "/session-abort" ack ("已请求中止") and the
+	// turn's "已中止". Wait for both, then inspect.
+	got := waitControls(t, rpc, 2)
+	titles := map[string]bool{}
+	for _, c := range got {
+		if c.Type == protocol.TypeNotice && c.Notice != nil {
+			titles[c.Notice.Title] = true
+		}
+	}
+	if !titles["已请求中止"] {
+		t.Errorf("missing '已请求中止' ack notice; got titles %v", titles)
+	}
+	if !titles["已中止"] {
+		t.Errorf("missing '已中止' turn notice; got titles %v", titles)
+	}
+	// No TypeError should be emitted for an abort.
+	for _, c := range rpc.Controls() {
+		if c.Type == protocol.TypeError {
+			t.Errorf("abort must not emit TypeError; got %v", c.Error)
+		}
+	}
+	h.Close()
+}
+
+// TestAbort_TypeAbortEvent verifies a protocol TypeAbort event (not a typed
+// command) also cancels the in-flight turn.
+func TestAbort_TypeAbortEvent(t *testing.T) {
+	llm := newSlowLLM()
+	rpc := &captureSender{}
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
+	time.Sleep(20 * time.Millisecond)
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypeAbort, Abort: &protocol.AbortPayload{ChatID: "c"}}); err != nil {
+		t.Fatalf("TypeAbort HandleEvent: %v", err)
+	}
+	// The aborted turn emits "已中止".
+	got := waitControls(t, rpc, 1)
+	if got[0].Type != protocol.TypeNotice || got[0].Notice == nil || got[0].Notice.Title != "已中止" {
+		t.Errorf("first control = %+v, want 已中止 notice", got[0])
+	}
+	h.Close()
+}
+
+// TestAbort_IdleReply verifies /session-abort on an idle chat (no in-flight
+// turn) replies with "无可中止" rather than erroring.
+func TestAbort_IdleReply(t *testing.T) {
+	rpc := &captureSender{}
+	h := New(&fakeLLM{}, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/session-abort"}}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	got := waitControls(t, rpc, 1)
+	if got[0].Type != protocol.TypeNotice || got[0].Notice == nil || got[0].Notice.Title != "无可中止" {
+		t.Errorf("control = %+v, want 无可中止 notice", got[0])
+	}
+}

@@ -2,6 +2,7 @@ package miniagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -122,6 +123,21 @@ func (h *Handler) Close() {
 	})
 }
 
+// abortChat cancels the in-flight turn for chatID, if any. Returns whether a
+// turn was running. It does NOT delete the cancelBy entry: the goroutine that
+// owns the slot (startTurn's caller) will endTurn on its own as it unwinds,
+// and deleting here would make endTurn's `cur == mine` check fail to clean
+// up. Mirrors bridgebase.Core.AbortChat's contract.
+func (h *Handler) abortChat(chatID string) bool {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if pc, ok := h.cancelBy[chatID]; ok {
+		pc.cancel()
+		return true
+	}
+	return false
+}
+
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
 // own goroutine (the SSE event loop must not block on a multi-second LLM
 // call). ctx is the process-lifetime ctx from backendrpc.Run; it is NOT
@@ -130,6 +146,18 @@ func (h *Handler) Close() {
 // message); reusing a chatID-derived id made the 2nd turn's Result collide
 // with the 1st's closed card and silently drop.
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
+	// TypeAbort: the frontend relays a user's stop request. Cancel the
+	// in-flight turn for that chat; the owning runTurn goroutine unwinds and
+	// emits an "已中止" notice. Non-Prompt, non-Abort events are ignored.
+	if ev.Type == protocol.TypeAbort {
+		if ev.Abort == nil || ev.Abort.ChatID == "" {
+			return nil
+		}
+		if h.abortChat(ev.Abort.ChatID) {
+			h.logger.Info("miniagent abort requested", log.FieldChatID, ev.Abort.ChatID)
+		}
+		return nil
+	}
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
 		h.logger.Debug("miniagent ignore non-prompt event", "event_type", ev.Type)
 		return nil
@@ -150,6 +178,17 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if prompt == "" {
 		h.logger.Info("miniagent empty prompt, noticing", log.FieldChatID, chatID)
 		return h.notify(ctx, chatID, "warning", "空消息", "请发送需要处理的内容。")
+	}
+
+	// /session-abort: cancels the in-flight turn. Handled BEFORE session
+	// commands and startTurn because the turn it must cancel is the one
+	// currently holding the slot — startTurn would reject us as busy. The
+	// aborted turn's runTurn emits the "已中止" notice as it unwinds.
+	if prompt == "/session-abort" {
+		if h.abortChat(chatID) {
+			return h.notify(ctx, chatID, "success", "已请求中止", "正在停止当前任务。")
+		}
+		return h.notify(ctx, chatID, "info", "无可中止", "当前没有正在执行的任务。")
 	}
 
 	// Session management commands (/session-new, /session-list, /session-use,
@@ -193,6 +232,22 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 
 	result, err := Run(ctx, h.llm, h.cfg, promptID, prompt, hist, h.emitHook(chatID, promptID), h.logger)
 	if err != nil {
+		// ctx.Canceled means the turn was aborted (user /session-abort or
+		// Close). Surface as an info notice rather than a scary error; the
+		// turn produced no History, so nothing is appended (the err path
+		// returns before the Append below), keeping aborted turns out of the
+		// conversation log.
+		if errors.Is(err, context.Canceled) {
+			h.logger.Info("miniagent turn aborted",
+				log.FieldChatID, chatID, log.FieldPromptID, promptID, "duration", time.Since(start))
+			h.sendCtrl(&protocol.Control{
+				Type:     protocol.TypeNotice,
+				PromptID: promptID,
+				ChatID:   chatID,
+				Notice:   &protocol.NoticePayload{Level: "info", Title: "已中止", Message: "本次任务已停止。"},
+			})
+			return
+		}
 		h.logger.Warn("miniagent turn failed",
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
