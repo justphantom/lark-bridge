@@ -103,6 +103,10 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 	// are the accepted boundaries, not command allow-listing.
 	cmd := exec.CommandContext(runCtx, "sh", "-c", a.Command)
 	cmd.Dir = root
+	// Strip credentials so an LLM-run `env` (or a tool that logs its env)
+	// cannot exfiltrate the miniagent/feishu/ipc keys. PATH/HOME/LANG etc.
+	// pass through so commands still find their tools.
+	cmd.Env = envWithoutSecrets()
 	out, err := cmd.CombinedOutput()
 	body := truncate(string(out), maxShellOutputChars, "…")
 	if err != nil {
@@ -124,4 +128,56 @@ func blockedShellReason(command string) string {
 		}
 	}
 	return ""
+}
+
+// secretEnvPrefixes lists env-var name prefixes that must never reach an
+// LLM-spawned shell: the miniagent/feishu/ipc credentials plus the generic
+// *_SECRET/*_KEY/*_TOKEN/*_PASSWORD shapes. The shell tool passes through
+// everything else (PATH, HOME, LANG, …) so commands find their tools, but
+// these are stripped so `env` or a leaked error log cannot exfiltrate keys.
+var secretEnvPrefixes = []string{
+	"MINIAGENT_",
+	"FEISHU_",
+	"IPC_",
+}
+
+// envWithoutSecrets returns os.Environ() with secret-bearing entries removed.
+// A var is dropped when its name (the part before '=') starts with any
+// secretEnvPrefix OR exactly matches the generic suffixes *_SECRET / *_KEY /
+// *_TOKEN / *_PASSWORD (case-insensitive), which covers most provider
+// conventions without enumerating each one.
+func envWithoutSecrets() []string {
+	out := make([]string, 0, 64)
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if isSecretEnv(name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// isSecretEnv reports whether name looks like a credential var. Prefix match
+// is exact-case (env names are conventionally UPPER); suffix match is
+// case-insensitive since conventions vary.
+func isSecretEnv(name string) bool {
+	for _, p := range secretEnvPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	upper := strings.ToUpper(name)
+	switch {
+	case strings.HasSuffix(upper, "_SECRET"),
+		strings.HasSuffix(upper, "_KEY"),
+		strings.HasSuffix(upper, "_TOKEN"),
+		strings.HasSuffix(upper, "_PASSWORD"),
+		strings.HasSuffix(upper, "_API_KEY"):
+		return true
+	}
+	return false
 }
