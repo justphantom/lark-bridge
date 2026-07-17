@@ -113,6 +113,10 @@ func run(cfgPath string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Close before stop/rpc.Close (LIFO): let in-flight turns wind down while
+	// IPC is still up so their final emit lands, then stop the signal ctx,
+	// then close the rpc.
+	defer h.Close()
 
 	logger.Info("miniagent ready",
 		"backend_id", cfg.BackendID,

@@ -134,3 +134,134 @@ var errBoom = &simpleErr{"boom"}
 type simpleErr struct{ msg string }
 
 func (e *simpleErr) Error() string { return e.msg }
+
+// slowLLM blocks on Do until release is closed, then returns its canned
+// response. Used to pin a turn in-flight so a second prompt hits busy.
+// release is shared across calls; closing it releases ALL concurrent Do
+// callers (do not close twice). Each call is otherwise independent.
+type slowLLM struct {
+	release chan struct{}
+	calls   int
+	mu      sync.Mutex
+}
+
+func newSlowLLM() *slowLLM {
+	return &slowLLM{release: make(chan struct{})}
+}
+
+func (s *slowLLM) Do(ctx context.Context, _ Request) (Response, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	}
+	return Response{Text: "slow reply"}, nil
+}
+
+// calls returns the current Do call count under the lock so -race is happy
+// when the test reads it from a different goroutine than the Do writers.
+func (s *slowLLM) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// waitControls polls until at least n Controls are captured or the deadline.
+func waitControls(t *testing.T, rpc *captureSender, n int) []*protocol.Control {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if got := rpc.Controls(); len(got) >= n {
+			return got
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for %d controls, got %d", n, len(rpc.Controls()))
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+}
+
+// TestHandleEvent_BusyRejectsSecond verifies a second prompt for a chat that
+// already has an in-flight turn is dropped with a Notice (no second LLM
+// call, no concurrent goroutine).
+func TestHandleEvent_BusyRejectsSecond(t *testing.T) {
+	llm := newSlowLLM()
+	rpc := &captureSender{}
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	ev := func(pid string) *protocol.Event {
+		return &protocol.Event{Type: protocol.TypePrompt, PromptID: pid, Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}}
+	}
+	if err := h.HandleEvent(context.Background(), ev("p1")); err != nil {
+		t.Fatalf("first HandleEvent: %v", err)
+	}
+	// Give the first turn a moment to enter the LLM call (startTurn ran,
+	// goroutine scheduled, slowLLM.Do now blocking on release).
+	time.Sleep(20 * time.Millisecond)
+
+	if err := h.HandleEvent(context.Background(), ev("p2")); err != nil {
+		t.Fatalf("second HandleEvent: %v", err)
+	}
+	// Second prompt should produce an immediate Notice (busy), without
+	// waiting for the slow LLM.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		if got := rpc.Controls(); len(got) >= 1 && got[0].Type == protocol.TypeNotice {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("busy Notice did not arrive; controls=%d", len(rpc.Controls()))
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	// Only one LLM call in flight (the first turn's); the second never ran.
+	if calls := llm.callCount(); calls != 1 {
+		t.Errorf("llm calls = %d, want 1 (second prompt must not call LLM)", calls)
+	}
+	llm.release <- struct{}{}
+	h.Close()
+}
+
+// TestHandleEvent_DistinctChatsConcurrent verifies two different chats run
+// concurrently without blocking each other.
+func TestHandleEvent_DistinctChatsConcurrent(t *testing.T) {
+	llm1 := newSlowLLM()
+	rpc := &captureSender{}
+	h := New(llm1, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "chat-a", Text: "hi"}})
+	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p2", Prompt: &protocol.PromptPayload{ChatID: "chat-b", Text: "hi"}})
+	time.Sleep(20 * time.Millisecond)
+
+	if calls := llm1.callCount(); calls != 2 {
+		t.Errorf("llm calls = %d, want 2 (both chats should run)", calls)
+	}
+	close(llm1.release)
+	h.Close()
+}
+
+// TestHandler_CloseWaitsForInFlight verifies Close blocks until the in-flight
+// turn finishes (after its ctx is cancelled) rather than stranding it.
+func TestHandler_CloseWaitsForInFlight(t *testing.T) {
+	llm := newSlowLLM()
+	rpc := &captureSender{}
+	h := New(llm, LoopConfig{Model: "m"}, rpc, log.Nop(), nil)
+
+	_ = h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePrompt, PromptID: "p1", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "hi"}})
+	time.Sleep(20 * time.Millisecond) // let slowLLM.Do block
+
+	// Close cancels the turn ctx → slowLLM.Do returns ctx.Err() → runTurn
+	// emits error → endTouch runs. Close should return within closeGrace.
+	start := time.Now()
+	h.Close()
+	if d := time.Since(start); d > closeGrace+500*time.Millisecond {
+		t.Errorf("Close took %s, expected ≤ %s+slack", d, closeGrace)
+	}
+}

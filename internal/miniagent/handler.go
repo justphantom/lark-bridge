@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/hu/lark-bridge/internal/bridgebase"
 	"github.com/hu/lark-bridge/internal/log"
 	"github.com/hu/lark-bridge/internal/protocol"
 )
@@ -16,16 +18,31 @@ type controlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
 }
 
+// closeGrace bounds how long Close waits for in-flight turns to wind down
+// after cancelling them. Long enough for a final emit to land, short enough
+// that a stuck goroutine does not hang SIGTERM.
+const closeGrace = 5 * time.Second
+
 // Handler owns the per-process agent state: the LLM client, the emit
 // channel, the loop config derived from config.MiniAgent, and the optional
 // per-chat history. One Handler per process; each turn runs on its own
 // goroutine.
+//
+// cancelBy enforces busy-then-drop per chat: a chat with an in-flight turn
+// rejects new prompts with a Notice instead of starting a second concurrent
+// turn (which would race on the LLM, the history jsonl, and the emit
+// ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
 	llm     Client
 	cfg     LoopConfig
 	rpc     controlSender
 	logger  *log.Logger
 	history *History // nil → stateless (MemoryEnabled=false)
+
+	cancelMu  sync.Mutex
+	cancelBy  map[string]*bridgebase.PromptCancel // chatID → in-flight turn
+	wg        sync.WaitGroup                      // tracks runTurn goroutines
+	closeOnce sync.Once
 }
 
 // New wires the handler. llm is the LLM client (HTTPClient in production,
@@ -35,7 +52,65 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 	if logger == nil {
 		logger = log.Nop()
 	}
-	return &Handler{llm: llm, cfg: cfg, rpc: rpc, logger: logger, history: history}
+	return &Handler{
+		llm:      llm,
+		cfg:      cfg,
+		rpc:      rpc,
+		logger:   logger,
+		history:  history,
+		cancelBy: make(map[string]*bridgebase.PromptCancel),
+	}
+}
+
+// startTurn reserves the per-chat turn slot. Returns (turnCtx, mine, false)
+// when the chat already has an in-flight turn (busy-then-drop); the caller
+// must NOT touch turnCtx/mine in that case. On success turnCtx is derived
+// from the process ctx so Close can cancel it, and the wg is incremented so
+// Close waits for this turn.
+func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+	h.cancelMu.Lock()
+	defer h.cancelMu.Unlock()
+	if _, busy := h.cancelBy[chatID]; busy {
+		return nil, nil, false
+	}
+	turnCtx, cancel := context.WithCancel(ctx)
+	mine = &bridgebase.PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID}
+	h.cancelBy[chatID] = mine
+	h.wg.Add(1)
+	return turnCtx, mine, true
+}
+
+// endTurn releases the per-chat slot only if it still points at mine (a
+// later Close or superceding turn may have already cleared it). Always
+// decrements wg to match startTurn's Add.
+func (h *Handler) endTurn(chatID string, mine *bridgebase.PromptCancel) {
+	h.cancelMu.Lock()
+	if cur, ok := h.cancelBy[chatID]; ok && cur == mine {
+		delete(h.cancelBy, chatID)
+	}
+	h.cancelMu.Unlock()
+	h.wg.Done()
+}
+
+// Close cancels every in-flight turn and waits up to closeGrace for them to
+// wind down so the process does not exit mid-emit / mid-Append. Idempotent.
+func (h *Handler) Close() {
+	h.closeOnce.Do(func() {
+		h.cancelMu.Lock()
+		for _, pc := range h.cancelBy {
+			pc.Cancel()
+		}
+		h.cancelMu.Unlock()
+		done := make(chan struct{})
+		go func() {
+			h.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(closeGrace):
+		}
+	})
 }
 
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
@@ -68,7 +143,19 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return h.notify(ctx, chatID, "warning", "空消息", "请发送需要处理的内容。")
 	}
 
-	go h.runTurn(ctx, promptID, chatID, prompt)
+	// Busy-then-drop: a chat with an in-flight turn gets an immediate Notice
+	// instead of a second concurrent goroutine. The latter would race on the
+	// history jsonl, double-call the LLM, and emit out-of-order Results.
+	turnCtx, mine, ok := h.startTurn(ctx, chatID)
+	if !ok {
+		h.logger.Info("miniagent prompt dropped: chat busy", log.FieldChatID, chatID, log.FieldPromptID, promptID)
+		return h.notify(ctx, chatID, "warning", "处理中",
+			"上一条消息还在处理，请等它结束后再发。")
+	}
+	go func() {
+		defer h.endTurn(chatID, mine)
+		h.runTurn(turnCtx, promptID, chatID, prompt)
+	}()
 	return nil
 }
 
