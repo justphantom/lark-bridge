@@ -143,6 +143,13 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return h.notify(ctx, chatID, "warning", "空消息", "请发送需要处理的内容。")
 	}
 
+	// Session management commands (/session-new, /session-list, /session-use,
+	// /session-del, /current) are handled inline before the LLM turn and
+	// replied to as a Notice. See commands.go.
+	if isSessionCommand(prompt) {
+		return h.handleSessionCommand(ctx, chatID, prompt)
+	}
+
 	// Busy-then-drop: a chat with an in-flight turn gets an immediate Notice
 	// instead of a second concurrent goroutine. The latter would race on the
 	// history jsonl, double-call the LLM, and emit out-of-order Results.
@@ -209,7 +216,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 			Duration:    time.Since(start),
 			Steps:       result.Steps,
 			TotalTokens: result.Usage.InputTokens + result.Usage.OutputTokens,
-			SessionID:   "", // P0 is stateless; P2 memory supplies this.
+			SessionID:   h.history.Current(chatID), // "" when memory is off / not yet created
 		},
 	})
 }

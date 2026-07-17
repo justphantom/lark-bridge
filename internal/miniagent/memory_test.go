@@ -137,14 +137,14 @@ func TestHistory_TrimUnderCapNoop(t *testing.T) {
 	}
 }
 
-// TestHistory_PathForSanitized verifies a chatID with path separators cannot
-// escape the history dir. SanitizeName keeps '.' (so ".." survives as a
-// literal filename fragment) but collapses '/', which is what prevents the
-// path traversal — the result is one flat filename under history/, not a
-// nested path.
-func TestHistory_PathForSanitized(t *testing.T) {
+// TestHistory_SessionPathSanitized verifies a chatID with path separators
+// cannot escape the history dir. SanitizeName keeps '.' (so ".." survives as
+// a literal filename fragment) but collapses '/', which is what prevents the
+// path traversal — the session path is one flat filename under history/, not
+// a nested path. sessionPath is the successor to the removed pathFor.
+func TestHistory_SessionPathSanitized(t *testing.T) {
 	h := newTestHistory(t)
-	p := h.pathFor("oc_../../etc/passwd")
+	p := h.sessionPath("oc_../../etc/passwd", "20260101-120000")
 	if !strings.HasSuffix(p, ".jsonl") {
 		t.Errorf("path missing .jsonl suffix: %s", p)
 	}

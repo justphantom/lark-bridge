@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/streamarchive"
 )
 
 // maxHistoryTokens bounds how much prior conversation the LLM sees. A rough
@@ -23,10 +23,12 @@ const maxHistoryTokens = 6000
 // big read_file cannot crowd out everything else.
 const maxToolResultInHistory = 500
 
-// History persists per-chat conversation as jsonl under
-// {stateDir}/miniagent/history/{sanitizedChatID}.jsonl. Each line is one
-// Message. Load reads the whole file; Append adds lines. The loop feeds
-// Load's result back into the LLM so the agent remembers prior turns.
+// History persists per-chat conversation as jsonl session files under
+// {stateDir}/miniagent/history/: one {chatID}__{sessionID}.jsonl per session
+// plus a {chatID}.cur pointer naming the active session (session management
+// lives in sessions.go). Load reads the active session; Append adds lines,
+// implicitly creating the first session on a chat's first turn. The loop
+// feeds Load's result back into the LLM so the agent remembers prior turns.
 //
 // A nil *History (MemoryEnabled=false) is valid: Load returns nil and Append
 // is a no-op, so the handler/runTurn code does not need a separate "memory
@@ -54,9 +56,13 @@ func (h *History) Load(chatID string) []Message {
 	if h == nil {
 		return nil
 	}
-	f, err := os.Open(h.pathFor(chatID))
+	_, path := h.resolve(chatID)
+	if path == "" {
+		return nil // no session yet is the common case on first turn
+	}
+	f, err := os.Open(path)
 	if err != nil {
-		return nil // missing file is the common case on first turn
+		return nil
 	}
 	defer f.Close()
 	var msgs []Message
@@ -85,11 +91,22 @@ func (h *History) Append(chatID string, msgs []Message) {
 	if h == nil || len(msgs) == 0 {
 		return
 	}
+	_, path := h.resolve(chatID)
+	if path == "" {
+		// First turn of a chat: the session is created implicitly here so
+		// a plain prompt never needs an explicit /session-new first.
+		sid := newSessionID(time.Now())
+		if err := h.writeCur(chatID, sid); err != nil {
+			h.logger.Warn("miniagent history: session pointer failed", log.FieldError, err)
+			return
+		}
+		path = h.sessionPath(chatID, sid)
+	}
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
 		h.logger.Warn("miniagent history: mkdir failed", log.FieldError, err)
 		return
 	}
-	f, err := os.OpenFile(h.pathFor(chatID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		h.logger.Warn("miniagent history: open failed", log.FieldError, err)
 		return
@@ -123,13 +140,6 @@ func (h *History) trim(msgs []Message) []Message {
 		msgs = dropFirstTurn(msgs)
 	}
 	return msgs
-}
-
-// pathFor returns the jsonl path for chatID. SanitizeName reuses the
-// streamarchive cleaner so a chatID with unexpected characters cannot
-// escape the history directory.
-func (h *History) pathFor(chatID string) string {
-	return filepath.Join(h.dir, streamarchive.SanitizeName(chatID)+".jsonl")
 }
 
 // estimateTokens is a rough char/4 budget for the message list. It counts
