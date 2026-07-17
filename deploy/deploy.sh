@@ -253,7 +253,6 @@ check_env_placeholder() {
 check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
 check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
 check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
-check_env_placeholder WORKSPACE_ROOT '/home/user/your-project' '本机项目根路径（agent 工具边界）'
 
 # 基础 config：优先用 repo 里用户自定义的 claude-config.json，否则 fallback 到 example
 if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
@@ -350,6 +349,14 @@ update_env_key() {
 update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
 update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
 update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
+# WORKSPACE_ROOT: 如果 .env 里没设或仍是占位值，自动推导为 PROJECT_ROOT 的上一级
+# （repo 的父目录，通常是所有项目的公共根）。运维可在 .env 里显式覆盖。
+if ! grep -q '^WORKSPACE_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null || \
+   grep -q '^WORKSPACE_ROOT=$\|^WORKSPACE_ROOT=/home/user/your-project' "$PROJECT_ROOT/.env" 2>/dev/null; then
+    WORKSPACE_ROOT_DEFAULT="$(dirname "$PROJECT_ROOT")"
+    update_env_key WORKSPACE_ROOT "$WORKSPACE_ROOT_DEFAULT" "$PROJECT_ROOT/.env"
+    info "WORKSPACE_ROOT 自动设为 $WORKSPACE_ROOT_DEFAULT（PROJECT_ROOT 的上一级）"
+fi
 sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
 info "已覆盖 $CONFIG_DIR/.env（以 repo 根 .env 为真源）"
