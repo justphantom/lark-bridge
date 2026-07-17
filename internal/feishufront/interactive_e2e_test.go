@@ -104,109 +104,6 @@ func wireFrontend(t *testing.T, defaultBackend string) (*Dispatcher, *fakeSink, 
 	return disp, sink, router, client, reg, cleanup
 }
 
-// TestPermissionRoundTrip drives a full permission interaction: the backend
-// POSTs a PermissionRequest Control; the dispatcher renders an interactive
-// card; a CardAction clicks allow; the dispatcher flips the card and forwards
-// an Answer Event the backend receives.
-func TestPermissionRoundTrip(t *testing.T) {
-	const backendID = "opencode-1"
-	disp, sink, router, client, reg, cleanup := wireFrontend(t, backendID)
-	defer cleanup()
-
-	chatID := "oc_chat"
-	// Bind the chat to the backend so DispatchCardAction can resolve it.
-	if err := router.Set(chatID, backendID); err != nil {
-		t.Fatal(err)
-	}
-
-	// 1. Backend POSTs a PermissionRequest Control.
-	permCtrl := &protocol.Control{
-		Type:   protocol.TypePermissionRequest,
-		ChatID: chatID,
-		PermissionRequest: &protocol.PermissionRequestPayload{
-			RequestID: "req-1",
-			PromptID:  "msg-1",
-			Message:   "allow write to /tmp?",
-		},
-	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("DispatchControl: %v", err)
-	}
-
-	// 2. Assert the dispatcher sent an interactive card with allow/deny.
-	card := sink.lastSendCard()
-	if card == nil {
-		t.Fatal("expected SendCard for permission, got none")
-	}
-	body := string(card)
-	if !strings.Contains(body, "allow") || !strings.Contains(body, "deny") || !strings.Contains(body, "req-1") {
-		t.Fatalf("permission card missing allow/deny/requestID: %s", body)
-	}
-
-	// 3. Simulate a CardAction: user clicks allow.
-	action := &feishu.CardAction{
-		ChatID:    chatID,
-		MessageID: "msg-1",
-		Value:     map[string]any{"requestID": "req-1", "choice": "allow", "kind": "permission"},
-	}
-	if err := disp.DispatchCardAction(context.Background(), action); err != nil {
-		t.Fatalf("DispatchCardAction: %v", err)
-	}
-
-	// 4. The interactive card must have been updated (submitted state).
-	sink.mu.Lock()
-	gotUpdate := len(sink.updates) > 0
-	sink.mu.Unlock()
-	if !gotUpdate {
-		t.Fatal("expected UpdateCard to flip the interactive card to submitted")
-	}
-	// Answer-forwarding is covered by TestPermissionRoundTrip_AnswerForwarded.
-	_ = client
-	_ = reg
-}
-
-// TestPermissionRoundTrip_AnswerForwarded uses the public RecvEvent path to
-// confirm the Answer Event reaches the backend.
-func TestPermissionRoundTrip_AnswerForwarded(t *testing.T) {
-	const backendID = "opencode-2"
-	disp, _, router, client, _, cleanup := wireFrontend(t, backendID)
-	defer cleanup()
-
-	chatID := "oc_chat2"
-	if err := router.Set(chatID, backendID); err != nil {
-		t.Fatal(err)
-	}
-	// Register the turn so DispatchControl can find the progress card path
-	// (not needed for permission, but harmless).
-	disp.turns.Start("msg-1", chatID, "", backendID)
-
-	permCtrl := &protocol.Control{
-		Type:              protocol.TypePermissionRequest,
-		ChatID:            chatID,
-		PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "req-2", PromptID: "msg-1", Message: "m"},
-	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("DispatchControl: %v", err)
-	}
-
-	action := &feishu.CardAction{
-		ChatID:    chatID,
-		MessageID: "msg-1",
-		Value:     map[string]any{"requestID": "req-2", "choice": "allow", "kind": "permission"},
-	}
-	if err := disp.DispatchCardAction(context.Background(), action); err != nil {
-		t.Fatalf("DispatchCardAction: %v", err)
-	}
-
-	ev, err := client.RecvEvent()
-	if err != nil {
-		t.Fatalf("RecvEvent: %v", err)
-	}
-	if ev.Type != protocol.TypeAnswer || ev.Answer.RequestID != "req-2" || ev.Answer.Choice != "allow" {
-		t.Fatalf("unexpected answer event: %+v", ev)
-	}
-}
-
 // TestCardActionIdempotent verifies a duplicate CardAction (same requestID)
 // is dropped after the first one.
 func TestCardActionIdempotent(t *testing.T) {
@@ -220,8 +117,8 @@ func TestCardActionIdempotent(t *testing.T) {
 	}
 	disp.turns.Start("msg-1", chatID, "", backendID)
 	disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
-		Type: protocol.TypePermissionRequest, ChatID: chatID,
-		PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "req-3", PromptID: "msg-1", Message: "m"},
+		Type: protocol.TypeQuestion, ChatID: chatID,
+		Question: &protocol.QuestionPayload{RequestID: "req-3", PromptID: "msg-1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}})
 
 	action := &feishu.CardAction{ChatID: chatID, MessageID: "msg-1",
@@ -323,8 +220,8 @@ func TestInteractiveTimeout(t *testing.T) {
 	}
 
 	permCtrl := &protocol.Control{
-		Type: protocol.TypePermissionRequest, ChatID: chatID,
-		PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "req-t", PromptID: "msg-1", Message: "m"},
+		Type: protocol.TypeQuestion, ChatID: chatID,
+		Question: &protocol.QuestionPayload{RequestID: "req-t", PromptID: "msg-1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
 	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("DispatchControl: %v", err)
@@ -388,8 +285,8 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 
 	// Backend raises a permission request mid-turn.
 	permCtrl := &protocol.Control{
-		Type: protocol.TypePermissionRequest, ChatID: chatID, PromptID: "msg-6",
-		PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "req-f", PromptID: "msg-6", Message: "m"},
+		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-6",
+		Question: &protocol.QuestionPayload{RequestID: "req-f", PromptID: "msg-6", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
 	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("permission: %v", err)

@@ -18,11 +18,10 @@ var allowedControlTypes = map[string]struct{}{
 	TypeToolUse:           {},
 	TypeToolResult:        {},
 	TypeResult:            {},
-	TypeError:             {},
-	TypeProgress:          {},
-	TypePermissionRequest: {},
-	TypeQuestion:          {},
-	TypeNotice:            {},
+	TypeError:    {},
+	TypeProgress: {},
+	TypeQuestion: {},
+	TypeNotice:   {},
 }
 
 // Validate checks Event consistency:
@@ -98,17 +97,16 @@ var controlRules = map[string]controlRule{
 	TypeToolUse:           {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse"},
 	TypeToolResult:        {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
 	TypeResult:            {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
-	TypeError:             {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
-	TypeProgress:          {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress"},
-	TypePermissionRequest: {payloadIsNil: func(c *Control) bool { return c.PermissionRequest == nil }, payloadName: "permissionRequest", needsChatID: true},
-	TypeQuestion:          {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
-	TypeNotice:            {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true},
+	TypeError:    {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
+	TypeProgress: {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress"},
+	TypeQuestion: {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
+	TypeNotice:   {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true},
 }
 
 // Validate checks Control consistency:
 //   - Type is in the allowed set.
 //   - The matching payload is non-nil.
-//   - TypePermissionRequest / TypeQuestion / TypeNotice require ChatID (they
+//   - TypeQuestion / TypeNotice require ChatID (they
 //     may be sent as standalone cards not tied to a turn's progress card).
 //   - BackendID is NOT checked: it is backfilled by the frontend POST handler
 //     from the URL path, so it is empty when the backend calls SendControl.

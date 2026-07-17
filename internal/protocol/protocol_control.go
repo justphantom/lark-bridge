@@ -7,7 +7,7 @@ type Control struct {
 	Type      string `json:"type"`
 	BackendID string `json:"backendID,omitempty"` // backfilled by the frontend POST handler from the URL path; empty when the backend sends
 	PromptID  string `json:"promptID,omitempty"`
-	ChatID    string `json:"chatID,omitempty"` // standalone-card controls (PermissionRequest/Question/Notice) require it
+	ChatID string `json:"chatID,omitempty"` // standalone-card controls (Question/Notice) require it
 
 	SessionInit       *SessionInitPayload       `json:"sessionInit,omitempty"`
 	Text              *TextPayload              `json:"text,omitempty"`
@@ -15,11 +15,10 @@ type Control struct {
 	ToolUse           *ToolUsePayload           `json:"toolUse,omitempty"`
 	ToolResult        *ToolResultPayload        `json:"toolResult,omitempty"`
 	Result            *ResultPayload            `json:"result,omitempty"`
-	Error             *ErrorPayload             `json:"error,omitempty"`
-	Progress          *ProgressPayload          `json:"progress,omitempty"`
-	PermissionRequest *PermissionRequestPayload `json:"permissionRequest,omitempty"`
-	Question          *QuestionPayload          `json:"question,omitempty"`
-	Notice            *NoticePayload            `json:"notice,omitempty"`
+	Error    *ErrorPayload    `json:"error,omitempty"`
+	Progress *ProgressPayload `json:"progress,omitempty"`
+	Question *QuestionPayload `json:"question,omitempty"`
+	Notice   *NoticePayload   `json:"notice,omitempty"`
 }
 
 // Control type values.
@@ -30,11 +29,10 @@ const (
 	TypeToolUse           = "tool_use"
 	TypeToolResult        = "tool_result"
 	TypeResult            = "result"
-	TypeError             = "error"
-	TypeProgress          = "progress"
-	TypePermissionRequest = "permission_request"
-	TypeQuestion          = "question"
-	TypeNotice            = "notice"
+	TypeError    = "error"
+	TypeProgress = "progress"
+	TypeQuestion = "question"
+	TypeNotice   = "notice"
 )
 
 // SessionInitPayload announces the session the backend bound for this prompt.
@@ -113,15 +111,6 @@ type ErrorPayload struct {
 // ProgressPayload carries a free-form progress description.
 type ProgressPayload struct {
 	Description string `json:"description,omitempty"`
-}
-
-// PermissionRequestPayload asks the frontend to render a permission card.
-type PermissionRequestPayload struct {
-	RequestID string   `json:"requestID"`
-	PromptID  string   `json:"promptID"`
-	Message   string   `json:"message,omitempty"`
-	Patterns  []string `json:"patterns,omitempty"`
-	Options   []string `json:"options,omitempty"` // e.g. ["allow", "deny"]
 }
 
 // QuestionPayload asks the frontend to render a question card.

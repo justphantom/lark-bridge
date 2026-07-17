@@ -15,26 +15,16 @@ import (
 // binds the requestID → messageID so a later card action can find it, caches
 // the rendered card bytes for the submitted/expired/finalised state flips,
 // and schedules the TTL expiry notice. Called by DispatchControl for
-// TypePermissionRequest / TypeQuestion controls.
+// TypeQuestion controls.
 func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control, backendType string) error {
 	_, _, chatID, footer := d.resolveFooter(ctrl, backendType)
 	footer.Status = "待确认"
 	header := cardkit.HeaderInfo{BackendType: backendType}
-	var (
-		card      []byte
-		err       error
-		requestID string
-	)
-	if ctrl.Type == protocol.TypePermissionRequest {
-		card, err = renderer.RenderPermission(ctrl, header, footer)
-		requestID = ctrl.PermissionRequest.RequestID
-	} else {
-		card, err = renderer.RenderQuestion(ctrl, header, footer)
-		requestID = ctrl.Question.RequestID
-	}
+	card, err := renderer.RenderQuestion(ctrl, header, footer)
 	if err != nil {
 		return err
 	}
+	requestID := ctrl.Question.RequestID
 	messageID, err := d.bot.SendCard(ctx, chatID, card, "")
 	if err != nil {
 		return err

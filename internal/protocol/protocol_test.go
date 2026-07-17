@@ -77,7 +77,6 @@ func TestControlRoundTrip(t *testing.T) {
 		{"result", &Control{Type: TypeResult, Result: &ResultPayload{Text: "done", Model: "m", Tokens: 10}}},
 		{"error", &Control{Type: TypeError, Error: &ErrorPayload{Message: "boom", Recoverable: true}}},
 		{"progress", &Control{Type: TypeProgress, Progress: &ProgressPayload{Description: "working"}}},
-		{"permission", &Control{Type: TypePermissionRequest, ChatID: "c1", PermissionRequest: &PermissionRequestPayload{RequestID: "r1", PromptID: "p", Options: []string{"once", "always", "reject"}}}},
 		{"question", &Control{Type: TypeQuestion, ChatID: "c1", Question: &QuestionPayload{RequestID: "r1", PromptID: "p", Questions: []QuestionItem{{Label: "q", Options: []string{"a"}}}}}},
 		{"notice", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "info", Title: "t", Message: "m"}}},
 	}
@@ -131,10 +130,6 @@ func TestControlValidate(t *testing.T) {
 	}{
 		{"text missing payload", &Control{Type: TypeText}, true},
 		{"text ok", &Control{Type: TypeText, Text: &TextPayload{Delta: "x"}}, false},
-		{"permission missing chatID", &Control{Type: TypePermissionRequest, PromptID: "p", BackendID: "b", PermissionRequest: &PermissionRequestPayload{RequestID: "r", PromptID: "p"}}, true},
-		{"permission ok", &Control{Type: TypePermissionRequest, ChatID: "c1", PermissionRequest: &PermissionRequestPayload{RequestID: "r", PromptID: "p"}}, false},
-		// BackendID is intentionally NOT checked: the frontend backfills it.
-		{"permission without backendID ok", &Control{Type: TypePermissionRequest, ChatID: "c1", PermissionRequest: &PermissionRequestPayload{RequestID: "r", PromptID: "p"}}, false},
 		{"question missing chatID", &Control{Type: TypeQuestion, Question: &QuestionPayload{RequestID: "r", PromptID: "p", Questions: []QuestionItem{{Label: "q", Options: []string{"a"}}}}}, true},
 		{"notice missing chatID", &Control{Type: TypeNotice, Notice: &NoticePayload{Level: "info", Title: "t"}}, true},
 		{"notice ok", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "info", Title: "t"}}, false},

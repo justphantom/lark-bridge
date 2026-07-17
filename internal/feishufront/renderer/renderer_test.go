@@ -170,20 +170,6 @@ func TestProgressRender_TruncatesLongText(t *testing.T) {
 	}
 }
 
-func TestPermissionRender(t *testing.T) {
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: "allow write?", Patterns: []string{"**/*.go"}}}
-	b, err := RenderPermission(ctrl, hdr(), ftr())
-	card := parse(t, b, err)
-	actions := actionButtons(t, card)
-	if len(actions) != 2 {
-		t.Fatalf("actions = %d, want 2", len(actions))
-	}
-	all := string(mustMarshal(t, actions))
-	if !strings.Contains(all, "r1") || !strings.Contains(all, "allow") || !strings.Contains(all, "deny") {
-		t.Errorf("permission actions missing requestID/choices: %s", all)
-	}
-}
-
 func TestQuestionRender(t *testing.T) {
 	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r2", Questions: []protocol.QuestionItem{{Label: "pick", Options: []string{"a", "b"}, Multiple: true, Custom: true}}}}
 	b, err := RenderQuestion(ctrl, hdr(), ftr())
@@ -204,8 +190,8 @@ func TestQuestionRender(t *testing.T) {
 }
 
 func TestInteractiveSubmitted(t *testing.T) {
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: "m"}}
-	orig, err := RenderPermission(ctrl, hdr(), ftr())
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
+	orig, err := RenderQuestion(ctrl, hdr(), ftr())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,9 +217,9 @@ func TestInteractiveSubmitted(t *testing.T) {
 // advances from "待确认" to "处理中" once the user submits, so the card reads
 // as past the pending state (design scheme ③ state-2 requirement).
 func TestInteractiveSubmitted_FlipsFooterStatus(t *testing.T) {
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: "m"}}
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
 	footer := cardkit.FooterInfo{BackendType: "opencode", Status: "待确认", SessionID: "abcdef123456"}
-	orig, err := RenderPermission(ctrl, hdr(), footer)
+	orig, err := RenderQuestion(ctrl, hdr(), footer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,22 +237,6 @@ func TestInteractiveSubmitted_FlipsFooterStatus(t *testing.T) {
 
 // TestPermissionRender_TruncatesLongBody verifies that a permission message
 // longer than the body budget is truncated so the card stays under Feishu's
-// content limit.
-func TestPermissionRender_TruncatesLongBody(t *testing.T) {
-	long := strings.Repeat("a", maxInteractiveBodyRunes*2)
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: long}}
-	b, err := RenderPermission(ctrl, hdr(), ftr())
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if len(b) > 28*1024 {
-		t.Errorf("card json = %d bytes, want <= %d", len(b), 28*1024)
-	}
-	if !strings.Contains(string(b), "…") {
-		t.Error("expected truncation marker … in permission card")
-	}
-}
-
 // TestQuestionRender_TruncatesLongOptions verifies that a question whose
 // options collectively exceed the body budget has later options dropped so the
 // card stays under Feishu's content limit.
@@ -318,8 +288,8 @@ func TestQuestionRender_OptionBudgetFitsLargeList(t *testing.T) {
 // TestRenderInteractiveExpired verifies the expired form carries the failure
 // notice and disables buttons.
 func TestRenderInteractiveExpired(t *testing.T) {
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: "m"}}
-	orig, err := RenderPermission(ctrl, hdr(), ftr())
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
+	orig, err := RenderQuestion(ctrl, hdr(), ftr())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +311,8 @@ func TestRenderInteractiveExpired(t *testing.T) {
 // TestInteractiveTimeoutHintFromConstant verifies the pending/expired hints use
 // the minutes from cardkit.InteractiveTimeout instead of a hardcoded value.
 func TestInteractiveTimeoutHintFromConstant(t *testing.T) {
-	ctrl := &protocol.Control{PermissionRequest: &protocol.PermissionRequestPayload{RequestID: "r1", Message: "m"}}
-	b, err := RenderPermission(ctrl, hdr(), ftr())
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
+	b, err := RenderQuestion(ctrl, hdr(), ftr())
 	if err != nil {
 		t.Fatal(err)
 	}

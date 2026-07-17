@@ -31,32 +31,6 @@ func interactiveTimeoutHint() string {
 	return fmt.Sprintf("\n\n⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))
 }
 
-// RenderPermission builds a permission-request card: the message as body,
-// the matched patterns listed, and two buttons (allow / deny) carrying the
-// requestID and choice (R4).
-func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
-	header.Template = "orange"
-	if header.Title == "" {
-		header.Title = "权限请求"
-	}
-	p := ctrl.PermissionRequest
-	body := truncateRunes(p.Message, maxInteractiveBodyRunes) + interactiveTimeoutHint()
-	if len(p.Patterns) > 0 {
-		body += "\n\n匹配模式："
-		for _, pat := range p.Patterns {
-			body += "\n- `" + pat + "`"
-		}
-	}
-	elements := []cardkit.Element{cardkit.MarkdownElement(body)}
-	actions := []cardkit.Action{
-		cardkit.ButtonAction("允许", "permission",
-			map[string]any{"requestID": p.RequestID, "choice": "allow"}, true, false),
-		cardkit.ButtonAction("拒绝", "permission",
-			map[string]any{"requestID": p.RequestID, "choice": "deny"}, false, false),
-	}
-	return cardkit.Card(header, footer, elements, actions)
-}
-
 // RenderQuestion builds a question card: one block per question (label +
 // options as a select/multi-select), an optional custom-input box, and a
 // single submit button. All controls live inside a form container so the

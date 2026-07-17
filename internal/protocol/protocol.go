@@ -6,7 +6,7 @@
 //     (Prompt / Answer / Abort / Ping).
 //   - POST /v1/control/{backendID} carries Control (backend→frontend):
 //     AI-side output and interaction requests (Text / Result / ToolUse /
-//     PermissionRequest / Question / Notice / ...).
+//     Question / Notice / ...).
 //
 // This package is pure struct definitions + Validate helpers. No business
 // logic. All errors are standard library fmt.Errorf.
