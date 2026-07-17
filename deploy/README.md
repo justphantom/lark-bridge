@@ -5,12 +5,14 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-                ┌───────────────────┼───────────────────┐
-            claude-back          opencode-back         peri-back
-            (Claude CLI)         (opencode CLI)        (peri CLI)
+        ┌───────────┬───────────┬───────────┬───────────┬──────────────┐
+   claude-back  opencode-back  peri-back  goose-back  deploy-monitor
+   (Claude CLI) (opencode CLI) (peri CLI) (goose CLI) (make deploy)
 ```
 
-四个独立进程，共享一份配置文件和 `ipc_secret`。
+前端 feishu-front + 四个 CLI 后端（claude/opencode/peri/goose）+ deploy-monitor，
+共六个 systemd 服务。`ipc_secret` 必须一致；deploy.sh 为每个进程生成独立 config
+（不同 backend_id / router_path），手启动方式下也可共用一份。
 
 ## 前置条件
 
@@ -20,13 +22,15 @@
 | Claude CLI | `claude` 在 PATH 中（仅 claude-back） |
 | opencode | `opencode` CLI 在 PATH 中（仅 opencode-back） |
 | peri | `peri` CLI 在 PATH 中（仅 peri-back） |
+| goose | `goose` CLI 在 PATH 中（仅 goose-back） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
 
 ## 1. 构建
 
 ```bash
 make build
-# 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back, bin/lark-peri-back
+# 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
+#       bin/lark-peri-back, bin/lark-goose-back, bin/lark-deploy-monitor
 ```
 
 ## 2. 准备配置
@@ -52,7 +56,7 @@ cp config.example.json claude-config.json
 ## 3. 创建 state 目录
 
 ```bash
-mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode /var/lib/lark-bridge/peri
+mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode /var/lib/lark-bridge/peri /var/lib/lark-bridge/goose
 ```
 
 ## 4. 启动
@@ -73,6 +77,9 @@ set -a; source .env; set +a
 
 # peri 后端（可选）
 ./bin/lark-peri-back -config peri-config.json &
+
+# goose 后端（可选）
+./bin/lark-goose-back -config goose-config.json &
 ```
 
 新群首次发消息时会提示"未绑定后端"，需用户发送 `/backend use {id}` 绑定。
@@ -181,7 +188,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back lark-deploy-monitor
 ```
 
 ## 7. 验证

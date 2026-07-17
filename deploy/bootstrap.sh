@@ -10,8 +10,8 @@
 #   5. npm 全局安装 opencode-ai
 #   6. clone 仓库
 #   7. 交互式收集飞书 App ID / App Secret，写入 .env（自动生成 IPC_SECRET）
-#   8. make build 产出三进制
-#   9. 自动衔接 ./deploy/deploy.sh --init，装 systemd 三服务并启动
+#   8. make build 产出六个二进制
+#   9. 自动衔接 ./deploy/deploy.sh --init，装 systemd 六服务并启动
 #
 # 用法：
 #   ./deploy/bootstrap.sh                 # 在全新机器上直接跑
@@ -158,14 +158,15 @@ info ".env 已写入（chmod 600），IPC_SECRET 已自动生成"
 # ── 步骤 8：构建 ─────────────────────────────────────
 info "make build..."
 make build
-[[ -x bin/lark-feishu-front  && -x bin/lark-claude-back  && -x bin/lark-opencode-back ]] \
+[[ -x bin/lark-feishu-front && -x bin/lark-claude-back && -x bin/lark-opencode-back \
+   && -x bin/lark-peri-back && -x bin/lark-goose-back && -x bin/lark-deploy-monitor ]] \
     || fail "构建产物缺失"
-info "三进制已产出：bin/lark-{feishu-front,claude-back,opencode-back}"
+info "六个二进制已产出：bin/lark-{feishu-front,claude-back,opencode-back,peri-back,goose-back,deploy-monitor}"
 
 # ── 步骤 9：衔接 deploy.sh，装 systemd 并启动 ────────
-info "衔接 deploy.sh --init（systemd 部署 + 启动三服务）..."
+info "衔接 deploy.sh --init（systemd 部署 + 启动六服务）..."
 ./deploy/deploy.sh --init
 
 echo
-info "全部完成。验证：systemctl status lark-feishu-front lark-claude-back lark-opencode-back"
+info "全部完成。验证：systemctl status lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back lark-deploy-monitor"
 info "日志：journalctl -u lark-feishu-front -f"

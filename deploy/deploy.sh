@@ -219,6 +219,18 @@ else
     cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
 fi
 
+# 将基础 config 里的默认 state 目录字面量 /var/lib/lark-bridge 统一替换为 $STATE_DIR，
+# 使 state_dir 与各后端 default_directory 都随 STATE_DIR 环境变量移动。否则 STATE_DIR
+# 仅作用于下面的 mkdir，而配置仍指向硬编码默认目录 → 目录建在新处、进程读写旧处，
+# 状态分裂（router、per-chat 工作目录全丢）。STATE_DIR 默认值即该字面量，默认场景
+# 为 no-op。config.example.json 中该字面量仅出现在 state_dir 与各 default_directory，
+# 均应随之移动；project_root 等不含此串，不受影响。
+# 转义替换串中的 sed 元字符（& \ |），路径含特殊字符时不破坏替换。
+esc_state="${STATE_DIR//\\/\\\\}"
+esc_state="${esc_state//&/\\&}"
+esc_state="${esc_state//|/\\|}"
+sed -i "s|/var/lib/lark-bridge|${esc_state}|g" "$STAGE/claude-config.json"
+
 # 确保 ipc_addr / frontend_url 与 IPC_ADDR 一致
 sed_expr="s|\"ipc_addr\"[[:space:]]*:.*|\"ipc_addr\":     \"$IPC_ADDR\",|; s|\"frontend_url\"[[:space:]]*:.*|\"frontend_url\": \"http://$IPC_ADDR\",|"
 sed -i "$sed_expr" "$STAGE/claude-config.json"
@@ -242,22 +254,22 @@ inject_router_path() {
         || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），两后端将共用默认 router 文件互相覆盖"
 }
 
-inject_router_path "$STAGE/claude-config.json" "/var/lib/lark-bridge/claude-router.json"
+inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 
 # opencode-back：独立 backend_id + 独立 router_path
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
-inject_router_path "$STAGE/opencode-config.json" "/var/lib/lark-bridge/opencode-router.json"
+inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
 
 # peri-back：独立 backend_id + 独立 router_path
 cp "$STAGE/claude-config.json" "$STAGE/peri-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "peri-1",|' "$STAGE/peri-config.json"
-inject_router_path "$STAGE/peri-config.json" "/var/lib/lark-bridge/peri-router.json"
+inject_router_path "$STAGE/peri-config.json" "$STATE_DIR/peri-router.json"
 
 # goose-back：独立 backend_id + 独立 router_path（同 peri 模式）
 cp "$STAGE/claude-config.json" "$STAGE/goose-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "goose-1",|' "$STAGE/goose-config.json"
-inject_router_path "$STAGE/goose-config.json" "/var/lib/lark-bridge/goose-router.json"
+inject_router_path "$STAGE/goose-config.json" "$STATE_DIR/goose-router.json"
 
 # deploy-monitor：独立 backend_id，无 session/router 需求；注入 deploy_monitor 块
 # 指向 repo 根。monitor 不参与本脚本的 stop/start（见 SERVICES 数组），其二进制更新需单独重启。
@@ -293,17 +305,18 @@ stop_services
 
 info "复制二进制和配置..."
 
-# 业务服务二进制已在 stop_services 后全部停止，可直接覆盖。deploy-monitor 不在
-# SERVICES 中（它要存活到部署结束发完成通知），其运行中的二进制无法被覆盖
-# (ETXTBSY)，故单独处理：运行中则跳过本次 cp，提示运维手动重启 monitor 更新。
-if systemctl is-active --quiet lark-deploy-monitor 2>/dev/null; then
-    warn "lark-deploy-monitor 正在运行，跳过其二进制更新（避免 ETXTBSY）；如需更新 monitor 请手动 systemctl restart"
-    for f in lark-feishu-front lark-claude-back lark-opencode-back lark-peri-back lark-goose-back; do
-        sudo cp "$BIN_DIR/$f" "$DEPLOY_DIR/"
-    done
-else
-    sudo cp "$BIN_DIR"/* "$DEPLOY_DIR/"
-fi
+# 二进制用「写临时文件 + 原子 rename」更新，而非直接 cp 覆盖。rename(2) 替换
+# 路径不触发 ETXTBSY——运行中的进程继续持有旧 inode，直到被重启才换上新文件。
+# 因此连正在运行的 deploy-monitor 也能就地更新其磁盘二进制：它本次部署保持存活
+# 以发送完成通知，下次手动 restart 即生效。这消除了原先「monitor 运行中就跳过其
+# 二进制更新、需手动 cp」的限制。临时文件落在同一 $DEPLOY_DIR，确保 mv 是同卷
+# rename（原子、不跨设备）。业务服务已在 stop_services 停止，rename 同样安全。
+for f in "$BIN_DIR"/*; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    sudo cp "$f" "$DEPLOY_DIR/.${name}.new"
+    sudo mv -f "$DEPLOY_DIR/.${name}.new" "$DEPLOY_DIR/$name"
+done
 sudo chmod 755 "$DEPLOY_DIR"/*
 
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
@@ -353,7 +366,14 @@ sudo systemctl start lark-claude-back lark-opencode-back lark-peri-back lark-goo
 
 # deploy-monitor 不在 SERVICES 中（避免被 stop_services 杀掉中断部署通知）。
 # 首次部署（unit 未 enable）时 enable + start；后续部署不触碰，monitor 进程
-# 全程存活以发送部署完成通知。monitor 二进制更新需运维手动 restart。
+# 全程存活以发送部署完成通知。其磁盘二进制已随上面 rename 步骤就地更新，但运行中
+# 进程仍持旧 inode，需运维手动 systemctl restart lark-deploy-monitor 才换上新版本。
+#
+# ⚠ 运行前提：monitor 以非 root 的 $RUN_USER 运行，收到 /deploy 时执行
+# `make deploy` → 本脚本 → 大量 `sudo systemctl ...`。systemd 无 TTY，sudo 一旦
+# 需要密码就会挂起直到 monitor 的 10 分钟超时，部署静默失败。故 $RUN_USER 必须对
+# systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo（或配 /etc/sudoers.d 条目）。
+# 验证：sudo -n -l | grep systemctl，或直接以该用户 `sudo -n systemctl is-active ...`。
 if ! systemctl is-enabled --quiet lark-deploy-monitor 2>/dev/null; then
     info "首次部署：enable + start lark-deploy-monitor"
     sudo systemctl enable lark-deploy-monitor 2>/dev/null || true
