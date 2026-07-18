@@ -3,6 +3,7 @@ package miniclient
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -25,26 +26,28 @@ const defaultMaxConcurrent = 4
 
 // Config carries the scalar settings the Client reads from config.MiniAgent.
 type Config struct {
-	CLIPath       string
-	APIKey        string
-	BaseURL       string
-	SystemPrompt  string
-	MaxTokens     int
-	Permission    string // global default permission mode
-	MaxConcurrent int
+	CLIPath             string
+	APIKey              string
+	BaseURL             string
+	SystemPrompt        string
+	MaxTokens           int
+	Permission          string // global default permission mode
+	ShellBlockedPatterns []string
+	MaxConcurrent       int
 }
 
 // Client wraps the miniagent-cli binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
 	cliPath    string
-	apiKey     string
-	baseURL    string
-	system     string
-	maxTokens  int
-	permission string // global default
-	logger     *log.Logger
-	sem        chan struct{}
+	apiKey       string
+	baseURL      string
+	system       string
+	maxTokens    int
+	permission   string // global default
+	blockedPats  []string
+	logger       *log.Logger
+	sem          chan struct{}
 }
 
 // New builds a Client. logger may be nil (→ nop).
@@ -57,14 +60,15 @@ func New(cfg Config, logger *log.Logger) *Client {
 		n = defaultMaxConcurrent
 	}
 	return &Client{
-		cliPath:    cfg.CLIPath,
-		apiKey:     cfg.APIKey,
-		baseURL:    cfg.BaseURL,
-		system:     cfg.SystemPrompt,
-		maxTokens:  cfg.MaxTokens,
-		permission: cfg.Permission,
-		logger:     logger,
-		sem:        make(chan struct{}, n),
+		cliPath:     cfg.CLIPath,
+		apiKey:      cfg.APIKey,
+		baseURL:     cfg.BaseURL,
+		system:      cfg.SystemPrompt,
+		maxTokens:   cfg.MaxTokens,
+		permission:  cfg.Permission,
+		blockedPats: cfg.ShellBlockedPatterns,
+		logger:      logger,
+		sem:         make(chan struct{}, n),
 	}
 }
 
@@ -148,6 +152,10 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if opts.Permission != "" {
 		// Per-chat override replaces the global default.
 		a = replaceArg(a, "--permission", opts.Permission)
+	}
+	if len(c.blockedPats) > 0 {
+		b, _ := json.Marshal(c.blockedPats)
+		a = append(a, "--blocked-patterns", string(b))
 	}
 	if opts.Workdir != "" {
 		a = append(a, "--workdir", opts.Workdir)

@@ -180,6 +180,10 @@ type MiniAgent struct {
 	// SecurityLevel ("default"/"free" map directly).
 	Permission    string `json:"permission,omitempty"`
 	SecurityLevel string `json:"security_level,omitempty"` // deprecated, use Permission
+	// ShellBlockedPatterns overrides the default shell blocklist. When empty,
+	// the built-in defaults (rm -rf, mkfs, dd if=, shutdown, etc.) are used.
+	// Set to an empty array [] to disable all blocking (not recommended).
+	ShellBlockedPatterns []string `json:"shell_blocked_patterns,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

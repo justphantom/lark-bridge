@@ -18,13 +18,10 @@ const maxShellOutputChars = 20000
 // partial output returned with an error marker.
 const shellTimeout = 60 * time.Second
 
-// shellBlockedPatterns are command substrings the shell tool refuses to run.
-// Matching is case-insensitive on the raw command string and is a coarse
-// guard, NOT a security boundary: a determined prompt can bypass it via
-// base64 decoding, variable expansion, symlinks, etc. The real boundary is
-// that the tool runs as an unprivileged user under workspace_root; treat
-// this list as a tripwire on the most destructive shapes, not a sandbox.
-var shellBlockedPatterns = []string{
+// defaultBlockedPatterns is the fallback blocklist when Shell.BlockedPatterns
+// is empty. Operators can override via config (miniagent.shell_blocked_patterns)
+// or CLI flag. Matching is case-insensitive substring.
+var defaultBlockedPatterns = []string{
 	"rm -rf",
 	"rm -fr",
 	"mkfs",
@@ -51,8 +48,9 @@ type shellArgs struct {
 // Output is stdout+stderr combined, truncated to maxShellOutputChars. A
 // command that exceeds shellTimeout is killed.
 type Shell struct {
-	WorkspaceRoot string
-	Unrestricted  bool
+	WorkspaceRoot   string
+	Unrestricted    bool
+	BlockedPatterns []string // overrides defaultBlockedPatterns when non-empty
 }
 
 func (Shell) Spec() ToolSpec {
@@ -88,7 +86,11 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 		if strings.TrimSpace(s.WorkspaceRoot) == "" {
 			return ToolResult{IsError: true, Output: "shell 未配置：workspace_root 为空"}
 		}
-		if msg := blockedShellReason(a.Command); msg != "" {
+		patterns := s.BlockedPatterns
+		if len(patterns) == 0 {
+			patterns = defaultBlockedPatterns
+		}
+		if msg := blockedShellReason(a.Command, patterns); msg != "" {
 			return ToolResult{IsError: true, Output: msg}
 		}
 	}
@@ -123,9 +125,9 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 
 // blockedShellReason returns a non-empty human reason when command matches a
 // blocked pattern, "" otherwise. Case-insensitive on a folded copy.
-func blockedShellReason(command string) string {
+func blockedShellReason(command string, patterns []string) string {
 	folded := strings.ToLower(command)
-	for _, p := range shellBlockedPatterns {
+	for _, p := range patterns {
 		if strings.Contains(folded, strings.ToLower(p)) {
 			return fmt.Sprintf("拒绝执行：命令匹配黑名单模式 %q（破坏性命令已被拦截）。", p)
 		}

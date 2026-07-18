@@ -86,12 +86,13 @@ func run(cfgPath string) error {
 		cliPath = filepath.Join(cfg.DeployMonitor.ProjectRoot, "bin", "miniagent-cli")
 	}
 	client := miniclient.New(miniclient.Config{
-		CLIPath:      cliPath,
-		APIKey:       cfg.MiniAgent.APIKey,
-		BaseURL:      cfg.MiniAgent.BaseURL,
-		SystemPrompt: cfg.MiniAgent.SystemPrompt,
-		MaxTokens:    cfg.MiniAgent.MaxTokens,
-		Permission:   cfg.MiniAgent.Permission,
+		CLIPath:             cliPath,
+		APIKey:              cfg.MiniAgent.APIKey,
+		BaseURL:             cfg.MiniAgent.BaseURL,
+		SystemPrompt:        cfg.MiniAgent.SystemPrompt,
+		MaxTokens:           cfg.MiniAgent.MaxTokens,
+		Permission:          cfg.MiniAgent.Permission,
+		ShellBlockedPatterns: cfg.MiniAgent.ShellBlockedPatterns,
 	}, logger)
 
 	// ModelLister for /model picker + /models command. In CLI mode the bridge

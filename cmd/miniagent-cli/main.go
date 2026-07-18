@@ -51,6 +51,7 @@ func main() {
 		chatID     = flag.String("chat-id", "", "chat id for per-chat session isolation (empty = no history)")
 		permission = flag.String("permission", "default", "permission mode: plan (read-only), default (bounded), free (unrestricted)")
 		verbose    = flag.Bool("verbose", false, "emit tool_use and tool_result events (default: tool_use only)")
+		blockedPat = flag.String("blocked-patterns", "", "JSON array of blocked shell patterns (overrides built-in defaults)")
 		showVer    = flag.Bool("version", false, "show version")
 
 		// Metadata query flags (exit after output, no stdin needed).
@@ -128,6 +129,13 @@ func main() {
 	}
 
 	unrestricted := *permission == "free"
+	var blockedPats []string
+	if *blockedPat != "" {
+		if err := json.Unmarshal([]byte(*blockedPat), &blockedPats); err != nil {
+			fmt.Fprintf(os.Stderr, "miniagent-cli: --blocked-patterns parse error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	var tools []miniagent.Tool
 	switch *permission {
 	case "plan":
@@ -142,7 +150,7 @@ func main() {
 			tools = append(tools,
 				miniagent.ReadFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
 				miniagent.WriteFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
-				miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
+				miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted, BlockedPatterns: blockedPats},
 			)
 		} else {
 			fmt.Fprintln(os.Stderr, "miniagent-cli: --workdir is empty AND permission is not free; read_file/write_file/shell not registered")

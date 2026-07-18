@@ -39,7 +39,8 @@
     "max_tokens":      4096,
     "workspace_root":  "${WORKSPACE_ROOT}",
     "memory_enabled":  true,
-    "permission":      "free"
+    "permission":      "free",
+    "shell_blocked_patterns": []
   },
 
   "deploy_monitor": {
