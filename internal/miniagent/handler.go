@@ -568,6 +568,9 @@ func (h *Handler) toolsForDir(dir string) []Tool {
 		case WriteFile:
 			v.WorkspaceRoot = dir
 			out = append(out, v)
+		case EditFile:
+			v.WorkspaceRoot = dir
+			out = append(out, v)
 		case Shell:
 			v.WorkspaceRoot = dir
 			out = append(out, v)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxReadFileChars bounds one read_file result so a huge file cannot blow
@@ -14,7 +15,9 @@ const maxReadFileChars = 20000
 
 // readfileArgs is the LLM-supplied argument object for read_file.
 type readfileArgs struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"` // 1-based start line; 0 = from beginning
+	Limit  int    `json:"limit,omitempty"`  // max lines to return; 0 = all
 }
 
 // ReadFile reads a text file under WorkspaceRoot. Call enforces
@@ -30,7 +33,7 @@ type ReadFile struct {
 func (ReadFile) Spec() ToolSpec {
 	return ToolSpec{
 		Name:        "read_file",
-		Description: "读取 workspace_root 内的文本文件内容。path 可以是绝对路径或相对 workspace_root 的路径。",
+		Description: "读取 workspace_root 内的文本文件内容。支持 offset/limit 按行范围读取，输出带行号标注。path 可以是绝对路径或相对 workspace_root 的路径。",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -38,15 +41,23 @@ func (ReadFile) Spec() ToolSpec {
 					"type":        "string",
 					"description": "要读取的文件路径，相对 workspace_root 或绝对路径",
 				},
+				"offset": map[string]any{
+					"type":        "integer",
+					"description": "起始行号（1-based），默认 1（从头开始）",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "最多返回的行数，默认全部",
+				},
 			},
 			"required": []string{"path"},
 		},
 	}
 }
 
-// Call resolves path under WorkspaceRoot, reads the file, and truncates.
-// Any failure (root unset, escape attempt, missing file, not a regular
-// file, read error) yields IsError=true with a human-readable Output.
+// Call resolves path under WorkspaceRoot, reads the file, and returns the
+// content with line numbers. When offset/limit are provided, only the
+// specified line range is returned. Any failure yields IsError=true.
 func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 	var a readfileArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
@@ -54,6 +65,9 @@ func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 	}
 	if a.Path == "" {
 		return ToolResult{IsError: true, Output: "参数缺失：path"}
+	}
+	if a.Offset < 0 {
+		a.Offset = 0
 	}
 
 	var full string
@@ -84,5 +98,33 @@ func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("读取 %q 失败：%v", a.Path, err)}
 	}
-	return ToolResult{Output: truncate(string(data), maxReadFileChars, "…")}
+
+	content := string(data)
+
+	// If no offset/limit, return raw content truncated (backward compat).
+	if a.Offset == 0 && a.Limit == 0 {
+		return ToolResult{Output: truncate(content, maxReadFileChars, "…")}
+	}
+
+	// Range read: split by lines, apply offset/limit, prepend line numbers.
+	lines := strings.Split(content, "\n")
+	start := a.Offset
+	if start < 1 {
+		start = 1
+	}
+	end := len(lines)
+	if a.Limit > 0 && start+a.Limit-1 < end {
+		end = start + a.Limit - 1
+	}
+	if start > len(lines) {
+		return ToolResult{IsError: true, Output: fmt.Sprintf("offset %d 超出文件行数（共 %d 行）", start, len(lines))}
+	}
+
+	var sb strings.Builder
+	// Width for line number padding.
+	width := len(fmt.Sprintf("%d", end))
+	for i := start; i <= end; i++ {
+		fmt.Fprintf(&sb, "%*d │ %s\n", width, i, lines[i-1])
+	}
+	return ToolResult{Output: truncate(sb.String(), maxReadFileChars, "…")}
 }

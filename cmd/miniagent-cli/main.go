@@ -150,10 +150,11 @@ func main() {
 			tools = append(tools,
 				miniagent.ReadFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
 				miniagent.WriteFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
+				miniagent.EditFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
 				miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted, BlockedPatterns: blockedPats},
 			)
 		} else {
-			fmt.Fprintln(os.Stderr, "miniagent-cli: --workdir is empty AND permission is not free; read_file/write_file/shell not registered")
+			fmt.Fprintln(os.Stderr, "miniagent-cli: --workdir is empty AND permission is not free; read_file/write_file/shell/edit_file not registered")
 		}
 		tools = append(tools, miniagent.WebFetch{})
 	}
