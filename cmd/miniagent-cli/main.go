@@ -133,6 +133,8 @@ func main() {
 	case "plan":
 		if *workdir != "" {
 			tools = append(tools, miniagent.ReadFile{WorkspaceRoot: *workdir})
+		} else {
+			fmt.Fprintln(os.Stderr, "miniagent-cli: --workdir is empty, read_file not registered (plan mode needs a workspace)")
 		}
 		tools = append(tools, miniagent.WebFetch{})
 	default:
@@ -142,6 +144,8 @@ func main() {
 				miniagent.WriteFile{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
 				miniagent.Shell{WorkspaceRoot: *workdir, Unrestricted: unrestricted},
 			)
+		} else {
+			fmt.Fprintln(os.Stderr, "miniagent-cli: --workdir is empty AND permission is not free; read_file/write_file/shell not registered")
 		}
 		tools = append(tools, miniagent.WebFetch{})
 	}
