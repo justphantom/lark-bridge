@@ -1,4 +1,4 @@
-package cliutil
+package claude
 
 import (
 	"bytes"
@@ -35,9 +35,9 @@ func testLogger(buf *bytes.Buffer) *log.Logger {
 func TestCheckVersion_Ready(t *testing.T) {
 	bin := versionBin(t)
 	var buf bytes.Buffer
-	err := CheckVersion(context.Background(), bin, "sh", 5*time.Second, testLogger(&buf), "permission_mode", "bypass")
+	err := checkVersion(context.Background(), bin, "sh", 5*time.Second, testLogger(&buf), "permission_mode", "bypass")
 	if err != nil {
-		t.Fatalf("CheckVersion: %v", err)
+		t.Fatalf("checkVersion: %v", err)
 	}
 	got := buf.String()
 	for _, want := range []string{"sh CLI ready", "cli_path", bin, "version"} {
@@ -53,7 +53,7 @@ func TestCheckVersion_Ready(t *testing.T) {
 // TestCheckVersion_MissingBinary verifies a non-existent path errors with
 // the backend name and path in the message.
 func TestCheckVersion_MissingBinary(t *testing.T) {
-	err := CheckVersion(context.Background(), "/no/such/cli-test", "claude", 5*time.Second, testLogger(&bytes.Buffer{}))
+	err := checkVersion(context.Background(), "/no/such/cli-test", "claude", 5*time.Second, testLogger(&bytes.Buffer{}))
 	if err == nil {
 		t.Fatal("expected error for missing binary, got nil")
 	}
@@ -70,7 +70,7 @@ func TestCheckVersion_ContextCancelled(t *testing.T) {
 	bin := versionBin(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := CheckVersion(ctx, bin, "sh", 5*time.Second, testLogger(&bytes.Buffer{})); err == nil {
+	if err := checkVersion(ctx, bin, "sh", 5*time.Second, testLogger(&bytes.Buffer{})); err == nil {
 		t.Fatal("expected error on cancelled ctx, got nil")
 	}
 }
@@ -80,8 +80,8 @@ func TestCheckVersion_ContextCancelled(t *testing.T) {
 func TestCheckVersion_ExtraFieldsOptional(t *testing.T) {
 	bin := versionBin(t)
 	var buf bytes.Buffer
-	if err := CheckVersion(context.Background(), bin, "sh", 5*time.Second, testLogger(&buf)); err != nil {
-		t.Fatalf("CheckVersion: %v", err)
+	if err := checkVersion(context.Background(), bin, "sh", 5*time.Second, testLogger(&buf)); err != nil {
+		t.Fatalf("checkVersion: %v", err)
 	}
 	if !strings.Contains(buf.String(), "sh CLI ready") {
 		t.Errorf("ready line missing\ngot: %s", buf.String())

@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/cliutil"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
@@ -114,7 +113,7 @@ type RunOptions struct {
 // `<cliPath> --version`. Returns an error suitable for a startup health
 // gate.
 func (c *Client) IsReady(ctx context.Context) error {
-	return cliutil.CheckVersion(ctx, c.cliPath, "claude", readyTimeout, c.logger,
+	return checkVersion(ctx, c.cliPath, "claude", readyTimeout, c.logger,
 		log.FieldPermissionMode, c.permissionMode)
 }
 

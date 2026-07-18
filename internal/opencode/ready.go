@@ -1,8 +1,4 @@
-// Package cliutil holds subprocess helpers shared by the CLI-backed
-// backends (claude, opencode). Currently only the --version readiness
-// probe, which every backend's IsReady duplicated verbatim modulo the
-// backend name and a few log fields.
-package cliutil
+package opencode
 
 import (
 	"context"
@@ -14,16 +10,16 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// CheckVersion runs `<cliPath> --version` as a startup readiness probe:
+// checkVersion runs `<cliPath> --version` as a startup readiness probe:
 // it proves the binary exists, is executable, and can complete its
 // cheapest invocation. A missing/misconfigured CLI fails here instead of
 // mid-turn. version is logged at Info so startup journals record it.
 //
-// backendName names the probe in error/log messages (e.g. "claude").
+// backendName names the probe in error/log messages (e.g. "opencode").
 // timeout bounds the probe so a hung binary does not block startup beyond
 // systemd's TimeoutStartSec. extraFields are appended to the "ready" log
-// line for backend-specific context (e.g. claude's permission_mode).
-func CheckVersion(ctx context.Context, cliPath, backendName string, timeout time.Duration, logger *log.Logger, extraFields ...any) error {
+// line for backend-specific context.
+func checkVersion(ctx context.Context, cliPath, backendName string, timeout time.Duration, logger *log.Logger, extraFields ...any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// #nosec G204 -- cliPath comes from the trusted config file, not user input.
