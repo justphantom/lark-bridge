@@ -74,8 +74,8 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 		return nil
 	}
 	defer h.endTurn(chatID, mine)
-	h.SetPromptIDForPickers(promptID)
-	defer h.SetPromptIDForPickers("")
+	h.SetPromptIDForPickers(chatID, promptID)
+	defer h.SetPromptIDForPickers(chatID, "")
 
 	fields := strings.Fields(prompt)
 	arg := ""
@@ -167,19 +167,19 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 			defer cancel()
 			models, err := lister.ListModels(ctx)
 			if err != nil {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "选择失败", "获取模型列表失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "选择失败", "获取模型列表失败："+err.Error())
 				return
 			}
 			choice, err := h.askAndWait(ctx, chatID, "模型", models)
 			if err != nil {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "选择失败", err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "warning", "选择失败", err.Error())
 				return
 			}
 			if err := h.history.SetModel(chatID, choice); err != nil {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "模型", "设置失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "模型", "设置失败："+err.Error())
 				return
 			}
-			h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
+			h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
 		}()
 		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
@@ -269,7 +269,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 		go func() {
 			dirs := scanSubdirs(root)
 			if len(dirs) == 0 {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
 				return
 			}
 			// Show basename in the card; resolve back to full path on click.
@@ -279,7 +279,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 			}
 			choice, err := h.askAndWait(context.Background(), chatID, "目录", names)
 			if err != nil {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "选择失败", err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "warning", "选择失败", err.Error())
 				return
 			}
 			// Resolve basename → full path.
@@ -291,14 +291,14 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 				}
 			}
 			if dir == "" {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "工作目录", "选中的目录不存在。")
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "工作目录", "选中的目录不存在。")
 				return
 			}
 			if err := h.history.SetDir(chatID, dir); err != nil {
-				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "工作目录", "设置失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "工作目录", "设置失败："+err.Error())
 				return
 			}
-			h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "success", "已切换目录", "工作目录已切换到 "+dir+"（下次提问生效）。")
+			h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "success", "已切换目录", "工作目录已切换到 "+dir+"（下次提问生效）。")
 		}()
 		return "async", "", ""
 	}

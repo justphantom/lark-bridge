@@ -54,7 +54,7 @@ type Handler struct {
 	cfgPermission  string // global default permission mode (from config)
 	client         *miniclient.Client // non-nil → CLI subprocess mode (P3)
 	historyDir     string             // state dir for CLI's --state-dir flag
-	currentPromptID string            // set by handleSessionCommand for picker goroutines
+	pickerPromptIDs sync.Map           // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -82,17 +82,23 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 	}
 }
 
-// SetPromptIDForPickers stores the current turn's promptID so async picker
-// goroutines (launched from commands.go, which don't receive promptID as a
-// parameter) can pass it to notifyWithPromptID, replacing the progress card
-// in place. Set by handleSessionCommand before dispatch, cleared after.
-// Thread-safe: handleSessionCommand runs under startTurn (serial per chat).
-func (h *Handler) SetPromptIDForPickers(promptID string) {
-	h.currentPromptID = promptID
+// SetPromptIDForPickers stores the promptID for a chat so async picker
+// goroutines can find it later. Keyed by chatID for concurrency safety
+// (multiple chats can run pickers simultaneously).
+func (h *Handler) SetPromptIDForPickers(chatID, promptID string) {
+	if promptID == "" {
+		h.pickerPromptIDs.Delete(chatID)
+	} else {
+		h.pickerPromptIDs.Store(chatID, promptID)
+	}
 }
 
-func (h *Handler) PromptIDForPickers() string {
-	return h.currentPromptID
+func (h *Handler) PromptIDForPickers(chatID string) string {
+	v, ok := h.pickerPromptIDs.Load(chatID)
+	if !ok {
+		return ""
+	}
+	return v.(string)
 }
 
 // RunningSession describes one in-flight turn for the /running card.
@@ -249,9 +255,11 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// aborted turn's runTurn emits the "已中止" notice as it unwinds.
 	if prompt == "/session-abort" {
 		if h.abortChat(chatID) {
-			return h.notify(ctx, chatID, "success", "已请求中止", "正在停止当前任务。")
+			h.notifyWithPromptID(chatID, promptID, "success", "已请求中止", "正在停止当前任务。")
+		} else {
+			h.notifyWithPromptID(chatID, promptID, "info", "无可中止", "当前没有正在执行的任务。")
 		}
-		return h.notify(ctx, chatID, "info", "无可中止", "当前没有正在执行的任务。")
+		return nil
 	}
 
 	// Session management commands (/session-new, /session-list, /session-use,
@@ -327,18 +335,26 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		return
 	}
 
-	var cancelled bool
+	var emittedTerminal bool
 	for ev := range events {
 		if ev.IsTerminal {
-			if ev.Kind == miniclient.KindError && ctx.Err() != nil {
-				cancelled = true
-			}
+			emittedTerminal = true
 		}
 		h.emitCLIEvent(chatID, promptID, ev, start)
 	}
-	if cancelled {
-		h.logger.Info("miniagent-cli turn aborted",
+	// If the CLI was killed by abort/close before emitting a terminal event,
+	// the miniclient pump synthesizes a KindError — but the user should see
+	// a friendly "已中止" notice, not a scary TypeError. Match runViaLoop's
+	// behavior: ctx cancelled → TypeNotice, not TypeError.
+	if ctx.Err() != nil && !emittedTerminal {
+		h.logger.Info("miniagent-cli turn aborted (no terminal event)",
 			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeNotice,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Notice:   &protocol.NoticePayload{Level: "info", Title: "已中止", Message: "本次任务已停止。"},
+		})
 	}
 }
 
