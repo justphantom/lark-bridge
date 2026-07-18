@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 func TestFormatTokens(t *testing.T) {

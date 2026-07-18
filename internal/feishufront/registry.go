@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // Channel buffer sizes. connEventChanBuf absorbs SSE Event bursts for one

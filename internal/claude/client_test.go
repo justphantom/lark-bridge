@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/config"
 )
 
 func TestBuildCommand_IncludesSettings(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // IncomingMessage is the normalized payload for one inbound Feishu

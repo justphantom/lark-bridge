@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // cmdDirectory pins, clears, or interactively selects the working directory

@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // reconnectBackoff is the delay before the first reconnect attempt; each

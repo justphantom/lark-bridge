@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // TestSanitizeName covers the filename-safety collapse: safe runes pass

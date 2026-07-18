@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/config"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // writeSettingsFiles creates a fake settings directory with the given

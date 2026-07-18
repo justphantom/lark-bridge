@@ -15,14 +15,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/backendrpc"
-	"github.com/hu/lark-bridge/internal/claude"
-	"github.com/hu/lark-bridge/internal/claudebridge"
-	"github.com/hu/lark-bridge/internal/config"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
-	"github.com/hu/lark-bridge/internal/router"
-	"github.com/hu/lark-bridge/internal/usage"
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/claude"
+	"github.com/justphantom/lark-bridge/internal/claudebridge"
+	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
 var version = "dev"

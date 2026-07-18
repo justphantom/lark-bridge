@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/atomicwrite"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/atomicwrite"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // fileVersion is the on-disk format version.

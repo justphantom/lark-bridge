@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 const (

@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/backendrpc"
-	"github.com/hu/lark-bridge/internal/claude"
-	"github.com/hu/lark-bridge/internal/feishufront"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/claude"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // scriptClaude is a fake claudeAPI that replays a fixed slice of events then

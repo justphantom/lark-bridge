@@ -7,13 +7,13 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/opencode"
-	"github.com/hu/lark-bridge/internal/protocol"
-	"github.com/hu/lark-bridge/internal/router"
-	"github.com/hu/lark-bridge/internal/streamarchive"
-	"github.com/hu/lark-bridge/internal/usage"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/opencode"
+	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/streamarchive"
+	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
 // cancelNoticeTimeout bounds the fresh context used to emit the "已取消"

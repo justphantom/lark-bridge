@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/cliutil"
-	"github.com/hu/lark-bridge/internal/config"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/cliutil"
+	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // readyTimeout bounds the `claude --version` health check performed by

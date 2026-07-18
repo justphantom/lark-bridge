@@ -1,7 +1,7 @@
 package router
 
 import (
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // AllBindings returns a snapshot of every chat→Binding mapping the router

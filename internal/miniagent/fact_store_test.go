@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 func newTestFactStore(t *testing.T) *FileFactStore {

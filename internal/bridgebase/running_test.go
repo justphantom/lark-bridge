@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // TestFormatDuration covers the three time bands.

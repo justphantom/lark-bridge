@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 )
 
 // TurnsByBackend backs OnBackendOffline cleanup: it returns exactly the

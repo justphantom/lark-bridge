@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // maxIterations bounds the ReAct loop so a misbehaving LLM cannot cycle

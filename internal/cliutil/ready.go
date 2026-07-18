@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // CheckVersion runs `<cliPath> --version` as a startup readiness probe:

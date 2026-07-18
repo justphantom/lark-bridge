@@ -1,7 +1,7 @@
 package router
 
 import (
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Bind forcibly maps chatID to the given sessionID, directory, title,

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/cmdutil"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 func TestParseCommand(t *testing.T) {

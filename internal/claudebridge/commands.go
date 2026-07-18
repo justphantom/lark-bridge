@@ -3,8 +3,8 @@ package claudebridge
 import (
 	"context"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // commandResult is the body a slash command returns; an alias of cmdutil.Result

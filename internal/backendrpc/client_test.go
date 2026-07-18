@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // TestClient_EventAndControl wires a real IPCServer to a backendrpc.Client and

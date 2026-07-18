@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // newTestRouter builds an in-memory router (no persistence) pre-loaded with a

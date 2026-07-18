@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
 

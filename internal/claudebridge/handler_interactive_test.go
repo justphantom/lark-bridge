@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // newInteractiveTestHandler builds a Handler with a fresh in-memory router and

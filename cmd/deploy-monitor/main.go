@@ -19,11 +19,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/hu/lark-bridge/internal/backendrpc"
-	"github.com/hu/lark-bridge/internal/config"
-	"github.com/hu/lark-bridge/internal/deploymonitor"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/deploymonitor"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 var version = "dev"

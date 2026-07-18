@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/claude"
+	"github.com/justphantom/lark-bridge/internal/claude"
 )
 
 // taskToolName renders the subagent as a tool-row name. taskKind discriminates

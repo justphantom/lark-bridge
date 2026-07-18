@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // askWaitTimeout bounds how long a picker waits for a human answer. Feishu

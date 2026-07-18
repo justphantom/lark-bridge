@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/backendrpc"
-	"github.com/hu/lark-bridge/internal/feishu"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // fakeSink is a CardSink that records every SendCard/UpdateCard call and

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // versionBin is a binary whose `--version` exits 0; bash ships one on every

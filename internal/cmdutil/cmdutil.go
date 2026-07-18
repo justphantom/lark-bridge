@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Timeout caps how long any single slash command may take. Commands run in

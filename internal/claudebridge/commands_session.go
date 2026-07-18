@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // cmdListSessions lists every chat→session binding the router holds. The

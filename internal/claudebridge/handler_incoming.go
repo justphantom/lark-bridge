@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // dirPerm is the owner-only permission for per-chat session working

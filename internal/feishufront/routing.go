@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/atomicwrite"
+	"github.com/justphantom/lark-bridge/internal/atomicwrite"
 )
 
 // routeEntry is one chatID → backendID mapping with the moment it was set.

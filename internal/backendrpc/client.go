@@ -21,8 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // handshakeTimeout bounds the SSE GET + POST dial/header wait. Without it a

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Message is one chat message. Role is "system" | "user" | "assistant" |

@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/cliutil"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/cliutil"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // readyTimeout bounds the `opencode --version` health check performed by

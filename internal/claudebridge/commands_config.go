@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/claude"
-	"github.com/hu/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/claude"
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // settablePermissionModes is the subset of CLI --permission-mode values

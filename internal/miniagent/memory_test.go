@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // newTestHistory builds a History rooted at a temp dir.

@@ -3,7 +3,7 @@ package bridgebase
 import (
 	"sync"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // AnswerBroker routes an interactive card's answer back to the goroutine that

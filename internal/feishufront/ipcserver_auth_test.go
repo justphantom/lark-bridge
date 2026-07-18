@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/backendrpc"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // newAuthTestServer builds an IPCServer with the given secret behind a test

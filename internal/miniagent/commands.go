@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // Session management commands. These mirror the claude backend's /session-*

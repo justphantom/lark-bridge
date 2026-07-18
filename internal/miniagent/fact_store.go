@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Fact is one structured long-term memory entry: an explicit key/value pair

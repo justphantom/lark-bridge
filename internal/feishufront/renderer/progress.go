@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 )
 
 // maxCompletedTools bounds how many completed-tool detail rows are shown.

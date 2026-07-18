@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // topDir is the directory under stateDir holding all per-backend archives.

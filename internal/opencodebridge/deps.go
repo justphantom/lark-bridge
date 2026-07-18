@@ -11,7 +11,7 @@ package opencodebridge
 import (
 	"context"
 
-	"github.com/hu/lark-bridge/internal/opencode"
+	"github.com/justphantom/lark-bridge/internal/opencode"
 )
 
 // opencodeAPI is the opencode backend capability the bridge needs. The

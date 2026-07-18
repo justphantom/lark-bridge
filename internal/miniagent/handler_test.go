@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // captureSender records every Control sent. Controls returns a snapshot.

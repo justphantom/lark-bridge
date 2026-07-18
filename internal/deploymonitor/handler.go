@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // controlSender is the subset of *backendrpc.Client the handler needs. It

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hu/lark-bridge/internal/atomicwrite"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/atomicwrite"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // routerVersion is the on-disk bindings format version.

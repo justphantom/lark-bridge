@@ -10,7 +10,7 @@ import (
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	larkimv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 func ptrString(s string) *string { return &s }

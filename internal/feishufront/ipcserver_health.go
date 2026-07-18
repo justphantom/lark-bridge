@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // sseWriteTimeout bounds how long one SSE frame may take to write+flush. A

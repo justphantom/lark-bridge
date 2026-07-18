@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // fakeSender captures SendControl calls. Each Control is appended to mu.captured

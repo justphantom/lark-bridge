@@ -3,7 +3,7 @@ package claudebridge
 import (
 	"context"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
 
 // cmdRunning lists all currently active turns across all chats. The snapshot

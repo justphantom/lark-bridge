@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // TestBuildCommand_IncludesSessionAndModel verifies session/model/agent flags

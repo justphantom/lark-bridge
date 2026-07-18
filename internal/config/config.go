@@ -17,7 +17,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/strutil"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // envVarPattern is the shared ${VAR} matcher defined once in strutil so the

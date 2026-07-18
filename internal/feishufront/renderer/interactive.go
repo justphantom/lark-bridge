@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // maxInteractiveBodyRunes caps permission message and question label text.

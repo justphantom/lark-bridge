@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // writeRaw writes arbitrary bytes to the router file so tests can craft

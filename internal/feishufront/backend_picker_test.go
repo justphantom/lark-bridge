@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/feishu"
 )
 
 // pickerRouter is a ChatRouter stub that records the last Set target so

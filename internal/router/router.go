@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Binding pairs a backend session id with the working directory the session

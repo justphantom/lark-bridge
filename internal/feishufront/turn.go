@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 )
 
 // Turn tracks one in-flight prompt and the progress card it owns.

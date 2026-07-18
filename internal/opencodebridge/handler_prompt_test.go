@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/opencode"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/opencode"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // newTestHandler builds a Handler wired to a closed-stream opencode fake and

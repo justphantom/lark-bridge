@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/strutil"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // maxLineLen caps the per-line buffer for the stdout scanner. Claude

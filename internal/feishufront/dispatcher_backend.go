@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishu"
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // noticeSendTimeout bounds a backend online/offline notification's Feishu send.

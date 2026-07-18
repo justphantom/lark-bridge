@@ -34,8 +34,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/miniagent"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/miniagent"
 )
 
 var version = "dev"

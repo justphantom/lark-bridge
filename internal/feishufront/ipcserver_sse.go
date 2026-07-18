@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // handleSSE registers the backend on connect, then streams protocol.Events as

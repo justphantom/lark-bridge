@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 func hdr() cardkit.HeaderInfo { return cardkit.HeaderInfo{BackendType: "claude"} }

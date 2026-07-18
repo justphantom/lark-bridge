@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront/cardkit"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // maxResultRunes caps the result body so a very long reply (e.g. a whole file

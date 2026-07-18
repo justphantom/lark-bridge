@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/config"
-	"github.com/hu/lark-bridge/internal/feishu"
-	"github.com/hu/lark-bridge/internal/feishufront"
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 var version = "dev"

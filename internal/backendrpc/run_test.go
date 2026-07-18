@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishufront"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // TestRun_InitialConnectFails verifies Run returns the connect error

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/feishu"
-	"github.com/hu/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 func TestParseBackendCommand(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // SessionInfo describes one stored session of a chat.

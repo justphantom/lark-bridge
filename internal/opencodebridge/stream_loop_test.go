@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hu/lark-bridge/internal/bridgebase"
-	"github.com/hu/lark-bridge/internal/log"
-	"github.com/hu/lark-bridge/internal/opencode"
-	"github.com/hu/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/opencode"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 func TestSummarizeToolInput(t *testing.T) {

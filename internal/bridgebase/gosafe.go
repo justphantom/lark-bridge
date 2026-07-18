@@ -8,7 +8,7 @@ package bridgebase
 import (
 	"runtime/debug"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // GoSafe runs fn in a new goroutine, recovering from any panic and logging it

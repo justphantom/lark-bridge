@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hu/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // maxLineLen caps the per-line scanner buffer for miniagent-cli stdout.
