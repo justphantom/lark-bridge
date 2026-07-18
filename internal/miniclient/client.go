@@ -14,7 +14,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// maxLineLen caps the per-line scanner buffer for miniagent-cli stdout.
+// maxLineLen caps the per-line scanner buffer for miniagent stdout.
 // A single tool_result (e.g. a large file read) can be several MB.
 const maxLineLen = 8 << 20 // 8 MB
 
@@ -36,7 +36,7 @@ type Config struct {
 	MaxConcurrent       int
 }
 
-// Client wraps the miniagent-cli binary. Safe for concurrent use: each
+// Client wraps the miniagent binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
 	cliPath    string
@@ -72,7 +72,7 @@ func New(cfg Config, logger *log.Logger) *Client {
 	}
 }
 
-// RunOptions describes one miniagent-cli turn.
+// RunOptions describes one miniagent turn.
 type RunOptions struct {
 	Prompt     string
 	Model      string
@@ -82,7 +82,7 @@ type RunOptions struct {
 	Permission string // per-chat override; "" → use Client's global default
 }
 
-// Run starts one miniagent-cli subprocess for opts and returns the event
+// Run starts one miniagent subprocess for opts and returns the event
 // stream. The caller MUST drain the channel until close. A terminal Event
 // (result or error) precedes close. ctx cancellation SIGKILLs the process
 // group so child tool subprocesses are reaped too.
@@ -116,10 +116,10 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	}
 	if err := cmd.Start(); err != nil {
 		<-c.sem
-		return nil, fmt.Errorf("start miniagent-cli: %w (is %s built?)", err, c.cliPath)
+		return nil, fmt.Errorf("start miniagent: %w (is %s built?)", err, c.cliPath)
 	}
 
-	c.logger.Debug("miniagent-cli started",
+	c.logger.Debug("miniagent started",
 		"model", opts.Model,
 		"workdir", opts.Workdir,
 		"prompt_len", len(opts.Prompt))
@@ -190,12 +190,12 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		close(out)
 	}()
 
-	// Tee stderr to debug log (miniagent-cli writes structured logs there).
+	// Tee stderr to debug log (miniagent writes structured logs there).
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
 		for sc.Scan() {
-			c.logger.Debug("miniagent-cli stderr", "line", sc.Text())
+			c.logger.Debug("miniagent stderr", "line", sc.Text())
 		}
 	}()
 
@@ -221,7 +221,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 	}()
 
 	// Group-kill on ctx cancellation: exec.CommandContext only SIGKILLs the
-	// main process (miniagent-cli), not its children. With Setpgid=true the
+	// main process (miniagent), not its children. With Setpgid=true the
 	// whole tree shares a process group id = cmd.Process.Pid. Sending
 	// syscall.Kill(-pgid, SIGKILL) reaches sh → git → node etc. so abort
 	// does not leave orphaned tool subprocesses holding locks or ports.
@@ -236,7 +236,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		// an error-path result. If we did NOT (process crashed before writing
 		// one), synthesize one so the consumer's drain-loop terminates.
 		if !gotTerminal {
-			out <- Event{Kind: KindError, Message: fmt.Sprintf("miniagent-cli exited: %v", err), IsError: true, IsTerminal: true}
+			out <- Event{Kind: KindError, Message: fmt.Sprintf("miniagent exited: %v", err), IsError: true, IsTerminal: true}
 		}
 	}
 }

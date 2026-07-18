@@ -121,7 +121,7 @@ func (h *Handler) RunningSessions() []RunningSession {
 	return out
 }
 
-// SetHistoryDir sets the state directory passed to miniagent-cli as
+// SetHistoryDir sets the state directory passed to miniagent as
 // --state-dir so the CLI subprocess can load/save per-chat history.
 func (h *Handler) SetHistoryDir(dir string) {
 	h.historyDir = dir
@@ -313,7 +313,7 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 	h.runViaLoop(ctx, promptID, chatID, prompt)
 }
 
-// runViaCLI forks miniagent-cli per turn, pumps its NDJSON stdout into
+// runViaCLI forks miniagent per turn, pumps its NDJSON stdout into
 // Controls. The CLI process owns the loop/tools/LLM/memory; the bridge
 // owns IPC + per-chat config + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
@@ -321,7 +321,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	model := h.activeModel(chatID)
 	workdir := h.activeDir(chatID)
 	perm := h.activePermission(chatID)
-	h.logger.Info("miniagent-cli turn start",
+	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
 		"model", model,
@@ -337,13 +337,13 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		Permission: perm,
 	})
 	if err != nil {
-		h.logger.Warn("miniagent-cli start failed",
+		h.logger.Warn("miniagent start failed",
 			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
 		h.sendCtrl(&protocol.Control{
 			Type:     protocol.TypeError,
 			PromptID: promptID,
 			ChatID:   chatID,
-			Error:    &protocol.ErrorPayload{Message: "启动 miniagent-cli 失败：" + err.Error(), Recoverable: true},
+			Error:    &protocol.ErrorPayload{Message: "启动 miniagent 失败：" + err.Error(), Recoverable: true},
 		})
 		return
 	}
@@ -360,7 +360,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	// a friendly "已中止" notice, not a scary TypeError. Match runViaLoop's
 	// behavior: ctx cancelled → TypeNotice, not TypeError.
 	if ctx.Err() != nil && !emittedTerminal {
-		h.logger.Info("miniagent-cli turn aborted (no terminal event)",
+		h.logger.Info("miniagent turn aborted (no terminal event)",
 			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
 		h.sendCtrl(&protocol.Control{
 			Type:     protocol.TypeNotice,
@@ -390,7 +390,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			ToolResult: &protocol.ToolResultPayload{Name: ev.Name, Input: ev.Input, Output: ev.Output, IsError: ev.IsError},
 		})
 	case miniclient.KindResult:
-		h.logger.Info("miniagent-cli turn done",
+		h.logger.Info("miniagent turn done",
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
 			"steps", ev.Steps,
@@ -411,7 +411,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			},
 		})
 	case miniclient.KindError:
-		h.logger.Warn("miniagent-cli turn failed",
+		h.logger.Warn("miniagent turn failed",
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
 			log.FieldError, errors.New(ev.Message),

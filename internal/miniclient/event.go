@@ -1,4 +1,4 @@
-// Package miniclient wraps the miniagent-cli subprocess: it forks the CLI,
+// Package miniclient wraps the miniagent subprocess: it forks the CLI,
 // pipes the prompt via stdin, and pumps stdout NDJSON events into a channel.
 // It is the miniagent analogue of internal/claude.Client.
 package miniclient
@@ -13,7 +13,7 @@ const (
 	KindError      = "error"
 )
 
-// Event is one parsed stream-json line from miniagent-cli's stdout. A
+// Event is one parsed stream-json line from miniagent's stdout. A
 // terminal event (KindResult or KindError) is always emitted last; the
 // pump goroutine closes the channel after it.
 type Event struct {
@@ -38,7 +38,7 @@ type Event struct {
 	IsTerminal bool
 }
 
-// rawEvent mirrors the JSON shape miniagent-cli writes (internal/miniagent
+// rawEvent mirrors the JSON shape miniagent writes (internal/miniagent
 // .streamEvent). Kept unexported: callers interact via Event.
 type rawEvent struct {
 	Type         string `json:"type"`

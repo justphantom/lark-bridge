@@ -66,7 +66,7 @@ func TestParseEvent_EmptyType(t *testing.T) {
 
 func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
-		CLIPath:       "/bin/miniagent-cli",
+		CLIPath:       "/bin/miniagent",
 		APIKey:        "sk-test",
 		BaseURL:       "http://localhost:8080",
 		SystemPrompt:  "be brief",
