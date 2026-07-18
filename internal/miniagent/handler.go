@@ -246,7 +246,8 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	}
 	if prompt == "" {
 		h.logger.Info("miniagent empty prompt, noticing", log.FieldChatID, chatID)
-		return h.notify(ctx, chatID, "warning", "空消息", "请发送需要处理的内容。")
+		h.notifyWithPromptID(chatID, promptID, "warning", "空消息", "请发送需要处理的内容。")
+		return nil
 	}
 
 	// /session-abort: cancels the in-flight turn. Handled BEFORE session
@@ -275,8 +276,9 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	turnCtx, mine, ok := h.startTurn(ctx, chatID)
 	if !ok {
 		h.logger.Info("miniagent prompt dropped: chat busy", log.FieldChatID, chatID, log.FieldPromptID, promptID)
-		return h.notify(ctx, chatID, "warning", "处理中",
+		h.notifyWithPromptID(chatID, promptID, "warning", "处理中",
 			"上一条消息还在处理，请等它结束后再发。")
+		return nil
 	}
 	go func() {
 		defer h.endTurn(chatID, mine)

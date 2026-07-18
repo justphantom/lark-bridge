@@ -220,6 +220,16 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		_, _ = io.Copy(io.Discard, stdout)
 	}()
 
+	// Group-kill on ctx cancellation: exec.CommandContext only SIGKILLs the
+	// main process (miniagent-cli), not its children. With Setpgid=true the
+	// whole tree shares a process group id = cmd.Process.Pid. Sending
+	// syscall.Kill(-pgid, SIGKILL) reaches sh → git → node etc. so abort
+	// does not leave orphaned tool subprocesses holding locks or ports.
+	if ctx.Err() != nil && cmd.Process != nil {
+		pgid := cmd.Process.Pid
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
 		// Non-zero exit without ctx cancel: if we already emitted a terminal
 		// event, the consumer has it and this is just the exit code reflecting
