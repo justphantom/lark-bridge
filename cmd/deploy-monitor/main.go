@@ -105,12 +105,14 @@ func run(cfgPath string) error {
 		}, eventErr)
 }
 
-// execCommander is the production commander: runs `make <target>` in dir,
-// capturing combined stdout+stderr. It is the only implementation outside tests.
+// execCommander is the production commander: runs `make -C dir target args...`
+// capturing combined stdout+stderr.
 type execCommander struct{}
 
-func (execCommander) Run(ctx context.Context, dir, target string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "make", "-C", dir, target)
+func (execCommander) Run(ctx context.Context, dir, target string, args ...string) ([]byte, error) {
+	cmdArgs := []string{"-C", dir, target}
+	cmdArgs = append(cmdArgs, args...)
+	cmd := exec.CommandContext(ctx, "make", cmdArgs...)
 	return cmd.CombinedOutput()
 }
 

@@ -50,7 +50,7 @@ type fakeCommander struct {
 	cancelCh chan struct{}
 }
 
-func (f *fakeCommander) Run(ctx context.Context, _, _ string) ([]byte, error) {
+func (f *fakeCommander) Run(ctx context.Context, _, _ string, _ ...string) ([]byte, error) {
 	f.mu.Lock()
 	f.calls++
 	f.mu.Unlock()

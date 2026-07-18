@@ -32,7 +32,7 @@ type controlSender interface {
 // a fake to avoid a real `make` call. Exported because the production impl
 // lives in the main package.
 type Commander interface {
-	Run(ctx context.Context, dir, target string) ([]byte, error)
+	Run(ctx context.Context, dir, target string, args ...string) ([]byte, error)
 }
 
 // Config carries the deploy-monitor runtime settings.
@@ -76,9 +76,15 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	}
 	chatID := ev.Prompt.ChatID
 	prompt := strings.TrimSpace(ev.Prompt.Text)
-	if prompt != "/deploy" {
+
+	var force bool
+	switch prompt {
+	case "/deploy":
+	case "/deploy-force":
+		force = true
+	default:
 		return h.notify(ctx, chatID, "warning", "未知指令",
-			"本后端只接受 /deploy（在 "+h.cfg.ProjectRoot+" 执行 make "+h.cfg.DeployTarget+"）。")
+			"本后端只接受 /deploy 或 /deploy-force（在 "+h.cfg.ProjectRoot+" 执行 make "+h.cfg.DeployTarget+"）。")
 	}
 
 	h.mu.Lock()
@@ -91,15 +97,19 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	h.running = true
 	h.mu.Unlock()
 
-	go h.runDeploy(chatID)
+	go h.runDeploy(chatID, force)
+	label := "make " + h.cfg.DeployTarget
+	if force {
+		label += " ARGS=--force"
+	}
 	return h.notify(ctx, chatID, "info", "部署已触发",
-		"开始执行 make "+h.cfg.DeployTarget+"，完成后会在此通知。")
+		"开始执行 "+label+"，完成后会在此通知。")
 }
 
 // runDeploy executes the make target and emits the terminal notice. It runs
 // on its own goroutine so the SSE loop stays free. The single-flight flag is
 // always cleared on exit (including ctx cancel).
-func (h *Handler) runDeploy(chatID string) {
+func (h *Handler) runDeploy(chatID string, force bool) {
 	defer func() {
 		h.mu.Lock()
 		h.running = false
@@ -112,9 +122,14 @@ func (h *Handler) runDeploy(chatID string) {
 	h.logger.Info("deploy start",
 		log.FieldChatID, chatID,
 		"dir", h.cfg.ProjectRoot,
-		"target", h.cfg.DeployTarget)
+		"target", h.cfg.DeployTarget,
+		"force", force)
 
-	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, h.cfg.DeployTarget)
+	var makeArgs []string
+	if force {
+		makeArgs = []string{"ARGS=--force"}
+	}
+	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, h.cfg.DeployTarget, makeArgs...)
 	if err != nil {
 		h.logger.Error("deploy failed", log.FieldChatID, chatID, log.FieldError, err)
 		h.notifyWithRetry(chatID, "error", "部署失败",
