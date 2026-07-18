@@ -75,6 +75,9 @@ func (e EditFile) Call(_ context.Context, args string) ToolResult {
 	var full string
 	if e.Unrestricted {
 		full = a.Path
+		if e.WorkspaceRoot != "" && !filepath.IsAbs(a.Path) {
+			full = filepath.Join(e.WorkspaceRoot, a.Path)
+		}
 	} else {
 		if e.WorkspaceRoot == "" {
 			return ToolResult{IsError: true, Output: "edit_file 未配置：workspace_root 为空"}

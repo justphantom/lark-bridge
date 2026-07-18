@@ -59,6 +59,9 @@ func (w WriteFile) Call(_ context.Context, args string) ToolResult {
 	var full string
 	if w.Unrestricted {
 		full = a.Path
+		if w.WorkspaceRoot != "" && !filepath.IsAbs(a.Path) {
+			full = filepath.Join(w.WorkspaceRoot, a.Path)
+		}
 	} else {
 		if w.WorkspaceRoot == "" {
 			return ToolResult{IsError: true, Output: "write_file 未配置：workspace_root 为空"}

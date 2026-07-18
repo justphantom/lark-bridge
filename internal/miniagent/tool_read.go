@@ -72,7 +72,12 @@ func (r ReadFile) Call(_ context.Context, args string) ToolResult {
 
 	var full string
 	if r.Unrestricted {
-		full = a.Path // no path bounds in free mode
+		full = a.Path
+		// In free mode, resolve relative paths against WorkspaceRoot so /cd
+		// still applies. Absolute paths are used as-is.
+		if r.WorkspaceRoot != "" && !filepath.IsAbs(a.Path) {
+			full = filepath.Join(r.WorkspaceRoot, a.Path)
+		}
 	} else {
 		if r.WorkspaceRoot == "" {
 			return ToolResult{IsError: true, Output: "read_file 未配置：workspace_root 为空"}

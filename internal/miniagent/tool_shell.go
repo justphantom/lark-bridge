@@ -99,15 +99,18 @@ func (s Shell) Call(ctx context.Context, args string) ToolResult {
 	defer cancel()
 	// #nosec G204 -- the agent's whole purpose is to run LLM-chosen shell.
 	cmd := exec.CommandContext(runCtx, "sh", "-c", a.Command)
-	if !s.Unrestricted {
+	// cwd: ALWAYS set when WorkspaceRoot is non-empty — it's the working
+	// directory the user chose via /cd, not a security boundary. Free mode
+	// skips path/blocklist checks but still runs in the chosen directory.
+	if s.WorkspaceRoot != "" {
 		root, err := filepath.Abs(s.WorkspaceRoot)
-		if err != nil {
-			return ToolResult{IsError: true, Output: fmt.Sprintf("解析 workspace_root 失败：%v", err)}
+		if err == nil {
+			if _, statErr := os.Stat(root); statErr == nil {
+				cmd.Dir = root
+			}
 		}
-		if _, err := os.Stat(root); err != nil {
-			return ToolResult{IsError: true, Output: fmt.Sprintf("workspace_root 不可访问：%v", err)}
-		}
-		cmd.Dir = root
+		// If root can't be resolved or doesn't exist, leave cmd.Dir unset
+		// (process default cwd) rather than erroring — free mode tolerates.
 	}
 	// Env isolation is ALWAYS enforced regardless of Unrestricted — API key
 	// leakage is an absolute security concern, not a convenience trade-off.
