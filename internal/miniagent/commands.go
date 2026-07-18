@@ -43,7 +43,6 @@ var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title,
 	"/memory-del":    (*Handler).cmdMemoryDel,
 	"/memory-search": (*Handler).cmdMemorySearch,
 	"/help":          (*Handler).cmdHelp,
-	"/running":       (*Handler).cmdRunning,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -476,18 +475,24 @@ func (h *Handler) cmdMemorySearch(chatID, arg string) (level, title, body string
 	return "info", "长期记忆", sb.String()
 }
 
-// cmdRunning lists all currently active turns across all chats.
-func (h *Handler) cmdRunning(_, _ string) (level, title, body string) {
+// cmdRunning lists currently active turns for this chat.
+func (h *Handler) cmdRunning(chatID, _ string) (level, title, body string) {
 	sessions := h.RunningSessions()
-	if len(sessions) == 0 {
+	var filtered []RunningSession
+	for _, s := range sessions {
+		if s.ChatID == chatID {
+			filtered = append(filtered, s)
+		}
+	}
+	if len(filtered) == 0 {
 		return "info", "运行中会话", "当前没有运行中的会话。"
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🔄 **运行中会话** (%d)\n\n", len(sessions)))
-	for _, s := range sessions {
+	sb.WriteString(fmt.Sprintf("🔄 **运行中会话** (%d)\n\n", len(filtered)))
+	for _, s := range filtered {
 		sb.WriteString(fmt.Sprintf("- 群ID：`%s`（运行 %s）\n", s.ChatID, formatDuration(s.Duration)))
 	}
-	sb.WriteString("\n💡 如需中止，请到对应群内发送 `/session-abort`")
+	sb.WriteString("\n💡 如需中止，请发送 `/session-abort`")
 	return "info", "运行中会话", sb.String()
 }
 

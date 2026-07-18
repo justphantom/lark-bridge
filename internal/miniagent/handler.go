@@ -252,6 +252,15 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return nil
 	}
 
+	// /running: read-only query for in-flight turns. Handled before session
+	// commands so it does not itself occupy a turn slot (which would make it
+	// appear as a running session).
+	if prompt == "/running" {
+		level, title, body := h.cmdRunning(chatID, "")
+		h.notifyWithPromptID(chatID, promptID, level, title, body)
+		return nil
+	}
+
 	// /session-abort: cancels the in-flight turn. Handled BEFORE session
 	// commands and startTurn because the turn it must cancel is the one
 	// currently holding the slot — startTurn would reject us as busy. The
