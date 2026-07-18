@@ -2,7 +2,6 @@ package miniagent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,20 +18,6 @@ type controlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
 }
 
-// promptCancel is the cancel entry of one in-flight turn, registered under
-// its chatID so busy-then-drop and Close can target exactly one chat. Local
-// type (mirroring bridgebase.PromptCancel) keeps miniagent independent of the
-// bridgebase package, which miniagent otherwise does not use.
-type promptCancel struct {
-	cancel    context.CancelFunc
-	startTime time.Time
-}
-
-// closeGrace bounds how long Close waits for in-flight turns to wind down
-// after cancelling them. Long enough for a final emit to land, short enough
-// that a stuck goroutine does not hang SIGTERM.
-const closeGrace = 5 * time.Second
-
 // Handler owns the per-process agent state: the LLM client, the emit
 // channel, the loop config derived from config.MiniAgent, and the optional
 // per-chat history. One Handler per process; each turn runs on its own
@@ -43,11 +28,11 @@ const closeGrace = 5 * time.Second
 // turn (which would race on the LLM, the history jsonl, and the emit
 // ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm           Client
-	modelLister   ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
-	cfg           LoopConfig
-	rpc           controlSender
-	logger        *log.Logger
+	llm            Client
+	modelLister    ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
+	cfg            LoopConfig
+	rpc            controlSender
+	logger         *log.Logger
 	history        *History   // nil → stateless (MemoryEnabled=false)
 	facts          FactStore  // nil → long-term memory disabled
 	answers        *answerBroker
@@ -103,108 +88,16 @@ func (h *Handler) PromptIDForPickers(chatID string) string {
 	return v.(string)
 }
 
-// RunningSession describes one in-flight turn for the /running card.
-type RunningSession struct {
-	ChatID   string
-	Duration time.Duration
-}
-
-// RunningSessions snapshots all in-flight turns.
-func (h *Handler) RunningSessions() []RunningSession {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	now := time.Now()
-	out := make([]RunningSession, 0, len(h.cancelBy))
-	for chatID, pc := range h.cancelBy {
-		out = append(out, RunningSession{ChatID: chatID, Duration: now.Sub(pc.startTime)})
-	}
-	return out
-}
-
 // SetHistoryDir sets the state directory passed to miniagent as
 // --state-dir so the CLI subprocess can load/save per-chat history.
 func (h *Handler) SetHistoryDir(dir string) {
 	h.historyDir = dir
 }
 
-// startTurn reserves the per-chat turn slot. Returns (turnCtx, mine, false)
-// when the chat already has an in-flight turn (busy-then-drop); the caller
-// must NOT touch turnCtx/mine in that case. On success turnCtx is derived
-// from the process ctx so Close can cancel it, and the wg is incremented so
-// Close waits for this turn.
-func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *promptCancel, ok bool) {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	// After Close, reject new turns so the wg.Wait in Close is not held open
-	// by a late HandleEvent that slipped in between cancelAll releasing the
-	// lock and the wait starting.
-	if h.closed {
-		return nil, nil, false
-	}
-	if _, busy := h.cancelBy[chatID]; busy {
-		return nil, nil, false
-	}
-	turnCtx, cancel := context.WithCancel(ctx)
-	mine = &promptCancel{cancel: cancel, startTime: time.Now()}
-	h.cancelBy[chatID] = mine
-	h.wg.Add(1)
-	return turnCtx, mine, true
-}
-
-// endTurn releases the per-chat slot only if it still points at mine (a
-// later Close or superceding turn may have already cleared it). Always
-// decrements wg to match startTurn's Add.
-func (h *Handler) endTurn(chatID string, mine *promptCancel) {
-	h.cancelMu.Lock()
-	if cur, ok := h.cancelBy[chatID]; ok && cur == mine {
-		delete(h.cancelBy, chatID)
-	}
-	h.cancelMu.Unlock()
-	h.wg.Done()
-}
-
-// Close cancels every in-flight turn and waits up to closeGrace for them to
-// wind down so the process does not exit mid-emit / mid-Append. Idempotent.
-func (h *Handler) Close() {
-	h.closeOnce.Do(func() {
-		h.cancelMu.Lock()
-		h.closed = true
-		for _, pc := range h.cancelBy {
-			pc.cancel()
-		}
-		h.cancelMu.Unlock()
-		h.answers.Drain()
-		done := make(chan struct{})
-		go func() {
-			h.wg.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(closeGrace):
-		}
-	})
-}
-
-// abortChat cancels the in-flight turn for chatID, if any. Returns whether a
-// turn was running. It does NOT delete the cancelBy entry: the goroutine that
-// owns the slot (startTurn's caller) will endTurn on its own as it unwinds,
-// and deleting here would make endTurn's `cur == mine` check fail to clean
-// up. Mirrors bridgebase.Core.AbortChat's contract.
-func (h *Handler) abortChat(chatID string) bool {
-	h.cancelMu.Lock()
-	defer h.cancelMu.Unlock()
-	if pc, ok := h.cancelBy[chatID]; ok {
-		pc.cancel()
-		return true
-	}
-	return false
-}
-
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
 // own goroutine (the SSE event loop must not block on a multi-second LLM
-// call). ctx is the process-lifetime ctx from backendrpc.Run; it is NOT
-// per-prompt (P0 has no /abort), so a turn only cancels on process shutdown.
+// call). ctx is the process-lifetime ctx from backendrpc.Run; per-prompt
+// cancellation arrives via TypeAbort, which targets one chat's turn ctx.
 // promptID MUST come from ev.PromptID (frontend assigns one per inbound
 // message); reusing a chatID-derived id made the 2nd turn's Result collide
 // with the 1st's closed card and silently drop.
@@ -298,10 +191,6 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	return nil
 }
 
-// runTurn runs the agent loop and emits the terminal Control. Always emits
-// exactly one terminal Control (Result on success, Error on failure) so the
-// frontend closes the turn card. A fresh short-lived ctx is used for the
-// terminal emit so it still lands after the prompt ctx is cancelled.
 // runTurn dispatches one turn: CLI subprocess mode (client != nil) or
 // in-process loop mode (client == nil). Both share the same per-chat state
 // (session/model/dir) and lifecycle (startTurn/endTurn/abort/close).
@@ -311,233 +200,6 @@ func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) 
 		return
 	}
 	h.runViaLoop(ctx, promptID, chatID, prompt)
-}
-
-// runViaCLI forks miniagent per turn, pumps its NDJSON stdout into
-// Controls. The CLI process owns the loop/tools/LLM/memory; the bridge
-// owns IPC + per-chat config + command dispatch.
-func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
-	start := time.Now()
-	model := h.activeModel(chatID)
-	workdir := h.activeDir(chatID)
-	perm := h.activePermission(chatID)
-	h.logger.Info("miniagent turn start",
-		log.FieldChatID, chatID,
-		log.FieldPromptID, promptID,
-		"model", model,
-		"workdir", workdir,
-		"permission", perm)
-
-	events, err := h.client.Run(ctx, miniclient.RunOptions{
-		Prompt:     prompt,
-		Model:      model,
-		Workdir:    workdir,
-		ChatID:     chatID,
-		StateDir:   h.historyDir,
-		Permission: perm,
-	})
-	if err != nil {
-		h.logger.Warn("miniagent start failed",
-			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeError,
-			PromptID: promptID,
-			ChatID:   chatID,
-			Error:    &protocol.ErrorPayload{Message: "启动 miniagent 失败：" + err.Error(), Recoverable: true},
-		})
-		return
-	}
-
-	var emittedTerminal bool
-	for ev := range events {
-		if ev.IsTerminal {
-			emittedTerminal = true
-		}
-		h.emitCLIEvent(chatID, promptID, ev, start)
-	}
-	// If the CLI was killed by abort/close before emitting a terminal event,
-	// the miniclient pump synthesizes a KindError — but the user should see
-	// a friendly "已中止" notice, not a scary TypeError. Match runViaLoop's
-	// behavior: ctx cancelled → TypeNotice, not TypeError.
-	if ctx.Err() != nil && !emittedTerminal {
-		h.logger.Info("miniagent turn aborted (no terminal event)",
-			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeNotice,
-			PromptID: promptID,
-			ChatID:   chatID,
-			Notice:   &protocol.NoticePayload{Level: "info", Title: "已中止", Message: "本次任务已停止。"},
-		})
-	}
-}
-
-// emitCLIEvent translates one miniclient.Event into a protocol.Control and
-// emits it to the frontend.
-func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, start time.Time) {
-	switch ev.Kind {
-	case miniclient.KindToolUse:
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeToolUse,
-			PromptID: promptID,
-			ChatID:   chatID,
-			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: ev.Input},
-		})
-	case miniclient.KindToolResult:
-		h.sendCtrl(&protocol.Control{
-			Type:       protocol.TypeToolResult,
-			PromptID:   promptID,
-			ChatID:     chatID,
-			ToolResult: &protocol.ToolResultPayload{Name: ev.Name, Input: ev.Input, Output: ev.Output, IsError: ev.IsError},
-		})
-	case miniclient.KindResult:
-		h.logger.Info("miniagent turn done",
-			log.FieldChatID, chatID,
-			log.FieldPromptID, promptID,
-			"steps", ev.Steps,
-			"input_tokens", ev.InputTokens,
-			"output_tokens", ev.OutputTokens,
-			log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeResult,
-			PromptID: promptID,
-			ChatID:   chatID,
-			Result: &protocol.ResultPayload{
-				Text:        ev.Text,
-				Model:       ev.Model,
-				Tokens:      ev.InputTokens + ev.OutputTokens,
-				Duration:    time.Since(start),
-				Steps:       ev.Steps,
-				TotalTokens: ev.InputTokens + ev.OutputTokens,
-			},
-		})
-	case miniclient.KindError:
-		h.logger.Warn("miniagent turn failed",
-			log.FieldChatID, chatID,
-			log.FieldPromptID, promptID,
-			log.FieldError, errors.New(ev.Message),
-			log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeError,
-			PromptID: promptID,
-			ChatID:   chatID,
-			Error:    &protocol.ErrorPayload{Message: ev.Message, Recoverable: true},
-		})
-	}
-}
-
-// runViaLoop runs the ReAct loop in-process (the original mode before P3).
-func (h *Handler) runViaLoop(ctx context.Context, promptID, chatID, prompt string) {
-	start := time.Now()
-	// Load history for this chat (nil on first turn or when memory is off).
-	// The loop sees prior turns and returns the new messages in result.History.
-	hist := h.history.Load(chatID)
-	// Resolve per-chat overrides: .model pin and .dir pin both override the
-	// global defaults. LoopConfig is a value type; cfg.Tools is rebuilt only
-	// when dir differs from workspace_root (toolsForDir zero-allocs otherwise).
-	cfg := h.cfg
-	cfg.Model = h.activeModel(chatID)
-	dir := h.activeDir(chatID)
-	cfg.Tools = h.buildTools(chatID, dir)
-	// Inject relevant long-term memory into the system prompt. We load chat
-	// facts always, and project/global facts when a workspace is pinned.
-	cfg.MemoryContext = h.memoryContext(chatID, dir)
-	h.logger.Info("miniagent turn start",
-		log.FieldChatID, chatID,
-		log.FieldPromptID, promptID,
-		"model", cfg.Model,
-		"workdir", dir,
-		"history_msgs", len(hist),
-		"prompt_preview", truncate(prompt, 80, "…"))
-
-	result, err := Run(ctx, h.llm, cfg, promptID, prompt, hist, h.emitHook(chatID, promptID), h.logger)
-	if err != nil {
-		// ctx.Canceled means the turn was aborted (user /session-abort or
-		// Close). Surface as an info notice rather than a scary error; the
-		// turn produced no History, so nothing is appended (the err path
-		// returns before the Append below), keeping aborted turns out of the
-		// conversation log.
-		if errors.Is(err, context.Canceled) {
-			h.logger.Info("miniagent turn aborted",
-				log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldDuration, time.Since(start).Milliseconds())
-			h.sendCtrl(&protocol.Control{
-				Type:     protocol.TypeNotice,
-				PromptID: promptID,
-				ChatID:   chatID,
-				Notice:   &protocol.NoticePayload{Level: "info", Title: "已中止", Message: "本次任务已停止。"},
-			})
-			return
-		}
-		h.logger.Warn("miniagent turn failed",
-			log.FieldChatID, chatID,
-			log.FieldPromptID, promptID,
-			log.FieldError, err,
-			log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
-			Type:     protocol.TypeError,
-			PromptID: promptID,
-			ChatID:   chatID,
-			Error:    &protocol.ErrorPayload{Message: err.Error(), Recoverable: true},
-		})
-		return
-	}
-	h.logger.Info("miniagent turn done",
-		log.FieldChatID, chatID,
-		log.FieldPromptID, promptID,
-		"steps", result.Steps,
-		"input_tokens", result.Usage.InputTokens,
-		"output_tokens", result.Usage.OutputTokens,
-		log.FieldDuration, time.Since(start).Milliseconds())
-
-	// Persist this turn's new messages so the next turn remembers context.
-	// The file is append-only (old turns stay on disk); Load trims what the
-	// LLM actually sees, so unbounded growth only costs disk, not context.
-	h.history.Append(chatID, result.History)
-
-	h.sendCtrl(&protocol.Control{
-		Type:     protocol.TypeResult,
-		PromptID: promptID,
-		ChatID:   chatID,
-		Result: &protocol.ResultPayload{
-			Text:        result.Text,
-			Model:       cfg.Model,
-			Tokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
-			Duration:    time.Since(start),
-			Steps:       result.Steps,
-			TotalTokens: result.Usage.InputTokens + result.Usage.OutputTokens,
-			SessionID:   h.history.Current(chatID), // "" when memory is off / not yet created
-		},
-	})
-}
-
-// emitHook returns an EmitFunc that turns loop tool signals into frontend
-// Controls (TypeToolUse when the LLM asks for a tool, TypeToolResult after
-// execution) so the user sees the agent working. Both use the turn's
-// promptID so the frontend folds them into the same card. Emits are
-// best-effort: a failure is logged but never fails the turn.
-func (h *Handler) emitHook(chatID, promptID string) EmitFunc {
-	return func(sig Signal) {
-		var ctrl *protocol.Control
-		switch sig.Kind {
-		case SignalToolUse:
-			ctrl = &protocol.Control{
-				Type:     protocol.TypeToolUse,
-				PromptID: promptID,
-				ChatID:   chatID,
-				ToolUse:  &protocol.ToolUsePayload{Name: sig.Name, Input: sig.Input},
-			}
-		case SignalToolResult:
-			ctrl = &protocol.Control{
-				Type:       protocol.TypeToolResult,
-				PromptID:   promptID,
-				ChatID:     chatID,
-				ToolResult: &protocol.ToolResultPayload{Name: sig.Name, Input: sig.Input, Output: sig.Output, IsError: sig.IsError},
-			}
-		default:
-			h.logger.Debug("miniagent unknown signal kind", "kind", sig.Kind)
-			return
-		}
-		h.sendCtrl(ctrl)
-	}
 }
 
 // sendCtrl emits one Control on a fresh 10s ctx (decoupled from any turn ctx
@@ -585,98 +247,4 @@ func (h *Handler) notifyWithPromptID(chatID, promptID, level, title, message str
 		ChatID:   chatID,
 		Notice:   &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
-}
-
-// activeModel returns the model this chat should use: the per-chat pin
-// (from .model file) if set, otherwise the global default (cfg.Model).
-func (h *Handler) activeModel(chatID string) string {
-	if m := h.history.Model(chatID); m != "" {
-		return m
-	}
-	return h.cfg.Model
-}
-
-// activeDir returns the working directory this chat should use: the per-chat
-// pin (from .dir file) if set, otherwise the global workspace_root.
-func (h *Handler) activeDir(chatID string) string {
-	if d := h.history.Directory(chatID); d != "" {
-		return d
-	}
-	return h.workspaceRoot
-}
-
-// activePermission returns the permission mode this chat should use: the
-// per-chat pin (from .perm file) if set, otherwise the global default.
-func (h *Handler) activePermission(chatID string) string {
-	if p := h.history.Permission(chatID); p != "" {
-		return p
-	}
-	return h.cfgPermission
-}
-
-// buildTools returns the full tool set for one turn: workspace-bound tools
-// scoped to dir and memory tools scoped to chatID. This always allocates a
-// new slice because memory tools capture chatID; the cost is negligible
-// compared to one LLM call.
-func (h *Handler) buildTools(chatID, dir string) []Tool {
-	base := h.cfg.Tools
-	if dir != "" && dir != h.workspaceRoot {
-		base = h.toolsForDir(dir)
-	}
-	out := make([]Tool, 0, len(base)+4)
-	out = append(out, base...)
-	out = append(out, NewMemoryTools(h.facts, chatID)...)
-	return out
-}
-
-// toolsForDir returns a Tool slice with WorkspaceRoot-bearing tools cloned
-// to use dir instead of the global root. WebFetch (no WorkspaceRoot) is
-// passed through. If dir equals workspaceRoot, the original slice is returned
-// unchanged (zero-alloc common path).
-func (h *Handler) toolsForDir(dir string) []Tool {
-	if dir == "" || dir == h.workspaceRoot {
-		return h.cfg.Tools
-	}
-	out := make([]Tool, 0, len(h.cfg.Tools))
-	for _, t := range h.cfg.Tools {
-		switch v := t.(type) {
-		case ReadFile:
-			v.WorkspaceRoot = dir
-			out = append(out, v)
-		case WriteFile:
-			v.WorkspaceRoot = dir
-			out = append(out, v)
-		case EditFile:
-			v.WorkspaceRoot = dir
-			out = append(out, v)
-		case Shell:
-			v.WorkspaceRoot = dir
-			out = append(out, v)
-		default:
-			out = append(out, t) // WebFetch etc — no WorkspaceRoot
-		}
-	}
-	return out
-}
-
-// memoryContext collects long-term facts to inject into the system prompt.
-// Chat-scoped facts are always included; project/global facts are included
-// when a workspace is available.
-func (h *Handler) memoryContext(chatID, dir string) string {
-	if h.facts == nil {
-		return ""
-	}
-	var all []Fact
-	if chat, _ := h.facts.List(ScopeChat, chatID, ""); len(chat) > 0 {
-		all = append(all, chat...)
-	}
-	if dir != "" {
-		if proj, _ := h.facts.List(ScopeProject, chatID, ""); len(proj) > 0 {
-			all = append(all, proj...)
-		}
-	}
-	if global, _ := h.facts.List(ScopeGlobal, chatID, ""); len(global) > 0 {
-		all = append(all, global...)
-	}
-	return formatFacts(all)
 }
