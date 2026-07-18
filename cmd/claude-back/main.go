@@ -58,16 +58,8 @@ func run(cfgPath string) error {
 
 	// The frontend validates a shared bearer token on every SSE/POST; a
 	// backend without the matching secret cannot register or emit controls.
-	if cfg.IPCSecret == "" {
-		return fmt.Errorf("ipc_secret is required (frontend IPC rejects connections without it)")
-	}
-	// Fail fast on missing identity/connection: an empty BackendID fails
-	// registration with an opaque error, and an empty FrontendURL dials nothing.
-	if cfg.BackendID == "" {
-		return fmt.Errorf("backend_id is required")
-	}
-	if cfg.FrontendURL == "" {
-		return fmt.Errorf("frontend_url is required")
+	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
+		return err
 	}
 
 	// Claude-back uses a nil SessionCreator: sessions are bound lazily and

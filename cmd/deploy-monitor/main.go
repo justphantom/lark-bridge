@@ -56,14 +56,8 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	if cfg.IPCSecret == "" {
-		return fmt.Errorf("ipc_secret is required (frontend IPC rejects connections without it)")
-	}
-	if cfg.BackendID == "" {
-		return fmt.Errorf("backend_id is required")
-	}
-	if cfg.FrontendURL == "" {
-		return fmt.Errorf("frontend_url is required")
+	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
+		return err
 	}
 
 	rpc, err := backendrpc.Connect(cfg.BackendID, "deploy-monitor", cfg.FrontendURL, cfg.IPCSecret)
