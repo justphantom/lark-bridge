@@ -5,6 +5,7 @@
 # 用法：
 #   ./deploy/deploy.sh            # 使用 repo 根目录已有的 claude-config.json 和 .env
 #   ./deploy/deploy.sh --init     # 首次部署，自动从 example 生成 claude-config.json 和 .env
+#   ./deploy/deploy.sh --force    # 强制部署，跳过运行中会话检查
 #
 # 可选环境变量：
 #   IPC_ADDR   IPC 监听地址（默认 localhost:6060）
@@ -207,8 +208,12 @@ command -v go   >/dev/null || fail "未安装 Go"
 command -v make >/dev/null || fail "未安装 make"
 
 # ── 步骤 0：部署前会话检查（先于构建，避免浪费编译时间）──
-info "检查运行中会话..."
-preflight_inflight_check
+if [[ "${1:-}" == "--force" ]]; then
+    warn "--force：跳过运行中会话检查，强制部署（可能打断正在进行的对话）"
+else
+    info "检查运行中会话..."
+    preflight_inflight_check
+fi
 
 # ── 步骤 1：构建 ──────────────────────────────────────
 info "构建二进制..."
