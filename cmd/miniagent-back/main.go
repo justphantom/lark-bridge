@@ -78,12 +78,13 @@ func run(cfgPath string) error {
 	rpc.SetLogger(logger)
 	defer rpc.Close()
 
-	// CLI subprocess mode: miniagent-back forks miniagent-cli per turn.
-	// The CLI binary lives alongside this binary in the deploy dir.
-	cliPath := filepath.Join(filepath.Dir(os.Args[0]), "miniagent-cli")
+	// CLI subprocess mode: miniagent-back forks miniagent per turn.
+	// The CLI binary (github.com/justphantom/miniagent) lives alongside
+	// this binary in the deploy dir.
+	cliPath := filepath.Join(filepath.Dir(os.Args[0]), "miniagent")
 	if _, err := os.Stat(cliPath); err != nil {
-		// Fallback: check repo bin dir (development mode).
-		cliPath = filepath.Join(cfg.DeployMonitor.ProjectRoot, "bin", "miniagent-cli")
+		// Fallback: check /usr/local/bin (make deploy from miniagent repo).
+		cliPath = "/usr/local/bin/miniagent"
 	}
 	client := miniclient.New(miniclient.Config{
 		CLIPath:             cliPath,
