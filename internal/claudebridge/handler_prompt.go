@@ -213,4 +213,3 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 		})
 	}
 }
-

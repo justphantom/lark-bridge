@@ -66,12 +66,12 @@ func TestParseEvent_EmptyType(t *testing.T) {
 
 func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
-		CLIPath:       "/bin/miniagent",
-		APIKey:        "sk-test",
-		BaseURL:       "http://localhost:8080",
-		SystemPrompt:  "be brief",
-		MaxTokens:     2048,
-		Permission: "free",
+		CLIPath:      "/bin/miniagent",
+		APIKey:       "sk-test",
+		BaseURL:      "http://localhost:8080",
+		SystemPrompt: "be brief",
+		MaxTokens:    2048,
+		Permission:   "free",
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Prompt:   "hi",

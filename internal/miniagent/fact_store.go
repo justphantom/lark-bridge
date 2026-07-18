@@ -26,7 +26,7 @@ type Fact struct {
 // FactScope controls which conversations can see a fact.
 //   - chat:    only the chat that created it (default, privacy-safe).
 //   - project: tied to the current workspaceRoot, shared across chats in the
-//              same project.
+//     same project.
 //   - global:  shared across all chats (use sparingly; user preferences only).
 type FactScope string
 

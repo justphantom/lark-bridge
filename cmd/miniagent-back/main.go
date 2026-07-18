@@ -23,8 +23,8 @@ import (
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/miniagent"
+	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -81,12 +81,12 @@ func run(cfgPath string) error {
 		cliPath = "/usr/local/bin/miniagent"
 	}
 	client := miniclient.New(miniclient.Config{
-		CLIPath:             cliPath,
-		APIKey:              cfg.MiniAgent.APIKey,
-		BaseURL:             cfg.MiniAgent.BaseURL,
-		SystemPrompt:        cfg.MiniAgent.SystemPrompt,
-		MaxTokens:           cfg.MiniAgent.MaxTokens,
-		Permission:          cfg.MiniAgent.Permission,
+		CLIPath:              cliPath,
+		APIKey:               cfg.MiniAgent.APIKey,
+		BaseURL:              cfg.MiniAgent.BaseURL,
+		SystemPrompt:         cfg.MiniAgent.SystemPrompt,
+		MaxTokens:            cfg.MiniAgent.MaxTokens,
+		Permission:           cfg.MiniAgent.Permission,
 		ShellBlockedPatterns: cfg.MiniAgent.ShellBlockedPatterns,
 	}, logger)
 

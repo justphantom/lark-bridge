@@ -191,4 +191,3 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	}
 	return d.registry.SendEvent(backendID, ev)
 }
-

@@ -28,19 +28,19 @@ type controlSender interface {
 // turn (which would race on the LLM, the history jsonl, and the emit
 // ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm            Client
-	modelLister    ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
-	cfg            LoopConfig
-	rpc            controlSender
-	logger         *log.Logger
-	history        *History   // nil → stateless (MemoryEnabled=false)
-	facts          FactStore  // nil → long-term memory disabled
-	answers        *answerBroker
-	workspaceRoot  string // global default for tools + /cd picker scope
-	cfgPermission  string // global default permission mode (from config)
-	client         *miniclient.Client // non-nil → CLI subprocess mode (P3)
-	historyDir     string             // state dir for CLI's --state-dir flag
-	pickerPromptIDs sync.Map          // chatID → promptID, for async picker goroutines
+	llm             Client
+	modelLister     ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
+	cfg             LoopConfig
+	rpc             controlSender
+	logger          *log.Logger
+	history         *History  // nil → stateless (MemoryEnabled=false)
+	facts           FactStore // nil → long-term memory disabled
+	answers         *answerBroker
+	workspaceRoot   string             // global default for tools + /cd picker scope
+	cfgPermission   string             // global default permission mode (from config)
+	client          *miniclient.Client // non-nil → CLI subprocess mode (P3)
+	historyDir      string             // state dir for CLI's --state-dir flag
+	pickerPromptIDs sync.Map           // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn

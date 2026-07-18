@@ -7,32 +7,32 @@ type Control struct {
 	Type      string `json:"type"`
 	BackendID string `json:"backendID,omitempty"` // backfilled by the frontend POST handler from the URL path; empty when the backend sends
 	PromptID  string `json:"promptID,omitempty"`
-	ChatID string `json:"chatID,omitempty"` // standalone-card controls (Question/Notice) require it
+	ChatID    string `json:"chatID,omitempty"` // standalone-card controls (Question/Notice) require it
 
-	SessionInit       *SessionInitPayload       `json:"sessionInit,omitempty"`
-	Text              *TextPayload              `json:"text,omitempty"`
-	Thinking          *ThinkingPayload          `json:"thinking,omitempty"`
-	ToolUse           *ToolUsePayload           `json:"toolUse,omitempty"`
-	ToolResult        *ToolResultPayload        `json:"toolResult,omitempty"`
-	Result            *ResultPayload            `json:"result,omitempty"`
-	Error    *ErrorPayload    `json:"error,omitempty"`
-	Progress *ProgressPayload `json:"progress,omitempty"`
-	Question *QuestionPayload `json:"question,omitempty"`
-	Notice   *NoticePayload   `json:"notice,omitempty"`
+	SessionInit *SessionInitPayload `json:"sessionInit,omitempty"`
+	Text        *TextPayload        `json:"text,omitempty"`
+	Thinking    *ThinkingPayload    `json:"thinking,omitempty"`
+	ToolUse     *ToolUsePayload     `json:"toolUse,omitempty"`
+	ToolResult  *ToolResultPayload  `json:"toolResult,omitempty"`
+	Result      *ResultPayload      `json:"result,omitempty"`
+	Error       *ErrorPayload       `json:"error,omitempty"`
+	Progress    *ProgressPayload    `json:"progress,omitempty"`
+	Question    *QuestionPayload    `json:"question,omitempty"`
+	Notice      *NoticePayload      `json:"notice,omitempty"`
 }
 
 // Control type values.
 const (
-	TypeSessionInit       = "session_init"
-	TypeText              = "text"
-	TypeThinking          = "thinking"
-	TypeToolUse           = "tool_use"
-	TypeToolResult        = "tool_result"
-	TypeResult            = "result"
-	TypeError    = "error"
-	TypeProgress = "progress"
-	TypeQuestion = "question"
-	TypeNotice   = "notice"
+	TypeSessionInit = "session_init"
+	TypeText        = "text"
+	TypeThinking    = "thinking"
+	TypeToolUse     = "tool_use"
+	TypeToolResult  = "tool_result"
+	TypeResult      = "result"
+	TypeError       = "error"
+	TypeProgress    = "progress"
+	TypeQuestion    = "question"
+	TypeNotice      = "notice"
 )
 
 // SessionInitPayload announces the session the backend bound for this prompt.

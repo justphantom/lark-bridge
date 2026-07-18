@@ -7,11 +7,12 @@ import (
 )
 
 // cmdPermission pins or clears the per-chat permission mode:
-//   /perm              → show current + available modes
-//   /perm plan         → read-only (read_file + webfetch only)
-//   /perm default      → full tools with workspace bounds + blocklist
-//   /perm free         → full tools without limits
-//   /perm clear        → restore global default
+//
+//	/perm              → show current + available modes
+//	/perm plan         → read-only (read_file + webfetch only)
+//	/perm default      → full tools with workspace bounds + blocklist
+//	/perm free         → full tools without limits
+//	/perm clear        → restore global default
 func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) {
 	if h.history == nil {
 		return "warning", "权限", "记忆未启用，无法设置权限模式。"

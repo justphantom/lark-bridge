@@ -12,9 +12,10 @@ import (
 )
 
 // cmdModel pins or clears the per-chat model:
-//   /model            → show current + usage
-//   /model clear      → clear pin (fall back to global default)
-//   /model <id>       → pin <id> for this chat
+//
+//	/model            → show current + usage
+//	/model clear      → clear pin (fall back to global default)
+//	/model <id>       → pin <id> for this chat
 func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 	if h.history == nil {
 		return "warning", "模型", "记忆未启用，无法设置模型。"
@@ -97,9 +98,10 @@ func (h *Handler) cmdModels(chatID, _ string) (level, title, body string) {
 }
 
 // cmdDirectory pins/clears/selects the per-chat working directory:
-//   /cd            → interactive picker (scan WORKSPACE_ROOT subdirs)
-//   /cd clear      → clear pin (fall back to global workspace_root)
-//   /cd <path>     → pin directly (must be under WORKSPACE_ROOT)
+//
+//	/cd            → interactive picker (scan WORKSPACE_ROOT subdirs)
+//	/cd clear      → clear pin (fall back to global workspace_root)
+//	/cd <path>     → pin directly (must be under WORKSPACE_ROOT)
 func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 	if h.workspaceRoot == "" {
 		return "warning", "工作目录", "未配置 workspace_root，无法设置工作目录。"

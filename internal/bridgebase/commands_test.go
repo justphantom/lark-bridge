@@ -35,7 +35,7 @@ func newCmdCommands(specs []CommandSpec[int]) *Commands[int] {
 // land in the emitted Notice.
 func TestDispatch_HappyPath(t *testing.T) {
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/ping", Title: "Ping", Level: "success"},
+		Spec: cmdutil.Spec{Name: "/ping", Title: "Ping", Level: "success"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "pong"}, nil
 		},
@@ -79,7 +79,7 @@ func TestDispatch_UnknownCommand(t *testing.T) {
 // it as an error-level notice with the message prefixed by ⚠️.
 func TestDispatch_HandlerError(t *testing.T) {
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/boom", Title: "Boom"},
+		Spec: cmdutil.Spec{Name: "/boom", Title: "Boom"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "ignored"}, errors.New("disk full")
 		},
@@ -105,7 +105,7 @@ func TestDispatch_HandlerError(t *testing.T) {
 // default TypeNotice — that would clobber the picker's card.
 func TestDispatch_HandledSkipsEmit(t *testing.T) {
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/pick", Title: "Pick"},
+		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "picker took over", Handled: true}, nil
 		},
@@ -124,7 +124,7 @@ func TestDispatch_HandledSkipsEmit(t *testing.T) {
 // self-handling command must not be silently swallowed.
 func TestDispatch_HandledWithErrorOverrides(t *testing.T) {
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/pick", Title: "Pick"},
+		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Handled: true}, errors.New("picker crashed")
 		},
@@ -150,7 +150,7 @@ func TestDispatch_Timeout(t *testing.T) {
 		t.Skip("cmdutil.Timeout is 15s; skip under -short")
 	}
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/slow", Title: "Slow"},
+		Spec: cmdutil.Spec{Name: "/slow", Title: "Slow"},
 		Handler: func(_ int, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			// Block until the dispatcher's timeout ctx fires.
 			<-ctx.Done()
@@ -180,7 +180,7 @@ func TestDispatch_Timeout(t *testing.T) {
 // block, not just the body.
 func TestDispatch_ChangeResultFields(t *testing.T) {
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/set", Title: "Set", Level: "success"},
+		Spec: cmdutil.Spec{Name: "/set", Title: "Set", Level: "success"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.ChangeResult("模型", "old", "new", "下次生效"), nil
 		},
@@ -207,7 +207,7 @@ func TestDispatch_PassesArgs(t *testing.T) {
 	var seenArgs []string
 	var seenArgCount int64
 	specs := []CommandSpec[int]{{
-		Spec:    cmdutil.Spec{Name: "/echo", Title: "Echo"},
+		Spec: cmdutil.Spec{Name: "/echo", Title: "Echo"},
 		Handler: func(_ int, _ context.Context, _ string, args []string) (cmdutil.Result, error) {
 			seenArgs = args
 			atomic.AddInt64(&seenArgCount, 1)

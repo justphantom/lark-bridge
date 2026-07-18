@@ -26,28 +26,28 @@ const defaultMaxConcurrent = 4
 
 // Config carries the scalar settings the Client reads from config.MiniAgent.
 type Config struct {
-	CLIPath             string
-	APIKey              string
-	BaseURL             string
-	SystemPrompt        string
-	MaxTokens           int
-	Permission          string // global default permission mode
+	CLIPath              string
+	APIKey               string
+	BaseURL              string
+	SystemPrompt         string
+	MaxTokens            int
+	Permission           string // global default permission mode
 	ShellBlockedPatterns []string
-	MaxConcurrent       int
+	MaxConcurrent        int
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
-	cliPath    string
-	apiKey       string
-	baseURL      string
-	system       string
-	maxTokens    int
-	permission   string // global default
-	blockedPats  []string
-	logger       *log.Logger
-	sem          chan struct{}
+	cliPath     string
+	apiKey      string
+	baseURL     string
+	system      string
+	maxTokens   int
+	permission  string // global default
+	blockedPats []string
+	logger      *log.Logger
+	sem         chan struct{}
 }
 
 // New builds a Client. logger may be nil (→ nop).
