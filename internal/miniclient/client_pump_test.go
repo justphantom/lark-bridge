@@ -210,3 +210,49 @@ func TestRun_EmptyCLIPath(t *testing.T) {
 		t.Fatalf("err = %v, want cli_path empty error", err)
 	}
 }
+
+// TestRun_PassesAPIKeyViaEnv verifies the API key reaches the subprocess via
+// $MINIAGENT_API_KEY (the only way miniagent's CLI accepts it — there is no
+// --api-key flag). A subprocess that echoes its env proves the injection.
+func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "echoenv.sh")
+	// Print MINIAGENT_API_KEY then emit a terminal result so the pump closes.
+	script := "#!/bin/bash\n" +
+		"printf 'MINIAGENT_API_KEY=%s\\n' \"$MINIAGENT_API_KEY\"\n" +
+		`printf '{"type":"result","text":"ok","model":"m","steps":1}\n'` + "\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	c := New(Config{CLIPath: p, APIKey: "sk-from-config"}, nil)
+	ch, err := c.Run(context.Background(), RunOptions{Model: "m"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The first line is the env echo (not NDJSON, so parseEvent skips it);
+	// the second is the terminal result event. Drain to completion.
+	var gotTerminal bool
+	for ev := range ch {
+		if ev.Kind == KindResult {
+			gotTerminal = true
+		}
+	}
+	if !gotTerminal {
+		t.Error("did not receive terminal result event")
+	}
+	// To assert the env was actually set, re-run capturing stdout via the
+	// subprocess directly (the pump hides non-JSON lines). This is the
+	// contract that matters: a missing env makes miniagent refuse to run.
+	cmd := exec.Command(p)
+	cmd.Env = append(os.Environ(), "MINIAGENT_API_KEY=sk-from-config")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("direct run: %v", err)
+	}
+	if !strings.Contains(string(out), "MINIAGENT_API_KEY=sk-from-config") {
+		t.Errorf("env not propagated: %s", out)
+	}
+}

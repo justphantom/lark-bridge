@@ -29,7 +29,7 @@ func (h *History) SetModel(chatID, model string) error {
 }
 
 func (h *History) modelPath(chatID string) string {
-	return filepath.Join(h.dir, sanitizeChatID(chatID)+".model")
+	return filepath.Join(h.metaDir, sanitizeChatID(chatID)+".model")
 }
 
 // Directory returns the per-chat pinned working directory, or "" when none
@@ -54,7 +54,7 @@ func (h *History) SetDir(chatID, dir string) error {
 }
 
 func (h *History) dirPath(chatID string) string {
-	return filepath.Join(h.dir, sanitizeChatID(chatID)+".dir")
+	return filepath.Join(h.metaDir, sanitizeChatID(chatID)+".dir")
 }
 
 // Permission returns the per-chat pinned permission mode, or "" when none
@@ -76,7 +76,7 @@ func (h *History) SetPermission(chatID, mode string) error {
 }
 
 func (h *History) permPath(chatID string) string {
-	return filepath.Join(h.dir, sanitizeChatID(chatID)+".perm")
+	return filepath.Join(h.metaDir, sanitizeChatID(chatID)+".perm")
 }
 
 // readPin returns the trimmed content of path, or "" on any read error.
@@ -89,19 +89,21 @@ func readPin(h *History, path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// writePin writes value to path atomically (temp+rename under h.dir). An
-// empty value removes the pin file. Callers guard the nil receiver first;
-// h is non-nil here by contract. Folding this helper removes ~90 lines of
-// near-identical boilerplate across the three pin setters.
+// writePin writes value to path atomically (temp+rename in the same dir as
+// path, so rename stays atomic on every filesystem). An empty value removes
+// the pin file. Callers guard the nil receiver first; h is non-nil here by
+// contract. Folding this helper removes ~90 lines of near-identical
+// boilerplate across the three pin setters.
 func writePin(h *History, path, value string) error {
 	if value == "" {
 		_ = os.Remove(path)
 		return nil
 	}
-	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(h.dir, filepath.Base(path)+"-*.tmp")
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+"-*.tmp")
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -100,6 +101,10 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	// #nosec G204 -- c.cliPath comes from trusted config; args are built internally.
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
 	cmd.Stdin = strings.NewReader(opts.Prompt)
+	// Pass the API key via env, not a flag: miniagent's CLI has no --api-key
+	// (passing one fails startup with "flag provided but not defined"). Inherit
+	// the parent env so PATH/HOME/etc. survive, then set/override the key.
+	cmd.Env = append(os.Environ(), "MINIAGENT_API_KEY="+c.apiKey)
 	// Own process group so cancellation SIGKILLs the whole tree (the CLI
 	// spawns tool subprocesses: bash, git…).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -129,12 +134,15 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	return out, nil
 }
 
-// buildArgs assembles the CLI flags from Client-level config (LLM creds,
-// system prompt, security) + per-turn options (model, workdir, chat-id).
+// buildArgs assembles the CLI flags from Client-level config (system prompt,
+// security) + per-turn options (model, workdir, chat-id). The API key is
+// intentionally NOT passed as a flag: miniagent's CLI has no --api-key
+// (unknown flags fail startup), it reads $MINIAGENT_API_KEY. Run sets that
+// env var explicitly on the subprocess so a backend running without the
+// env in its own environment still works.
 func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{
 		"--model", opts.Model,
-		"--api-key", c.apiKey,
 		"--verbose", // bridge always wants tool events
 	}
 	if c.baseURL != "" {

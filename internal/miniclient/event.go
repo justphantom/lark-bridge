@@ -30,6 +30,11 @@ type Event struct {
 	InputTokens  int
 	OutputTokens int
 	Steps        int
+	// Incomplete is true when the CLI hit its iteration cap (maxIterations=20)
+	// without producing a final assistant text. Per the miniagent README the
+	// result event carries incomplete=true (omitted when false); without it
+	// the bridge cannot tell "empty answer" from "ran out of steps".
+	Incomplete bool
 
 	// error event fields.
 	Message string
@@ -51,6 +56,7 @@ type rawEvent struct {
 	InputTokens  int    `json:"input_tokens,omitempty"`
 	OutputTokens int    `json:"output_tokens,omitempty"`
 	Steps        int    `json:"steps,omitempty"`
+	Incomplete   bool   `json:"incomplete,omitempty"`
 	Message      string `json:"message,omitempty"`
 }
 
@@ -72,6 +78,7 @@ func parseEvent(line []byte) (Event, bool) {
 		InputTokens:  raw.InputTokens,
 		OutputTokens: raw.OutputTokens,
 		Steps:        raw.Steps,
+		Incomplete:   raw.Incomplete,
 		Message:      raw.Message,
 	}
 	switch raw.Type {

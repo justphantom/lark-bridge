@@ -1,6 +1,7 @@
 package miniagent
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -238,5 +239,40 @@ func TestModel_NilSafe(t *testing.T) {
 	}
 	if err := h.SetModel("x", "m"); err == nil {
 		t.Error("nil SetModel should error")
+	}
+}
+
+// TestPins_LandUnderMetaDir locks the on-disk layout: per-chat pins MUST
+// land under {stateDir}/miniagent/meta/, matching miniagent's CLI MetaStore
+// (../miniagent/internal/miniagent/meta.go). A drift here silently breaks
+// the bridge↔CLI contract: pins written by /perm or /model would be
+// invisible to `miniagent --show-current` and to direct CLI runs.
+func TestPins_LandUnderMetaDir(t *testing.T) {
+	root := t.TempDir()
+	h := NewHistory(root, log.Nop())
+
+	if err := h.SetModel("chat-1", "gpt-4o"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if err := h.SetDir("chat-1", "/repo"); err != nil {
+		t.Fatalf("SetDir: %v", err)
+	}
+	if err := h.SetPermission("chat-1", "free"); err != nil {
+		t.Fatalf("SetPermission: %v", err)
+	}
+
+	for _, rel := range []string{"miniagent/meta/chat-1.model", "miniagent/meta/chat-1.dir", "miniagent/meta/chat-1.perm"} {
+		full := root + "/" + rel
+		if _, err := os.Stat(full); err != nil {
+			t.Errorf("pin not at %s: %v", rel, err)
+		}
+	}
+
+	// And NOT under history/ (the old, buggy location).
+	for _, rel := range []string{"miniagent/history/chat-1.model", "miniagent/history/chat-1.perm"} {
+		full := root + "/" + rel
+		if _, err := os.Stat(full); err == nil {
+			t.Errorf("pin must not be at %s (history dir is for session jsonl only)", rel)
+		}
 	}
 }

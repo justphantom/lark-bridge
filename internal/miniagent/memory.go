@@ -34,17 +34,25 @@ const maxToolResultInHistory = 500
 // is a no-op, so the handler/runTurn code does not need a separate "memory
 // off" branch.
 type History struct {
-	dir    string
-	logger *log.Logger
+	dir     string // {stateDir}/miniagent/history — session jsonl + .cur pointer
+	metaDir string // {stateDir}/miniagent/meta — per-chat .model/.dir/.perm pins
+	logger  *log.Logger
 }
 
-// NewHistory builds a History rooted at {stateDir}/miniagent/history. The
-// directory is created lazily on the first Append. logger may be nil.
+// NewHistory builds a History rooted at {stateDir}/miniagent/history for
+// session files and {stateDir}/miniagent/meta for per-chat pins. The meta
+// layout matches miniagent's CLI MetaStore so pins written by the bridge
+// are visible to the CLI (--show-current, future CLI runs) and vice versa.
+// Both directories are created lazily on first write. logger may be nil.
 func NewHistory(stateDir string, logger *log.Logger) *History {
 	if logger == nil {
 		logger = log.Nop()
 	}
-	return &History{dir: filepath.Join(stateDir, "miniagent", "history"), logger: logger}
+	return &History{
+		dir:     filepath.Join(stateDir, "miniagent", "history"),
+		metaDir: filepath.Join(stateDir, "miniagent", "meta"),
+		logger:  logger,
+	}
 }
 
 // Load returns the stored conversation for chatID (trimmed to the token

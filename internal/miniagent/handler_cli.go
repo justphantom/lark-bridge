@@ -93,18 +93,28 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			"steps", ev.Steps,
 			"input_tokens", ev.InputTokens,
 			"output_tokens", ev.OutputTokens,
+			"incomplete", ev.Incomplete,
 			log.FieldDuration, time.Since(start).Milliseconds())
+		text := ev.Text
+		// When the CLI hit its iteration cap, Text is empty and the user would
+		// see a blank reply. Surface a brief explanation so the silence is
+		// self-explaining; the Incomplete flag lets the frontend render a
+		// dedicated style on top of this text if it wants.
+		if ev.Incomplete && text == "" {
+			text = "⏱️ 已达单轮最大步数（20）被截断，未生成最终回答。可重试或换更具体的提问。"
+		}
 		h.sendCtrl(&protocol.Control{
 			Type:     protocol.TypeResult,
 			PromptID: promptID,
 			ChatID:   chatID,
 			Result: &protocol.ResultPayload{
-				Text:        ev.Text,
+				Text:        text,
 				Model:       ev.Model,
 				Tokens:      ev.InputTokens + ev.OutputTokens,
 				Duration:    time.Since(start),
 				Steps:       ev.Steps,
 				TotalTokens: ev.InputTokens + ev.OutputTokens,
+				Incomplete:  ev.Incomplete,
 			},
 		})
 	case miniclient.KindError:

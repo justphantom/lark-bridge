@@ -99,6 +99,11 @@ type ResultPayload struct {
 	// store. 0 when no history exists (first turn) or usage tracking is off;
 	// the renderer hides the cumulative portion in that case.
 	TotalTokens int `json:"totalTokens,omitempty"`
+	// Incomplete is true when the backend hit its iteration cap without
+	// producing a final answer (miniagent: maxIterations=20). Text is empty
+	// in that case; without this flag the frontend cannot distinguish a
+	// legitimately empty reply from a truncated one. miniagent only.
+	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // ErrorPayload carries an error control. Recoverable hints the frontend can
