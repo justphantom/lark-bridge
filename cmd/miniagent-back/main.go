@@ -94,12 +94,24 @@ func run(cfgPath string) error {
 		Permission:   cfg.MiniAgent.Permission,
 	}, logger)
 
+	// ModelLister for /model picker + /models command. In CLI mode the bridge
+	// has no LLM client, but it has the API key + base URL from config, so a
+	// lightweight HTTPClient is enough to call GET /v1/models.
+	var ml miniagent.ModelLister
+	if cfg.MiniAgent.APIKey != "" {
+		ml = &miniagent.HTTPClient{
+			APIKey:  cfg.MiniAgent.APIKey,
+			BaseURL: cfg.MiniAgent.BaseURL,
+			Logger:  logger,
+		}
+	}
+
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
 	var history *miniagent.History
 	if memoryEnabled {
 		history = miniagent.NewHistory(cfg.StateDir, logger)
 	}
-	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission)
+	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission, ml)
 	h.SetHistoryDir(cfg.StateDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

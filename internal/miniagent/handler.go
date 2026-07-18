@@ -43,10 +43,11 @@ const closeGrace = 5 * time.Second
 // turn (which would race on the LLM, the history jsonl, and the emit
 // ordering). wg tracks runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm            Client
-	cfg            LoopConfig
-	rpc            controlSender
-	logger         *log.Logger
+	llm           Client
+	modelLister   ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
+	cfg           LoopConfig
+	rpc           controlSender
+	logger        *log.Logger
 	history        *History // nil → stateless (MemoryEnabled=false)
 	answers        *answerBroker
 	workspaceRoot  string // global default for tools + /cd picker scope
@@ -61,12 +62,13 @@ type Handler struct {
 	closeOnce sync.Once
 }
 
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client, cfgPermission string) *Handler {
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client, cfgPermission string, ml ModelLister) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
 	return &Handler{
 		llm:           llm,
+		modelLister:   ml,
 		cfg:           cfg,
 		rpc:           rpc,
 		logger:        logger,

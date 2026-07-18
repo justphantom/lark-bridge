@@ -153,8 +153,8 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 		// click; both must run off the SSE event loop. Emit a "loading" notice
 		// immediately, then launch a goroutine that fetches models, emits a
 		// selection card, waits for the user's click, and applies it.
-		lister, ok := h.llm.(ModelLister)
-		if !ok {
+		lister := h.modelLister
+		if lister == nil {
 			return "warning", "模型", "当前 LLM 客户端不支持列模型。用 /model <ID> 直接指定。"
 		}
 		h.sendCtrl(&protocol.Control{
@@ -197,8 +197,8 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 
 // cmdModels lists available models from the LLM endpoint (GET /v1/models).
 func (h *Handler) cmdModels(chatID, _ string) (level, title, body string) {
-	lister, ok := h.llm.(ModelLister)
-	if !ok {
+	lister := h.modelLister
+	if lister == nil {
 		return "warning", "模型列表", "当前 LLM 客户端不支持列模型。"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
