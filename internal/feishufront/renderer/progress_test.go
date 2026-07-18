@@ -605,29 +605,17 @@ func TestRender_FourZoneOrder(t *testing.T) {
 	}
 }
 
-// TestRender_AbortButtonOnlyWhenRunning locks the abort button: it appears
-// while a tool is running and disappears once all tools settle, so a pure-text
-// reply does not show a meaningless stop button.
-func TestRender_AbortButtonOnlyWhenRunning(t *testing.T) {
+// TestRender_NoAbortButton verifies the progress card never carries an abort
+// button — the button was removed; users stop via /session-abort text command.
+func TestRender_NoAbortButton(t *testing.T) {
 	s := NewProgressState()
 	s.AddToolUse("bash", "ls", false, "") // running
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(string(b), `"kind":"abort"`) {
-		t.Errorf("expected abort button when a tool is running: %s", b)
-	}
-
-	s2 := NewProgressState()
-	s2.AddToolUse("bash", "ls", false, "")
-	s2.AddToolResult("bash", "", "ok", false, false, "") // settled
-	b2, err := s2.Render(hdr(), ftr())
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if strings.Contains(string(b2), `"kind":"abort"`) {
-		t.Errorf("abort button should be hidden when nothing runs: %s", b2)
+	if strings.Contains(string(b), `"kind":"abort"`) {
+		t.Errorf("abort button should not appear in progress card: %s", b)
 	}
 }
 

@@ -270,17 +270,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 		zones = append(zones, cardkit.MarkdownElement(truncateRunes(t, maxTextRunes)))
 	}
 
-	// Abort button: only while tools are running. A pure-text reply (no
-	// tools) finishes quickly and the button would be noise; once everything
-	// is done the card is about to be replaced by the result card anyway.
-	// The button carries kind="abort"; DispatchCardAction forwards it as a
-	// TypeAbort event to the backend, same path as /session-abort.
-	var actions []cardkit.Action
-	if len(running) > 0 {
-		actions = append(actions, cardkit.ButtonAction("⏹ 停止", "abort", nil, false, false))
-	}
-
-	return cardkit.Card(header, footer, appendZones(zones), actions)
+	return cardkit.Card(header, footer, appendZones(zones), nil)
 }
 
 // appendZones flattens zone elements into a single slice, inserting an hr

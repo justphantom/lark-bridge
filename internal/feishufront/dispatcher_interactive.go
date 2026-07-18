@@ -150,12 +150,6 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	if kind == "backend" {
 		return d.handleBackendChoice(ctx, action)
 	}
-	// Progress-card abort button: forward as a TypeAbort event to the bound
-	// backend, same path as /session-abort. abortChat is idempotent, so a
-	// double-click or a click on a stale (about-to-be-finalised) card is safe.
-	if kind == "abort" {
-		return d.handleAbortChoice(ctx, action)
-	}
 	requestID := requestIDFromValue(action.Value)
 	if requestID != "" && !d.actionIDs.Add(requestID) {
 		return nil
@@ -198,21 +192,3 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	return d.registry.SendEvent(backendID, ev)
 }
 
-// handleAbortChoice forwards a progress-card "⏹ 停止" click to the bound
-// backend as a TypeAbort event — the same path /session-abort takes. The
-// backend's abortChat cancels the in-flight prompt's context.
-func (d *Dispatcher) handleAbortChoice(_ context.Context, action *feishu.CardAction) error {
-	if d.router == nil {
-		return nil
-	}
-	backendID, err := d.router.Resolve(action.ChatID)
-	if err != nil {
-		return err
-	}
-	ev := &protocol.Event{
-		Type:     protocol.TypeAbort,
-		PromptID: action.MessageID,
-		Abort:    &protocol.AbortPayload{ChatID: action.ChatID},
-	}
-	return d.registry.SendEvent(backendID, ev)
-}
