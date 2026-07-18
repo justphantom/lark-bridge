@@ -48,13 +48,14 @@ type Handler struct {
 	cfg           LoopConfig
 	rpc           controlSender
 	logger        *log.Logger
-	history        *History // nil → stateless (MemoryEnabled=false)
+	history        *History   // nil → stateless (MemoryEnabled=false)
+	facts          FactStore  // nil → long-term memory disabled
 	answers        *answerBroker
 	workspaceRoot  string // global default for tools + /cd picker scope
 	cfgPermission  string // global default permission mode (from config)
 	client         *miniclient.Client // non-nil → CLI subprocess mode (P3)
 	historyDir     string             // state dir for CLI's --state-dir flag
-	pickerPromptIDs sync.Map           // chatID → promptID, for async picker goroutines
+	pickerPromptIDs sync.Map          // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -63,7 +64,7 @@ type Handler struct {
 	closeOnce sync.Once
 }
 
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, workspaceRoot string, client *miniclient.Client, cfgPermission string, ml ModelLister) *Handler {
+func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, facts FactStore, workspaceRoot string, client *miniclient.Client, cfgPermission string, ml ModelLister) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -74,6 +75,7 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		rpc:           rpc,
 		logger:        logger,
 		history:       history,
+		facts:         facts,
 		answers:       newAnswerBroker(),
 		workspaceRoot: workspaceRoot,
 		cfgPermission: cfgPermission,
@@ -426,7 +428,10 @@ func (h *Handler) runViaLoop(ctx context.Context, promptID, chatID, prompt strin
 	cfg := h.cfg
 	cfg.Model = h.activeModel(chatID)
 	dir := h.activeDir(chatID)
-	cfg.Tools = h.toolsForDir(dir)
+	cfg.Tools = h.buildTools(chatID, dir)
+	// Inject relevant long-term memory into the system prompt. We load chat
+	// facts always, and project/global facts when a workspace is pinned.
+	cfg.MemoryContext = h.memoryContext(chatID, dir)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
@@ -600,6 +605,21 @@ func (h *Handler) activePermission(chatID string) string {
 	return h.cfgPermission
 }
 
+// buildTools returns the full tool set for one turn: workspace-bound tools
+// scoped to dir and memory tools scoped to chatID. This always allocates a
+// new slice because memory tools capture chatID; the cost is negligible
+// compared to one LLM call.
+func (h *Handler) buildTools(chatID, dir string) []Tool {
+	base := h.cfg.Tools
+	if dir != "" && dir != h.workspaceRoot {
+		base = h.toolsForDir(dir)
+	}
+	out := make([]Tool, 0, len(base)+4)
+	out = append(out, base...)
+	out = append(out, NewMemoryTools(h.facts, chatID)...)
+	return out
+}
+
 // toolsForDir returns a Tool slice with WorkspaceRoot-bearing tools cloned
 // to use dir instead of the global root. WebFetch (no WorkspaceRoot) is
 // passed through. If dir equals workspaceRoot, the original slice is returned
@@ -628,4 +648,26 @@ func (h *Handler) toolsForDir(dir string) []Tool {
 		}
 	}
 	return out
+}
+
+// memoryContext collects long-term facts to inject into the system prompt.
+// Chat-scoped facts are always included; project/global facts are included
+// when a workspace is available.
+func (h *Handler) memoryContext(chatID, dir string) string {
+	if h.facts == nil {
+		return ""
+	}
+	var all []Fact
+	if chat, _ := h.facts.List(ScopeChat, chatID, ""); len(chat) > 0 {
+		all = append(all, chat...)
+	}
+	if dir != "" {
+		if proj, _ := h.facts.List(ScopeProject, chatID, ""); len(proj) > 0 {
+			all = append(all, proj...)
+		}
+	}
+	if global, _ := h.facts.List(ScopeGlobal, chatID, ""); len(global) > 0 {
+		all = append(all, global...)
+	}
+	return formatFacts(all)
 }

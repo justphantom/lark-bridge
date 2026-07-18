@@ -30,17 +30,20 @@ import (
 // Adding a command means adding one entry here (and the method); isSession
 // recognition and dispatch both read this table.
 var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title, body string){
-	"/session-new":  (*Handler).cmdSessionNew,
-	"/session-list": (*Handler).cmdSessionList,
-	"/session-use":  (*Handler).cmdSessionUse,
-	"/session-del":  (*Handler).cmdSessionDel,
-	"/current":      (*Handler).cmdCurrent,
-	"/model":        (*Handler).cmdModel,
-	"/models":       (*Handler).cmdModels,
-	"/cd":           (*Handler).cmdDirectory,
-	"/perm":         (*Handler).cmdPermission,
-	"/help":         (*Handler).cmdHelp,
-	"/running":      (*Handler).cmdRunning,
+	"/session-new":   (*Handler).cmdSessionNew,
+	"/session-list":  (*Handler).cmdSessionList,
+	"/session-use":   (*Handler).cmdSessionUse,
+	"/session-del":   (*Handler).cmdSessionDel,
+	"/current":       (*Handler).cmdCurrent,
+	"/model":         (*Handler).cmdModel,
+	"/models":        (*Handler).cmdModels,
+	"/cd":            (*Handler).cmdDirectory,
+	"/perm":          (*Handler).cmdPermission,
+	"/memory-list":   (*Handler).cmdMemoryList,
+	"/memory-del":    (*Handler).cmdMemoryDel,
+	"/memory-search": (*Handler).cmdMemorySearch,
+	"/help":          (*Handler).cmdHelp,
+	"/running":       (*Handler).cmdRunning,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -63,7 +66,9 @@ func isSessionCommand(prompt string) bool {
 // slot also blocks a session switch from landing mid-turn, which would orphan
 // the in-flight turn's Append target.
 func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, prompt string) error {
-	if h.history == nil {
+	// Memory-management commands work even when conversation history is off,
+	// because long-term facts are stored separately.
+	if h.history == nil && !isMemoryCommand(prompt) {
 		h.notifyWithPromptID(chatID, promptID, "warning", "会话", "记忆未启用，无法管理会话。")
 		return nil
 	}
@@ -89,6 +94,20 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 	}
 	h.notifyWithPromptID(chatID, promptID, level, title, body)
 	return nil
+}
+
+// isMemoryCommand reports whether prompt is one of the memory-management
+// commands that should work even when conversation history is disabled.
+func isMemoryCommand(prompt string) bool {
+	fields := strings.Fields(prompt)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "/memory-list", "/memory-del", "/memory-search":
+		return true
+	}
+	return false
 }
 
 // Per-command handlers. Each returns the Notice level/title/body. history is
@@ -388,10 +407,73 @@ func (h *Handler) cmdHelp(_, _ string) (level, title, body string) {
 	sb.WriteString("/session-use <id> 切换到指定会话\n")
 	sb.WriteString("/session-del [id] 删除会话\n")
 	sb.WriteString("/session-abort  中止当前任务\n")
+	sb.WriteString("/memory-list [prefix] 列出长期记忆\n")
+	sb.WriteString("/memory-del <key>  删除长期记忆\n")
+	sb.WriteString("/memory-search <q> 搜索长期记忆\n")
 	sb.WriteString("/running        显示运行中的会话\n")
 	sb.WriteString("/help           显示本帮助\n")
 	sb.WriteString("\n直接发送消息即可与 AI 对话。")
 	return "info", "帮助", sb.String()
+}
+
+// cmdMemoryList lists long-term facts for the chat.
+func (h *Handler) cmdMemoryList(chatID, arg string) (level, title, body string) {
+	if h.facts == nil {
+		return "warning", "长期记忆", "长期记忆未启用。"
+	}
+	facts, err := h.facts.List(ScopeChat, chatID, arg)
+	if err != nil {
+		return "error", "长期记忆", "读取失败：" + err.Error()
+	}
+	if len(facts) == 0 {
+		if arg == "" {
+			return "info", "长期记忆", "当前没有长期记忆。"
+		}
+		return "info", "长期记忆", fmt.Sprintf("前缀 %q 没有匹配的记忆。", arg)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("共 %d 条记忆：\n", len(facts)))
+	for _, f := range facts {
+		fmt.Fprintf(&sb, "- %s: %s\n", f.Key, f.Value)
+	}
+	return "info", "长期记忆", sb.String()
+}
+
+// cmdMemoryDel deletes one long-term fact by key.
+func (h *Handler) cmdMemoryDel(chatID, arg string) (level, title, body string) {
+	if h.facts == nil {
+		return "warning", "长期记忆", "长期记忆未启用。"
+	}
+	if arg == "" {
+		return "warning", "长期记忆", "用法：/memory-del <key>"
+	}
+	if err := h.facts.Delete(ScopeChat, chatID, arg); err != nil {
+		return "error", "长期记忆", "删除失败：" + err.Error()
+	}
+	return "success", "已删除", fmt.Sprintf("已删除记忆 %q。", arg)
+}
+
+// cmdMemorySearch searches long-term facts by substring.
+func (h *Handler) cmdMemorySearch(chatID, arg string) (level, title, body string) {
+	if h.facts == nil {
+		return "warning", "长期记忆", "长期记忆未启用。"
+	}
+	if arg == "" {
+		return "warning", "长期记忆", "用法：/memory-search <关键词>"
+	}
+	facts, err := h.facts.Search(ScopeChat, chatID, arg, 20)
+	if err != nil {
+		return "error", "长期记忆", "搜索失败：" + err.Error()
+	}
+	if len(facts) == 0 {
+		return "info", "长期记忆", fmt.Sprintf("未找到包含 %q 的记忆。", arg)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("找到 %d 条记忆：\n", len(facts)))
+	for _, f := range facts {
+		fmt.Fprintf(&sb, "- %s: %s\n", f.Key, f.Value)
+	}
+	return "info", "长期记忆", sb.String()
 }
 
 // cmdRunning lists all currently active turns across all chats.

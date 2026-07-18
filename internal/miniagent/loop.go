@@ -119,9 +119,13 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 		logger.Debug("miniagent llm call start",
 			log.FieldPromptID, promptID, "step", step, "model", cfg.Model)
 		callStart := time.Now()
+		system := cfg.System
+		if cfg.MemoryContext != "" {
+			system += cfg.MemoryContext
+		}
 		resp, err := llm.Do(ctx, Request{
 			Model:     cfg.Model,
-			System:    cfg.System,
+			System:    system,
 			Messages:  msgs,
 			MaxTokens: cfg.MaxTokens,
 			Tools:     toolSpecs,
@@ -194,9 +198,11 @@ func Run(ctx context.Context, llm Client, cfg LoopConfig, promptID, userPrompt s
 
 // LoopConfig carries the per-turn LLM parameters. Tools is the executable
 // tool set (each Tool also contributes its Spec to the LLM schema).
+// MemoryContext is appended to the system prompt when non-empty.
 type LoopConfig struct {
-	Model     string
-	System    string
-	MaxTokens int
-	Tools     []Tool
+	Model         string
+	System        string
+	MemoryContext string
+	MaxTokens     int
+	Tools         []Tool
 }

@@ -109,10 +109,12 @@ func run(cfgPath string) error {
 
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
 	var history *miniagent.History
+	var facts miniagent.FactStore
 	if memoryEnabled {
 		history = miniagent.NewHistory(cfg.StateDir, logger)
+		facts = miniagent.NewFactStore(cfg.StateDir, logger)
 	}
-	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission, ml)
+	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, facts, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission, ml)
 	h.SetHistoryDir(cfg.StateDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

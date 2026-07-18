@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -160,8 +161,11 @@ func main() {
 	}
 
 	var history *miniagent.History
+	var facts miniagent.FactStore
 	if *stateDir != "" && *chatID != "" {
 		history = miniagent.NewHistory(*stateDir, logger)
+		facts = miniagent.NewFactStore(*stateDir, logger)
+		tools = append(tools, miniagent.NewMemoryTools(facts, *chatID)...)
 	}
 	hist := history.Load(*chatID)
 
@@ -170,11 +174,20 @@ func main() {
 
 	emit := miniagent.StreamEmitFunc(os.Stdout, *verbose)
 
+	memoryContext := ""
+	if facts != nil {
+		// Inject chat-scoped facts into the CLI system prompt.
+		if chatFacts, _ := facts.List(miniagent.ScopeChat, *chatID, ""); len(chatFacts) > 0 {
+			memoryContext = formatFactsForCLI(chatFacts)
+		}
+	}
+
 	result, err := miniagent.Run(ctx, llm, miniagent.LoopConfig{
-		Model:     *model,
-		System:    *system,
-		MaxTokens: *maxTokens,
-		Tools:     tools,
+		Model:         *model,
+		System:        *system,
+		MemoryContext: memoryContext,
+		MaxTokens:     *maxTokens,
+		Tools:         tools,
 	}, "cli", string(prompt), hist, emit, logger)
 
 	if err != nil {
@@ -184,6 +197,21 @@ func main() {
 
 	history.Append(*chatID, result.History)
 	miniagent.EmitResult(os.Stdout, result, *model)
+}
+
+// formatFactsForCLI renders facts for appending to the CLI system prompt.
+// Duplicated lightly from miniagent.formatFacts to keep the CLI main package
+// self-contained.
+func formatFactsForCLI(facts []miniagent.Fact) string {
+	if len(facts) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n以下是与当前对话相关的已知事实（由用户或之前的对话沉淀）：\n")
+	for _, f := range facts {
+		fmt.Fprintf(&sb, "- %s: %s\n", f.Key, f.Value)
+	}
+	return sb.String()
 }
 
 // ── Metadata query implementations ────────────────────
