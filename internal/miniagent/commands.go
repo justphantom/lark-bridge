@@ -62,19 +62,20 @@ func isSessionCommand(prompt string) bool {
 // via a Notice. A busy chat gets the same "处理中" notice a prompt would — the
 // slot also blocks a session switch from landing mid-turn, which would orphan
 // the in-flight turn's Append target.
-func (h *Handler) handleSessionCommand(ctx context.Context, chatID, prompt string) error {
+func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, prompt string) error {
 	if h.history == nil {
-		return h.notify(ctx, chatID, "warning", "会话", "记忆未启用，无法管理会话。")
+		h.notifyWithPromptID(chatID, promptID, "warning", "会话", "记忆未启用，无法管理会话。")
+		return nil
 	}
-	// Reserve the slot so a concurrent runTurn for this chat cannot interleave
-	// a Load/Append with our session mutation. Synchronous + fast (file ops),
-	// so turnCtx is unused; the slot purely serializes.
 	turnCtx, mine, ok := h.startTurn(ctx, chatID)
 	_ = turnCtx
 	if !ok {
-		return h.notify(ctx, chatID, "warning", "处理中", "上一条消息还在处理，请等它结束后再发。")
+		h.notifyWithPromptID(chatID, promptID, "warning", "处理中", "上一条消息还在处理，请等它结束后再发。")
+		return nil
 	}
 	defer h.endTurn(chatID, mine)
+	h.SetPromptIDForPickers(promptID)
+	defer h.SetPromptIDForPickers("")
 
 	fields := strings.Fields(prompt)
 	arg := ""
@@ -83,12 +84,11 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, prompt strin
 	}
 	fn := sessionCmds[fields[0]]
 	level, title, body := fn(h, chatID, arg)
-	// "async" is a sentinel: the command launched its own goroutine and
-	// emitted its own notices, so handleSessionCommand must not send another.
 	if level == "async" {
 		return nil
 	}
-	return h.notify(ctx, chatID, level, title, body)
+	h.notifyWithPromptID(chatID, promptID, level, title, body)
+	return nil
 }
 
 // Per-command handlers. Each returns the Notice level/title/body. history is
@@ -167,19 +167,19 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 			defer cancel()
 			models, err := lister.ListModels(ctx)
 			if err != nil {
-				h.notify(ctx, chatID, "error", "选择失败", "获取模型列表失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "选择失败", "获取模型列表失败："+err.Error())
 				return
 			}
 			choice, err := h.askAndWait(ctx, chatID, "模型", models)
 			if err != nil {
-				h.notify(ctx, chatID, "warning", "选择失败", err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "选择失败", err.Error())
 				return
 			}
 			if err := h.history.SetModel(chatID, choice); err != nil {
-				h.notify(ctx, chatID, "error", "模型", "设置失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "模型", "设置失败："+err.Error())
 				return
 			}
-			h.notify(ctx, chatID, "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
+			h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
 		}()
 		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
@@ -269,7 +269,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 		go func() {
 			dirs := scanSubdirs(root)
 			if len(dirs) == 0 {
-				h.notify(context.Background(), chatID, "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
 				return
 			}
 			// Show basename in the card; resolve back to full path on click.
@@ -279,7 +279,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 			}
 			choice, err := h.askAndWait(context.Background(), chatID, "目录", names)
 			if err != nil {
-				h.notify(context.Background(), chatID, "warning", "选择失败", err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "warning", "选择失败", err.Error())
 				return
 			}
 			// Resolve basename → full path.
@@ -291,14 +291,14 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 				}
 			}
 			if dir == "" {
-				h.notify(context.Background(), chatID, "error", "工作目录", "选中的目录不存在。")
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "工作目录", "选中的目录不存在。")
 				return
 			}
 			if err := h.history.SetDir(chatID, dir); err != nil {
-				h.notify(context.Background(), chatID, "error", "工作目录", "设置失败："+err.Error())
+				h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "error", "工作目录", "设置失败："+err.Error())
 				return
 			}
-			h.notify(context.Background(), chatID, "success", "已切换目录", "工作目录已切换到 "+dir+"（下次提问生效）。")
+			h.notifyWithPromptID(chatID, h.PromptIDForPickers(), "success", "已切换目录", "工作目录已切换到 "+dir+"（下次提问生效）。")
 		}()
 		return "async", "", ""
 	}

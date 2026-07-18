@@ -54,6 +54,7 @@ type Handler struct {
 	cfgPermission  string // global default permission mode (from config)
 	client         *miniclient.Client // non-nil → CLI subprocess mode (P3)
 	historyDir     string             // state dir for CLI's --state-dir flag
+	currentPromptID string            // set by handleSessionCommand for picker goroutines
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -79,6 +80,19 @@ func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, hist
 		client:        client,
 		cancelBy:      make(map[string]*promptCancel),
 	}
+}
+
+// SetPromptIDForPickers stores the current turn's promptID so async picker
+// goroutines (launched from commands.go, which don't receive promptID as a
+// parameter) can pass it to notifyWithPromptID, replacing the progress card
+// in place. Set by handleSessionCommand before dispatch, cleared after.
+// Thread-safe: handleSessionCommand runs under startTurn (serial per chat).
+func (h *Handler) SetPromptIDForPickers(promptID string) {
+	h.currentPromptID = promptID
+}
+
+func (h *Handler) PromptIDForPickers() string {
+	return h.currentPromptID
 }
 
 // RunningSession describes one in-flight turn for the /running card.
@@ -244,7 +258,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// /session-del, /current) are handled inline before the LLM turn and
 	// replied to as a Notice. See commands.go.
 	if isSessionCommand(prompt) {
-		return h.handleSessionCommand(ctx, chatID, prompt)
+		return h.handleSessionCommand(ctx, chatID, promptID, prompt)
 	}
 
 	// Busy-then-drop: a chat with an in-flight turn gets an immediate Notice
@@ -521,6 +535,23 @@ func (h *Handler) notify(_ context.Context, chatID, level, title, message string
 		Type:   protocol.TypeNotice,
 		ChatID: chatID,
 		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: message},
+		// PromptID intentionally empty: notify is used for both prompt-bound
+		// replies (where the frontend replaces the progress card) and
+		// standalone notices (abort ack, picker async replies) that have no
+		// progress card to replace. Callers that want replacement should use
+		// notifyWithPromptID instead.
+	})
+}
+
+// notifyWithPromptID is like notify but sets PromptID so the frontend can
+// replace the progress card (the "🔄 正在启动…" placeholder) in place via
+// UpdateCard, instead of leaving the stale card and sending a new one.
+func (h *Handler) notifyWithPromptID(chatID, promptID, level, title, message string) {
+	h.sendCtrl(&protocol.Control{
+		Type:     protocol.TypeNotice,
+		PromptID: promptID,
+		ChatID:   chatID,
+		Notice:   &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
 }
 
