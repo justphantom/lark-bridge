@@ -35,6 +35,7 @@ type Config struct {
 	Permission           string // global default permission mode
 	ShellBlockedPatterns []string
 	MaxConcurrent        int
+	Stream               bool // miniagent -stream flag; false → no text deltas
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
@@ -47,6 +48,7 @@ type Client struct {
 	maxTokens   int
 	permission  string // global default
 	blockedPats []string
+	stream      bool
 	logger      *log.Logger
 	sem         chan struct{}
 }
@@ -68,6 +70,7 @@ func New(cfg Config, logger *log.Logger) *Client {
 		maxTokens:   cfg.MaxTokens,
 		permission:  cfg.Permission,
 		blockedPats: cfg.ShellBlockedPatterns,
+		stream:      cfg.Stream,
 		logger:      logger,
 		sem:         make(chan struct{}, n),
 	}
@@ -147,11 +150,12 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{
 		"-model", opts.Model,
 		"-verbose", // bridge always wants tool events
-		// Disable streaming text deltas: the bridge renders the final answer
-		// from result.text, and emitCLIEvent has no case for "text" events —
-		// with stream on, every delta would be parsed and silently dropped.
-		// Off keeps stdout to just tool_use/tool_result + the terminal result.
-		"-stream=false",
+		// Stream is driven by config (miniagent's -stream defaults to true on
+		// the CLI side). The bridge renders the final answer from result.text
+		// and emitCLIEvent has no case for "text" events, so when stream is on
+		// every delta is parsed and silently dropped — default false keeps
+		// stdout to just tool_use/tool_result + the terminal result.
+		"-stream=" + strconv.FormatBool(c.stream),
 	}
 	if c.baseURL != "" {
 		a = append(a, "-base-url", c.baseURL)

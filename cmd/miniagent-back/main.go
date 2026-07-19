@@ -88,6 +88,7 @@ func run(cfgPath string) error {
 		MaxTokens:            cfg.MiniAgent.MaxTokens,
 		Permission:           cfg.MiniAgent.Permission,
 		ShellBlockedPatterns: cfg.MiniAgent.ShellBlockedPatterns,
+		Stream:               cfg.MiniAgent.Stream,
 	}, logger)
 
 	// CLIState: every state read/write (sessions, pins, memory, list-models)

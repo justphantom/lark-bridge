@@ -138,10 +138,12 @@ type DeployMonitor struct {
 	DeployTarget string `json:"deploy_target,omitempty"`
 }
 
-// MiniAgent holds settings for the miniagent backend, a self-contained
-// ReAct agent (LLM + tools + memory) that does NOT shell out to an external
-// agent CLI like claude/opencode. It calls an OpenAI-compatible chat
-// completions endpoint directly via net/http.
+// MiniAgent holds settings for the miniagent backend. Each turn forks the
+// miniagent CLI binary (github.com/justphantom/miniagent): the CLI owns the
+// ReAct loop, tools, LLM call, and memory; the bridge does IPC + slash-command
+// dispatch + per-chat state via the CLI's -show-current / -set-* / -memory-*
+// flags. This mirrors how the claude/opencode backends shell out to their
+// own CLIs — the bridge carries no HTTP/LLM code of its own.
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
 	// pull from the environment (config.Load expands it); writing the key
@@ -161,6 +163,13 @@ type MiniAgent struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// Stream toggles miniagent's SSE streaming of text deltas (its -stream
+	// flag, which defaults to true on the CLI side). The bridge renders the
+	// final answer from result.text and has no "text" event case, so deltas
+	// would be silently dropped. Default false (zero value) keeps stdout to
+	// just tool_use/tool_result + the terminal result; set true only if a
+	// future frontend consumes the incremental text.
+	Stream bool `json:"stream,omitempty"`
 	// WorkspaceRoot bounds read_file to paths under this directory (after
 	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
 	// call it). Recommended: ${WORKSPACE_ROOT} so it shares the same env

@@ -121,6 +121,26 @@ func TestBuildArgs_Full(t *testing.T) {
 			t.Errorf("missing flag %s in buildArgs output: %v", flag, args)
 		}
 	}
+	// Stream defaults to false (config zero value): the bridge renders the
+	// final answer from result.text and has no "text" event case, so it
+	// pins -stream=false to suppress dropped deltas.
+	if !contains(args, "-stream=false") {
+		t.Errorf("expected -stream=false by default: %v", args)
+	}
+}
+
+// TestBuildArgs_StreamOn verifies that Stream=true flips the flag value. The
+// flag is always emitted (never omitted) so the CLI's own default (true) is
+// never relied upon.
+func TestBuildArgs_StreamOn(t *testing.T) {
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "k", Stream: true}, nil)
+	args := c.buildArgs(RunOptions{Model: "m"})
+	if !contains(args, "-stream=true") {
+		t.Errorf("expected -stream=true when Stream set: %v", args)
+	}
+	if contains(args, "-stream=false") {
+		t.Errorf("stream=false must not appear when Stream=true: %v", args)
+	}
 }
 
 func TestBuildArgs_Minimal(t *testing.T) {
