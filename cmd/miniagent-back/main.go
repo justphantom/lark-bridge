@@ -1,10 +1,10 @@
-// Command lark-miniagent-back runs the miniagent backend.
-//
-// miniagent is a self-contained ReAct agent: unlike claude/opencode (which
-// shell out to an external agent CLI), it calls an OpenAI-compatible chat
-// completions endpoint directly, drives a tool loop, and emits Controls
-// back to the frontend. P0 implements single-turn Q&A; tools, memory, and
-// permissions land in later phases.
+// Command lark-miniagent-back runs the miniagent backend. Like the claude
+// and opencode backends, it shells out to an external agent CLI (the
+// miniagent binary at github.com/justphantom/miniagent): each turn forks
+// one subprocess that owns the ReAct loop, tool execution, and the LLM
+// call. The bridge itself does IPC + slash-command dispatch + event
+// forwarding, and reads/writes per-chat state (sessions, model/dir/perm
+// pins, memory) via the CLI's -show-current / -set-* / -memory-* flags.
 //
 // Configuration is read from -config. The miniagent.api_key field should
 // use ${MINIAGENT_API_KEY} so the key is pulled from the environment, not
