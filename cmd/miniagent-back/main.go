@@ -95,7 +95,7 @@ func run(cfgPath string) error {
 	var cli *miniagent.CLIState
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
 	if memoryEnabled && cfg.StateDir != "" {
-		cli = miniagent.NewCLIState(cliPath, cfg.StateDir)
+		cli = miniagent.NewCLIState(cliPath, cfg.StateDir, cfg.MiniAgent.APIKey, cfg.MiniAgent.BaseURL)
 	}
 	h := miniagent.New(rpc, logger, cli, cfg.MiniAgent.WorkspaceRoot, cfg.StateDir, client, cfg.MiniAgent.Model, cfg.MiniAgent.Permission)
 

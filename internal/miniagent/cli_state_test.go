@@ -38,7 +38,7 @@ func newCLIState(t *testing.T) *CLIState {
 	t.Helper()
 	bin := findMiniagentBinary(t)
 	dir := t.TempDir()
-	return NewCLIState(bin, dir)
+	return NewCLIState(bin, dir, "test-key", "http://localhost:8080")
 }
 
 // TestCLIState_ShowCurrent_Empty verifies a fresh state reports all empty

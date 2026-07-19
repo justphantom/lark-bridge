@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -65,12 +66,28 @@ type CurrentState struct {
 type CLIState struct {
 	binary   string
 	stateDir string
+	apiKey   string // injected as $MINIAGENT_API_KEY on every fork (-list-models needs it)
+	baseURL  string // injected as $MINIAGENT_BASE_URL on every fork (-list-models needs it)
 }
 
 // NewCLIState builds a CLIState. binary is the miniagent executable path;
-// stateDir is the -state-dir passed to every subcommand.
-func NewCLIState(binary, stateDir string) *CLIState {
-	return &CLIState{binary: binary, stateDir: stateDir}
+// stateDir is the -state-dir passed to every subcommand. apiKey/baseURL are
+// set on each subprocess env so subcommands that talk to the LLM endpoint
+// (notably -list-models) work even when the backend's own env lacks them —
+// mirroring how miniclient.Client.Run injects the key for the main flow.
+func NewCLIState(binary, stateDir, apiKey, baseURL string) *CLIState {
+	return &CLIState{binary: binary, stateDir: stateDir, apiKey: apiKey, baseURL: baseURL}
+}
+
+// envForFork returns the env list for a CLI subprocess: the parent env plus
+// MINIAGENT_API_KEY / MINIAGENT_BASE_URL overridden from config. We set them
+// unconditionally (empty is fine for state-only subcommands) so -list-models
+// does not silently inherit a stale or missing key.
+func (c *CLIState) envForFork() []string {
+	return append(os.Environ(),
+		"MINIAGENT_API_KEY="+c.apiKey,
+		"MINIAGENT_BASE_URL="+c.baseURL,
+	)
 }
 
 // call runs the CLI with the given extra args and returns stdout. stderr is
@@ -79,6 +96,7 @@ func (c *CLIState) call(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"-state-dir", c.stateDir}, args...)
 	// #nosec G204 -- c.binary is trusted config; args are built internally.
 	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.Env = c.envForFork()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -291,9 +309,9 @@ func (c *CLIState) SearchFacts(ctx context.Context, chatID, query string) ([]Fac
 // the bridge carries zero HTTP/LLM code — the CLI is the only outbound
 // HTTP surface.
 func (c *CLIState) ListModels(ctx context.Context) ([]string, error) {
-	// -list-models does not need -chat-id, but does need $MINIAGENT_API_KEY
-	// and $MINIAGENT_BASE_URL; the bridge sets them on the miniagent-back
-	// process env, and exec.CommandContext inherits them.
+	// -list-models does not need -chat-id or -state-dir, but does need
+	// $MINIAGENT_API_KEY and $MINIAGENT_BASE_URL; callNoStateDir injects both
+	// from config rather than relying on the parent env being set.
 	out, err := c.callNoStateDir(ctx, "-list-models")
 	if err != nil {
 		return nil, err
@@ -310,6 +328,7 @@ func (c *CLIState) ListModels(ctx context.Context) ([]string, error) {
 func (c *CLIState) callNoStateDir(ctx context.Context, args ...string) ([]byte, error) {
 	// #nosec G204 -- c.binary is trusted config.
 	cmd := exec.CommandContext(ctx, c.binary, args...)
+	cmd.Env = c.envForFork()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

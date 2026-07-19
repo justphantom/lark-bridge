@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-// TestReplaceArg_Existing replaces --flag <old> with <new> in place and
+// TestReplaceArg_Existing replaces -flag <old> with <new> in place and
 // leaves the surrounding args intact. Per-chat permission override relies
 // on this mutation, not a duplicate append.
 func TestReplaceArg_Existing(t *testing.T) {
-	args := []string{"--model", "m", "--permission", "default", "--workdir", "/x"}
-	got := replaceArg(args, "--permission", "free")
-	want := []string{"--model", "m", "--permission", "free", "--workdir", "/x"}
+	args := []string{"-model", "m", "-permission", "default", "-workdir", "/x"}
+	got := replaceArg(args, "-permission", "free")
+	want := []string{"-model", "m", "-permission", "free", "-workdir", "/x"}
 	if len(got) != len(want) {
 		t.Fatalf("len got=%d want=%d", len(got), len(want))
 	}
@@ -27,13 +27,13 @@ func TestReplaceArg_Existing(t *testing.T) {
 	}
 }
 
-// TestReplaceArg_Missing appends --flag newval when --flag is absent (the
+// TestReplaceArg_Missing appends -flag newval when -flag is absent (the
 // global default was "" so buildArgs never added it; per-chat override must
 // introduce it).
 func TestReplaceArg_Missing(t *testing.T) {
-	args := []string{"--model", "m"}
-	got := replaceArg(args, "--permission", "plan")
-	want := []string{"--model", "m", "--permission", "plan"}
+	args := []string{"-model", "m"}
+	got := replaceArg(args, "-permission", "plan")
+	want := []string{"-model", "m", "-permission", "plan"}
 	if len(got) != len(want) {
 		t.Fatalf("len got=%d want=%d", len(got), len(want))
 	}
@@ -44,21 +44,21 @@ func TestReplaceArg_Missing(t *testing.T) {
 	}
 }
 
-// TestReplaceArg_FlagAtTailNoValue does not panic when --flag is the last
+// TestReplaceArg_FlagAtTailNoValue does not panic when -flag is the last
 // token (no value to replace). The walk stops at len-1 so it appends a
 // fresh pair rather than mutating out of range.
 func TestReplaceArg_FlagAtTailNoValue(t *testing.T) {
-	args := []string{"--model", "m", "--permission"}
+	args := []string{"-model", "m", "-permission"}
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("panicked: %v", r)
 		}
 	}()
-	got := replaceArg(args, "--permission", "free")
-	// Existing --permission has no value following it, so the loop misses it
+	got := replaceArg(args, "-permission", "free")
+	// Existing -permission has no value following it, so the loop misses it
 	// and a new pair is appended.
-	if !contains(got, "--permission") || !contains(got, "free") {
-		t.Errorf("expected --permission free appended, got %v", got)
+	if !contains(got, "-permission") || !contains(got, "free") {
+		t.Errorf("expected -permission free appended, got %v", got)
 	}
 }
 
@@ -213,7 +213,7 @@ func TestRun_EmptyCLIPath(t *testing.T) {
 
 // TestRun_PassesAPIKeyViaEnv verifies the API key reaches the subprocess via
 // $MINIAGENT_API_KEY (the only way miniagent's CLI accepts it — there is no
-// --api-key flag). A subprocess that echoes its env proves the injection.
+// -api-key flag). A subprocess that echoes its env proves the injection.
 func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")

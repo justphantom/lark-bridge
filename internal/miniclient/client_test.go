@@ -103,13 +103,13 @@ func TestBuildArgs_Full(t *testing.T) {
 		ChatID:   "c1",
 		StateDir: "/tmp/ma",
 	})
-	// Check key flags are present. --api-key is intentionally absent: the
+	// Check key flags are present. -api-key is intentionally absent: the
 	// CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
 	want := map[string]bool{
-		"--model": false, "--base-url": false,
-		"--system": false, "--max-tokens": false, "--permission": false,
-		"--verbose": false, "--workdir": false, "--chat-id": false,
-		"--state-dir": false,
+		"-model": false, "-base-url": false,
+		"-system": false, "-max-tokens": false, "-permission": false,
+		"-verbose": false, "-workdir": false, "-chat-id": false,
+		"-state-dir": false,
 	}
 	for _, a := range args {
 		if _, ok := want[a]; ok {
@@ -126,7 +126,7 @@ func TestBuildArgs_Full(t *testing.T) {
 func TestBuildArgs_Minimal(t *testing.T) {
 	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
-	// Only model + verbose are guaranteed when others are empty. --api-key
+	// Only model + verbose are guaranteed when others are empty. -api-key
 	// must NOT appear (the CLI has no such flag; the key goes via env).
 	hasFlag := func(f string) bool {
 		for i, a := range args {
@@ -136,18 +136,18 @@ func TestBuildArgs_Minimal(t *testing.T) {
 		}
 		return false
 	}
-	if !hasFlag("--model") {
-		t.Errorf("missing required flag --model: %v", args)
+	if !hasFlag("-model") {
+		t.Errorf("missing required flag -model: %v", args)
 	}
 	for _, a := range args {
-		if a == "--api-key" {
-			t.Errorf("--api-key must NOT be in args (CLI has no such flag): %v", args)
+		if a == "-api-key" {
+			t.Errorf("-api-key must NOT be in args (CLI has no such flag): %v", args)
 		}
 	}
-	if !contains(args, "--verbose") {
+	if !contains(args, "-verbose") {
 		t.Errorf("verbose should always be present: %v", args)
 	}
-	if hasFlag("--workdir") {
+	if hasFlag("-workdir") {
 		t.Errorf("workdir should be absent when empty: %v", args)
 	}
 }
