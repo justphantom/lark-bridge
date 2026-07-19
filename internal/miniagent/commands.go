@@ -8,23 +8,18 @@ import (
 
 // Session management commands. These mirror the claude backend's /session-*
 // vocabulary so users get a consistent UX across bridges, but the dispatch is
-// self-contained (the miniagent has no router/registry like claudebridge, so
-// it does not use bridgebase.Commands). A command is recognized only when the
-// prompt's first token is one of:
+// self-contained (the miniagent has no router/registry like claudebridge).
 //
-//	/session-new        start a fresh session (the old one is kept on disk)
-//	/session-list       list this chat's stored sessions
-//	/session-use <id>   resume a previously stored session (接续)
-//	/session-del [<id>] delete a session (the active one when no id is given)
-//	/current            show the active session id
-//
-// Commands are dispatched inline from HandleEvent (before the LLM turn) and
-// the reply is emitted as a single TypeNotice.
+// State changes are issued through the CLI binary (cli_state.go), so the
+// bridge never touches the on-disk session/jsonl/pin files directly.
+// Each command returns the Notice level/title/body the dispatcher emits.
+// "async" as level is a sentinel meaning the command has already emitted its
+// own controls and the dispatcher must not emit a Notice.
 
 // sessionCmds is the single source of truth for command names → handlers.
 // Adding a command means adding one entry here (and the method); isSession
 // recognition and dispatch both read this table.
-var sessionCmds = map[string]func(h *Handler, chatID, arg string) (level, title, body string){
+var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg string) (level, title, body string){
 	"/session-new":   (*Handler).cmdSessionNew,
 	"/session-list":  (*Handler).cmdSessionList,
 	"/session-use":   (*Handler).cmdSessionUse,
@@ -54,15 +49,13 @@ func isSessionCommand(prompt string) bool {
 	return ok
 }
 
-// handleSessionCommand reserves the per-chat turn slot (so it cannot race with
-// an in-flight runTurn over the history files), runs the command, and replies
-// via a Notice. A busy chat gets the same "处理中" notice a prompt would — the
-// slot also blocks a session switch from landing mid-turn, which would orphan
-// the in-flight turn's Append target.
+// handleSessionCommand reserves the per-chat turn slot (so a command cannot
+// race with an in-flight runTurn over CLI state), runs the command, and
+// replies via a Notice. A busy chat gets the same "处理中" notice a prompt
+// would — the slot also blocks a session switch from landing mid-turn, which
+// would orphan the in-flight turn's Append target.
 func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, prompt string) error {
-	// Memory-management commands work even when conversation history is off,
-	// because long-term facts are stored separately.
-	if h.history == nil && !isMemoryCommand(prompt) {
+	if h.cli == nil && !isMemoryCommand(prompt) {
 		h.notifyWithPromptID(chatID, promptID, "warning", "会话", "记忆未启用，无法管理会话。")
 		return nil
 	}
@@ -82,7 +75,7 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 		arg = fields[1]
 	}
 	fn := sessionCmds[fields[0]]
-	level, title, body := fn(h, chatID, arg)
+	level, title, body := fn(h, ctx, chatID, arg)
 	if level == "async" {
 		return nil
 	}
@@ -91,7 +84,7 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 }
 
 // isMemoryCommand reports whether prompt is one of the memory-management
-// commands that should work even when conversation history is disabled.
+// commands that should work even when state access is disabled.
 func isMemoryCommand(prompt string) bool {
 	fields := strings.Fields(prompt)
 	if len(fields) == 0 {
@@ -104,11 +97,11 @@ func isMemoryCommand(prompt string) bool {
 	return false
 }
 
-// Per-command handlers. Each returns the Notice level/title/body. history is
+// Per-command handlers. Each returns the Notice level/title/body. cli is
 // non-nil (guarded by handleSessionCommand).
 
-func (h *Handler) cmdSessionNew(chatID, _ string) (level, title, body string) {
-	sid, err := h.history.NewSession(chatID)
+func (h *Handler) cmdSessionNew(ctx context.Context, chatID, _ string) (level, title, body string) {
+	sid, err := h.cli.NewSession(ctx, chatID)
 	if err != nil {
 		return "error", "会话", "新建会话失败：" + err.Error()
 	}
@@ -116,22 +109,22 @@ func (h *Handler) cmdSessionNew(chatID, _ string) (level, title, body string) {
 		fmt.Sprintf("新会话已创建（%s）。旧会话仍保留，可用 /session-list 查看、/session-use 切回。", sid)
 }
 
-func (h *Handler) cmdSessionList(chatID, _ string) (level, title, body string) {
-	return h.renderSessionList(chatID)
+func (h *Handler) cmdSessionList(ctx context.Context, chatID, _ string) (level, title, body string) {
+	return h.renderSessionList(ctx, chatID)
 }
 
-func (h *Handler) cmdSessionUse(chatID, arg string) (level, title, body string) {
+func (h *Handler) cmdSessionUse(ctx context.Context, chatID, arg string) (level, title, body string) {
 	if arg == "" {
 		return "warning", "会话", "用法：/session-use <会话ID>。先用 /session-list 查看可用会话。"
 	}
-	if err := h.history.UseSession(chatID, arg); err != nil {
+	if err := h.cli.UseSession(ctx, chatID, arg); err != nil {
 		return "error", "会话", err.Error()
 	}
 	return "success", "已切换会话", fmt.Sprintf("已切换到会话 %s。", arg)
 }
 
-func (h *Handler) cmdSessionDel(chatID, arg string) (level, title, body string) {
-	if err := h.history.DeleteSession(chatID, arg); err != nil {
+func (h *Handler) cmdSessionDel(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if err := h.cli.DeleteSession(ctx, chatID, arg); err != nil {
 		return "error", "会话", err.Error()
 	}
 	which := arg
@@ -141,21 +134,33 @@ func (h *Handler) cmdSessionDel(chatID, arg string) (level, title, body string) 
 	return "success", "已删除", fmt.Sprintf("已删除会话 %s。", which)
 }
 
-func (h *Handler) cmdCurrent(chatID, _ string) (level, title, body string) {
-	sid := h.history.Current(chatID)
-	cur := h.activeModel(chatID)
-	dir := h.activeDir(chatID)
-	perm := h.activePermission(chatID)
-	if sid == "" {
+func (h *Handler) cmdCurrent(ctx context.Context, chatID, _ string) (level, title, body string) {
+	state, err := h.cli.ShowCurrent(ctx, chatID)
+	if err != nil {
+		return "error", "当前状态", "读取失败：" + err.Error()
+	}
+	cur := state.Model
+	if cur == "" {
+		cur = h.cfgModel
+	}
+	dir := state.Directory
+	if dir == "" {
+		dir = h.workspaceRoot
+	}
+	perm := state.Permission
+	if perm == "" {
+		perm = h.cfgPermission
+	}
+	if state.SessionID == "" {
 		return "info", "当前状态", fmt.Sprintf("当前无活动会话（首次提问后将自动创建）。\n模型：%s\n工作目录：%s\n权限：%s", cur, dir, perm)
 	}
-	return "info", "当前状态", fmt.Sprintf("活动会话：%s\n模型：%s\n工作目录：%s\n权限：%s", sid, cur, dir, perm)
+	return "info", "当前状态", fmt.Sprintf("活动会话：%s\n模型：%s\n工作目录：%s\n权限：%s", state.SessionID, cur, dir, perm)
 }
 
 // renderSessionList builds the /session-list body: oldest first, the active
 // session marked with →, each line carrying id / mtime / size.
-func (h *Handler) renderSessionList(chatID string) (level, title, body string) {
-	sessions, err := h.history.ListSessions(chatID)
+func (h *Handler) renderSessionList(ctx context.Context, chatID string) (level, title, body string) {
+	sessions, err := h.cli.ListSessions(ctx, chatID)
 	if err != nil {
 		return "error", "会话", "读取会话列表失败：" + err.Error()
 	}

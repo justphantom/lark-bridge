@@ -9,11 +9,11 @@ import (
 )
 
 // newCLIHandler builds a Handler wired only enough to call emitCLIEvent:
-// the rpc captures Controls, no LLM/client/history needed.
+// the rpc captures Controls, no client/LLM needed.
 func newCLIHandler(t *testing.T) (*Handler, *captureSender) {
 	t.Helper()
 	sender := &captureSender{}
-	h := New(nil, LoopConfig{}, sender, log.Nop(), nil, nil, "", nil, "default", nil)
+	h := New(sender, log.Nop(), nil, "", "", nil, "test-model", "default")
 	return h, sender
 }
 

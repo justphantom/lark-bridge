@@ -90,27 +90,14 @@ func run(cfgPath string) error {
 		ShellBlockedPatterns: cfg.MiniAgent.ShellBlockedPatterns,
 	}, logger)
 
-	// ModelLister for /model picker + /models command. In CLI mode the bridge
-	// has no LLM client, but it has the API key + base URL from config, so a
-	// lightweight HTTPClient is enough to call GET /v1/models.
-	var ml miniagent.ModelLister
-	if cfg.MiniAgent.APIKey != "" {
-		ml = &miniagent.HTTPClient{
-			APIKey:  cfg.MiniAgent.APIKey,
-			BaseURL: cfg.MiniAgent.BaseURL,
-			Logger:  logger,
-		}
-	}
-
+	// CLIState: every state read/write (sessions, pins, memory, list-models)
+	// forks the miniagent binary. nil when state-dir is empty (stateless mode).
+	var cli *miniagent.CLIState
 	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
-	var history *miniagent.History
-	var facts miniagent.FactStore
-	if memoryEnabled {
-		history = miniagent.NewHistory(cfg.StateDir, logger)
-		facts = miniagent.NewFactStore(cfg.StateDir, logger)
+	if memoryEnabled && cfg.StateDir != "" {
+		cli = miniagent.NewCLIState(cliPath, cfg.StateDir)
 	}
-	h := miniagent.New(nil, miniagent.LoopConfig{}, rpc, logger, history, facts, cfg.MiniAgent.WorkspaceRoot, client, cfg.MiniAgent.Permission, ml)
-	h.SetHistoryDir(cfg.StateDir)
+	h := miniagent.New(rpc, logger, cli, cfg.MiniAgent.WorkspaceRoot, cfg.StateDir, client, cfg.MiniAgent.Model, cfg.MiniAgent.Permission)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

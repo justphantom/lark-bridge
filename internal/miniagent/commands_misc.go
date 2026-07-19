@@ -1,6 +1,7 @@
 package miniagent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -13,12 +14,12 @@ import (
 //	/perm default      → full tools with workspace bounds + blocklist
 //	/perm free         → full tools without limits
 //	/perm clear        → restore global default
-func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) {
-	if h.history == nil {
-		return "warning", "权限", "记忆未启用，无法设置权限模式。"
+func (h *Handler) cmdPermission(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "权限", "状态未启用，无法设置权限模式。"
 	}
 	if arg == "" {
-		cur := h.activePermission(chatID)
+		cur := h.activePermission(ctx, chatID)
 		return "info", "当前权限", fmt.Sprintf("当前权限模式：%s\n\n可选：\n/perm plan（只读）\n/perm default（受限写）\n/perm free（无限制）\n/perm clear（恢复默认）", cur)
 	}
 	valid := map[string]bool{"plan": true, "default": true, "free": true, "clear": true}
@@ -29,7 +30,7 @@ func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) 
 	if arg == "clear" {
 		mode = ""
 	}
-	if err := h.history.SetPermission(chatID, mode); err != nil {
+	if err := h.cli.SetPermission(ctx, chatID, mode); err != nil {
 		return "error", "权限", "设置失败：" + err.Error()
 	}
 	if mode == "" {
@@ -39,7 +40,7 @@ func (h *Handler) cmdPermission(chatID, arg string) (level, title, body string) 
 }
 
 // cmdHelp lists all available commands with brief descriptions.
-func (h *Handler) cmdHelp(_, _ string) (level, title, body string) {
+func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, body string) {
 	var sb strings.Builder
 	sb.WriteString("可用命令：\n\n")
 	sb.WriteString("/current        显示当前会话/模型/目录/权限\n")
@@ -70,11 +71,11 @@ func (h *Handler) cmdHelp(_, _ string) (level, title, body string) {
 }
 
 // cmdMemoryList lists long-term facts for the chat.
-func (h *Handler) cmdMemoryList(chatID, arg string) (level, title, body string) {
-	if h.facts == nil {
-		return "warning", "长期记忆", "长期记忆未启用。"
+func (h *Handler) cmdMemoryList(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "长期记忆", "状态未启用。"
 	}
-	facts, err := h.facts.List(ScopeChat, chatID, arg)
+	facts, err := h.cli.ListFacts(ctx, chatID, arg)
 	if err != nil {
 		return "error", "长期记忆", "读取失败：" + err.Error()
 	}
@@ -93,28 +94,32 @@ func (h *Handler) cmdMemoryList(chatID, arg string) (level, title, body string) 
 }
 
 // cmdMemoryDel deletes one long-term fact by key.
-func (h *Handler) cmdMemoryDel(chatID, arg string) (level, title, body string) {
-	if h.facts == nil {
-		return "warning", "长期记忆", "长期记忆未启用。"
+func (h *Handler) cmdMemoryDel(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "长期记忆", "状态未启用。"
 	}
 	if arg == "" {
 		return "warning", "长期记忆", "用法：/memory-del <key>"
 	}
-	if err := h.facts.Delete(ScopeChat, chatID, arg); err != nil {
+	existed, err := h.cli.DeleteFact(ctx, chatID, arg)
+	if err != nil {
 		return "error", "长期记忆", "删除失败：" + err.Error()
+	}
+	if !existed {
+		return "info", "长期记忆", fmt.Sprintf("记忆 %q 不存在。", arg)
 	}
 	return "success", "已删除", fmt.Sprintf("已删除记忆 %q。", arg)
 }
 
 // cmdMemorySearch searches long-term facts by substring.
-func (h *Handler) cmdMemorySearch(chatID, arg string) (level, title, body string) {
-	if h.facts == nil {
-		return "warning", "长期记忆", "长期记忆未启用。"
+func (h *Handler) cmdMemorySearch(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "长期记忆", "状态未启用。"
 	}
 	if arg == "" {
 		return "warning", "长期记忆", "用法：/memory-search <关键词>"
 	}
-	facts, err := h.facts.Search(ScopeChat, chatID, arg, 20)
+	facts, err := h.cli.SearchFacts(ctx, chatID, arg)
 	if err != nil {
 		return "error", "长期记忆", "搜索失败：" + err.Error()
 	}
@@ -130,7 +135,7 @@ func (h *Handler) cmdMemorySearch(chatID, arg string) (level, title, body string
 }
 
 // cmdRunning lists currently active turns for this chat.
-func (h *Handler) cmdRunning(chatID, _ string) (level, title, body string) {
+func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title, body string) {
 	sessions := h.RunningSessions()
 	var filtered []RunningSession
 	for _, s := range sessions {

@@ -15,9 +15,7 @@ import (
 // owns IPC + per-chat config + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	model := h.activeModel(chatID)
-	workdir := h.activeDir(chatID)
-	perm := h.activePermission(chatID)
+	model, workdir, perm := h.activeTurnConfig(ctx, chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
@@ -30,7 +28,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		Model:      model,
 		Workdir:    workdir,
 		ChatID:     chatID,
-		StateDir:   h.historyDir,
+		StateDir:   h.stateDir,
 		Permission: perm,
 	})
 	if err != nil {
@@ -130,4 +128,63 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			Error:    &protocol.ErrorPayload{Message: ev.Message, Recoverable: true},
 		})
 	}
+}
+
+// activeTurnConfig returns the (model, workdir, permission) triple the CLI
+// subprocess should be invoked with for this chat. The per-chat pin (held in
+// the CLI's MetaStore) wins; missing pins fall back to the bridge's global
+// defaults from config. One -show-current fork per turn; the ~5ms cost is
+// negligible next to the LLM call that follows.
+//
+// When cli is nil (stateless mode — no state-dir configured), the global
+// defaults are returned directly with no fork.
+func (h *Handler) activeTurnConfig(ctx context.Context, chatID string) (model, workdir, permission string) {
+	if h.cli == nil {
+		return h.cfgModel, h.workspaceRoot, h.cfgPermission
+	}
+	state, err := h.cli.ShowCurrent(ctx, chatID)
+	if err != nil {
+		// Show-current failing does not prevent the turn: fall back to globals
+		// and log so the operator can see the CLI is misconfigured.
+		h.logger.Warn("miniagent: show-current failed, using globals", log.FieldChatID, chatID, log.FieldError, err)
+		return h.cfgModel, h.workspaceRoot, h.cfgPermission
+	}
+	model = state.Model
+	if model == "" {
+		model = h.cfgModel
+	}
+	workdir = state.Directory
+	if workdir == "" {
+		workdir = h.workspaceRoot
+	}
+	permission = state.Permission
+	if permission == "" {
+		permission = h.cfgPermission
+	}
+	return model, workdir, permission
+}
+
+// activeModel/activeDir/activePermission are kept for command-side reads
+// (/current display). They always go through cli.ShowCurrent; the ctx
+// comes from the dispatcher's per-command timeout.
+func (h *Handler) activeModel(ctx context.Context, chatID string) string {
+	if h.cli == nil {
+		return h.cfgModel
+	}
+	state, _ := h.cli.ShowCurrent(ctx, chatID)
+	if state.Model != "" {
+		return state.Model
+	}
+	return h.cfgModel
+}
+
+func (h *Handler) activePermission(ctx context.Context, chatID string) string {
+	if h.cli == nil {
+		return h.cfgPermission
+	}
+	state, _ := h.cli.ShowCurrent(ctx, chatID)
+	if state.Permission != "" {
+		return state.Permission
+	}
+	return h.cfgPermission
 }

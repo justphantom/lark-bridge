@@ -16,39 +16,35 @@ import (
 //	/model            → show current + usage
 //	/model clear      → clear pin (fall back to global default)
 //	/model <id>       → pin <id> for this chat
-func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
-	if h.history == nil {
-		return "warning", "模型", "记忆未启用，无法设置模型。"
+func (h *Handler) cmdModel(ctx context.Context, chatID, arg string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "模型", "状态未启用，无法设置模型。"
 	}
 	if arg == "" {
-		// No arg → interactive picker (async, like opencode-back's runModelPicker).
-		// ListModels may take tens of seconds, and askAndWait blocks for a human
-		// click; both must run off the SSE event loop. Emit a "loading" notice
-		// immediately, then launch a goroutine that fetches models, emits a
-		// selection card, waits for the user's click, and applies it.
-		lister := h.modelLister
-		if lister == nil {
-			return "warning", "模型", "当前 LLM 客户端不支持列模型。用 /model <ID> 直接指定。"
-		}
+		// Interactive picker: -list-models may take seconds and askAndWait
+		// blocks for a human click; both must run off the SSE event loop.
+		// Emit a "loading" notice immediately, then launch a goroutine that
+		// fetches models via the CLI, emits a selection card, waits for the
+		// user's click, and applies it.
 		h.sendCtrl(&protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "info", Title: "正在加载模型列表", Message: "正在获取可用模型，请稍候…"},
 		})
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		go func() { //nolint:gosec // G118: picker outlives the request ctx — the user's click may come minutes later
+			pickCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			models, err := lister.ListModels(ctx)
+			models, err := h.cli.ListModels(pickCtx)
 			if err != nil {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "选择失败", "获取模型列表失败："+err.Error())
 				return
 			}
-			choice, err := h.askAndWait(ctx, chatID, "模型", models)
+			choice, err := h.askAndWait(pickCtx, chatID, "模型", models)
 			if err != nil {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "warning", "选择失败", err.Error())
 				return
 			}
-			if err := h.history.SetModel(chatID, choice); err != nil {
+			if err := h.cli.SetModel(pickCtx, chatID, choice); err != nil {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "模型", "设置失败："+err.Error())
 				return
 			}
@@ -57,33 +53,30 @@ func (h *Handler) cmdModel(chatID, arg string) (level, title, body string) {
 		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
 	if arg == "clear" {
-		if err := h.history.SetModel(chatID, ""); err != nil {
+		if err := h.cli.SetModel(ctx, chatID, ""); err != nil {
 			return "error", "模型", "清除模型失败：" + err.Error()
 		}
-		return "success", "已恢复默认", fmt.Sprintf("已清除自定义模型，将使用全局默认 %s。", h.cfg.Model)
+		return "success", "已恢复默认", fmt.Sprintf("已清除自定义模型，将使用全局默认 %s。", h.cfgModel)
 	}
-	if err := h.history.SetModel(chatID, arg); err != nil {
+	if err := h.cli.SetModel(ctx, chatID, arg); err != nil {
 		return "error", "模型", "设置模型失败：" + err.Error()
 	}
 	return "success", "已切换模型", fmt.Sprintf("已切换到模型 %s（下次提问生效）。", arg)
 }
 
-// cmdModels lists available models from the LLM endpoint (GET /v1/models).
-func (h *Handler) cmdModels(chatID, _ string) (level, title, body string) {
-	lister := h.modelLister
-	if lister == nil {
-		return "warning", "模型列表", "当前 LLM 客户端不支持列模型。"
+// cmdModels lists available models via the CLI's -list-models subcommand.
+func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title, body string) {
+	if h.cli == nil {
+		return "warning", "模型列表", "状态未启用。"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	models, err := lister.ListModels(ctx)
+	models, err := h.cli.ListModels(ctx)
 	if err != nil {
 		return "error", "模型列表", "获取失败：" + err.Error()
 	}
 	if len(models) == 0 {
 		return "info", "模型列表", "端点未返回任何模型。"
 	}
-	cur := h.activeModel(chatID)
+	cur := h.activeModel(ctx, chatID)
 	var sb strings.Builder
 	sb.WriteString("可用模型：\n")
 	for _, m := range models {
@@ -102,7 +95,7 @@ func (h *Handler) cmdModels(chatID, _ string) (level, title, body string) {
 //	/cd            → interactive picker (scan WORKSPACE_ROOT subdirs)
 //	/cd clear      → clear pin (fall back to global workspace_root)
 //	/cd <path>     → pin directly (must be under WORKSPACE_ROOT)
-func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
+func (h *Handler) cmdDirectory(ctx context.Context, chatID, arg string) (level, title, body string) {
 	if h.workspaceRoot == "" {
 		return "warning", "工作目录", "未配置 workspace_root，无法设置工作目录。"
 	}
@@ -117,7 +110,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "info", Title: "正在扫描目录", Message: "正在获取工作目录列表，请稍候…"},
 		})
-		go func() {
+		go func() { //nolint:gosec // G118: picker outlives the request ctx
 			dirs := scanSubdirs(root)
 			if len(dirs) == 0 {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "warning", "工作目录", "WORKSPACE_ROOT 下没有子目录。")
@@ -145,7 +138,9 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "工作目录", "选中的目录不存在。")
 				return
 			}
-			if err := h.history.SetDir(chatID, dir); err != nil {
+			pickCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := h.cli.SetDir(pickCtx, chatID, dir); err != nil {
 				h.notifyWithPromptID(chatID, h.PromptIDForPickers(chatID), "error", "工作目录", "设置失败："+err.Error())
 				return
 			}
@@ -154,7 +149,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 		return "async", "", ""
 	}
 	if arg == "clear" {
-		if err := h.history.SetDir(chatID, ""); err != nil {
+		if err := h.cli.SetDir(ctx, chatID, ""); err != nil {
 			return "error", "工作目录", "清除失败：" + err.Error()
 		}
 		return "success", "已恢复默认", "已清除自定义工作目录，将使用全局 " + root + "。"
@@ -164,7 +159,7 @@ func (h *Handler) cmdDirectory(chatID, arg string) (level, title, body string) {
 	if err != nil {
 		return "error", "工作目录", err.Error()
 	}
-	if err := h.history.SetDir(chatID, dir); err != nil {
+	if err := h.cli.SetDir(ctx, chatID, dir); err != nil {
 		return "error", "工作目录", "设置失败：" + err.Error()
 	}
 	return "success", "已切换目录", "工作目录已切换到 " + dir + "（下次提问生效）。"

@@ -18,28 +18,25 @@ type controlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
 }
 
-// Handler owns the per-process agent state: the LLM client, the emit
-// channel, the loop config derived from config.MiniAgent, and the optional
-// per-chat history. One Handler per process; each turn runs on its own
-// goroutine.
+// Handler owns the per-process bridge state: the IPC sender, the CLI
+// subprocess client (one fork per turn), the CLIState for state-access
+// subcommands, and the picker/answer-broker machinery. One Handler per
+// process; each turn runs on its own goroutine.
 //
 // cancelBy enforces busy-then-drop per chat: a chat with an in-flight turn
 // rejects new prompts with a Notice instead of starting a second concurrent
-// turn (which would race on the LLM, the history jsonl, and the emit
-// ordering). wg tracks runTurn goroutines so Close can wait for them.
+// turn (which would race on the LLM and the emit ordering). wg tracks
+// runTurn goroutines so Close can wait for them.
 type Handler struct {
-	llm             Client
-	modelLister     ModelLister // for /models + /model picker; nil in CLI mode when no LLM creds at bridge
-	cfg             LoopConfig
 	rpc             controlSender
 	logger          *log.Logger
-	history         *History  // nil → stateless (MemoryEnabled=false)
-	facts           FactStore // nil → long-term memory disabled
+	cli             *CLIState // may be nil when state-dir is empty (stateless mode)
 	answers         *answerBroker
-	workspaceRoot   string             // global default for tools + /cd picker scope
+	workspaceRoot   string             // global default for the /cd picker scope
+	cfgModel        string             // global default model (from config)
 	cfgPermission   string             // global default permission mode (from config)
-	client          *miniclient.Client // non-nil → CLI subprocess mode (P3)
-	historyDir      string             // state dir for CLI's --state-dir flag
+	stateDir        string             // passed to miniagent as --state-dir per turn
+	client          *miniclient.Client // non-nil → CLI subprocess mode
 	pickerPromptIDs sync.Map           // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
@@ -49,24 +46,32 @@ type Handler struct {
 	closeOnce sync.Once
 }
 
-func New(llm Client, cfg LoopConfig, rpc controlSender, logger *log.Logger, history *History, facts FactStore, workspaceRoot string, client *miniclient.Client, cfgPermission string, ml ModelLister) *Handler {
+// New builds a Handler. rpc emits Controls to the frontend; cli wraps the
+// miniagent binary for state-access subcommands (nil = stateless); client
+// is the per-turn fork runner. cfgModel/cfgPermission supply the global
+// defaults a chat uses when it has no per-chat pin.
+func New(rpc controlSender, logger *log.Logger, cli *CLIState, workspaceRoot, stateDir string, client *miniclient.Client, cfgModel, cfgPermission string) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
 	return &Handler{
-		llm:           llm,
-		modelLister:   ml,
-		cfg:           cfg,
 		rpc:           rpc,
 		logger:        logger,
-		history:       history,
-		facts:         facts,
+		cli:           cli,
 		answers:       newAnswerBroker(),
 		workspaceRoot: workspaceRoot,
+		stateDir:      stateDir,
 		cfgPermission: cfgPermission,
+		cfgModel:      cfgModel,
 		client:        client,
 		cancelBy:      make(map[string]*promptCancel),
 	}
+}
+
+// SetHistoryDir sets the state directory passed to miniagent as --state-dir.
+// Kept as a separate setter for backwards compatibility with cmd/miniagent-back.
+func (h *Handler) SetHistoryDir(dir string) {
+	h.stateDir = dir
 }
 
 // SetPromptIDForPickers stores the promptID for a chat so async picker
@@ -87,12 +92,6 @@ func (h *Handler) PromptIDForPickers(chatID string) string {
 	}
 	s, _ := v.(string)
 	return s
-}
-
-// SetHistoryDir sets the state directory passed to miniagent as
-// --state-dir so the CLI subprocess can load/save per-chat history.
-func (h *Handler) SetHistoryDir(dir string) {
-	h.historyDir = dir
 }
 
 // HandleEvent dispatches Prompt events. Each prompt launches runTurn on its
@@ -150,7 +149,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// commands so it does not itself occupy a turn slot (which would make it
 	// appear as a running session).
 	if prompt == "/running" {
-		level, title, body := h.cmdRunning(chatID, "")
+		level, title, body := h.cmdRunning(ctx, chatID, "")
 		h.notifyWithPromptID(chatID, promptID, level, title, body)
 		return nil
 	}
@@ -193,14 +192,16 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 }
 
 // runTurn dispatches one turn: CLI subprocess mode (client != nil) or
-// in-process loop mode (client == nil). Both share the same per-chat state
-// (session/model/dir) and lifecycle (startTurn/endTurn/abort/close).
+// runTurn dispatches one turn to the CLI subprocess. The bridge always runs
+// in CLI subprocess mode (no in-process ReAct loop); if client is nil, the
+// prompt is dropped with a notice (misconfiguration: no miniclient wired).
 func (h *Handler) runTurn(ctx context.Context, promptID, chatID, prompt string) {
-	if h.client != nil {
-		h.runViaCLI(ctx, promptID, chatID, prompt)
+	if h.client == nil {
+		h.logger.Error("miniagent: no miniclient wired; dropping turn", log.FieldChatID, chatID, log.FieldPromptID, promptID)
+		h.notifyWithPromptID(chatID, promptID, "error", "配置错误", "miniagent 客户端未初始化。")
 		return
 	}
-	h.runViaLoop(ctx, promptID, chatID, prompt)
+	h.runViaCLI(ctx, promptID, chatID, prompt)
 }
 
 // sendCtrl emits one Control on a fresh 10s ctx (decoupled from any turn ctx
