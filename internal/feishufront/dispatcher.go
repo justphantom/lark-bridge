@@ -140,11 +140,11 @@ func (d *Dispatcher) SetDedupConfig(staleWindow, eventTTL time.Duration, eventMa
 		if ttl <= 0 {
 			ttl = d.eventIDs.ttl
 		}
-		max := eventMaxEntries
-		if max <= 0 {
-			max = d.eventIDs.maxEntries
+		maxEntries := eventMaxEntries
+		if maxEntries <= 0 {
+			maxEntries = d.eventIDs.maxEntries
 		}
-		d.eventIDs.Configure(ttl, max)
+		d.eventIDs.Configure(ttl, maxEntries)
 	}
 }
 

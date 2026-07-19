@@ -97,7 +97,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	h.running = true
 	h.mu.Unlock()
 
-	go h.runDeploy(chatID, force)
+	go h.runDeploy(chatID, force) //nolint:gosec // G118: deploy must outlive the triggering request's ctx
 	label := "make " + h.cfg.DeployTarget
 	if force {
 		label += " ARGS=--force"
@@ -148,7 +148,7 @@ func (h *Handler) runDeploy(chatID string, force bool) {
 // 503 because the backend is not in the frontend's registry. We poll the
 // reconnect with 2s intervals up to 30s total.
 func (h *Handler) notifyWithRetry(chatID, level, title, message string) {
-	for attempt := 0; attempt < 15; attempt++ {
+	for attempt := range 15 {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := h.notify(ctx, chatID, level, title, message)
 		cancel()

@@ -402,8 +402,8 @@ func TestWriteFile_MissingPath(t *testing.T) {
 	}
 }
 
-// TestWriteFile_FileMode0644 verifies the default mode.
-func TestWriteFile_FileMode0644(t *testing.T) {
+// TestWriteFile_FileMode0600 verifies the default mode.
+func TestWriteFile_FileMode0600(t *testing.T) {
 	dir := t.TempDir()
 	w := WriteFile{WorkspaceRoot: dir}
 	if res := w.Call(context.Background(), `{"path":"m.txt","content":"x"}`); res.IsError {
@@ -413,8 +413,8 @@ func TestWriteFile_FileMode0644(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o644 {
-		t.Errorf("mode = %o, want 0644", got)
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %o, want 0600", got)
 	}
 }
 

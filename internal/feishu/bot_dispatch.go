@@ -7,9 +7,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/log"
 	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkimv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 func (b *Bot) handleP2MessageReceiveV1(ctx context.Context, event *larkimv1.P2MessageReceiveV1) error {

@@ -147,7 +147,7 @@ func TestHistory_TrimFiresOnManyShortMessages(t *testing.T) {
 	// Build many short turns. Each message carries the +4 overhead, so a few
 	// hundred easily exceed maxHistoryTokens (6000) even with empty content.
 	var msgs []Message
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		msgs = append(msgs,
 			Message{Role: "user", Content: "ok"},
 			Message{Role: "assistant", Content: "k"},

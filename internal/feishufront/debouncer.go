@@ -30,7 +30,7 @@ func newCardDebouncer(ctx context.Context, bot CardSink, interval time.Duration)
 		flushInterval: interval,
 		ctx:           ctx,
 	}
-	go d.flushLoop()
+	go d.flushLoop() //nolint:gosec // G118: ctx is the app-lifetime ctx from main, not request-scoped
 	return d
 }
 

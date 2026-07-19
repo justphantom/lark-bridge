@@ -120,7 +120,7 @@ func ensureDir(label, abs string, create bool) error {
 		if !create {
 			return fmt.Errorf("%s: directory does not exist: %s", label, abs)
 		}
-		if err := os.MkdirAll(abs, 0o755); err != nil {
+		if err := os.MkdirAll(abs, 0o750); err != nil {
 			return fmt.Errorf("%s: failed to create directory: %w", label, err)
 		}
 		return nil

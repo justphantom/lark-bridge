@@ -155,11 +155,11 @@ func TestHandleEvent_NonPromptIgnored(t *testing.T) {
 	}
 }
 
-var errBoom = &simpleErr{"boom"}
+var errBoom = &simpleError{"boom"}
 
-type simpleErr struct{ msg string }
+type simpleError struct{ msg string }
 
-func (e *simpleErr) Error() string { return e.msg }
+func (e *simpleError) Error() string { return e.msg }
 
 // slowLLM blocks on Do until release is closed, then returns its canned
 // response. Used to pin a turn in-flight so a second prompt hits busy.

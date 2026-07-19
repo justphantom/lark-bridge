@@ -211,7 +211,7 @@ func (c *Core) EmitAsync(promptID string, ctrl *protocol.Control) {
 			log.FieldControlType, ctrl.Type)
 		return
 	}
-	GoSafe(c.Logger, "emit:"+string(ctrl.Type), func() {
+	GoSafe(c.Logger, "emit:"+ctrl.Type, func() {
 		defer func() { <-c.emitSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

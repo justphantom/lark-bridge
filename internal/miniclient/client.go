@@ -180,7 +180,7 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 // replaceArg finds --flag <old> in args and replaces <old> with newval.
 // If --flag is not present, appends --flag newval.
 func replaceArg(args []string, flag, newval string) []string {
-	for i := 0; i < len(args)-1; i++ {
+	for i := range len(args) - 1 {
 		if args[i] == flag {
 			args[i+1] = newval
 			return args

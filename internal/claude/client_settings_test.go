@@ -167,7 +167,6 @@ func TestListSettings_CacheExpiresAfterTTL(t *testing.T) {
 // caching off: every call rescans.
 func TestListSettings_CacheDisabledWhenTTLZeroOrNegative(t *testing.T) {
 	for _, ttl := range []int{0, -1} {
-		ttl := ttl
 		t.Run("", func(t *testing.T) {
 			dir := writeSettingsFiles(t, "settings.json")
 			c := New(config.Claude{SettingsDir: dir, SettingsCacheTTL: ttl}, log.Nop())

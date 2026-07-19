@@ -147,7 +147,7 @@ func TestPrune_NewSinkIntegration(t *testing.T) {
 	stateDir := t.TempDir()
 	lg := log.Nop()
 	// history=3 → each NewSink prunes to keep 2 before adding 1 (net 3 cap).
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		w, c := NewSink(lg, stateDir, "claude", "c", "r", 3)
 		if w == nil {
 			t.Fatal("nil sink")

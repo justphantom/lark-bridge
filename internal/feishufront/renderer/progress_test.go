@@ -239,7 +239,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 	// don't collapse). Tools are appended in order; the last ones are the
 	// most recent.
 	total := maxRunningTools + 2
-	for i := 0; i < total; i++ {
+	for i := range total {
 		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go", false, "")
 	}
 	b, err := s.Render(hdr(), ftr())
@@ -258,7 +258,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 		}
 	}
 	// The oldest collapsed ones should NOT appear by their desc.
-	for i := 0; i < total-maxRunningTools; i++ {
+	for i := range total-maxRunningTools {
 		if strings.Contains(body, "/file"+strconv.Itoa(i)+".go") {
 			t.Errorf("collapsed running tool /file%d.go should not appear in card", i)
 		}
@@ -269,7 +269,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 // the count is within maxRunningTools (no collapse summary).
 func TestRender_RunningToolsUnderCap(t *testing.T) {
 	s := NewProgressState()
-	for i := 0; i < maxRunningTools; i++ {
+	for i := range maxRunningTools {
 		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go", false, "")
 	}
 	b, err := s.Render(hdr(), ftr())
@@ -280,7 +280,7 @@ func TestRender_RunningToolsUnderCap(t *testing.T) {
 	if strings.Contains(body, "个运行中") {
 		t.Errorf("should not collapse when within cap, got: %s", body)
 	}
-	for i := 0; i < maxRunningTools; i++ {
+	for i := range maxRunningTools {
 		if !strings.Contains(body, "/file"+strconv.Itoa(i)+".go") {
 			t.Errorf("expected /file%d.go in rendered card, got: %s", i, body)
 		}
@@ -355,7 +355,7 @@ func TestSummary_CountsByCategory(t *testing.T) {
 func TestRender_GroupedSummaryBeyondCap(t *testing.T) {
 	s := NewProgressState()
 	// 7 reads of distinct files (> maxCompletedTools=3) + 2 edits + 1 mcp.
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		s.AddToolUse("read", "/f"+strconv.Itoa(i)+".go", false, "")
 		s.AddToolResult("read", "", "ok", false, false, "")
 	}
@@ -494,7 +494,7 @@ func TestAddToolResult_SubagentFoldedThenNotificationNoPanic(t *testing.T) {
 	s := NewProgressState()
 	// Spawn more running subagents than maxRunningTools so the oldest collapse.
 	total := maxRunningTools + 2
-	for i := 0; i < total; i++ {
+	for i := range total {
 		s.AddToolUse("Explore Agent", "task "+strconv.Itoa(i), true, "T"+strconv.Itoa(i))
 	}
 	// Notification for the first (oldest, collapsed) subagent.

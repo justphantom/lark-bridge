@@ -74,12 +74,12 @@ func (h *History) NewSession(chatID string) (string, error) {
 		// Two NewSession calls within one second would share a filename.
 		sid = fmt.Sprintf("%s-%d", sid, now.Nanosecond())
 	}
-	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+	if err := os.MkdirAll(h.dir, 0o750); err != nil {
 		return "", err
 	}
 	// O_EXCL: a brand-new sid must never collide with an existing file; if it
 	// somehow does, erroring is safer than truncating prior history.
-	f, err := os.OpenFile(h.sessionPath(chatID, sid), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(h.sessionPath(chatID, sid), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +197,7 @@ func (h *History) current(chatID string) string {
 // session. The temp file lives in the same directory as the target so the
 // rename is atomic on POSIX (same filesystem).
 func (h *History) writeCur(chatID, sid string) error {
-	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+	if err := os.MkdirAll(h.dir, 0o750); err != nil {
 		return err
 	}
 	target := h.curPathFor(chatID)

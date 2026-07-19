@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/strutil"
 	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // maxContentSize is the maximum byte length of raw markdown text sent

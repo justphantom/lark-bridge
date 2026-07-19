@@ -23,10 +23,11 @@ func TestShouldEmitText_ThrottlesWithinInterval(t *testing.T) {
 	if !th.ShouldEmitText(base) {
 		t.Fatal("first call should emit")
 	}
-	// Subsequent calls within the interval must be suppressed.
-	for _, offset := range []time.Duration{10, 50, 100, 199} {
-		if th.ShouldEmitText(base.Add(offset * time.Millisecond)) {
-			t.Errorf("call at +%dms should be throttled", offset)
+		// Subsequent calls within the interval must be suppressed.
+		for _, offsetMS := range []int{10, 50, 100, 199} {
+			offset := time.Duration(offsetMS) * time.Millisecond
+			if th.ShouldEmitText(base.Add(offset)) {
+				t.Errorf("call at +%dms should be throttled", offsetMS)
 		}
 	}
 }
@@ -52,7 +53,7 @@ func TestShouldEmitText_EmitsAfterInterval(t *testing.T) {
 func TestShouldEmitText_ZeroIntervalAlwaysEmits(t *testing.T) {
 	th := NewControlThrottle(0)
 	now := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !th.ShouldEmitText(now.Add(time.Duration(i) * time.Microsecond)) {
 			t.Errorf("call %d: interval<=0 should always emit", i)
 		}
@@ -64,7 +65,7 @@ func TestShouldEmitText_ZeroIntervalAlwaysEmits(t *testing.T) {
 func TestShouldEmitText_ConcurrentSafe(t *testing.T) {
 	th := NewControlThrottle(time.Millisecond)
 	done := make(chan struct{}, 4)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			for j := 0; j < 100; j++ {
@@ -72,7 +73,7 @@ func TestShouldEmitText_ConcurrentSafe(t *testing.T) {
 			}
 		}()
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		<-done
 	}
 }

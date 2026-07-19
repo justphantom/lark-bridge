@@ -135,7 +135,7 @@ func TestStartPrompt_ConcurrentSerialization(t *testing.T) {
 	var winners int64
 	var wg sync.WaitGroup
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			defer wg.Done()
 			_, mine, ok := c.StartPrompt(context.Background(), "race")

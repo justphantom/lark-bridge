@@ -60,14 +60,14 @@ func truncateOutput(s string) string {
 	return truncateRunes(s, maxToolOutputLen)
 }
 
-// truncateRunes caps s to max runes, appending "…" if truncated.
-func truncateRunes(s string, max int) string {
-	if max <= 0 {
+// truncateRunes caps s to maxRunes runes, appending "…" if truncated.
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
 		return ""
 	}
 	runes := []rune(s)
-	if len(runes) <= max {
+	if len(runes) <= maxRunes {
 		return s
 	}
-	return string(runes[:max]) + "…"
+	return string(runes[:maxRunes]) + "…"
 }

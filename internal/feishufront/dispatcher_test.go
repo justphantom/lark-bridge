@@ -174,7 +174,7 @@ func TestDedupSetMaxEntries(t *testing.T) {
 // existing TTL-only behavior is preserved for actionIDs/terminals.
 func TestDedupSetMaxEntriesZero(t *testing.T) {
 	s := newDedupSet(time.Hour, 0)
-	for i := 0; i < 1500; i++ {
+	for i := range 1500 {
 		if !s.Add("id" + itoa(i)) {
 			t.Fatalf("Add id%d should be true (unbounded)", i)
 		}

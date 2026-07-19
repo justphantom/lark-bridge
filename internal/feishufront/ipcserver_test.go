@@ -262,7 +262,7 @@ func TestReconnect_OldHandlerDoesNotEvictNewConn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("old connect: %v", err)
 	}
-	defer old.Body.Close()
+	defer func() { _ = old.Body.Close() }()
 	// Drain the initial registration so the conn is established.
 	time.Sleep(50 * time.Millisecond)
 
@@ -410,14 +410,14 @@ func TestIPCServer_SetLoggerConcurrent(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			srv.fireCallback(srv.onOffline.Load(), "back-1", "claude", "offline")
 		}
 	}()
 
 	// Writer side: swap loggers concurrently. Each SetLogger stores a fresh
 	// pointer; the atomic must keep the field consistent for readers.
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		srv.SetLogger(log.Nop())
 	}
 	<-done

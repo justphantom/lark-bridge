@@ -79,13 +79,13 @@ func (w WriteFile) Call(_ context.Context, args string) ToolResult {
 	// MkdirAll so the LLM can write src/new.go without a separate mkdir
 	// tool. The parent dir is already bounded to workspace_root by
 	// resolveUnderRoot, so this cannot create dirs outside it.
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("创建父目录失败：%v", err)}
 	}
 	// 0644: standard project-file mode (owner rw, group/other r). Matches
 	// what `cat > file` or an editor produces, so the file interops with
 	// shell/git without surprising permission diffs.
-	if err := os.WriteFile(full, []byte(a.Content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(a.Content), 0o600); err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("写入 %q 失败：%v", a.Path, err)}
 	}
 	return ToolResult{Output: fmt.Sprintf("已写入 %d 字节到 %s", len(a.Content), a.Path)}

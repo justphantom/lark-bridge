@@ -62,13 +62,13 @@ func TestEmitCLIEvent_Incomplete_PropagatesAndFillsText(t *testing.T) {
 func TestEmitCLIEvent_NormalResultUnchanged(t *testing.T) {
 	h, sender := newCLIHandler(t)
 	ev := miniclient.Event{
-		Kind:       miniclient.KindResult,
-		Text:       "测试全部通过。",
-		Model:      "kimi",
-		InputTokens: 320,
+		Kind:         miniclient.KindResult,
+		Text:         "测试全部通过。",
+		Model:        "kimi",
+		InputTokens:  320,
 		OutputTokens: 48,
-		Steps:      3,
-		IsTerminal: true,
+		Steps:        3,
+		IsTerminal:   true,
 	}
 	h.emitCLIEvent("chat-1", "prompt-1", ev, time.Now())
 

@@ -124,7 +124,7 @@ func (s *FileFactStore) load(scope FactScope, chatID string) (map[string]Fact, e
 // save writes the backing file atomically (temp+rename) under a write lock.
 func (s *FileFactStore) save(scope FactScope, chatID string, facts map[string]Fact) error {
 	path := s.scopedFile(scope, chatID)
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, 0o750); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(s.dir, ".memory-*.tmp")

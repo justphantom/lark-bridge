@@ -291,7 +291,6 @@ func TestListModels_CacheExpiresAfterTTL(t *testing.T) {
 // <= 0 turns caching off: every call forks the CLI.
 func TestListModels_CacheDisabledWhenTTLZeroOrNegative(t *testing.T) {
 	for _, ttl := range []int{0, -1} {
-		ttl := ttl
 		t.Run(fmt.Sprintf("ttl=%d", ttl), func(t *testing.T) {
 			bin, count := countingFakeOpencode(t)
 			c := New(Config{CLIPath: bin, ListCacheTTL: ttl}, log.Nop())

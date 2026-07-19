@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/justphantom/lark-bridge/internal/log"
 	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // newSendOnlyBot builds a Bot whose channel/imService are nil. The send
@@ -117,7 +118,7 @@ func (f *fakeChannel) OnReconnected(func())                                     
 func (f *fakeChannel) OnDisconnected(func())                                               {}
 func (f *fakeChannel) Start(context.Context) error                                         { return nil }
 func (f *fakeChannel) Stream(context.Context, *sdktypes.SendInput) (sdktypes.StreamController, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // sdk contract: (nil, nil) signals "no stream supported" by this fake
 }
 func (f *fakeChannel) UpdatePolicy(sdktypes.PolicyConfig)                   {}
 func (f *fakeChannel) GetPolicy() sdktypes.PolicyConfig                     { return sdktypes.PolicyConfig{} }

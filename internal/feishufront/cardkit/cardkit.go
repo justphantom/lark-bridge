@@ -31,15 +31,15 @@ const InteractiveTimeout = 10 * time.Minute
 // truncateRunes caps s to max runes, appending "…" if truncated. Duplicated
 // from renderer.truncateRunes rather than exported, because renderer is an
 // internal sibling and only two call sites exist.
-func truncateRunes(s string, max int) string {
-	if max <= 0 {
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
 		return ""
 	}
 	runes := []rune(s)
-	if len(runes) <= max {
+	if len(runes) <= maxRunes {
 		return s
 	}
-	return string(runes[:max]) + "…"
+	return string(runes[:maxRunes]) + "…"
 }
 
 // HeaderInfo describes a card header: backendType prefixes the title,

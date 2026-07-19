@@ -70,7 +70,7 @@ func RenderResult(ctrl *protocol.Control, header cardkit.HeaderInfo, footer card
 		}
 	}
 	if ctrl.Result.Duration > 0 {
-		stats = append(stats, fmt.Sprintf("⏱ %s", formatDuration(time.Duration(ctrl.Result.Duration))))
+		stats = append(stats, fmt.Sprintf("⏱ %s", formatDuration(ctrl.Result.Duration)))
 	}
 	if ctrl.Result.Steps > 0 {
 		stats = append(stats, fmt.Sprintf("🔄 %d 轮", ctrl.Result.Steps))

@@ -50,14 +50,17 @@ func resolveUnderRoot(root, p string) (string, error) {
 	realParent, err := filepath.EvalSymlinks(filepath.Dir(full))
 	if err != nil {
 		// Missing parent (e.g. root itself not yet created) — fall back to
-		// the string check above, which is the best we can do.
+		// the string check above, which is the best we can do. The error is
+		// intentionally swallowed: returning it would break the common case
+		// of writing a file whose parent dir does not yet exist.
+		_ = err
 		return full, nil
 	}
-	real := filepath.Join(realParent, filepath.Base(full))
-	if err := checkUnderRoot(root, real, p); err != nil {
+	resolved := filepath.Join(realParent, filepath.Base(full))
+	if err := checkUnderRoot(root, resolved, p); err != nil {
 		return "", err
 	}
-	return real, nil
+	return resolved, nil
 }
 
 // checkUnderRoot is the string-level containment test shared by the pre- and

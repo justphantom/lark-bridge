@@ -107,7 +107,7 @@ func drainUntilTerminal(t *testing.T, reg *feishufront.BackendRegistry) []*proto
 func controlTypes(controls []*protocol.Control) []string {
 	types := make([]string, len(controls))
 	for i, c := range controls {
-		types[i] = string(c.Type)
+		types[i] = c.Type
 	}
 	return types
 }

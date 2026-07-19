@@ -76,7 +76,7 @@ func run(cfgPath string) error {
 	// The CLI binary (github.com/justphantom/miniagent) lives alongside
 	// this binary in the deploy dir.
 	cliPath := filepath.Join(filepath.Dir(os.Args[0]), "miniagent")
-	if _, err := os.Stat(cliPath); err != nil {
+	if _, err := os.Stat(cliPath); err != nil { //nolint:gosec // G703: cliPath derives from our own argv[0], not user input
 		// Fallback: check /usr/local/bin (make deploy from miniagent repo).
 		cliPath = "/usr/local/bin/miniagent"
 	}

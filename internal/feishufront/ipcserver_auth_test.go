@@ -28,7 +28,7 @@ func newAuthTestServer(t *testing.T, secret string) (*httptest.Server, *BackendR
 
 func doSSE(t *testing.T, ts *httptest.Server, authHeader string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest("GET", ts.URL+"/v1/events?backendID=back-1&backendType=claude", nil)
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/events?backendID=back-1&backendType=claude", nil)
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -46,7 +46,7 @@ func postControl(t *testing.T, ts *httptest.Server, authHeader string) int {
 	t.Helper()
 	ctrl := &protocol.Control{Type: protocol.TypeText, BackendID: "back-1", Text: &protocol.TextPayload{Delta: "x"}}
 	body, _ := json.Marshal(ctrl)
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/control/back-1", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/control/back-1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)

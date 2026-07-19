@@ -105,31 +105,6 @@ func New(path string, logger *log.Logger) (*Store, error) {
 	return s, nil
 }
 
-// load reads the persisted totals. A missing file is not an error. A malformed
-// file or unsupported version is a hard error: returning nil would reset
-// totals to zero and the next save would overwrite, permanently losing
-// accumulated accounting.
-func (s *Store) load() error {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read %s: %w", s.path, err)
-	}
-	var f fileShape
-	if err := json.Unmarshal(data, &f); err != nil {
-		return fmt.Errorf("parse %s: %w; back up or remove the file", s.path, err)
-	}
-	if f.Version != fileVersion {
-		return fmt.Errorf("unsupported version %d (expected %d); back up or remove the file", f.Version, fileVersion)
-	}
-	if f.Sessions != nil {
-		s.sessions = f.Sessions
-	}
-	return nil
-}
-
 // Add accumulates d into the session's entry and schedules a save. A new
 // sessionID creates the entry; an existing one adds to its totals. ChatID is
 // recorded once on creation and not overwritten (a session is bound to one
@@ -154,6 +129,75 @@ func (s *Store) Add(d Delta) {
 	e.LastUpdate = now
 	s.mu.Unlock()
 	s.saveAsync()
+}
+
+// Close stops the save coalescer and performs a final synchronous save so the
+// last Add before shutdown is not lost. Idempotent. In-memory stores (empty
+// path) are a no-op.
+func (s *Store) Close() {
+	s.closeOnce.Do(func() {
+		if s.saveStop == nil {
+			return
+		}
+		close(s.saveStop)
+		<-s.saveDone
+		if err := s.save(); err != nil {
+			s.logger.Error("usage final save failed",
+				log.FieldPath, s.path,
+				log.FieldError, err)
+		}
+	})
+}
+
+// Snapshot returns a copy of every session's entry. Owned by the caller.
+func (s *Store) Snapshot() []Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Entry, 0, len(s.sessions))
+	for _, e := range s.sessions {
+		out = append(out, *e)
+	}
+	return out
+}
+
+// Get returns a copy of the session's accumulated entry. ok is false when the
+// session has no recorded history (first turn) or the store is nil.
+func (s *Store) Get(sessionID string) (Entry, bool) {
+	if s == nil || sessionID == "" {
+		return Entry{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.sessions[sessionID]
+	if !ok {
+		return Entry{}, false
+	}
+	return *e, true
+}
+
+// load reads the persisted totals. A missing file is not an error. A malformed
+// file or unsupported version is a hard error: returning nil would reset
+// totals to zero and the next save would overwrite, permanently losing
+// accumulated accounting.
+func (s *Store) load() error {
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", s.path, err)
+	}
+	var f fileShape
+	if err := json.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("parse %s: %w; back up or remove the file", s.path, err)
+	}
+	if f.Version != fileVersion {
+		return fmt.Errorf("unsupported version %d (expected %d); back up or remove the file", f.Version, fileVersion)
+	}
+	if f.Sessions != nil {
+		s.sessions = f.Sessions
+	}
+	return nil
 }
 
 // saveAsync schedules a save on the worker goroutine. Coalesces: if multiple
@@ -209,48 +253,4 @@ func (s *Store) save() error {
 		return fmt.Errorf("save %s: %w", s.path, err)
 	}
 	return nil
-}
-
-// Close stops the save coalescer and performs a final synchronous save so the
-// last Add before shutdown is not lost. Idempotent. In-memory stores (empty
-// path) are a no-op.
-func (s *Store) Close() {
-	s.closeOnce.Do(func() {
-		if s.saveStop == nil {
-			return
-		}
-		close(s.saveStop)
-		<-s.saveDone
-		if err := s.save(); err != nil {
-			s.logger.Error("usage final save failed",
-				log.FieldPath, s.path,
-				log.FieldError, err)
-		}
-	})
-}
-
-// Snapshot returns a copy of every session's entry. Owned by the caller.
-func (s *Store) Snapshot() []Entry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]Entry, 0, len(s.sessions))
-	for _, e := range s.sessions {
-		out = append(out, *e)
-	}
-	return out
-}
-
-// Get returns a copy of the session's accumulated entry. ok is false when the
-// session has no recorded history (first turn) or the store is nil.
-func (s *Store) Get(sessionID string) (Entry, bool) {
-	if s == nil || sessionID == "" {
-		return Entry{}, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.sessions[sessionID]
-	if !ok {
-		return Entry{}, false
-	}
-	return *e, true
 }
