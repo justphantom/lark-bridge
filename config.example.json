@@ -7,7 +7,7 @@
   "ipc_secret":   "${IPC_SECRET}",
   "ipc_addr":     "${IPC_ADDR}",
   "backend_id":   "claude-1",
-  "frontend_url": "http://${IPC_ADDR}",
+  "frontend_url": "${FRONTEND_URL}",
 
   "claude": {
     "cli_path":            "claude",

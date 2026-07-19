@@ -6,6 +6,14 @@
 #   ./deploy/deploy.sh            # 使用 repo 根目录已有的 claude-config.json 和 .env
 #   ./deploy/deploy.sh --init     # 首次部署，自动从 example 生成 claude-config.json 和 .env
 #   ./deploy/deploy.sh --force    # 强制部署，跳过运行中会话检查
+#   ./deploy/deploy.sh --binaries <tar|dir>
+#                                # 跳过 make build，从已编译产物部署（目标机免 Go/免 repo）。
+#                                # <tar>：make pack 产出的 tarball，解包取顶层二进制；
+#                                # <dir>：已解包目录，内含 lark-* 二进制。
+#   ./deploy/deploy.sh --services claude,opencode
+#                                # 只部署指定服务子集（逗号分隔，可用：feishu claude
+#                                # opencode miniagent）。默认全量。多主机部署时每台机
+#                                # 用不同子集：前端机 --services feishu，后端机 --services claude,...
 #
 # 可选环境变量：
 #   IPC_ADDR   IPC 监听地址（默认 localhost:6060）
@@ -45,7 +53,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-SERVICES=(lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back)
+# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 4 个业务服务。
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -205,28 +213,102 @@ WantedBy=multi-user.target
 EOF
 }
 
+# ── 参数解析 ──────────────────────────────────────────
+# 全部 flag 在此一次性解析到变量，后续不再直接读 $1（旧的 --init/--force
+# 位置检查改为读 $INIT/$FORCE）。--binaries / --services 接受紧跟的下一个参数。
+BINARIES_SRC=""
+SERVICES_ARG=""
+INIT=false
+FORCE=false
+prev=""
+for arg in "$@"; do
+    if [[ -n "$prev" ]]; then
+        case "$prev" in
+            --binaries) BINARIES_SRC="$arg" ;;
+            --services) SERVICES_ARG="$arg" ;;
+        esac
+        prev=""; continue
+    fi
+    case "$arg" in
+        --init)        INIT=true ;;
+        --force)       FORCE=true ;;
+        --binaries|--services) prev="$arg" ;;
+        *)             fail "未知参数：$arg（可用：--init --force --binaries <path> --services <list>）" ;;
+    esac
+done
+[[ -z "$prev" ]] || fail "${prev} 需要一个参数"
+
+# 服务短名 ↔ unit/配置/依赖/提权 映射。新增 backend 仅在此登记四处即可被
+# --services 识别，无需改部署流程的各操作点。
+svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
+svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; miniagent) echo miniagent-config.json;; esac; }
+# backend 依赖前端 listen 且需提权（透传外部 CLI）；feishu-front 两者皆无。
+svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
+svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
+
+# SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
+# SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
+SELECTED=()
+if [[ -n "$SERVICES_ARG" ]]; then
+    IFS=',' read -ra _parts <<< "$SERVICES_ARG"
+    for s in "${_parts[@]}"; do
+        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode miniagent）"
+        SELECTED+=("$s")
+    done
+else
+    SELECTED=(feishu claude opencode miniagent)
+fi
+SERVICES=()
+for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
+
 # ── 前置检查 ──────────────────────────────────────────
-[[ -f "$PROJECT_ROOT/Makefile" ]] || fail "未找到 Makefile，请在 repo 根目录运行"
-command -v go   >/dev/null || fail "未安装 Go"
-command -v make >/dev/null || fail "未安装 make"
+# 仅源码构建模式（无 --binaries）才要求本机有 Makefile/go/make；
+# --binaries 模式目标机无需 Go 工具链与 repo 源码。
+if [[ -z "$BINARIES_SRC" ]]; then
+    [[ -f "$PROJECT_ROOT/Makefile" ]] || fail "未找到 Makefile，请在 repo 根目录运行"
+    command -v go   >/dev/null || fail "未安装 Go"
+    command -v make >/dev/null || fail "未安装 make"
+fi
 
 # ── 步骤 0：部署前会话检查（先于构建，避免浪费编译时间）──
-if [[ "${1:-}" == "--force" ]]; then
+if $FORCE; then
     warn "--force：跳过运行中会话检查，强制部署（可能打断正在进行的对话）"
 else
     info "检查运行中会话..."
     preflight_inflight_check
 fi
 
-# ── 步骤 1：构建 ──────────────────────────────────────
-info "构建二进制..."
-make -C "$PROJECT_ROOT" build
+# ── 步骤 1：准备二进制 ────────────────────────────────
+# 源码模式：make build 本机编译。--binaries 模式：从 tarball 解包或从目录复制，
+# 解耦编译与部署（目标机无需 Go/repo）。两种模式产物都落到 BIN_DIR，后续
+# cp 到 DEPLOY_DIR 的流程不变。
+ensure_binaries() {
+    mkdir -p "$BIN_DIR"
+    if [[ -z "$BINARIES_SRC" ]]; then
+        info "构建二进制（源码编译）..."
+        make -C "$PROJECT_ROOT" build
+        return
+    fi
+    if [[ -f "$BINARIES_SRC" ]]; then
+        info "从 tarball 解包二进制：$BINARIES_SRC"
+        tar -xzf "$BINARIES_SRC" -C "$BIN_DIR"
+    elif [[ -d "$BINARIES_SRC" ]]; then
+        info "从目录复制二进制：$BINARIES_SRC"
+        cp "$BINARIES_SRC"/lark-* "$BIN_DIR/" 2>/dev/null || cp "$BINARIES_SRC"/* "$BIN_DIR/"
+    else
+        fail "--binaries 路径不存在：$BINARIES_SRC"
+    fi
+    chmod 755 "$BIN_DIR"/lark-* 2>/dev/null || true
+}
+ensure_binaries
 [[ -x "$BIN_DIR/lark-feishu-front" ]]   || fail "构建产物缺失：lark-feishu-front"
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
 # NOTE: miniagent binary (github.com/justphantom/miniagent) must be
 # deployed separately via its own Makefile. It lives at /usr/local/bin/miniagent.
+# NOTE: lark-deploy-monitor 在本 tarball 内但不归 deploy.sh 管（由 upgrade-monitor.sh
+# 独立部署）；解包后留在 BIN_DIR 无害，下方 cp 会一并落到 DEPLOY_DIR 供其覆盖。
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
 # 四个进程各用独立 config：claude/opencode/miniagent/feishu-config.json。
@@ -240,8 +322,16 @@ info "准备配置文件..."
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-if [[ "${1:-}" == "--init" ]]; then
-    [[ -f "$PROJECT_ROOT/.env" ]] || cp "$PROJECT_ROOT/deploy/env.example" "$PROJECT_ROOT/.env"
+if $INIT; then
+    if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
+        if [[ -f "$PROJECT_ROOT/deploy/env.example" ]]; then
+            cp "$PROJECT_ROOT/deploy/env.example" "$PROJECT_ROOT/.env"
+        elif [[ -f "$BIN_DIR/env.example" ]]; then
+            cp "$BIN_DIR/env.example" "$PROJECT_ROOT/.env"
+        else
+            fail "找不到 env.example 模板（repo deploy/ 或 tarball）"
+        fi
+    fi
     # 生成 IPC_SECRET（仅匹配未改过的占位符）
     if grep -q '^IPC_SECRET=change-me' "$PROJECT_ROOT/.env" 2>/dev/null; then
         secret="$(openssl rand -hex 32)"
@@ -263,11 +353,16 @@ check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
 check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
 check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
 
-# 基础 config：优先用 repo 里用户自定义的 claude-config.json，否则 fallback 到 example
+# 基础 config 真源优先级：repo 自定义 > repo example > tarball 解包的 example（--binaries
+# 部署目标机可能无 repo 源码，仅 tarball + deploy.sh）。
 if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
     cp "$PROJECT_ROOT/claude-config.json" "$STAGE/claude-config.json"
-else
+elif [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
     cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
+elif [[ -f "$BIN_DIR/config.example.json" ]]; then
+    cp "$BIN_DIR/config.example.json" "$STAGE/claude-config.json"
+else
+    fail "找不到 config 基底（claude-config.json / config.example.json）"
 fi
 
 # state_dir / ipc_addr / frontend_url 已在 config 模板里写成 ${STATE_DIR} / ${IPC_ADDR}
@@ -325,19 +420,18 @@ info "复制二进制和配置..."
 # 临时文件落在同一 $DEPLOY_DIR，确保 mv 是同卷 rename（原子、不跨设备）。
 # 业务服务已在 stop_services 停止，rename 同样安全。
 # 注意：deploy-monitor 的二进制不在此流程内——它由 upgrade-monitor.sh 独立管理。
-for f in "$BIN_DIR"/*; do
-    [[ -f "$f" ]] || continue
-    name="$(basename "$f")"
-    sudo cp "$f" "$DEPLOY_DIR/.${name}.new"
-    sudo mv -f "$DEPLOY_DIR/.${name}.new" "$DEPLOY_DIR/$name"
+for s in "${SELECTED[@]}"; do
+    u="$(svc_unit "$s")"
+    [[ -f "$BIN_DIR/$u" ]] || fail "构建产物缺失：$u（--binaries 产物或 make build 输出不全）"
+    sudo cp "$BIN_DIR/$u" "$DEPLOY_DIR/.${u}.new"
+    sudo mv -f "$DEPLOY_DIR/.${u}.new" "$DEPLOY_DIR/$u"
 done
 sudo chmod 755 "$DEPLOY_DIR"/*
 
 # config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
-sudo cp "$STAGE/claude-config.json"        "$CONFIG_DIR/"
-sudo cp "$STAGE/opencode-config.json"      "$CONFIG_DIR/"
-sudo cp "$STAGE/miniagent-config.json"     "$CONFIG_DIR/"
-sudo cp "$STAGE/feishu-config.json"        "$CONFIG_DIR/"
+for s in "${SELECTED[@]}"; do
+    sudo cp "$STAGE/$(svc_config "$s")" "$CONFIG_DIR/"
+done
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
 # .env 以 repo 根目录的为唯一真源：每次部署先在 repo 根 .env 上同步本次
@@ -366,6 +460,12 @@ if ! grep -q '^WORKSPACE_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null || \
     update_env_key WORKSPACE_ROOT "$WORKSPACE_ROOT_DEFAULT" "$PROJECT_ROOT/.env"
     info "WORKSPACE_ROOT 自动设为 $WORKSPACE_ROOT_DEFAULT（PROJECT_ROOT 的上一级）"
 fi
+# FRONTEND_URL：单机默认 http://$IPC_ADDR。仅当 .env 未设或为空时推导；
+# 多机部署由运维显式设前端机可达地址（不被覆盖）。
+if ! grep -q '^FRONTEND_URL=' "$PROJECT_ROOT/.env" 2>/dev/null || \
+   grep -q '^FRONTEND_URL=$' "$PROJECT_ROOT/.env" 2>/dev/null; then
+    update_env_key FRONTEND_URL "http://$IPC_ADDR" "$PROJECT_ROOT/.env"
+fi
 sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
 info "已覆盖 $CONFIG_DIR/.env（以 repo 根 .env 为真源）"
@@ -376,10 +476,10 @@ sudo chown -R "$RUN_USER:$RUN_USER" "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
 # ── 步骤 4：生成 systemd unit（动态用户）─────────────
 info "生成 systemd unit 文件（User=$RUN_USER）..."
 
-write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
-write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front "" true
-write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front "" true
-write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front "" true
+for s in "${SELECTED[@]}"; do
+    u="$(svc_unit "$s")"
+    write_unit "$u" "$u" "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "" "$(svc_privileged "$s")"
+done
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
 info "启动服务..."
@@ -387,13 +487,21 @@ sudo systemctl daemon-reload
 # enable 所有服务开机自启，但不 --now；下面显式控制启动顺序。
 sudo systemctl enable "${SERVICES[@]}" 2>/dev/null || true
 
-# 先起前端，等 IPC 端口 listen，避免后端连不上而崩溃-重启
-sudo systemctl start lark-feishu-front
-wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
-wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
+# 先起前端（若本次部署含前端），等 IPC 端口 listen，避免后端连不上而崩溃-重启。
+# 仅部署 backend 时前端已在运行，跳过等待直接起 backend。
+if [[ " ${SELECTED[*]} " == *" feishu "* ]]; then
+    sudo systemctl start lark-feishu-front
+    wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
+    wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
+fi
 
-# 端口已通，再起三个 CLI backend（并行，互不依赖）
-sudo systemctl start lark-claude-back lark-opencode-back lark-miniagent-back
+# 端口已通，再起选中的 backend（不含 feishu，并行互不依赖）
+backends=()
+for s in "${SELECTED[@]}"; do
+    [[ "$s" == "feishu" ]] && continue
+    backends+=("$(svc_unit "$s")")
+done
+[[ ${#backends[@]} -eq 0 ]] || sudo systemctl start "${backends[@]}"
 
 # ⚠ 运行前提：$RUN_USER 必须对 systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo，
 # 否则远程 /deploy（经 deploy-monitor 触发本脚本）会在 sudo 处挂起至超时。

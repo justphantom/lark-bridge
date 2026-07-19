@@ -215,3 +215,61 @@ journalctl -u lark-miniagent-back -f
 
 # 在飞书群里 @机器人 发消息，观察日志输出
 ```
+
+## 8. 二进制分发与灵活部署
+
+deploy.sh 支持三种正交维度，组合使用：
+
+- `--binaries <tar|dir>`：从已编译产物部署，目标机无需 Go/repo。
+- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode miniagent`）。
+- `--init` / `--force`：首次生成配置 / 跳过运行中会话检查。
+
+### 8.1 打包分发（编译与部署解耦）
+
+```bash
+# 构建机（有 Go + repo）
+make pack                          # 本机平台
+make pack GOOS=linux GOARCH=arm64  # 交叉编译
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
+#       + config.example.json + env.example（供 --init 首次部署）
+
+# 分发到目标机
+scp bin/lark-bridge-*.tar.gz host:/tmp/
+scp -r deploy host:/opt/lark-bridge/   # deploy.sh 本身不在 tarball 内
+
+# 目标机（免 Go / 免 repo）
+cd /opt/lark-bridge
+./deploy/deploy.sh --init --binaries /tmp/lark-bridge-*.tar.gz
+```
+
+### 8.2 部分部署
+
+```bash
+# 只更新 claude 后端（其余服务不动）
+./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services claude
+
+# 前端机只装前端
+./deploy/deploy.sh --init --binaries /tmp/xxx.tar.gz --services feishu
+```
+
+### 8.3 多主机分布式部署
+
+前后端分机部署：前端机跑 feishu-front（持有飞书长连接 + IPC server），backend 机跑 CLI 后端，通过 IPC 连前端。代码层无需改动——`ipc_addr` 经标准 `ListenAndServe` 监听，`frontend_url` 是 backend 拨号地址。
+
+```bash
+# ── 前端机（192.168.1.10）──────────────────────────
+# .env: IPC_ADDR 监听非 loopback；FRONTEND_URL 留空（前端不用）
+IPC_ADDR=0.0.0.0:6060
+./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services feishu
+
+# ── backend 机（192.168.1.20）──────────────────────
+# .env: FRONTEND_URL 指前端机；IPC_ADDR 本机无关（backend 不监听）
+FRONTEND_URL=http://192.168.1.10:6060
+./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services claude,opencode
+```
+
+要点：
+- `IPC_SECRET` 三机必须一致（鉴权共享）。
+- IPC 为明文 HTTP，跨机仅限可信内网；跨不可信网络请走 SSH 隧道或 wireguard。
+- `state_dir` 各机独立（会话绑定经 router_path 文件，前后端同机时才共享；分机时 router 文件随前端）。
+
