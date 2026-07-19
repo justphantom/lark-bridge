@@ -11,13 +11,16 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// sendInteractive renders and sends a permission-request or question card,
-// binds the requestID → messageID so a later card action can find it, caches
-// the rendered card bytes for the submitted/expired/finalised state flips,
-// and schedules the TTL expiry notice. Called by DispatchControl for
-// TypeQuestion controls.
+// sendInteractive renders a permission-request or question card and ships it.
+// When the owning turn already has a "处理中" progress card in flight, the
+// interactive card replaces it in place (UpdateCard on the same messageID) so
+// the chat keeps a single message rather than a placeholder next to a fresh
+// question card. It then binds requestID → messageID so a later card action can
+// find it, caches the rendered card bytes for the submitted/expired/finalised
+// state flips, and schedules the TTL expiry notice. Called by DispatchControl
+// for TypeQuestion controls.
 func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control, backendType string) error {
-	_, _, chatID, footer := d.resolveFooter(ctrl, backendType)
+	turn, _, chatID, footer := d.resolveFooter(ctrl, backendType)
 	footer.Status = "待确认"
 	header := cardkit.HeaderInfo{BackendType: backendType}
 	card, err := renderer.RenderQuestion(ctrl, header, footer)
@@ -25,9 +28,20 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		return err
 	}
 	requestID := ctrl.Question.RequestID
-	messageID, err := d.bot.SendCard(ctx, chatID, card, "")
-	if err != nil {
-		return err
+	// Take over the in-flight progress card when one exists; otherwise fall
+	// back to a standalone card.
+	reusesProgress := turn.MessageID != ""
+	var messageID string
+	if reusesProgress {
+		if err := d.bot.UpdateCard(ctx, turn.MessageID, card); err != nil {
+			return err
+		}
+		messageID = turn.MessageID
+	} else {
+		messageID, err = d.bot.SendCard(ctx, chatID, card, "")
+		if err != nil {
+			return err
+		}
 	}
 	if requestID != "" {
 		// Evict expired interactive bindings (and their cached card bytes)
@@ -38,7 +52,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 			delete(d.cards, rid)
 			d.cardMu.Unlock()
 		}
-		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID)
+		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID, reusesProgress)
 		d.cardMu.Lock()
 		d.cards[requestID] = card
 		// Schedule the expiry notice; if the user never responds within the
@@ -108,23 +122,26 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 // gatekept completed. No-op when the turn had no interactive card or the user
 // already submitted (the binding is gone). Each card's TTL timer is cancelled
 // so it cannot later overwrite the finalised form with an expiry notice.
+//
+// A card that took over its turn's progress card (reusesProgress) is skipped:
+// the result card already replaced the same messageID, so a separate
+// "已完成" flip would clobber it. Its timer and binding are still released.
 func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID string) {
-	for _, pair := range d.turns.InteractiveByPromptID(promptID) {
-		requestID, messageID := pair[0], pair[1]
+	for _, b := range d.turns.InteractiveByPromptID(promptID) {
 		d.cardMu.Lock()
-		orig := d.cards[requestID]
-		if t := d.interactiveTimers[requestID]; t != nil {
+		orig := d.cards[b.RequestID]
+		if t := d.interactiveTimers[b.RequestID]; t != nil {
 			t.Stop()
-			delete(d.interactiveTimers, requestID)
+			delete(d.interactiveTimers, b.RequestID)
 		}
-		delete(d.cards, requestID)
+		delete(d.cards, b.RequestID)
 		d.cardMu.Unlock()
-		d.turns.UnbindInteractive(requestID)
-		if orig == nil {
+		d.turns.UnbindInteractive(b.RequestID)
+		if orig == nil || b.ReusesProgress {
 			continue
 		}
 		if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
-			_ = d.bot.UpdateCard(ctx, messageID, fin)
+			_ = d.bot.UpdateCard(ctx, b.MessageID, fin)
 		}
 	}
 }

@@ -267,8 +267,9 @@ func TestInteractiveTimeout(t *testing.T) {
 	}
 }
 
-// TestInteractiveFinalizedOnResult verifies scheme ④: when a result control
-// lands for a prompt that still has a pending interactive card, the card is
+// TestInteractiveFinalizedOnResult covers a standalone interactive card (no
+// in-flight progress card to take over): when a result control lands for a
+// prompt that still has a pending standalone interactive card, the card is
 // flipped to a finalised state and its binding/timer released — it does not
 // linger grey forever.
 func TestInteractiveFinalizedOnResult(t *testing.T) {
@@ -280,10 +281,8 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 	if err := router.Set(chatID, backendID); err != nil {
 		t.Fatal(err)
 	}
-	// A turn owns the prompt the permission card is linked to.
-	disp.turns.Start("msg-6", chatID, "om-progress", backendID)
 
-	// Backend raises a permission request mid-turn.
+	// No turn in flight: the question card ships standalone (fresh SendCard).
 	permCtrl := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-6",
 		Question: &protocol.QuestionPayload{RequestID: "req-f", PromptID: "msg-6", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
@@ -316,9 +315,81 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 	}
 	sink.mu.Unlock()
 	if !seen {
-		t.Error("expected interactive card finalised with '本轮已完成'")
+		t.Error("expected standalone interactive card finalised with '本轮已完成'")
 	}
 	if _, ok := disp.turns.InteractiveMessageID("req-f"); ok {
+		t.Error("interactive binding should be released after result")
+	}
+}
+
+// TestInteractiveReusesProgressCard covers the reuse path: when a question
+// arrives mid-turn, it takes over the in-flight "处理中" card in place (same
+// messageID) instead of shipping a second card, and the result card then
+// replaces that same messageID — no standalone "已完成" flip may clobber it.
+func TestInteractiveReusesProgressCard(t *testing.T) {
+	const backendID = "opencode-7"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_chat7"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress"
+	disp.turns.Start("msg-7", chatID, progressMID, backendID)
+
+	permCtrl := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-7",
+		Question: &protocol.QuestionPayload{RequestID: "req-r", PromptID: "msg-7", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("permission: %v", err)
+	}
+	// The interactive card reuses the progress card's messageID — no extra
+	// SendCard beyond the initial progress placeholder.
+	mid, _ := disp.turns.InteractiveMessageID("req-r")
+	if mid != progressMID {
+		t.Fatalf("interactive messageID = %q, want reused %q", mid, progressMID)
+	}
+	sink.mu.Lock()
+	sends, updates := len(sink.sends), len(sink.updates)
+	sink.mu.Unlock()
+	if sends != 0 {
+		t.Errorf("expected no fresh SendCard for a reused card, got %d sends", sends)
+	}
+	if updates == 0 {
+		t.Error("expected an UpdateCard replacing the progress card")
+	}
+
+	resCtrl := &protocol.Control{
+		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-7",
+		Result: &protocol.ResultPayload{Text: "done"},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+
+	// The last update on the reused messageID is the result card (body carries
+	// the result text), and no standalone "本轮已完成" flip overwrote it.
+	sink.mu.Lock()
+	var last string
+	var finalizeSeen bool
+	for _, u := range sink.updates {
+		if u.messageID == progressMID {
+			last = string(u.card)
+			if strings.Contains(last, "本轮已完成") {
+				finalizeSeen = true
+			}
+		}
+	}
+	sink.mu.Unlock()
+	if finalizeSeen {
+		t.Error("reused card must not receive a standalone finalize (result card replaces it)")
+	}
+	if !strings.Contains(last, "done") {
+		t.Errorf("result card should be the last update on the reused messageID, got: %s", last)
+	}
+	if _, ok := disp.turns.InteractiveMessageID("req-r"); ok {
 		t.Error("interactive binding should be released after result")
 	}
 }

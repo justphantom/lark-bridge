@@ -91,8 +91,8 @@ func TestInFlight_ExcludesDeployMonitor(t *testing.T) {
 // their requestIDs so paired card state can be dropped. (M4)
 func TestSweepInteractive_TTL(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("fresh", "m-fresh", "")
-	m.BindInteractive("stale", "m-stale", "")
+	m.BindInteractive("fresh", "m-fresh", "", false)
+	m.BindInteractive("stale", "m-stale", "", false)
 
 	// Age the "stale" entry past the TTL by rewriting its boundAt directly
 	// (same-package test can reach the unexported field).
@@ -117,8 +117,8 @@ func TestSweepInteractive_TTL(t *testing.T) {
 // SweepInteractive is a no-op when every binding is within the TTL.
 func TestSweepInteractive_AllFresh(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "")
-	m.BindInteractive("r2", "m2", "")
+	m.BindInteractive("r1", "m1", "", false)
+	m.BindInteractive("r2", "m2", "", false)
 	if expired := m.SweepInteractive(); len(expired) != 0 {
 		t.Fatalf("want no expirations, got %v", expired)
 	}
@@ -128,7 +128,7 @@ func TestSweepInteractive_AllFresh(t *testing.T) {
 // the requestID does not leak.
 func TestUnbindInteractive(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "")
+	m.BindInteractive("r1", "m1", "", false)
 	if _, ok := m.InteractiveMessageID("r1"); !ok {
 		t.Fatal("binding missing after BindInteractive")
 	}
@@ -144,18 +144,18 @@ func TestUnbindInteractive(t *testing.T) {
 // match, and bindings for other prompts are excluded.
 func TestInteractiveByPromptID(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "p-a")
-	m.BindInteractive("r2", "m2", "p-a")
-	m.BindInteractive("r3", "m3", "p-b")
-	m.BindInteractive("r4", "m4", "") // standalone, no link
+	m.BindInteractive("r1", "m1", "p-a", false)
+	m.BindInteractive("r2", "m2", "p-a", false)
+	m.BindInteractive("r3", "m3", "p-b", false)
+	m.BindInteractive("r4", "m4", "", false) // standalone, no link
 
 	got := m.InteractiveByPromptID("p-a")
 	if len(got) != 2 {
 		t.Fatalf("p-a: want 2 cards, got %v", got)
 	}
 	seen := map[string]bool{}
-	for _, pair := range got {
-		seen[pair[0]] = true
+	for _, b := range got {
+		seen[b.RequestID] = true
 	}
 	if !seen["r1"] || !seen["r2"] {
 		t.Fatalf("p-a: want {r1,r2}, got %v", got)
