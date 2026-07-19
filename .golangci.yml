@@ -52,8 +52,6 @@ linters:
     - nilnil               # returns (nil, nil) — usually wrong
     - noctx                # http.Request without ctx
     - reassign             # reassigning stdlib vars (http.DefaultClient)
-    - rowserrcheck         # database/sql Rows.Err
-    - sqlclosecheck        # database/sql Rows/Stmt Close
     - wastedassign         # assignment overwritten before use
 
     # ── modernization / simplification ───────────────────────────────────
@@ -101,7 +99,7 @@ linters:
   #     Flags every numeric literal (HTTP 4xx/5xx, byte sizes, test sleeps).
   #     Most are self-documenting inline; named constants add indirection
   #     without clarity. magic numbers worth a name are already extracted.
-  #   - wsl_v5 / nlreturn / lll
+  #   - wsl_v5 / nlreturn
   #     Pure formatting opinions. gofmt + goimports (enabled as formatters)
   #     cover the project's formatting contract; additional whitespace
   #     rules risk diverging from the Go standard library's own style.
@@ -112,21 +110,22 @@ linters:
   #     Outlaw `if err != nil { return err }` and unwrapped external errors
   #     respectively; the project follows stdlib idiom on both.
   #   - lll
-  #     golines (as formatter) is the appropriate home; project ceiling is
-  #     120 cols.
+  #     Line-length cap. Project ceiling is 120 cols; a formatter
+  #     (golines) is the right home, not a linter.
   #   - depguard
   #     No banned-import policy to enforce; project deps are minimal.
   #   - dupl / dupword / misspell
   #     Cosmetic; not used in this codebase's review process.
   #   - testifylint / protogetter / spancheck / sloglint / loggercheck /
-  #     promlinter / sqlclosecheck* / clickhouselint / arangolint /
+  #     promlinter / sqlclosecheck / clickhouselint / arangolint /
   #     unqueryvet / iotamixing / nilnesserr
   #     Library-specific; project does not use testify / otel / logr /
   #     Prometheus / ClickHouse / Arango / proto getters / SQL.
   #   - funlen / cyclop / gocyclo / gocognit / nestif / maintidx
   #     Complexity caps. The largest functions are event-dispatch switches
-  #     (claudebridge.streamRun, miniagent.Run) where splitting hurts
-  #     readability; the 300-line file cap in AGENTS.md already bounds size.
+  #     (claudebridge.streamRun, opencodebridge.streamRun) where splitting
+  #     hurts readability; the 300-line file cap in AGENTS.md already
+  #     bounds size.
   #   - goconst
   #     Flags string repeats ≥3 that should be const; trade-off here favors
   #     inline strings for one-off notice bodies.
@@ -170,13 +169,6 @@ linters:
         - G101  # hardcoded creds — test API keys "sk-test", "sk-from-config"
         - G204  # subprocess from variable — cliPath is trusted config
         - G304  # file path from variable — internally derived everywhere
-    funlen:
-      lines: 120
-      statements: 60
-    cyclop:
-      max: 20
-    gocyclo:
-      max: 20
 
   exclusions:
     # paths to skip entirely (generated/vendored are auto-excluded by v2).
@@ -194,9 +186,9 @@ linters:
           - gosec
           - errcheck
           - gocheckcompilerdirectives
-      # cmd/*/main.go uses non-constant fmt.Errorf formats for config
-      # validation messages; revive/checkprintf would flag this but it's
-      # deliberate (the message IS the format string here).
+      # cmd/*/main.go does `defer rpc.Close()` whose returned error is not
+      # actionable at process exit; errcheck would flag it but there is
+      # nothing meaningful to do with the error.
       - path: cmd/.*\.go
         linters:
           - errcheck
