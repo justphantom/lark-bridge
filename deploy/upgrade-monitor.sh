@@ -71,6 +71,7 @@ init_monitor() {
     sudo mkdir -p "$CONFIG_DIR"
     sudo cp "$stage/$CONFIG_NAME" "$CONFIG_DIR/"
     sudo chmod 600 "$CONFIG_DIR/$CONFIG_NAME"
+    sudo chown "$RUN_USER":"$RUN_USER" "$CONFIG_DIR/$CONFIG_NAME"
 
     # 二进制
     sudo cp "$BIN_DIR/$UNIT_NAME" "$DEPLOY_DIR/$UNIT_NAME"
