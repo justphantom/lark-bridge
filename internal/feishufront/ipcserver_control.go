@@ -62,9 +62,9 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 // Turns names each in-flight turn so a stranded turn (backend crashed mid-turn)
 // is identifiable, not just a stale count.
 type statusResponse struct {
-	InFlight int           `json:"inflight"`
-	Backends []string      `json:"backends"`
-	Turns    []turnStatus  `json:"turns"`
+	InFlight int          `json:"inflight"`
+	Backends []string     `json:"backends"`
+	Turns    []turnStatus `json:"turns"`
 }
 
 // turnStatus is one in-flight turn's operator-facing identity. ElapsedS is the
