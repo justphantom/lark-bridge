@@ -1,0 +1,198 @@
+# golangci-lint v2 config — adapted for this project.
+#
+# Based on the community "golden config" at https://github.com/maratori/golangci-lint-config
+# (the de-facto standard reference, recommended by the golangci-lint maintainer).
+# Linters removed from the golden list are commented inline with the reason.
+#
+# Each enabled linter is either already passing on this codebase or fixed
+# alongside this config; the file is the canonical style contract.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      # Local imports (anything under this module) are grouped after stdlib
+      # and third-party, matching the goimports convention used in the tree.
+      local-prefixes:
+        - github.com/justphantom/lark-bridge
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+linters:
+  # Explicit allow-list — NOT `default: all`. `all` pulls in linters that the
+  # community explicitly warns against (wsl_v5, lll, varnamelen, nlreturn,
+  # contextcheck, containedctx, errchkjson, forcetypeassert, ...), and a few
+  # that simply do not apply to this project. Listing the keepers here makes
+  # the style contract auditable at a glance.
+  default: none
+  enable:
+    # ── correctness / bug-finding ─────────────────────────────────────────
+    - errcheck              # unchecked errors — real bugs
+    - govet                 # go vet
+    - staticcheck           # SA/QF rules
+    - unused                # dead code
+    - ineffassign           # ineffective assignments
+    - bodyclose             # http.Response.Body close
+    - canonicalheader       # http.Header canonical keys
+    - durationcheck         # Duration*Duration is a bug
+    - errorlint             # errors.Is/As vs == / unhandled wrapping
+    - exhaustive            # enum-like switch must cover all cases
+    - fatcontext           # nested context.Context overwrite
+    - makezero             # make(T, n) followed by append loses n elements
+    - nilerr               # returns nil after err != nil check
+    - nilnil               # returns (nil, nil) — usually wrong
+    - noctx                # http.Request without ctx
+    - reassign             # reassigning stdlib vars (http.DefaultClient)
+    - rowserrcheck         # database/sql Rows.Err
+    - sqlclosecheck        # database/sql Rows/Stmt Close
+    - wastedassign         # assignment overwritten before use
+
+    # ── modernization / simplification ───────────────────────────────────
+    - copyloopvar          # Go 1.22+ removes the need to copy loop vars
+    - intrange            # for i := range n
+    - unconvert           # redundant type conversions
+    - usestdlibvars       # use http.StatusOK / http.MethodGet etc.
+    - exptostd            # golang.org/x/exp → std (Go 1.21+)
+    - predeclared         # shadowing predeclared names (len, cap, error)
+
+    # ── structure / style (kept because they catch real issues here) ─────
+    - errname             # error types suffixed with Error, sentinels Err…
+    - funcorder           # constructor → exported → unexported method order
+    - gocheckcompilerdirectives  # //go: directive validity
+    - goprintffuncname   # printf-like funcs end in "f"
+    - gosec               # security (with project-specific excludes below)
+    - recvcheck          # consistent receiver type within a type's methods
+    - embeddedstructfieldcheck  # embedded fields placement + mutex guard
+
+    # ── test hygiene ─────────────────────────────────────────────────────
+    - usetesting          # use testing.TB.TempDir / testing.TB.Context
+
+  # Linters intentionally NOT enabled, with rationale. Do not re-enable
+  # without first reading why the project disagrees.
+  #
+  #   - contextcheck / containedctx
+  #     Both produce frequent false positives on this codebase: the bridge
+  #     pattern (Handler holds ctx-derived state, dispatchers fan out) reads
+  #     as "non-inherited context" even when ctx is correctly propagated.
+  #     errorlint + govet cover the same bug class without the noise.
+  #   - forcetypeassert
+  #     errcheck with check-type-assertions:true (below) already covers it.
+  #   - testpackage
+  #     Requires _test.go files to use the _test package suffix, blocking
+  #     direct testing of unexported helpers (parseEvent, newTestCore,
+  #     emitCLIEvent, captureSender, ...). Losing that coverage is a worse
+  #     trade than the encapsulation gain.
+  #   - paralleltest / tparallel
+  #     Many tests share filesystem state via newTestCore / router.v5.json /
+  #     History's t.TempDir. Forcing t.Parallel() requires per-test
+  #     isolation refactors that add complexity without correctness gains.
+  #   - gosmopolitan
+  #     Flags Chinese string literals, which are intentional user-facing
+  #     copy in this Feishu bot ("未知命令", "已中止", "⏳ 等待...").
+  #   - mnd
+  #     Flags every numeric literal (HTTP 4xx/5xx, byte sizes, test sleeps).
+  #     Most are self-documenting inline; named constants add indirection
+  #     without clarity. magic numbers worth a name are already extracted.
+  #   - wsl_v5 / nlreturn / lll
+  #     Pure formatting opinions. gofmt + goimports (enabled as formatters)
+  #     cover the project's formatting contract; additional whitespace
+  #     rules risk diverging from the Go standard library's own style.
+  #   - varnamelen
+  #     Flags short names (r, ok, i, n) that are idiomatic in Go and used
+  #     throughout the standard library.
+  #   - noinlineerr / wrapcheck
+  #     Outlaw `if err != nil { return err }` and unwrapped external errors
+  #     respectively; the project follows stdlib idiom on both.
+  #   - lll
+  #     golines (as formatter) is the appropriate home; project ceiling is
+  #     120 cols.
+  #   - depguard
+  #     No banned-import policy to enforce; project deps are minimal.
+  #   - dupl / dupword / misspell
+  #     Cosmetic; not used in this codebase's review process.
+  #   - testifylint / protogetter / spancheck / sloglint / loggercheck /
+  #     promlinter / sqlclosecheck* / clickhouselint / arangolint /
+  #     unqueryvet / iotamixing / nilnesserr
+  #     Library-specific; project does not use testify / otel / logr /
+  #     Prometheus / ClickHouse / Arango / proto getters / SQL.
+  #   - funlen / cyclop / gocyclo / gocognit / nestif / maintidx
+  #     Complexity caps. The largest functions are event-dispatch switches
+  #     (claudebridge.streamRun, miniagent.Run) where splitting hurts
+  #     readability; the 300-line file cap in AGENTS.md already bounds size.
+  #   - goconst
+  #     Flags string repeats ≥3 that should be const; trade-off here favors
+  #     inline strings for one-off notice bodies.
+  #   - gocritic
+  #     Overlaps heavily with staticcheck + revive; enabling adds noise
+  #     without new signal.
+  #   - revive (full set)
+  #     A subset is enabled via staticcheck + the explicit linters above;
+  #     the full revive rule set conflicts with project conventions.
+  #   - godoclint / godot / godox / goheader
+  #     Doc-style; project comments are sparse by design (AGENTS.md:
+  #     "comments only for non-obvious why").
+  #   - exhaustruct / exhaustruct-style rules
+  #     Requires every struct field at construction; project uses
+  #     zero-value defaults intentionally.
+
+  settings:
+    errcheck:
+      # Also flag unchecked type assertions (b.(T) without , ok).
+      check-type-assertions: true
+      # Also flag unchecked errors on closed-over returns (e.g. defer Close).
+      check-blank: false
+    exhaustive:
+      # Exhaustiveness applies to switch AND map literals keyed by enums.
+      check:
+        - switch
+        - map
+      default-signifies-exhaustive: true
+    embeddedstructfieldcheck:
+      # Embedded sync.Mutex / RWMutex is a real footgun (exposes Lock/Unlock
+      # on the outer type). Forbid it.
+      forbid-mutex: true
+    gosec:
+      # Trusted patterns: test fixtures and config-derived paths only.
+      excludes:
+        - G101  # hardcoded creds — test API keys "sk-test", "sk-from-config"
+        - G204  # subprocess from variable — cliPath is trusted config
+        - G304  # file path from variable — internally derived everywhere
+    funlen:
+      lines: 120
+      statements: 60
+    cyclop:
+      max: 20
+    gocyclo:
+      max: 20
+
+  exclusions:
+    # paths to skip entirely (generated/vendored are auto-excluded by v2).
+    paths:
+      - "vendor/.*"
+      - "third_party/.*"
+    # rules (per-linter path/exclude filters).
+    rules:
+      # Test files get latitude on http ctx and security patterns: test
+      # fixtures use os.WriteFile, fake SSE servers, hardcoded test keys,
+      # and request bodies without ctx — all intentional in tests.
+      - path: _test\.go
+        linters:
+          - noctx
+          - gosec
+          - errcheck
+          - gocheckcompilerdirectives
+      # cmd/*/main.go uses non-constant fmt.Errorf formats for config
+      # validation messages; revive/checkprintf would flag this but it's
+      # deliberate (the message IS the format string here).
+      - path: cmd/.*\.go
+        linters:
+          - errcheck
