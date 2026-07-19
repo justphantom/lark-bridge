@@ -1,8 +1,9 @@
 // Command lark-deploy-monitor runs the deploy-monitor backend.
 //
 // It registers as a backend (backendType "deploy-monitor") over SSE and, when
-// a bound chat sends "/deploy", runs `make <target>` in the project root. The
-// deploy runs asynchronously (single-flight) and the result is reported back
+// a bound chat sends "/deploy", runs `make <target>` in the project root; "/pull"
+// and "/push" run git pull --ff-only / git push in the same root. The job runs
+// asynchronously (single-flight, shared across /deploy, /pull, /push) and the result is reported back
 // as a Notice Control. Configuration is read from -config.
 //
 // deploy.sh is expected to NOT stop/restart this service mid-deploy (it only
@@ -100,14 +101,13 @@ func run(cfgPath string) error {
 		}, eventErr)
 }
 
-// execCommander is the production commander: runs `make -C dir target args...`
+// execCommander is the production commander: runs `name args...` inside dir,
 // capturing combined stdout+stderr.
 type execCommander struct{}
 
-func (execCommander) Run(ctx context.Context, dir, target string, args ...string) ([]byte, error) {
-	cmdArgs := []string{"-C", dir, target}
-	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.CommandContext(ctx, "make", cmdArgs...)
+func (execCommander) Run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
 	return cmd.CombinedOutput()
 }
 

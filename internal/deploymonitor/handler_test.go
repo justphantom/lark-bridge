@@ -44,15 +44,17 @@ func (f *fakeSender) snapshot() []*protocol.Control {
 type fakeCommander struct {
 	mu       sync.Mutex
 	calls    int
+	last     []string // last invocation: [name, args...]
 	delay    time.Duration
 	out      []byte
 	err      error
 	cancelCh chan struct{}
 }
 
-func (f *fakeCommander) Run(ctx context.Context, _, _ string, _ ...string) ([]byte, error) {
+func (f *fakeCommander) Run(ctx context.Context, _ string, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	f.calls++
+	f.last = append([]string{name}, args...)
 	f.mu.Unlock()
 	if f.delay > 0 {
 		select {
@@ -62,7 +64,7 @@ func (f *fakeCommander) Run(ctx context.Context, _, _ string, _ ...string) ([]by
 		}
 	}
 	if f.cancelCh != nil {
-		// block until test releases, simulating a long deploy
+		// block until test releases, simulating a long job
 		select {
 		case <-f.cancelCh:
 		case <-ctx.Done():
@@ -76,6 +78,13 @@ func (f *fakeCommander) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+// lastCmd returns [name, args...] of the most recent Run, or nil if uncalled.
+func (f *fakeCommander) lastCmd() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.last
 }
 
 // fakeStatusQuerier returns a canned StatusSnapshot (or err) for /running
@@ -339,4 +348,77 @@ func TestTailOutput(t *testing.T) {
 	if len(got) != 53 || !strings.HasPrefix(got, "…") {
 		t.Errorf("want 53-byte '…'+tail, got len=%d prefix=%q", len(got), got[:1])
 	}
+}
+
+func TestHandleEvent_PullRunsGitFFOnly(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("Already up to date.")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("c6", "/pull")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := strings.Join(cmd.lastCmd(), " "); got != "git pull --ff-only" {
+		t.Fatalf("pull want 'git pull --ff-only', got %q", got)
+	}
+	// terminal notice arrives async; poll up to 1s.
+	termDeadline := time.Now().Add(time.Second)
+	for len(rpc.snapshot()) < 2 && time.Now().Before(termDeadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(lastNoticeMessage(rpc.snapshot()), "Already up to date.") {
+		t.Errorf("pull notice should carry git output, got %q", lastNoticeMessage(rpc.snapshot()))
+	}
+}
+
+func TestHandleEvent_PushRunsGitPush(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("pushed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("c7", "/push")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := strings.Join(cmd.lastCmd(), " "); got != "git push" {
+		t.Errorf("push want 'git push', got %q", got)
+	}
+}
+
+// TestHandleEvent_JobsShareSingleFlightSlot verifies /deploy, /pull and /push
+// share one slot: a /pull while a /deploy is in flight is rejected, not queued.
+func TestHandleEvent_JobsShareSingleFlightSlot(t *testing.T) {
+	rpc := &fakeSender{}
+	release := make(chan struct{})
+	cmd := &fakeCommander{cancelCh: release}
+	h := newHandler(rpc, cmd)
+
+	_ = h.HandleEvent(context.Background(), promptEvent("c8", "/deploy"))
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	_ = h.HandleEvent(context.Background(), promptEvent("c8", "/pull"))
+	if cmd.callCount() != 1 {
+		t.Fatalf("/pull during deploy must not run, calls=%d", cmd.callCount())
+	}
+	var sawInProgress bool
+	for _, c := range rpc.snapshot() {
+		if c.Notice != nil && strings.Contains(c.Notice.Title, "进行中") {
+			sawInProgress = true
+		}
+	}
+	if !sawInProgress {
+		t.Errorf("expected 'in progress' notice for /pull during deploy, got %+v", rpc.snapshot())
+	}
+	close(release)
 }

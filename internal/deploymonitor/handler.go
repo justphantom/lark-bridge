@@ -34,12 +34,12 @@ type statusQuerier interface {
 	Status(ctx context.Context) (*protocol.StatusSnapshot, error)
 }
 
-// Commander runs the deploy target in dir. The production implementation
-// (cmd/deploy-monitor's execCommander) shells out via os/exec; tests inject
-// a fake to avoid a real `make` call. Exported because the production impl
-// lives in the main package.
+// Commander runs a command (name with args) inside dir. The production
+// implementation (cmd/deploy-monitor's execCommander) shells out via os/exec;
+// tests inject a fake to avoid a real subprocess. Exported because the
+// production impl lives in the main package.
 type Commander interface {
-	Run(ctx context.Context, dir, target string, args ...string) ([]byte, error)
+	Run(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 }
 
 // Config carries the deploy-monitor runtime settings.
@@ -77,9 +77,11 @@ func New(cfg Config, rpc controlSender, status statusQuerier, cmd Commander, log
 	return &Handler{cfg: cfg, rpc: rpc, status: status, cmd: cmd, logger: logger, timeout: deployTimeout}
 }
 
-// HandleEvent dispatches Prompt events. Only "/deploy" is honored; any other
-// text is rejected with a notice. The actual deploy runs asynchronously so
-// the SSE event loop is not blocked.
+// HandleEvent dispatches Prompt events. /deploy, /deploy-force, /pull and /push
+// share one single-flight slot (acquireAndRun) so a deploy mid-flight can't
+// race a pull/push that would mutate the working tree; /running is read-only
+// and bypasses the slot. The job runs asynchronously so the SSE event loop is
+// not blocked.
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
 		return nil
@@ -87,43 +89,59 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	chatID := ev.Prompt.ChatID
 	prompt := strings.TrimSpace(ev.Prompt.Text)
 
-	var force bool
 	switch prompt {
-	case "/deploy":
-	case "/deploy-force":
-		force = true
+	case "/deploy", "/deploy-force":
+		return h.acquireAndRun(ctx, chatID, "make", h.deployArgs(prompt == "/deploy-force"), "部署")
+	case "/pull":
+		// --ff-only: refuse to create a merge on divergence instead of
+		// leaving a conflicted working tree that would block later deploys.
+		return h.acquireAndRun(ctx, chatID, "git", []string{"pull", "--ff-only"}, "拉取")
+	case "/push":
+		return h.acquireAndRun(ctx, chatID, "git", []string{"push"}, "推送")
 	case "/running":
-		// Read-only query; must NOT take the single-flight deploy slot — a
-		// /running while a deploy is in progress should still answer.
+		// Read-only query; must NOT take the single-flight slot — a /running
+		// while a job is in progress should still answer.
 		return h.handleRunning(ctx, chatID)
 	default:
 		return h.notify(ctx, chatID, "warning", "未知指令",
-			"本后端接受 /deploy、/deploy-force（在 "+h.cfg.ProjectRoot+" 执行 make "+h.cfg.DeployTarget+"）或 /running（查看运行中会话）。")
+			"本后端接受 /deploy、/deploy-force、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
 	}
+}
 
+// deployArgs assembles the make argument list for the deploy target. force
+// appends ARGS=--force, which deploy.sh reads as a `make deploy` override.
+func (h *Handler) deployArgs(force bool) []string {
+	args := []string{h.cfg.DeployTarget}
+	if force {
+		args = append(args, "ARGS=--force")
+	}
+	return args
+}
+
+// acquireAndRun takes the single-flight slot and launches the job on its own
+// goroutine, replying with an immediate "triggered" notice. If a job is
+// already running it replies "in progress" instead of queueing.
+func (h *Handler) acquireAndRun(ctx context.Context, chatID, name string, args []string, label string) error {
 	h.mu.Lock()
 	if h.running {
 		h.mu.Unlock()
-		h.logger.Info("deploy rejected: already running", log.FieldChatID, chatID)
-		return h.notify(ctx, chatID, "warning", "部署进行中",
-			"已有一次部署正在执行，请等待其完成后再试。")
+		h.logger.Info("job rejected: already running",
+			log.FieldChatID, chatID, "cmd", jobLabel(name, args))
+		return h.notify(ctx, chatID, "warning", label+"进行中",
+			"已有一次操作正在执行，请等待其完成后再试。")
 	}
 	h.running = true
 	h.mu.Unlock()
 
-	go h.runDeploy(chatID, force) //nolint:gosec // G118: deploy must outlive the triggering request's ctx
-	label := "make " + h.cfg.DeployTarget
-	if force {
-		label += " ARGS=--force"
-	}
-	return h.notify(ctx, chatID, "info", "部署已触发",
-		"开始执行 "+label+"，完成后会在此通知。")
+	go h.runJob(chatID, name, args, label) //nolint:gosec // G118: job must outlive the triggering request's ctx
+	return h.notify(ctx, chatID, "info", label+"已触发",
+		"开始执行 "+jobLabel(name, args)+"，完成后会在此通知。")
 }
 
-// runDeploy executes the make target and emits the terminal notice. It runs
+// runJob runs name args in ProjectRoot and emits the terminal notice. It runs
 // on its own goroutine so the SSE loop stays free. The single-flight flag is
 // always cleared on exit (including ctx cancel).
-func (h *Handler) runDeploy(chatID string, force bool) {
+func (h *Handler) runJob(chatID, name string, args []string, label string) {
 	defer func() {
 		h.mu.Lock()
 		h.running = false
@@ -133,26 +151,26 @@ func (h *Handler) runDeploy(chatID string, force bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
 	defer cancel()
 
-	h.logger.Info("deploy start",
+	h.logger.Info("job start",
 		log.FieldChatID, chatID,
 		"dir", h.cfg.ProjectRoot,
-		"target", h.cfg.DeployTarget,
-		"force", force)
+		"cmd", jobLabel(name, args))
 
-	var makeArgs []string
-	if force {
-		makeArgs = []string{"ARGS=--force"}
-	}
-	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, h.cfg.DeployTarget, makeArgs...)
+	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, name, args...)
 	if err != nil {
-		h.logger.Error("deploy failed", log.FieldChatID, chatID, log.FieldError, err)
-		h.notifyWithRetry(chatID, "error", "部署失败",
+		h.logger.Error("job failed", log.FieldChatID, chatID, "cmd", jobLabel(name, args), log.FieldError, err)
+		h.notifyWithRetry(chatID, "error", label+"失败",
 			tailOutput(out, 500)+"\n错误："+err.Error())
 		return
 	}
 
-	h.logger.Info("deploy done", log.FieldChatID, chatID)
-	h.notifyWithRetry(chatID, "success", "部署完成", tailOutput(out, 500))
+	h.logger.Info("job done", log.FieldChatID, chatID, "cmd", jobLabel(name, args))
+	h.notifyWithRetry(chatID, "success", label+"完成", tailOutput(out, 500))
+}
+
+// jobLabel renders the command line ("name args...") for logs and notices.
+func jobLabel(name string, args []string) string {
+	return strings.Join(append([]string{name}, args...), " ")
 }
 
 // notifyWithRetry sends a notice to the chat, retrying when the frontend
