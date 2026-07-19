@@ -372,25 +372,26 @@ func TestInteractiveReusesProgressCard(t *testing.T) {
 		t.Fatalf("result: %v", err)
 	}
 
-	// The last update on the reused messageID is the result card (body carries
-	// the result text), and no standalone "本轮已完成" flip overwrote it.
+	// The result ships a fresh standalone card; the reused progress
+	// messageID stays frozen at the submitted-question state and must not
+	// receive a standalone finalize flip.
 	sink.mu.Lock()
-	var last string
 	var finalizeSeen bool
 	for _, u := range sink.updates {
-		if u.messageID == progressMID {
-			last = string(u.card)
-			if strings.Contains(last, "本轮已完成") {
-				finalizeSeen = true
-			}
+		if u.messageID == progressMID && strings.Contains(string(u.card), "本轮已完成") {
+			finalizeSeen = true
 		}
+	}
+	lastSend := ""
+	if len(sink.sends) > 0 {
+		lastSend = string(sink.sends[len(sink.sends)-1].card)
 	}
 	sink.mu.Unlock()
 	if finalizeSeen {
-		t.Error("reused card must not receive a standalone finalize (result card replaces it)")
+		t.Error("reused card must not receive a standalone finalize (result ships a new card)")
 	}
-	if !strings.Contains(last, "done") {
-		t.Errorf("result card should be the last update on the reused messageID, got: %s", last)
+	if !strings.Contains(lastSend, "done") {
+		t.Errorf("result should ship as a fresh SendCard carrying the result text, got: %s", lastSend)
 	}
 	if _, ok := disp.turns.InteractiveMessageID("req-r"); ok {
 		t.Error("interactive binding should be released after result")

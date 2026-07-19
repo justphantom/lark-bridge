@@ -156,16 +156,28 @@ func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, bac
 		d.cleanupProgress(ctrl.PromptID, messageID)
 		return err
 	}
-	// Flush pending debounced updates for this card before replacing it.
+	// Flush pending debounced updates so the progress card freezes at its
+	// last frame before the standalone result card ships.
 	if d.debouncer != nil {
 		d.debouncer.flush()
 	}
-	// Mark finalized right after the flush: a straggler progress update for
-	// the same messageID arriving between here and the terminal send must not
-	// enqueue a stale frame that the next debouncer tick would flush over
-	// this final card.
+	// Mark finalized so a straggler progress update for the same messageID
+	// cannot enqueue a stale frame that the next debouncer tick would flush
+	// over the frozen progress card.
 	d.markFinalized(messageID)
-	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, card, true)
+	// TypeResult ships a fresh standalone card (replyToID=""): the in-flight
+	// progress card stays frozen at its last frame so the user can review
+	// the process alongside the final reply. Linked interactive cards are
+	// still finalised so they don't sit grey forever.
+	_, err = d.bot.SendCard(ctx, chatID, card, "")
+	if err == nil {
+		d.finalizeLinkedInteractive(ctx, ctrl.PromptID)
+	}
+	// Release turn/progress slots whether the send succeeded or not, so a
+	// transient Feishu error does not leak the promptID across the maps.
+	d.turns.Finish(ctrl.PromptID)
+	d.cleanupProgress(ctrl.PromptID, messageID)
+	return err
 }
 
 func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Control, backendType string) error {

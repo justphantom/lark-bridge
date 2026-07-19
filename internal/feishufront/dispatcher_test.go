@@ -505,13 +505,14 @@ func TestDispatcherDedupTerminal(t *testing.T) {
 		t.Fatalf("second result: %v", err)
 	}
 	sends, updates := sink.counts()
-	// First result updated the existing om_progress card in place; the
-	// duplicate must not have produced any extra send or update.
-	if sends != 0 {
-		t.Errorf("expected 0 SendCard on duplicate, got %d", sends)
+	// First result shipped a fresh standalone card (the progress card is
+	// left frozen at its last frame); the duplicate must not have produced
+	// any extra send or update.
+	if sends != 1 {
+		t.Errorf("expected 1 SendCard (standalone result), got %d", sends)
 	}
-	if updates != 1 {
-		t.Errorf("expected exactly 1 UpdateCard, got %d", updates)
+	if updates != 0 {
+		t.Errorf("expected 0 UpdateCard (progress card left untouched), got %d", updates)
 	}
 }
 
@@ -666,10 +667,10 @@ func TestSendResult_IncludesSummary(t *testing.T) {
 	must(&protocol.Control{Type: protocol.TypeResult, PromptID: promptID, ChatID: "oc_chat",
 		Result: &protocol.ResultPayload{Text: "done", Tokens: 10}})
 
-	if len(sink.updates) == 0 {
-		t.Fatalf("expected an UpdateCard for the result, got none")
+	if len(sink.sends) == 0 {
+		t.Fatalf("expected a SendCard for the result, got none")
 	}
-	got := string(sink.updates[len(sink.updates)-1].card)
+	got := string(sink.sends[len(sink.sends)-1].card)
 	for _, want := range []string{"读取 2", "子代理 1", "10 tokens"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("result card missing %q: %s", want, got)
