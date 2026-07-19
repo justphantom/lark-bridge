@@ -78,8 +78,26 @@ func (f *fakeCommander) callCount() int {
 	return f.calls
 }
 
+// fakeStatusQuerier returns a canned StatusSnapshot (or err) for /running
+// tests. A nil snap yields an empty snapshot so the default newHandler wiring
+// does not panic when a test never touches /running.
+type fakeStatusQuerier struct {
+	snap *protocol.StatusSnapshot
+	err  error
+}
+
+func (f *fakeStatusQuerier) Status(_ context.Context) (*protocol.StatusSnapshot, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.snap == nil {
+		return &protocol.StatusSnapshot{}, nil
+	}
+	return f.snap, nil
+}
+
 func newHandler(rpc controlSender, cmd Commander) *Handler {
-	return New(Config{ProjectRoot: "/repo", DeployTarget: "deploy"}, rpc, cmd, nil, 0)
+	return New(Config{ProjectRoot: "/repo", DeployTarget: "deploy"}, rpc, &fakeStatusQuerier{}, cmd, nil, 0)
 }
 
 func promptEvent(chatID, text string) *protocol.Event {
@@ -232,6 +250,62 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 		t.Errorf("single-flight flag did not clear after deploy: calls=%d (before=%d)",
 			cmd.callCount(), beforeCalls)
 	}
+}
+
+// TestHandleEvent_Running_ListsTurns verifies /running renders the frontend's
+// in-flight snapshot: count, each turn's backend id, an elapsed label, and the
+// abort hint reinforcing the "no auto-end" policy.
+func TestHandleEvent_Running_ListsTurns(t *testing.T) {
+	sender := &fakeSender{}
+	snap := &protocol.StatusSnapshot{Turns: []protocol.TurnInfo{
+		{BackendID: "claude-1", ChatID: "oc_d186b4d6aaaaaaaaaaaaaaaaaaaaaaaa", ElapsedS: 45},
+		{BackendID: "opencode-1", ChatID: "oc_9cbbf3ebbbbbbbbbbbbbbbbbbbbbbbbb", ElapsedS: 130},
+	}}
+	h := New(Config{}, sender, &fakeStatusQuerier{snap: snap}, &fakeCommander{}, nil, 0)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("oc_x", "/running")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	body := lastNoticeMessage(sender.snapshot())
+	for _, want := range []string{"运行中会话（2）", "claude-1", "opencode-1", "2m10s", "45s", "/session-abort"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\nbody: %s", want, body)
+		}
+	}
+}
+
+// TestHandleEvent_Running_Empty renders a friendly line when nothing is running.
+func TestHandleEvent_Running_Empty(t *testing.T) {
+	sender := &fakeSender{}
+	h := New(Config{}, sender, &fakeStatusQuerier{snap: &protocol.StatusSnapshot{}}, &fakeCommander{}, nil, 0)
+	if err := h.HandleEvent(context.Background(), promptEvent("oc_x", "/running")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if body := lastNoticeMessage(sender.snapshot()); !strings.Contains(body, "当前没有运行中的会话") {
+		t.Errorf("want empty-hint, got: %s", body)
+	}
+}
+
+// TestHandleEvent_Running_Error surfaces a status-query failure as an error notice.
+func TestHandleEvent_Running_Error(t *testing.T) {
+	sender := &fakeSender{}
+	h := New(Config{}, sender, &fakeStatusQuerier{err: errors.New("frontend down")}, &fakeCommander{}, nil, 0)
+	if err := h.HandleEvent(context.Background(), promptEvent("oc_x", "/running")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if body := lastNoticeMessage(sender.snapshot()); !strings.Contains(body, "frontend down") {
+		t.Errorf("want error echoed, got: %s", body)
+	}
+}
+
+// lastNoticeMessage returns the message of the most recent captured Notice.
+func lastNoticeMessage(ctrls []*protocol.Control) string {
+	for i := len(ctrls) - 1; i >= 0; i-- {
+		if ctrls[i].Notice != nil {
+			return ctrls[i].Notice.Message
+		}
+	}
+	return ""
 }
 
 func TestHandleEvent_IgnoresNonPrompt(t *testing.T) {

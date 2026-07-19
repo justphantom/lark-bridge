@@ -27,6 +27,13 @@ type controlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
 }
 
+// statusQuerier is the subset of *backendrpc.Client the handler needs to read
+// the frontend's in-flight turn list for /running. Exists so tests substitute
+// a fake instead of hitting a real frontend.
+type statusQuerier interface {
+	Status(ctx context.Context) (*protocol.StatusSnapshot, error)
+}
+
 // Commander runs the deploy target in dir. The production implementation
 // (cmd/deploy-monitor's execCommander) shells out via os/exec; tests inject
 // a fake to avoid a real `make` call. Exported because the production impl
@@ -48,6 +55,7 @@ type Config struct {
 type Handler struct {
 	cfg     Config
 	rpc     controlSender
+	status  statusQuerier
 	cmd     Commander
 	logger  *log.Logger
 	timeout time.Duration
@@ -56,15 +64,17 @@ type Handler struct {
 	running bool
 }
 
-// New wires the handler. deployTimeout bounds one `make` run; <=0 → 10m.
-func New(cfg Config, rpc controlSender, cmd Commander, logger *log.Logger, deployTimeout time.Duration) *Handler {
+// New wires the handler. status supplies the in-flight turn snapshot for
+// /running (typically the same *backendrpc.Client as rpc). deployTimeout
+// bounds one `make` run; <=0 → 10m.
+func New(cfg Config, rpc controlSender, status statusQuerier, cmd Commander, logger *log.Logger, deployTimeout time.Duration) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
 	if deployTimeout <= 0 {
 		deployTimeout = 10 * time.Minute
 	}
-	return &Handler{cfg: cfg, rpc: rpc, cmd: cmd, logger: logger, timeout: deployTimeout}
+	return &Handler{cfg: cfg, rpc: rpc, status: status, cmd: cmd, logger: logger, timeout: deployTimeout}
 }
 
 // HandleEvent dispatches Prompt events. Only "/deploy" is honored; any other
@@ -82,9 +92,13 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	case "/deploy":
 	case "/deploy-force":
 		force = true
+	case "/running":
+		// Read-only query; must NOT take the single-flight deploy slot — a
+		// /running while a deploy is in progress should still answer.
+		return h.handleRunning(ctx, chatID)
 	default:
 		return h.notify(ctx, chatID, "warning", "未知指令",
-			"本后端只接受 /deploy 或 /deploy-force（在 "+h.cfg.ProjectRoot+" 执行 make "+h.cfg.DeployTarget+"）。")
+			"本后端接受 /deploy、/deploy-force（在 "+h.cfg.ProjectRoot+" 执行 make "+h.cfg.DeployTarget+"）或 /running（查看运行中会话）。")
 	}
 
 	h.mu.Lock()
@@ -174,6 +188,54 @@ func (h *Handler) notify(ctx context.Context, chatID, level, title, message stri
 		ChatID: chatID,
 		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
+}
+
+// handleRunning answers the /running query: fetches the frontend's in-flight
+// turn snapshot and renders it as a notice. It runs inline (not on a goroutine)
+// — the GET is bounded by statusQueryTimeout and is user-paced, so blocking
+// the SSE loop briefly is acceptable, unlike a multi-minute `make deploy`.
+func (h *Handler) handleRunning(ctx context.Context, chatID string) error {
+	snap, err := h.status.Status(ctx)
+	if err != nil {
+		return h.notify(ctx, chatID, "error", "查询失败", "读取运行中会话失败："+err.Error())
+	}
+	return h.notify(ctx, chatID, "info", "运行中会话", renderTurns(snap))
+}
+
+// renderTurns formats the in-flight snapshot as a scannable notice body. The
+// trailing abort hint reinforces the policy: turns are never ended automatically.
+func renderTurns(snap *protocol.StatusSnapshot) string {
+	if len(snap.Turns) == 0 {
+		return "当前没有运行中的会话。"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "运行中会话（%d）：\n", len(snap.Turns))
+	for _, t := range snap.Turns {
+		fmt.Fprintf(&sb, "- %s · %s · %s\n", t.BackendID, shortID(t.ChatID), formatElapsed(t.ElapsedS))
+	}
+	sb.WriteString("\n会话不会自动结束，如需结束请发送 /session-abort。")
+	return sb.String()
+}
+
+// shortID shortens a Feishu ID (oc_ + 32 hex) to its last 8 chars so the turn
+// list stays scannable while remaining identifiable.
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return "…" + id[len(id)-8:]
+}
+
+// formatElapsed turns seconds into a compact duration label.
+func formatElapsed(s int64) string {
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm%ds", s/60, s%60)
+	default:
+		return fmt.Sprintf("%dh%dm", s/3600, (s%3600)/60)
+	}
 }
 
 // tailOutput returns the last maxBytes of out as a string. The deploy script

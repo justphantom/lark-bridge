@@ -33,6 +33,10 @@ const handshakeTimeout = 10 * time.Second
 // caller's ctx has none, so a wedged frontend cannot pin the emit goroutine.
 const sendControlTimeout = 15 * time.Second
 
+// statusQueryTimeout is the fallback deadline Status applies when the caller's
+// ctx has none, so a wedged frontend cannot block a /running query.
+const statusQueryTimeout = 5 * time.Second
+
 // sseEventChanBuf is the buffer for the backend's inbound SSE Event channel. The
 // frontend pushes Events here for the bridge to drain; a full channel surfaces
 // backpressure rather than unbounded queuing.
@@ -267,6 +271,37 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 		return fmt.Errorf("send control %d: %s", resp.StatusCode, respBody)
 	}
 	return nil
+}
+
+// Status GETs /v1/status from the frontend, returning the in-flight turn
+// snapshot. Used by backends that must observe frontend-owned turn state (e.g.
+// deploy-monitor's /running). When ctx has no deadline it is bounded by
+// statusQueryTimeout so a stalled frontend cannot block the caller.
+func (c *Client) Status(ctx context.Context) (*protocol.StatusSnapshot, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, statusQueryTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.frontendURL+"/v1/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, respBody)
+	}
+	var snap protocol.StatusSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("parse status: %w", err)
+	}
+	return &snap, nil
 }
 
 // Close shuts the client down. Idempotent. Closes the SSE body so the read

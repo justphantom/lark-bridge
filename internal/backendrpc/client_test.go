@@ -129,6 +129,45 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
+// TestStatus_ReturnsInFlightTurns drives GET /v1/status end to end: the
+// IPCServer serves the in-flight count + per-turn detail wired via
+// SetInFlightTurns / SetInFlightDetail, and Client.Status decodes them.
+func TestStatus_ReturnsInFlightTurns(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	srv.SetInFlightTurns(func() int { return 2 })
+	srv.SetInFlightDetail(func() []feishufront.Turn {
+		return []feishufront.Turn{
+			{PromptID: "p-1", ChatID: "oc_a", BackendID: "claude-1", StartedAt: time.Now().Add(-30 * time.Second)},
+			{PromptID: "p-2", ChatID: "oc_b", BackendID: "opencode-1", StartedAt: time.Now().Add(-90 * time.Second)},
+		}
+	})
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	client, err := Connect("back-1", "claude", ts.URL, "")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	snap, err := client.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if snap.InFlight != 2 {
+		t.Errorf("inflight = %d, want 2", snap.InFlight)
+	}
+	if len(snap.Turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(snap.Turns))
+	}
+	// 30s ± a little test jitter.
+	got := snap.Turns[0]
+	if got.BackendID != "claude-1" || got.ChatID != "oc_a" || got.PromptID != "p-1" || got.ElapsedS < 25 || got.ElapsedS > 35 {
+		t.Errorf("turn[0] = %+v", got)
+	}
+}
+
 func TestSendControl_ValidationFails(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
 	srv := feishufront.NewIPCServer(reg, "")

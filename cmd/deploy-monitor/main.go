@@ -73,6 +73,7 @@ func run(cfgPath string) error {
 			DeployTarget: cfg.DeployMonitor.DeployTarget,
 		},
 		rpc,
+		rpc,
 		execCommander{},
 		logger,
 		0,
