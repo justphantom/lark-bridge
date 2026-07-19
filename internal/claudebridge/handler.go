@@ -93,6 +93,10 @@ func (h *Handler) emitNoticeLogged(chatID, level, title, body string, extra ...s
 	h.EmitNoticeLogged(chatID, level, title, body, extra...)
 }
 
+func (h *Handler) emitCardUpdateLogged(chatID, messageID, level, title, body string, extra ...string) {
+	h.EmitCardUpdateLogged(chatID, messageID, level, title, body, extra...)
+}
+
 func (h *Handler) emitAsync(promptID string, ctrl *protocol.Control) {
 	h.EmitAsync(promptID, ctrl)
 }

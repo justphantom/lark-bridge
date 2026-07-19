@@ -54,7 +54,7 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载模型列表", "正在获取可用模型，请稍候（约半分钟）…")
 	bridgebase.GoSafe(h.Logger, "model-picker:"+chatID, func() {
-		choice, err := h.AskAndWait(chatID, "", "模型", "选择模型", h.agent.ListModels, true)
+		choice, messageID, err := h.AskAndWait(chatID, "", "模型", "选择模型", h.agent.ListModels, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 			return
@@ -66,7 +66,7 @@ func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 		h.Router.SetModelSpec(chatID, choice)
 		cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
 		res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
-		h.emitNoticeLogged(chatID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
+		h.emitCardUpdateLogged(chatID, messageID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
 	})
 	return commandResult{Handled: true}
 }
@@ -118,7 +118,7 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 	h.emitNoticeLogged(chatID, "info", "正在加载 agent 列表", "正在获取可用 agent，请稍候（约半分钟）…")
 	bridgebase.GoSafe(h.Logger, "agent-picker:"+chatID, func() {
-		choice, err := h.AskAndWait(chatID, "", "agent", "选择 agent", h.agent.ListAgents, true)
+		choice, messageID, err := h.AskAndWait(chatID, "", "agent", "选择 agent", h.agent.ListAgents, true)
 		if err != nil {
 			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 			return
@@ -130,7 +130,7 @@ func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 		h.Router.SetAgent(chatID, choice)
 		cmdutil.LogSettingChange(h.Logger, chatID, "agent", choice)
 		res := cmdutil.ChangeResult("agent", old, choice, "下次提问生效。")
-		h.emitNoticeLogged(chatID, "success", "已切换 agent", res.Body, res.Field, res.Before, res.After)
+		h.emitCardUpdateLogged(chatID, messageID, "success", "已切换 agent", res.Body, res.Field, res.Before, res.After)
 	})
 	return commandResult{Handled: true}
 }

@@ -189,6 +189,17 @@ func (c *Core) EmitNoticeLogged(chatID, level, title, body string, extra ...stri
 	}
 }
 
+// EmitCardUpdateLogged is EmitCardUpdate plus a Warn on failure. Picker
+// handlers use it to turn the original question card into a green result card
+// instead of posting a separate notice.
+func (c *Core) EmitCardUpdateLogged(chatID, messageID, level, title, body string, extra ...string) {
+	if err := EmitCardUpdate(c.AppCtx, c.Emit, chatID, messageID, level, title, body, extra...); err != nil {
+		c.Logger.Warn("emit card update failed",
+			log.FieldChatID, chatID,
+			log.FieldError, err)
+	}
+}
+
 // EmitAsync sends a Control in a background goroutine (fire-and-forget) so
 // the stream loop never blocks on IPC latency. Each goroutine uses an
 // independent 5s context (not the prompt ctx); intermediate controls are

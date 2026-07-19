@@ -76,7 +76,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 		byName[name] = d
 	}
 
-	choice, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", bridgebase.StaticOptions(options), false)
+	choice, messageID, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", bridgebase.StaticOptions(options), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -97,7 +97,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
 	res := cmdutil.ChangeResult("工作目录", old, dir, "会话已重置，下次提问生效。")
-	h.emitNoticeLogged(chatID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
+	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 

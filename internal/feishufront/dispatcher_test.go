@@ -434,6 +434,52 @@ func TestSendNoticeFallbackToSendCard(t *testing.T) {
 	}
 }
 
+// TestSendNoticeUpdateMessageID verifies that a TypeNotice carrying
+// UpdateMessageID patches the referenced card in place instead of sending a
+// new standalone notice card. This is the path setting pickers use to turn the
+// original question card into a green result card.
+func TestSendNoticeUpdateMessageID(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+
+	err := d.DispatchControl(context.Background(), RoutedControl{
+		BackendID: "claude-1",
+		Control: &protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: "oc_chat",
+			Notice: &protocol.NoticePayload{
+				Level:           "success",
+				Title:           "已切换模型",
+				Message:         "下次提问生效。",
+				Field:           "模型",
+				Before:          "默认",
+				After:           "sonnet",
+				UpdateMessageID: "om_question_card",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+	if len(sink.sends) != 0 {
+		t.Fatalf("expected no SendCard, got %d", len(sink.sends))
+	}
+	if len(sink.updates) != 1 {
+		t.Fatalf("expected one UpdateCard, got %d", len(sink.updates))
+	}
+	up := sink.updates[0]
+	if up.messageID != "om_question_card" {
+		t.Errorf("update messageID = %q, want om_question_card", up.messageID)
+	}
+	card := string(up.card)
+	if !strings.Contains(card, "已切换模型") {
+		t.Errorf("result card missing title: %s", card)
+	}
+	if !strings.Contains(card, "~默认~ → **sonnet**") {
+		t.Errorf("result card missing before→after block: %s", card)
+	}
+}
+
 // TestDispatcherDedupTerminal verifies that a duplicate terminal control
 // (Result/Error/Notice) for the same PromptID is dropped, so a retried backend
 // POST does not double-post the final card.

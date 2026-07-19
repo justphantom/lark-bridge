@@ -50,9 +50,12 @@ type PromptPayload struct {
 
 // AnswerPayload carries a user answer to a backend interaction request
 // (permission / question). Answer is keyed by RequestID, not PromptID.
+// MessageID is the Feishu message ID of the card the user submitted, so the
+// backend can update that same card instead of posting a separate notice.
 type AnswerPayload struct {
 	ChatID    string   `json:"chatID"`
 	RequestID string   `json:"requestID"`
+	MessageID string   `json:"messageID,omitempty"`
 	Choice    string   `json:"choice,omitempty"`  // permission
 	Choices   []string `json:"choices,omitempty"` // question, multiple
 	Custom    string   `json:"custom,omitempty"`  // question custom input

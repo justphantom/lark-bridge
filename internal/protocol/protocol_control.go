@@ -139,11 +139,14 @@ type QuestionItem struct {
 // instead of the flat Message body, so a user sees what changed relative to the
 // prior value. All three are omitted by default (omitempty) so non-change
 // notices render exactly as before.
+// UpdateMessageID, when set, tells the frontend to patch the existing card
+// rather than sending a new standalone notice card.
 type NoticePayload struct {
-	Level   string `json:"level"` // info/success/warning/error
-	Title   string `json:"title"`
-	Message string `json:"message,omitempty"`
-	Field   string `json:"field,omitempty"`
-	Before  string `json:"before,omitempty"`
-	After   string `json:"after,omitempty"`
+	Level           string `json:"level"` // info/success/warning/error
+	Title           string `json:"title"`
+	Message         string `json:"message,omitempty"`
+	Field           string `json:"field,omitempty"`
+	Before          string `json:"before,omitempty"`
+	After           string `json:"after,omitempty"`
+	UpdateMessageID string `json:"updateMessageID,omitempty"`
 }

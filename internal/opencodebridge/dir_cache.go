@@ -57,7 +57,7 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) 
 // directory's full path. Uses askAndWait's listFn form so the (cached) scan
 // runs on the picker's own ctx, matching the opencode picker convention.
 func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
-	choice, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
+	choice, messageID, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
 		dirs, err := h.DirCache.List()
 		if err != nil {
 			return nil, err
@@ -105,7 +105,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
 	res := cmdutil.ChangeResult("工作目录", old, dir, "会话已重置，下次提问生效。")
-	h.emitNoticeLogged(chatID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
+	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 

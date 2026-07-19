@@ -53,7 +53,8 @@ func StaticOptions(options []string) func(context.Context) ([]string, error) {
 // (Question controls require ChatID). kind/label tailor the card copy.
 //
 // Returns the chosen value (custom input takes priority over a listed pick),
-// or an error describing why no answer was obtained.
+// the Feishu message ID of the question card that was answered, and an error
+// describing why no answer was obtained.
 func AskAndWait(
 	appCtx context.Context,
 	answers *AnswerBroker,
@@ -61,7 +62,7 @@ func AskAndWait(
 	chatID, replyToID, kind, label string,
 	listFn func(context.Context) ([]string, error),
 	allowCustom bool,
-) (string, error) {
+) (string, string, error) {
 	// listTimeoutCtx bounds the (slow) list subcommand independently of any
 	// caller deadline. It rides the process-lifetime appCtx so a shutdown
 	// still cancels an in-flight fork.
@@ -69,19 +70,19 @@ func AskAndWait(
 	defer listCancel()
 	options, err := listFn(listCtx)
 	if err != nil {
-		return "", fmt.Errorf("获取%s列表失败：%w", kind, err)
+		return "", "", fmt.Errorf("获取%s列表失败：%w", kind, err)
 	}
 	if len(options) == 0 {
-		return "", fmt.Errorf("没有可用的%s", kind)
+		return "", "", fmt.Errorf("没有可用的%s", kind)
 	}
 
 	requestID, err := newRequestID()
 	if err != nil {
-		return "", fmt.Errorf("生成请求 ID 失败：%w", err)
+		return "", "", fmt.Errorf("生成请求 ID 失败：%w", err)
 	}
 	ch, ok := answers.Register(requestID)
 	if !ok {
-		return "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
+		return "", "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
 	}
 
 	q := &protocol.Control{
@@ -100,7 +101,7 @@ func AskAndWait(
 	defer emitCancel()
 	if err := emit(emitCtx, replyToID, q); err != nil {
 		answers.Cancel(requestID)
-		return "", fmt.Errorf("发送选择卡片失败：%w", err)
+		return "", "", fmt.Errorf("发送选择卡片失败：%w", err)
 	}
 
 	// Waiting for a human answer is unbounded in practice; derive a fresh
@@ -112,19 +113,23 @@ func AskAndWait(
 	case ans, ok := <-ch:
 		if !ok {
 			// Channel closed by Drain during shutdown.
-			return "", errors.New("服务正在关闭，请稍后重试")
+			return "", "", errors.New("服务正在关闭，请稍后重试")
 		}
 		choice := PickAnswerValue(ans)
 		if choice == "" {
-			return "", fmt.Errorf("未选择任何%s", kind)
+			return "", "", fmt.Errorf("未选择任何%s", kind)
 		}
-		return choice, nil
+		messageID := ""
+		if ans != nil {
+			messageID = ans.MessageID
+		}
+		return choice, messageID, nil
 	case <-waitCtx.Done():
 		answers.Cancel(requestID)
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("选择超时（>%s），请重新发起", AskWaitTimeout)
+			return "", "", fmt.Errorf("选择超时（>%s），请重新发起", AskWaitTimeout)
 		}
-		return "", errors.New("等待选择被中断")
+		return "", "", errors.New("等待选择被中断")
 	}
 }
 
@@ -161,9 +166,22 @@ func newRequestID() (string, error) {
 // from appCtx lets a confirmation or error Notice land after a multi-minute
 // wait.
 func EmitNotice(appCtx context.Context, emit EmitFunc, chatID, level, title, body string, extra ...string) error {
+	return EmitCardUpdate(appCtx, emit, chatID, "", level, title, body, extra...)
+}
+
+// EmitCardUpdate sends a Notice control that patches an existing card
+// (identified by updateMessageID) instead of posting a new standalone notice.
+// An empty updateMessageID falls back to sending a new card, matching
+// EmitNotice behaviour.
+func EmitCardUpdate(appCtx context.Context, emit EmitFunc, chatID, updateMessageID, level, title, body string, extra ...string) error {
 	ctx, cancel := context.WithTimeout(appCtx, emitNoticeTimeout)
 	defer cancel()
-	np := &protocol.NoticePayload{Level: level, Title: title, Message: body}
+	np := &protocol.NoticePayload{
+		Level:           level,
+		Title:           title,
+		Message:         body,
+		UpdateMessageID: updateMessageID,
+	}
 	// extra carries optional Field/Before/After in that order, matching the
 	// ChangeResult shape the renderer expects for a before→after block.
 	if len(extra) > 0 {
@@ -189,6 +207,6 @@ func (c *Core) AskAndWait(
 	chatID, replyToID, kind, label string,
 	listFn func(context.Context) ([]string, error),
 	allowCustom bool,
-) (string, error) {
+) (string, string, error) {
 	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
 }

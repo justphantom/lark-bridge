@@ -127,9 +127,9 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 }
 
 // handleBackendChoice is the frontend-side consumer of a backend-picker click:
-// it binds the chat to the chosen backend and refreshes the card so the new
-// selection shows ✓/disabled. Unlike backend-driven Question cards this never
-// round-trips to a backend — the frontend owns the Layer-1 route.
+// it binds the chat to the chosen backend and updates the original picker card
+// to a green result state (disabled buttons + confirmation) so the switch
+// produces only one message.
 func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.CardAction) error {
 	id, _ := action.Value["backendID"].(string)
 	btype := d.registry.BackendType(id)
@@ -140,13 +140,32 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 	if err := d.router.Set(action.ChatID, id); err != nil {
 		return d.notice(ctx, action.ChatID, "error", "切换失败", err.Error())
 	}
-	// Refresh the picker card so the new selection shows ✓/disabled, then
-	// always send a confirmation notice. The card refresh alone (button
-	// going grey with a ✓) is too subtle — without an explicit notice users
-	// report "no feedback", unlike the other pickers which all confirm via a
-	// separate success card.
-	if card, err := d.renderBackendPicker(action.ChatID); err == nil {
-		_ = d.bot.UpdateCard(ctx, action.MessageID, card)
+	card, err := d.renderBackendResult(action.ChatID, id, btype)
+	if err != nil {
+		return d.notice(ctx, action.ChatID, "error", "切换失败", err.Error())
 	}
-	return d.notice(ctx, action.ChatID, "success", "已切换后端", "当前后端: "+id+"（"+btype+"）")
+	return d.bot.UpdateCard(ctx, action.MessageID, card)
+}
+
+// renderBackendResult builds the result-state backend picker card: green
+// header, confirmation body, and every backend button disabled (the selected
+// one prefixed ✓). This replaces the original picker card in place so /backend
+// emits only one message.
+func (d *Dispatcher) renderBackendResult(chatID, selectedID, selectedType string) ([]byte, error) {
+	ids := d.registry.Registered()
+	sort.Strings(ids)
+	current, _ := d.router.Resolve(chatID)
+	header := cardkit.HeaderInfo{Title: "已切换后端", Template: "green"}
+	footer := cardkit.FooterInfo{BackendID: selectedID, BackendType: selectedType, Status: "已完成", Time: time.Now()}
+	actions := make([]cardkit.Action, 0, len(ids))
+	for _, id := range ids {
+		label := id + "（" + d.registry.BackendType(id) + "）"
+		if id == current {
+			label = "✓ " + label
+		}
+		actions = append(actions, cardkit.ButtonAction(label, "backend",
+			map[string]any{"backendID": id}, id == current, true))
+	}
+	body := "当前后端: " + selectedID + "（" + selectedType + "）"
+	return cardkit.Card(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions)
 }

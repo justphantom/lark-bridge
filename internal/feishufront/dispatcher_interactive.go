@@ -192,7 +192,7 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			d.turns.UnbindInteractive(requestID)
 		}
 	}
-	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID}
+	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}
 	if len(action.FormValue) > 0 {
 		answer.Choices, answer.Custom = parseQuestionFormValue(action.FormValue)
 	} else if c, ok := action.Value["choice"].(string); ok {

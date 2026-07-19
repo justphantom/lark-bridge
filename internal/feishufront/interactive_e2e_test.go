@@ -150,7 +150,7 @@ func TestCardActionIdempotent(t *testing.T) {
 // TestQuestionRoundTrip_AnswerForwarded drives a question form submit end to
 // end: the backend POSTs a Question Control; the dispatcher renders a form
 // card; a CardAction submits form_value (a select + a custom input); the
-// dispatcher forwards an Answer Event carrying Choices + Custom.
+// dispatcher forwards an Answer Event carrying Choices + Custom + MessageID.
 func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 	const backendID = "opencode-4"
 	disp, _, router, client, _, cleanup := wireFrontend(t, backendID)
@@ -202,6 +202,9 @@ func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 	}
 	if ev.Answer.Custom != "备注" {
 		t.Fatalf("Custom = %q, want 备注", ev.Answer.Custom)
+	}
+	if ev.Answer.MessageID != "msg-1" {
+		t.Fatalf("MessageID = %q, want msg-1", ev.Answer.MessageID)
 	}
 }
 

@@ -124,11 +124,42 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 		t.Fatalf("backend received unexpected event %q", ev.Type)
 	default:
 	}
-	// Success path refreshes the picker in place (1 update) AND sends a
-	// confirmation notice (1 send) — the card refresh alone is too subtle.
+	// Success path updates the original picker card to a green result card
+	// in place; no separate confirmation notice is sent.
 	sends, updates := sink.counts()
-	if sends != 1 || updates != 1 {
-		t.Errorf("want 1 send + 1 update, got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 1 {
+		t.Errorf("want 0 sends + 1 update, got %d sends + %d updates", sends, updates)
+	}
+}
+
+// TestRenderBackendResult verifies the result-state picker card has a green
+// header, confirmation body, and every backend button disabled.
+func TestRenderBackendResult(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("claude-1", "claude")
+	reg.Register("opencode-1", "opencode")
+	rt := &pickerRouter{current: "opencode-1"}
+	d := NewDispatcher(&fakeSink{}, reg, NewTurnManager(), rt)
+
+	card, err := d.renderBackendResult("oc_x", "opencode-1", "opencode")
+	if err != nil {
+		t.Fatalf("renderBackendResult: %v", err)
+	}
+	s := string(card)
+	if !strings.Contains(s, "已切换后端") {
+		t.Errorf("result card missing title: %s", s)
+	}
+	if !strings.Contains(s, "当前后端: opencode-1（opencode）") {
+		t.Errorf("result card missing confirmation body: %s", s)
+	}
+	if !strings.Contains(s, `"template":"green"`) {
+		t.Errorf("result card header not green: %s", s)
+	}
+	if !strings.Contains(s, `"disabled":true`) {
+		t.Errorf("result card buttons not disabled: %s", s)
+	}
+	if !strings.Contains(s, "✓ opencode-1") {
+		t.Errorf("current backend not marked ✓: %s", s)
 	}
 }
 

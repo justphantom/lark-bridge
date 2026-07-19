@@ -68,7 +68,7 @@ func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string)
 // runPermPicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
 func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
-	choice, err := h.AskAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
+	choice, messageID, err := h.AskAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -80,7 +80,7 @@ func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
 	h.Router.SetPermissionMode(chatID, choice)
 	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", choice)
 	res := cmdutil.ChangeResult("权限模式", old, choice, "下次提问生效。")
-	h.emitNoticeLogged(chatID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
+	h.emitCardUpdateLogged(chatID, messageID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 
@@ -151,7 +151,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 		byName[name] = p
 	}
 
-	choice, err := h.AskAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
+	choice, messageID, err := h.AskAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
 	if err != nil {
 		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
@@ -171,7 +171,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 	h.Router.SetSettingsFile(chatID, path)
 	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", path)
 	res := cmdutil.ChangeResult("--settings 文件", old, path, "下次提问生效。")
-	h.emitNoticeLogged(chatID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
+	h.emitCardUpdateLogged(chatID, messageID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 

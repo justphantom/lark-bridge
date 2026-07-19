@@ -92,3 +92,34 @@ func TestNewRequestID(t *testing.T) {
 		t.Errorf("two ids identical: %q (must be unguessable)", a)
 	}
 }
+
+// TestAskAndWait_ReturnsMessageID verifies the answer's MessageID is surfaced
+// to the caller so a picker can update the original question card.
+func TestAskAndWait_ReturnsMessageID(t *testing.T) {
+	answers := NewAnswerBroker()
+	emit := func(context.Context, string, *protocol.Control) error { return nil }
+
+	done := make(chan struct{})
+	var gotValue, gotMessageID string
+	go func() {
+		defer close(done)
+		gotValue, gotMessageID, _ = AskAndWait(context.Background(), answers, emit, "chat-1", "", "模型", "选择模型", StaticOptions([]string{"a", "b"}), false)
+	}()
+
+	reqID := ""
+	for reqID == "" {
+		ids := answers.PendingIDs()
+		if len(ids) > 0 {
+			reqID = ids[0]
+		}
+	}
+	answers.Deliver(reqID, &protocol.AnswerPayload{RequestID: reqID, ChatID: "chat-1", MessageID: "om_card", Choices: []string{"b"}})
+	<-done
+
+	if gotValue != "b" {
+		t.Errorf("value = %q, want b", gotValue)
+	}
+	if gotMessageID != "om_card" {
+		t.Errorf("messageID = %q, want om_card", gotMessageID)
+	}
+}

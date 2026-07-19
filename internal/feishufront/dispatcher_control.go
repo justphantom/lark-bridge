@@ -169,6 +169,17 @@ func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, bac
 }
 
 func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Control, backendType string) error {
+	// A notice carrying UpdateMessageID patches an existing standalone card
+	// (e.g. a submitted question card) instead of sending a new one.
+	if n := ctrl.Notice; n != nil && n.UpdateMessageID != "" {
+		footer := cardkit.FooterInfo{BackendType: backendType, Status: noticeFooterStatus(n.Level, n.Title)}
+		card, err := cardkit.Notice(footer, n.Level, n.Title, n.Message, n.Field, n.Before, n.After)
+		if err != nil {
+			return err
+		}
+		return d.bot.UpdateCard(ctx, n.UpdateMessageID, card)
+	}
+
 	d.cleanupProgress(ctrl.PromptID, "")
 	turn, ok, chatID, footer := d.resolveFooter(ctrl, backendType)
 	messageID := ""
