@@ -160,7 +160,10 @@ write_unit() {
     # privileged=true 时整个沙箱块省略：供需要 sudo 提权的单元用（如
     # deploy-monitor 跑 `make deploy` 时要 systemctl/cp 到 /etc）。沙箱的
     # NoNewPrivileges 会禁止 sudo 的 setuid 提权，故提权单元必须绕过沙箱。
-    # 当前 4 个业务服务都不需要提权，此参数留作 upgrade-monitor.sh 的 unit 使用。
+    # claude/opencode/miniagent 三个 backend 同样用 privileged=true：它们透传执行
+    # 任意外部 CLI 链（git/node/npm/bash 及子进程），保守沙箱（NoNewPrivileges/
+    # RestrictSUIDSGID 拦 setuid helper、ProtectSystem=full 拦写 /usr）会误伤，故裸跑；
+    # 仅 feishu-front 不 fork 外部 CLI，保留沙箱。
     local sandbox=""
     if [[ "$privileged" != "true" ]]; then
         sandbox='# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
@@ -374,8 +377,8 @@ sudo chown -R "$RUN_USER:$RUN_USER" "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
 info "生成 systemd unit 文件（User=$RUN_USER）..."
 
 write_unit lark-feishu-front   lark-feishu-front   lark-feishu-front   feishu-config.json
-write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front
-write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front
+write_unit lark-claude-back    lark-claude-back    lark-claude-back    claude-config.json   lark-feishu-front "" true
+write_unit lark-opencode-back  lark-opencode-back  lark-opencode-back  opencode-config.json lark-feishu-front "" true
 write_unit lark-miniagent-back lark-miniagent-back lark-miniagent-back miniagent-config.json lark-feishu-front "" true
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
