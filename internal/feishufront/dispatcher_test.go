@@ -704,11 +704,11 @@ func TestDebouncer_NormalFlushDropsOnCancelledCtx(t *testing.T) {
 	}
 }
 
-// TestOnBackendOffline_ReleasesInFlightTurn pins the M3 fix: a disconnecting
-// backend never sends the terminal control that would Finish its turn, so
-// OnBackendOffline must release that backend's in-flight turn and progress
-// state instead of leaving them to accumulate across reconnects.
-func TestOnBackendOffline_ReleasesInFlightTurn(t *testing.T) {
+// TestOnBackendOffline_KeepsInFlightTurn pins the policy: a turn ends ONLY
+// when the user sends /session-abort, never because its backend went offline.
+// OnBackendOffline must leave the turn and its progress state in place — they
+// are visible via GET /v1/status's turns list so the user can decide to abort.
+func TestOnBackendOffline_KeepsInFlightTurn(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
@@ -719,20 +719,20 @@ func TestOnBackendOffline_ReleasesInFlightTurn(t *testing.T) {
 
 	d.OnBackendOffline("back-A", "claude")
 
-	if _, ok := d.turns.Get("p-1"); ok {
-		t.Fatal("in-flight turn for offline backend should be released")
+	if _, ok := d.turns.Get("p-1"); !ok {
+		t.Fatal("in-flight turn must survive its backend going offline (only /session-abort ends it)")
 	}
 	d.progressMu.Lock()
 	_, leak := d.progress["p-1"]
 	d.progressMu.Unlock()
-	if leak {
-		t.Fatal("progress state for offline backend should be cleaned up")
+	if !leak {
+		t.Fatal("progress state must be retained for the stranded turn")
 	}
 }
 
-// TestOnBackendOffline_PreservesOtherBackends ensures the cleanup only touches
-// the offline backend's turns — a turn owned by a still-online backend survives.
-func TestOnBackendOffline_PreservesOtherBackends(t *testing.T) {
+// TestOnBackendOffline_PreservesAllTurns ensures offline-of-one does not touch
+// any turn: neither the offline backend's turn nor another backend's is released.
+func TestOnBackendOffline_PreservesAllTurns(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
@@ -741,8 +741,8 @@ func TestOnBackendOffline_PreservesOtherBackends(t *testing.T) {
 
 	d.OnBackendOffline("back-A", "claude")
 
-	if _, ok := d.turns.Get("p-A"); ok {
-		t.Fatal("back-A turn should be released")
+	if _, ok := d.turns.Get("p-A"); !ok {
+		t.Fatal("back-A turn must survive back-A going offline")
 	}
 	if _, ok := d.turns.Get("p-B"); !ok {
 		t.Fatal("back-B turn must survive back-A going offline")

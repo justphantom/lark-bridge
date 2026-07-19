@@ -16,18 +16,12 @@ import (
 const noticeSendTimeout = 10 * time.Second
 
 func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
-	// Release this backend's in-flight turns: a disconnecting backend never
-	// sends the terminal control that would otherwise Finish them, so without
-	// this the turns/progress/finalized maps grow monotonically across
-	// reconnects. (Interactive/card bindings for this backend are reclaimed by
-	// the TTL sweep, not by promptID.)
-	for _, promptID := range d.turns.TurnsByBackend(backendID) {
-		turn, ok := d.turns.Get(promptID)
-		d.turns.Finish(promptID)
-		if ok {
-			d.cleanupProgress(promptID, turn.MessageID)
-		}
-	}
+	// A disconnecting backend never sends the terminal control that would
+	// Finish its turns. Per project policy a turn ends ONLY when the user
+	// sends /session-abort, so we do NOT release them here — the stranded
+	// turns stay in the in-flight set, visible by name via GET /v1/status's
+	// turns list, until the user explicitly aborts or the frontend restarts.
+	// (Interactive/card bindings are still reclaimed by their own TTL sweep.)
 	if d.router == nil {
 		return
 	}
@@ -35,7 +29,7 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 	for _, chatID := range chats {
 		footer := cardkit.FooterInfo{BackendID: backendID, BackendType: backendType, Status: "离线", Time: time.Now()}
 		card, err := cardkit.Notice(footer, "warning", "后端离线",
-			"backend "+backendID+" 已断开，发往该后端的消息将被丢弃。请用 /backend 切换到其他在线后端。", "", "", "")
+			"backend "+backendID+" 已断开。该后端的进行中任务不会被自动结束，如需结束请发送 /session-abort；要继续对话请用 /backend 切换到其他在线后端。", "", "", "")
 		if err != nil {
 			continue
 		}

@@ -114,8 +114,9 @@ func (m *TurnManager) Finish(promptID string) {
 }
 
 // TurnsByBackend returns the promptIDs of in-flight turns owned by backendID.
-// Used by OnBackendOffline to release a disconnecting backend's in-flight
-// state, which the backend itself never gets to Finish.
+// Retained for abort/diagnostic paths that need to target one backend's turns
+// — OnBackendOffline no longer releases them (a turn ends only on
+// /session-abort, not on its backend disconnecting).
 func (m *TurnManager) TurnsByBackend(backendID string) []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -151,6 +152,21 @@ func (m *TurnManager) InFlight() int {
 		n++
 	}
 	return n
+}
+
+// InFlightTurns returns a snapshot of every currently in-flight turn. Unlike
+// InFlight it does NOT exclude deploy-monitor backends: the per-turn detail
+// (promptID/chatID/backendID) is what lets an operator see a turn stranded by
+// a crashed backend — the count alone hides it. Returns value-copies so the
+// caller may read fields without a lock.
+func (m *TurnManager) InFlightTurns() []Turn {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Turn, 0, len(m.turns))
+	for _, t := range m.turns {
+		out = append(out, *t)
+	}
+	return out
 }
 
 // BindInteractive records the messageID of an interactive card by requestID.

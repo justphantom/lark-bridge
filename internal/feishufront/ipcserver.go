@@ -37,6 +37,12 @@ type IPCServer struct {
 	// wired (e.g. unit tests) — the endpoint then reports 0.
 	inFlightTurns atomic.Pointer[func() int]
 
+	// inFlightDetail, when set, returns the per-turn detail behind that count
+	// (promptID/chatID/backendID/elapsed). GET /v1/status exposes it so a turn
+	// stranded by a crashed backend is visible by name, not just as a stale
+	// inflight number. nil in unit tests — the endpoint then omits the list.
+	inFlightDetail atomic.Pointer[func() []Turn]
+
 	// wasOffline tracks backend IDs that were evicted by the health checker,
 	// so handleSSE can distinguish a reconnect from a first-time connect.
 	//
@@ -158,4 +164,11 @@ func (s *IPCServer) SetOnOnline(fn func(backendID, backendType string)) {
 // checks treat 0 as "safe to restart".
 func (s *IPCServer) SetInFlightTurns(fn func() int) {
 	s.inFlightTurns.Store(&fn)
+}
+
+// SetInFlightDetail wires the per-turn snapshot queried by GET /v1/status.
+// Pass TurnManager.InFlightTurns. When unset, the endpoint omits the turns
+// list (back-compat for callers/tests that only need the count).
+func (s *IPCServer) SetInFlightDetail(fn func() []Turn) {
+	s.inFlightDetail.Store(&fn)
 }

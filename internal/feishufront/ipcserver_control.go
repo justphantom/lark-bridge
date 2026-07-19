@@ -3,6 +3,7 @@ package feishufront
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -58,9 +59,22 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 // a deploy script (curl + jq) can consume it cheaply; the operative field is
 // InFlight — when >0, an in-progress conversation would be cut off by a
 // restart. Backends lists registered backend IDs for operator visibility.
+// Turns names each in-flight turn so a stranded turn (backend crashed mid-turn)
+// is identifiable, not just a stale count.
 type statusResponse struct {
-	InFlight int      `json:"inflight"`
-	Backends []string `json:"backends"`
+	InFlight int           `json:"inflight"`
+	Backends []string      `json:"backends"`
+	Turns    []turnStatus  `json:"turns"`
+}
+
+// turnStatus is one in-flight turn's operator-facing identity. ElapsedS is the
+// wall-clock seconds since the turn started — a turn that outlives any
+// plausible LLM call is the signature of a stranded one.
+type turnStatus struct {
+	PromptID  string `json:"prompt_id"`
+	ChatID    string `json:"chat_id"`
+	BackendID string `json:"backend_id"`
+	ElapsedS  int64  `json:"elapsed_s"`
 }
 
 // handleStatus reports the current in-flight turn count and registered backends
@@ -68,7 +82,8 @@ type statusResponse struct {
 // the same authOK gate as the other endpoints; an unauthenticated request gets
 // 401, which deploy.sh interprets as "service up, check auth" — it must pass
 // the configured secret to read the body. When inFlightTurns is unset (nil),
-// InFlight is reported as 0 (the safe value for a deploy check).
+// InFlight is reported as 0 (the safe value for a deploy check). The turns list
+// is filled only when inFlightDetail is wired.
 func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.authOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -78,11 +93,23 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if fn := s.inFlightTurns.Load(); fn != nil {
 		inflight = (*fn)()
 	}
+	turns := []turnStatus{}
+	if fn := s.inFlightDetail.Load(); fn != nil {
+		for _, t := range (*fn)() {
+			turns = append(turns, turnStatus{
+				PromptID:  t.PromptID,
+				ChatID:    t.ChatID,
+				BackendID: t.BackendID,
+				ElapsedS:  int64(time.Since(t.StartedAt).Seconds()),
+			})
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// Best-effort status write: the response is fire-and-forget and the
 	// connection may already be torn down by the time Encode flushes.
 	_ = json.NewEncoder(w).Encode(statusResponse{
 		InFlight: inflight,
 		Backends: s.registry.Registered(),
+		Turns:    turns,
 	})
 }

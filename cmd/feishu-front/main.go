@@ -146,6 +146,7 @@ func run(cfgPath, addr string) error {
 	// (which otherwise self-blocks: make deploy → /v1/status → inflight>0).
 	turns.SetTypeResolver(registry.BackendType)
 	ipc.SetInFlightTurns(turns.InFlight)
+	ipc.SetInFlightDetail(turns.InFlightTurns)
 
 	bot.OnIncoming(dispatcher.DispatchIncoming)
 	bot.OnCardAction(dispatcher.DispatchCardAction)
