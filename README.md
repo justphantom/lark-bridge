@@ -41,10 +41,7 @@ make fmt        # gofmt -s -w .
 make clean
 ```
 
-Go 1.25+。直接依赖：
-
-- `github.com/larksuite/oapi-sdk-go/v3`（飞书开放平台 SDK）
-- `golang.org/x/net`
+Go 1.25+。直接依赖仅 `github.com/larksuite/oapi-sdk-go/v3`（飞书开放平台 SDK）；`gorilla/websocket`、`gogo/protobuf` 为 SDK 的间接依赖。
 
 ## 配置
 
