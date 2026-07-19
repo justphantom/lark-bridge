@@ -147,7 +147,7 @@ func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, h
 	// attach a deadline-carrying context to the request because that context
 	// also governs the response body — cancelling it after Connect returns
 	// would close the SSE stream.
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +261,7 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuth(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func (c *Client) Status(ctx context.Context) (*protocol.StatusSnapshot, error) {
 		return nil, err
 	}
 	c.setAuth(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
 		return nil, err
 	}

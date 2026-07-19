@@ -167,6 +167,7 @@ linters:
       # Trusted patterns: test fixtures and config-derived paths only.
       excludes:
         - G101  # hardcoded creds — test API keys "sk-test", "sk-from-config"
+        - G117  # exported field matching secret pattern — APIKey is a legitimate config field, not a hardcoded constant
         - G204  # subprocess from variable — cliPath is trusted config
         - G304  # file path from variable — internally derived everywhere
 

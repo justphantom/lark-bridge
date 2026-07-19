@@ -82,7 +82,7 @@ ScanLoop:
 		// Tee the raw line verbatim before parsing so the archive holds the
 		// complete CLI return stream, including lines parseEvent rejects.
 		if sink != nil {
-			_, _ = io.WriteString(sink, line+"\n")
+			_, _ = io.WriteString(sink, line+"\n") //nolint:gosec // G705: sink is a streamarchive file writer, not an HTTP response
 		}
 
 		events, err := parseEvent(line)
