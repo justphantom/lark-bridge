@@ -73,14 +73,14 @@ func FormatRunning(sessions []RunningSession) string {
 	})
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🔄 **运行中会话** (%d)\n\n", len(sessions)))
+	fmt.Fprintf(&sb, "🔄 **运行中会话** (%d)\n\n", len(sessions))
 	for i, session := range sessions {
-		sb.WriteString(fmt.Sprintf("**%d. %s**\n", i+1, session.Title))
-		sb.WriteString(fmt.Sprintf("   📊 群ID：`%s`\n", session.ChatID))
-		sb.WriteString(fmt.Sprintf("   ⏱️ 运行时间：%s\n", FormatDuration(session.Duration)))
-		sb.WriteString(fmt.Sprintf("   🤖 模型：%s\n", session.Model))
+		fmt.Fprintf(&sb, "**%d. %s**\n", i+1, session.Title)
+		fmt.Fprintf(&sb, "   📊 群ID：`%s`\n", session.ChatID)
+		fmt.Fprintf(&sb, "   ⏱️ 运行时间：%s\n", FormatDuration(session.Duration))
+		fmt.Fprintf(&sb, "   🤖 模型：%s\n", session.Model)
 		if session.Agent != "" {
-			sb.WriteString(fmt.Sprintf("   🔧 agent：%s\n", session.Agent))
+			fmt.Fprintf(&sb, "   🔧 agent：%s\n", session.Agent)
 		}
 		sb.WriteString("\n")
 	}

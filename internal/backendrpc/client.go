@@ -57,7 +57,13 @@ const maxErrBody = 4 << 10
 // deadlines at the call sites (SendControl takes a ctx; the SSE handshake
 // uses a dedicated connect ctx).
 func newHTTPClient() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// Fallback to the default transport untouched if the assertion ever
+		// breaks (e.g. someone wrapped DefaultTransport). Header timeouts
+		// then come from net/http defaults.
+		return &http.Client{}
+	}
 	tr.ResponseHeaderTimeout = handshakeTimeout
 	return &http.Client{Transport: tr}
 }
@@ -127,7 +133,7 @@ func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, h
 	q.Set("backendID", backendID)
 	q.Set("backendType", backendType)
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +149,7 @@ func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, h
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("sse handshake %d: %s", resp.StatusCode, body)
 	}
 	c.sseBody = resp.Body
@@ -155,7 +161,7 @@ func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, h
 // frames (which may span multiple data: lines) and dispatching decoded
 // protocol.Event into eventCh. On EOF/error it closes the client.
 func (c *Client) readSSE(r io.ReadCloser) {
-	defer r.Close()
+	defer func() { _ = r.Close() }() // body drain done; close error is not actionable
 	scanner := bufio.NewScanner(r)
 	// Frames can be large (rich prompts); raise the per-line cap.
 	scanner.Buffer(make([]byte, 0, scannerInitBuf), scannerMaxLine)
@@ -207,7 +213,7 @@ func (c *Client) readSSE(r io.ReadCloser) {
 	if err := scanner.Err(); err != nil {
 		c.logger.Load().Warn("sse scanner", log.FieldError, err)
 	}
-	c.Close()
+	_ = c.Close() // SSE goroutine ending; close error not actionable
 }
 
 // setAuth adds the shared bearer token to req when a secret is configured.
@@ -255,7 +261,7 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // control POST fire-and-forget
 	if resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		return fmt.Errorf("send control %d: %s", resp.StatusCode, respBody)

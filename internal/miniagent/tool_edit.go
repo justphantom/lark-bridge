@@ -109,7 +109,7 @@ func (e EditFile) Call(_ context.Context, args string) ToolResult {
 	}
 
 	updated := strings.Replace(content, a.OldString, a.NewString, 1)
-	if err := os.WriteFile(full, []byte(updated), 0o600); err != nil {
+	if err := os.WriteFile(full, []byte(updated), 0o600); err != nil { //nolint:gosec // G703: full is workspace-bound by resolveToolPath above
 		return ToolResult{IsError: true, Output: fmt.Sprintf("写入 %q 失败：%v", a.Path, err)}
 	}
 	return ToolResult{Output: fmt.Sprintf("已替换 %q 中的 1 处文本（%d → %d 字节）", a.Path, len(content), len(updated))}

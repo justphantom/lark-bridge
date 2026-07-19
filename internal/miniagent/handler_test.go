@@ -47,10 +47,7 @@ func TestHandleEvent_EmitsResultOnSuccess(t *testing.T) {
 
 	// runTurn runs on its own goroutine; poll briefly for the terminal emit.
 	deadline := time.After(2 * time.Second)
-	for {
-		if len(rpc.Controls()) > 0 {
-			break
-		}
+	for len(rpc.Controls()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("timeout waiting for emit")
@@ -107,10 +104,7 @@ func TestHandleEvent_EmitsErrorOnLLMFailure(t *testing.T) {
 	_ = h.HandleEvent(context.Background(), ev)
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if len(rpc.Controls()) > 0 {
-			break
-		}
+	for len(rpc.Controls()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("timeout waiting for emit")

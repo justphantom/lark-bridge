@@ -85,7 +85,7 @@ func (h *Handler) cmdMemoryList(chatID, arg string) (level, title, body string) 
 		return "info", "长期记忆", fmt.Sprintf("前缀 %q 没有匹配的记忆。", arg)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("共 %d 条记忆：\n", len(facts)))
+	fmt.Fprintf(&sb, "共 %d 条记忆：\n", len(facts))
 	for _, f := range facts {
 		fmt.Fprintf(&sb, "- %s: %s\n", f.Key, f.Value)
 	}
@@ -122,7 +122,7 @@ func (h *Handler) cmdMemorySearch(chatID, arg string) (level, title, body string
 		return "info", "长期记忆", fmt.Sprintf("未找到包含 %q 的记忆。", arg)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("找到 %d 条记忆：\n", len(facts)))
+	fmt.Fprintf(&sb, "找到 %d 条记忆：\n", len(facts))
 	for _, f := range facts {
 		fmt.Fprintf(&sb, "- %s: %s\n", f.Key, f.Value)
 	}
@@ -142,9 +142,9 @@ func (h *Handler) cmdRunning(chatID, _ string) (level, title, body string) {
 		return "info", "运行中会话", "当前没有运行中的会话。"
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🔄 **运行中会话** (%d)\n\n", len(filtered)))
+	fmt.Fprintf(&sb, "🔄 **运行中会话** (%d)\n\n", len(filtered))
 	for _, s := range filtered {
-		sb.WriteString(fmt.Sprintf("- 群ID：`%s`（运行 %s）\n", s.ChatID, formatDuration(s.Duration)))
+		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, formatDuration(s.Duration))
 	}
 	sb.WriteString("\n💡 如需中止，请发送 `/session-abort`")
 	return "info", "运行中会话", sb.String()

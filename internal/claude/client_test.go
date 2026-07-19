@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 func TestBuildCommand_IncludesSettings(t *testing.T) {
 	c := New(configForTest(), nil)
 
-	cmd, err := c.buildCommand(RunOptions{
+	cmd, err := c.buildCommand(context.Background(), RunOptions{
 		Prompt:       "hi",
 		SettingsFile: "/home/user/.claude/kimi.json",
 	})
@@ -29,7 +30,7 @@ func TestBuildCommand_IncludesSettings(t *testing.T) {
 func TestBuildCommand_OmitsEmptySettings(t *testing.T) {
 	c := New(configForTest(), nil)
 
-	cmd, err := c.buildCommand(RunOptions{Prompt: "hi"})
+	cmd, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestBuildCommand_OmitsEmptySettings(t *testing.T) {
 // subprocesses) instead of orphaning grandchildren.
 func TestBuildCommand_SetsProcessGroup(t *testing.T) {
 	c := New(configForTest(), nil)
-	cmd, err := c.buildCommand(RunOptions{Prompt: "hi"})
+	cmd, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}

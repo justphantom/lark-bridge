@@ -18,6 +18,7 @@ import (
 // options come from the CLI's list subcommands, not config).
 type Handler struct {
 	*bridgebase.Core
+
 	agent opencodeAPI
 }
 
@@ -65,20 +66,20 @@ func NewWithLogger(r *router.Router, api opencodeAPI, rpc *backendrpc.Client, cf
 // The lowercase wrappers below preserve the bridge's historical method names
 // so existing call sites read unchanged; each delegates to the Core.
 
-func (h *Handler) debugRedact() bool { return h.Core.DebugRedact() }
+func (h *Handler) debugRedact() bool { return h.DebugRedact() }
 
 func (h *Handler) emit(ctx context.Context, promptID string, ctrl *protocol.Control) error {
-	return h.Core.Emit(ctx, promptID, ctrl)
+	return h.Emit(ctx, promptID, ctrl)
 }
 
 func (h *Handler) emitLogged(ctx context.Context, promptID, chatID string, ctrl *protocol.Control) {
-	h.Core.EmitLogged(ctx, promptID, chatID, ctrl)
+	h.EmitLogged(ctx, promptID, chatID, ctrl)
 }
 
 func (h *Handler) emitNoticeLogged(chatID, level, title, body string, extra ...string) {
-	h.Core.EmitNoticeLogged(chatID, level, title, body, extra...)
+	h.EmitNoticeLogged(chatID, level, title, body, extra...)
 }
 
 func (h *Handler) emitAsync(promptID string, ctrl *protocol.Control) {
-	h.Core.EmitAsync(promptID, ctrl)
+	h.EmitAsync(promptID, ctrl)
 }

@@ -16,7 +16,7 @@ const maxControlBody = 1 << 20
 // backendID to be registered, backfills BackendID from the URL path, and
 // enqueues it for the frontend main loop.
 func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }() // request fully read; close error not actionable
 	if !s.authOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -79,7 +79,9 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		inflight = (*fn)()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(statusResponse{
+	// Best-effort status write: the response is fire-and-forget and the
+	// connection may already be torn down by the time Encode flushes.
+	_ = json.NewEncoder(w).Encode(statusResponse{
 		InFlight: inflight,
 		Backends: s.registry.Registered(),
 	})

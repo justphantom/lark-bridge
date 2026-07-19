@@ -72,7 +72,7 @@ func (h *History) Load(chatID string) []Message {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only file; close error not actionable
 	var msgs []Message
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024) // allow large tool_result lines
@@ -119,7 +119,7 @@ func (h *History) Append(chatID string, msgs []Message) {
 		h.logger.Warn("miniagent history: open failed", log.FieldError, err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // append file flushed by writer; close error not actionable
 	w := bufio.NewWriter(f)
 	for _, m := range msgs {
 		b, err := json.Marshal(m)

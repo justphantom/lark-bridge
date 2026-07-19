@@ -122,7 +122,7 @@ func TestDispatcherDedupDelete(t *testing.T) {
 // any bot call.
 func TestDispatcherUnknownControl(t *testing.T) {
 	d := NewDispatcher(nil, NewBackendRegistry(), NewTurnManager(), nil)
-	err := d.DispatchControl(nil, RoutedControl{BackendID: "b", Control: &protocol.Control{Type: "bogus"}})
+	err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{Type: "bogus"}})
 	if err == nil {
 		t.Fatal("expected error for unknown control type")
 	}

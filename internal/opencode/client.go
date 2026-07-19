@@ -128,7 +128,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 		return nil, ctx.Err()
 	}
 
-	cmd, err := c.buildCommand(opts)
+	cmd, err := c.buildCommand(ctx, opts)
 	if err != nil {
 		<-c.sem
 		return nil, err
@@ -166,7 +166,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 
 // buildCommand assembles the opencode CLI invocation for one turn.
 // The prompt is passed as a positional argument (opencode run "<prompt>").
-func (c *Client) buildCommand(opts RunOptions) (*exec.Cmd, error) {
+func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, error) {
 	if c.cliPath == "" {
 		return nil, errors.New("opencode: cli_path is empty")
 	}
@@ -190,7 +190,7 @@ func (c *Client) buildCommand(opts RunOptions) (*exec.Cmd, error) {
 	// #nosec G204 -- c.cliPath comes from the trusted config file; args are
 	// constructed internally (session/model/agent are validated upstream by
 	// the slash commands before reaching here).
-	cmd := exec.Command(c.cliPath, args...)
+	cmd := exec.CommandContext(ctx, c.cliPath, args...)
 	if opts.Directory != "" {
 		cmd.Dir = opts.Directory
 	}

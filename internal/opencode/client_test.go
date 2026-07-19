@@ -18,7 +18,7 @@ import (
 // and the positional prompt are assembled correctly.
 func TestBuildCommand_IncludesSessionAndModel(t *testing.T) {
 	c := New(Config{CLIPath: "opencode"}, log.Nop())
-	cmd, err := c.buildCommand(RunOptions{
+	cmd, err := c.buildCommand(context.Background(), RunOptions{
 		Prompt:    "hi",
 		SessionID: "sess-1",
 		Model:     "anthropic/claude",
@@ -46,7 +46,7 @@ func TestBuildCommand_IncludesSessionAndModel(t *testing.T) {
 // unset so the CLI uses its own defaults.
 func TestBuildCommand_OmitsEmptyFlags(t *testing.T) {
 	c := New(Config{CLIPath: "opencode"}, log.Nop())
-	cmd, err := c.buildCommand(RunOptions{Prompt: "hi"})
+	cmd, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestBuildCommand_OmitsEmptyFlags(t *testing.T) {
 // group leader, so cancellation can SIGKILL the whole tree.
 func TestBuildCommand_SetsProcessGroup(t *testing.T) {
 	c := New(Config{CLIPath: "opencode"}, log.Nop())
-	cmd, err := c.buildCommand(RunOptions{Prompt: "hi"})
+	cmd, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestBuildCommand_SetsProcessGroup(t *testing.T) {
 // TestBuildCommand_EmptyCLIPathErrors verifies a missing CLI path fails fast.
 func TestBuildCommand_EmptyCLIPathErrors(t *testing.T) {
 	c := New(Config{}, log.Nop())
-	if _, err := c.buildCommand(RunOptions{Prompt: "hi"}); err == nil {
+	if _, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"}); err == nil {
 		t.Fatal("expected error for empty cli_path")
 	}
 }

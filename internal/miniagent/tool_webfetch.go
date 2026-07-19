@@ -82,7 +82,7 @@ func (w WebFetch) Call(ctx context.Context, args string) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("抓取失败：%v", err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()                  // body drained by io.ReadAll
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5MB raw cap
 	if err != nil {
 		return ToolResult{IsError: true, Output: fmt.Sprintf("读取响应失败：%v", err)}

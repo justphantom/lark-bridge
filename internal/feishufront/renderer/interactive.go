@@ -23,14 +23,6 @@ const maxInteractiveBodyRunes = cardkit.MaxBodyRunes
 // under Feishu's card content ceiling.
 const maxQuestionOptionRunes = 15000
 
-// interactiveTimeoutHint returns the pending-hint line appended to every
-// permission/question card so the user knows a silent card will not wait
-// forever. The duration comes from cardkit.InteractiveTimeout so the UI stays
-// in sync with the turn manager's eviction policy.
-func interactiveTimeoutHint() string {
-	return fmt.Sprintf("\n\n⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))
-}
-
 // RenderQuestion builds a question card: one block per question (label +
 // options as a select/multi-select), an optional custom-input box, and a
 // single submit button. All controls live inside a form container so the

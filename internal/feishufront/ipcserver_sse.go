@@ -89,10 +89,10 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 					log.FieldError, err)
 				continue
 			}
-			if err := rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)); err != nil {
-				// Writer doesn't support deadlines (e.g. httptest recycler):
-				// proceed best-effort without a bound.
-			}
+			// SetWriteDeadline returns an error on writers that do not support
+			// deadlines (e.g. httptest.ResponseRecorder); ignore and proceed
+			// best-effort without a bound.
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 				// The write failed or timed out: the connection is broken, so
 				// do NOT Touch (the health checker will evict this conn).

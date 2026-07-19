@@ -258,7 +258,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 		}
 	}
 	// The oldest collapsed ones should NOT appear by their desc.
-	for i := range total-maxRunningTools {
+	for i := range total - maxRunningTools {
 		if strings.Contains(body, "/file"+strconv.Itoa(i)+".go") {
 			t.Errorf("collapsed running tool /file%d.go should not appear in card", i)
 		}
@@ -600,7 +600,8 @@ func TestRender_FourZoneOrder(t *testing.T) {
 			t.Fatalf("missing %q in render: %s", sub, body)
 		}
 	}
-	if !(idx("planning") < idx("/running.go") && idx("/running.go") < idx("make build") && idx("make build") < idx("denied")) {
+	// Zone order must be strictly ascending: thinking < running < completed < error.
+	if idx("planning") >= idx("/running.go") || idx("/running.go") >= idx("make build") || idx("make build") >= idx("denied") {
 		t.Errorf("zone order wrong (want thinking<running<completed<error): %s", body)
 	}
 }

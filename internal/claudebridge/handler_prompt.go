@@ -147,7 +147,7 @@ func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts 
 	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, backendTag, chatID, replyToID, h.StreamHistory)
 	if sink != nil {
 		opts.LineSink = wrapThinkingFilter(sink)
-		defer closeSink()
+		defer func() { _ = closeSink() }() // archive already flushed
 	}
 
 	events, err := h.agent.Run(ctx, opts)

@@ -23,11 +23,11 @@ func TestShouldEmitText_ThrottlesWithinInterval(t *testing.T) {
 	if !th.ShouldEmitText(base) {
 		t.Fatal("first call should emit")
 	}
-		// Subsequent calls within the interval must be suppressed.
-		for _, offsetMS := range []int{10, 50, 100, 199} {
-			offset := time.Duration(offsetMS) * time.Millisecond
-			if th.ShouldEmitText(base.Add(offset)) {
-				t.Errorf("call at +%dms should be throttled", offsetMS)
+	// Subsequent calls within the interval must be suppressed.
+	for _, offsetMS := range []int{10, 50, 100, 199} {
+		offset := time.Duration(offsetMS) * time.Millisecond
+		if th.ShouldEmitText(base.Add(offset)) {
+			t.Errorf("call at +%dms should be throttled", offsetMS)
 		}
 	}
 }
@@ -68,7 +68,7 @@ func TestShouldEmitText_ConcurrentSafe(t *testing.T) {
 	for range 4 {
 		go func() {
 			defer func() { done <- struct{}{} }()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				th.ShouldEmitText(time.Now())
 			}
 		}()

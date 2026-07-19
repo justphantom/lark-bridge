@@ -126,7 +126,7 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 	var err error
 	backoff := cardRetryBase
 	for attempt := 0; ; attempt++ {
-		resp, err = b.imService.V1.Message.Patch(ctx, req)
+		resp, err = b.imService.Message.Patch(ctx, req)
 		if err == nil {
 			break
 		}
@@ -186,7 +186,7 @@ func (b *Bot) updateFallbackCard(ctx context.Context, messageID string) error {
 			Content(string(fallbackCardJSON())).
 			Build()).
 		Build()
-	resp, err := b.imService.V1.Message.Patch(ctx, req)
+	resp, err := b.imService.Message.Patch(ctx, req)
 	if err != nil {
 		return fmt.Errorf("feishu: update card request failed: %w", err)
 	}

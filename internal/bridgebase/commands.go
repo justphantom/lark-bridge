@@ -19,6 +19,7 @@ type CommandHandler[H any] func(h H, ctx context.Context, chatID string, args []
 // cmdutil.Spec; the Handler binds the bridge's own handler type.
 type CommandSpec[H any] struct {
 	cmdutil.Spec
+
 	Handler CommandHandler[H]
 }
 

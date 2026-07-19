@@ -66,7 +66,6 @@ linters:
 
     # ── structure / style (kept because they catch real issues here) ─────
     - errname             # error types suffixed with Error, sentinels Err…
-    - funcorder           # constructor → exported → unexported method order
     - gocheckcompilerdirectives  # //go: directive validity
     - goprintffuncname   # printf-like funcs end in "f"
     - gosec               # security (with project-specific excludes below)
@@ -134,6 +133,11 @@ linters:
   #   - gocritic
   #     Overlaps heavily with staticcheck + revive; enabling adds noise
   #     without new signal.
+  #   - funcorder
+  #     Forces constructor → exported → unexported method ordering. Project
+  #     methods are grouped by semantic concern (lifecycle / emit / state)
+  #     rather than visibility, which reads better in handlers with many
+  #     related methods. Reordering would scatter cohesive groups.
   #   - revive (full set)
   #     A subset is enabled via staticcheck + the explicit linters above;
   #     the full revive rule set conflicts with project conventions.

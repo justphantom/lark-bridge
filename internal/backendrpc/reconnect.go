@@ -49,7 +49,7 @@ func Run(ctx context.Context, backendID, backendType, frontendURL, secret string
 		select {
 		case <-ctx.Done():
 			if c := current.Load(); c != nil {
-				c.Close()
+				_ = c.Close() // shutdown path
 			}
 		case <-stop:
 		}
@@ -58,7 +58,7 @@ func Run(ctx context.Context, backendID, backendType, frontendURL, secret string
 	for {
 		ev, rerr := client.RecvEvent()
 		if rerr != nil {
-			client.Close()
+			_ = client.Close() // conn is broken (RecvEvent errored)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -81,7 +81,7 @@ func Run(ctx context.Context, backendID, backendType, frontendURL, secret string
 			// OLD client and exited, so nothing would ever close this NEW one
 			// and RecvEvent would block forever. Close it ourselves and return.
 			if ctx.Err() != nil {
-				client.Close()
+				_ = client.Close() // shutdown path
 				return nil
 			}
 			current.Store(client)

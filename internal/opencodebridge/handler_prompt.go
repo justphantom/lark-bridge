@@ -125,7 +125,7 @@ func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts
 	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "opencode", chatID, promptID, h.StreamHistory)
 	if sink != nil {
 		opts.LineSink = sink
-		defer closeSink()
+		defer func() { _ = closeSink() }() // archive already flushed
 	}
 
 	events, err := h.agent.Run(ctx, opts)

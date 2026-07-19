@@ -188,33 +188,6 @@ func (c *HTTPClient) Do(ctx context.Context, req Request) (Response, error) {
 	}
 }
 
-// doOnce performs a single POST and returns the raw response body, the HTTP
-// status (0 on transport error), and the error. It is the unit of retry.
-func (c *HTTPClient) doOnce(ctx context.Context, client *http.Client, url string, body []byte) (raw []byte, status int, err error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, fmt.Errorf("build request: %w", err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		// On some errors (redirect policy, auth negotiation) the http client
-		// returns a non-nil resp alongside err; its body must still be closed
-		// to avoid leaking the connection.
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if rerr != nil {
-		return raw, resp.StatusCode, fmt.Errorf("read response: %w", rerr)
-	}
-	return raw, resp.StatusCode, nil
-}
-
 // parseRetryAfter extracts a Retry-After hint from an error response body.
 // OpenAI-compatible endpoints usually echo it as a top-level JSON field when
 // 429; returns 0 if absent/unparseable so the caller falls back to its own
@@ -276,3 +249,30 @@ func (c *HTTPClient) ListModels(ctx context.Context) ([]string, error) {
 // OpenAI wire-format serialization (chatMessage / chatToolCall /
 // buildChatBody / parseChatResponse) lives in llm_chat.go, keeping this
 // file to the transport concerns: types, HTTPClient, retry, ListModels.
+
+// doOnce performs a single POST and returns the raw response body, the HTTP
+// status (0 on transport error), and the error. It is the unit of retry.
+func (c *HTTPClient) doOnce(ctx context.Context, client *http.Client, url string, body []byte) (raw []byte, status int, err error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		// On some errors (redirect policy, auth negotiation) the http client
+		// returns a non-nil resp alongside err; its body must still be closed
+		// to avoid leaking the connection.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }() // body drained by io.ReadAll
+	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if rerr != nil {
+		return raw, resp.StatusCode, fmt.Errorf("read response: %w", rerr)
+	}
+	return raw, resp.StatusCode, nil
+}

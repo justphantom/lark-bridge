@@ -106,10 +106,7 @@ func TestHandleEvent_DeployTriggersAndNotices(t *testing.T) {
 
 	// Terminal notice arrives after the async deploy; poll up to 1s.
 	deadline := time.Now().Add(time.Second)
-	for {
-		if cmd.callCount() == 1 && len(rpc.snapshot()) >= 2 {
-			break
-		}
+	for cmd.callCount() != 1 || len(rpc.snapshot()) < 2 {
 		if time.Now().After(deadline) {
 			t.Fatalf("deploy did not complete: calls=%d notices=%d",
 				cmd.callCount(), len(rpc.snapshot()))
@@ -137,10 +134,7 @@ func TestHandleEvent_FailureEmitsError(t *testing.T) {
 	_ = h.HandleEvent(context.Background(), promptEvent("c2", "/deploy"))
 
 	deadline := time.Now().Add(time.Second)
-	for {
-		if len(rpc.snapshot()) >= 2 {
-			break
-		}
+	for len(rpc.snapshot()) < 2 {
 		if time.Now().After(deadline) {
 			t.Fatalf("no terminal notice, got %+v", rpc.snapshot())
 		}
@@ -221,13 +215,7 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 	// Release the first deploy; running flag must clear so a later /deploy works.
 	close(release)
 	deadline = time.Now().Add(time.Second)
-	for {
-		if cmd.callCount() == 1 && len(rpc.snapshot()) >= 3 {
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
+	for (cmd.callCount() != 1 || len(rpc.snapshot()) < 3) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
