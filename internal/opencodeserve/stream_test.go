@@ -3,6 +3,7 @@ package opencodeserve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // fakeServe is a minimal mock of the opencode serve server, exposing only
@@ -470,5 +473,95 @@ func TestRun_MessageIDFiltering(t *testing.T) {
 	}
 	if got := text.String(); got != "keep-me" {
 		t.Errorf("text = %q, want %q (stale DROP must be filtered)", got, "keep-me")
+	}
+}
+
+// TestSSE_HeartbeatForcesReconnect verifies the watchdog cancels the active
+// connection when no traffic has arrived within heartbeatTimeout — the only
+// way to unblock a half-open TCP read. We shrink heartbeatTimeout to keep
+// the test fast and manually backdate lastHeartbeat past the window.
+func TestSSE_HeartbeatForcesReconnect(t *testing.T) {
+	saved := heartbeatTimeout
+	t.Cleanup(func() { heartbeatTimeout = saved })
+	heartbeatTimeout = 50 * time.Millisecond
+
+	d := newSSEDispatcher("http://unused", nil, nil)
+	// newSSEDispatcher spawned a watchdog; stop it on cleanup so it does
+	// not leak. Close stopCh + wait on heartbeatDone directly (we did not
+	// start run(), so d.done never closes — do NOT call d.stop() here).
+	t.Cleanup(func() {
+		close(d.stopCh)
+		<-d.heartbeatDone
+	})
+
+	cancelled := make(chan struct{})
+	d.setConnCancel(func() { close(cancelled) })
+	// Backdate heartbeat so the first watchdog tick already sees stale.
+	d.lastHeartbeatMu.Lock()
+	d.lastHeartbeat = time.Now().Add(-2 * heartbeatTimeout)
+	d.lastHeartbeatMu.Unlock()
+
+	select {
+	case <-cancelled:
+		// watchdog fired cancelConn as expected
+	case <-time.After(time.Second):
+		t.Fatal("watchdog did not cancel the stale connection within 1s")
+	}
+}
+
+// TestSSE_RecoverPanic verifies recoverPanic swallows a panic instead of
+// propagating — the guarantee that a single malformed frame cannot kill the
+// global SSE subscription.
+func TestSSE_RecoverPanic(t *testing.T) {
+	// A goroutine that panics must not escape.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer recoverPanic(log.Nop(), "test")
+		panic("boom")
+	}()
+	select {
+	case <-done:
+		// recoverPanic swallowed the panic as expected.
+	case <-time.After(time.Second):
+		t.Fatal("recoverPanic let the panic escape (goroutine did not return)")
+	}
+}
+
+// TestAPIError_SentinelMapping verifies apiError maps HTTP status codes onto
+// the sentinel errors so callers can branch with errors.Is instead of string
+// matching on the formatted message.
+func TestAPIError_SentinelMapping(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"404 -> ErrNotFound", http.StatusNotFound, `{"_tag":"NotFound"}`, ErrNotFound},
+		{"401 -> ErrUnauthorized", http.StatusUnauthorized, "token expired", ErrUnauthorized},
+		{"409 -> ErrSessionBusy", http.StatusConflict, "session ses_X busy", ErrSessionBusy},
+		{"500 -> generic", http.StatusInternalServerError, "boom", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := apiError(tc.status, truncateDetail([]byte(tc.body)))
+			if tc.want == nil {
+				if errors.Is(err, ErrNotFound) || errors.Is(err, ErrSessionBusy) || errors.Is(err, ErrUnauthorized) {
+					t.Fatalf("status %d mapped to a sentinel; want generic: %v", tc.status, err)
+				}
+				if !strings.Contains(err.Error(), tc.body) {
+					t.Errorf("generic error lost body detail: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("errors.Is: got %v, want %v", err, tc.want)
+			}
+			// The wrapped detail must survive so logs stay diagnosable.
+			if !strings.Contains(err.Error(), tc.body) {
+				t.Errorf("sentinel error lost body detail %q: %v", tc.body, err)
+			}
+		})
 	}
 }

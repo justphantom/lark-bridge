@@ -25,10 +25,29 @@ import (
 // deliver).
 const subscriberBuf = 256
 
-// reconnBackoff is the delay between SSE reconnect attempts. opencode serve
-// closes the connection on shutdown and we want to ride a restart without
-// losing in-flight turns (their next prompt re-creates a session).
-const reconnBackoff = 2 * time.Second
+// SSE reconnect backoff bounds. A failing or flapping upstream grows the
+// delay exponentially from reconnectBackoffMin to reconnectBackoffMax so a
+// crashing server cannot trigger a ~10/s reconnect storm; a healthy long-
+// lived connection resets the backoff on close for a fast retry.
+const (
+	reconnectBackoffMin = 100 * time.Millisecond
+	reconnectBackoffMax = 5 * time.Second
+
+	// healthyConnMinDuration is the minimum lifetime for a connection to
+	// count as "healthy". A connection that opens then closes within this
+	// window is treated as flapping (server returning 200 then immediate
+	// EOF during a restart) and triggers backoff growth rather than a
+	// tight retry loop.
+	healthyConnMinDuration = 2 * time.Second
+)
+
+// heartbeatTimeout bounds how long the connection may go without ANY traffic
+// before we declare it half-open and force a reconnect. Any SSE frame resets
+// the watchdog (via updateHeartbeat in handleFrame), so this also covers the
+// case where opencode serve stops emitting heartbeats but the TCP socket
+// stays open. A var (not const) so tests can shrink it; production code
+// never writes to it.
+var heartbeatTimeout = 15 * time.Second
 
 // sseLineLimit bounds the per-line SSE scanner buffer. The opencode serve
 // frames are tiny (heartbeat, part deltas) — 1 MiB is a generous ceiling.
@@ -85,6 +104,23 @@ type sseDispatcher struct {
 	subs   map[string]chan Event
 	stopCh chan struct{}
 	done   chan struct{}
+
+	// lastHeartbeat is updated on every successfully handled SSE frame and
+	// on each fresh connection. The heartbeat watchdog closes the active
+	// connection when no traffic has arrived within heartbeatTimeout — the
+	// only way to unblock a half-open TCP socket short of a RST.
+	lastHeartbeat   time.Time
+	lastHeartbeatMu sync.Mutex
+
+	// connCancel cancels the active SSE connection's request context so the
+	// heartbeat watchdog can break a stuck (half-open) TCP read and force a
+	// reconnect. nil when no connection is active. Guarded by connCancelMu.
+	connCancelMu sync.Mutex
+	connCancel   context.CancelFunc
+
+	// heartbeatDone is closed when the heartbeat goroutine exits, so stop()
+	// can wait for it without racing the wg-less design.
+	heartbeatDone chan struct{}
 }
 
 // atomicLogger wraps an atomic pointer so SetLogger is race-free against the
@@ -109,13 +145,16 @@ func (a *atomicLogger) store(l *log.Logger) {
 
 func newSSEDispatcher(baseURL string, httpClient *http.Client, logger *log.Logger) *sseDispatcher {
 	d := &sseDispatcher{
-		baseURL:    baseURL,
-		httpClient: httpClient,
-		subs:       make(map[string]chan Event),
-		stopCh:     make(chan struct{}),
-		done:       make(chan struct{}),
+		baseURL:       baseURL,
+		httpClient:    httpClient,
+		subs:          make(map[string]chan Event),
+		stopCh:        make(chan struct{}),
+		done:          make(chan struct{}),
+		heartbeatDone: make(chan struct{}),
 	}
 	d.logger.store(logger)
+	d.lastHeartbeat = time.Now()
+	go d.heartbeatWatchdog()
 	return d
 }
 
@@ -146,7 +185,8 @@ func (d *sseDispatcher) unsubscribe(sessionID string, ch chan Event) {
 	d.mu.Unlock()
 }
 
-// stop signals the dispatcher goroutine to exit and blocks until it has.
+// stop signals the dispatcher goroutine to exit and blocks until it and
+// the heartbeat watchdog have both exited.
 func (d *sseDispatcher) stop() {
 	select {
 	case <-d.stopCh:
@@ -155,15 +195,85 @@ func (d *sseDispatcher) stop() {
 		close(d.stopCh)
 	}
 	<-d.done
+	<-d.heartbeatDone
+}
+
+// heartbeatWatchdog runs as a standalone goroutine, closing the active SSE
+// connection when no traffic has arrived within heartbeatTimeout. The only
+// way to unblock a half-open TCP read (server gone but socket open) short
+// of a RST is cancelling the request context, which is what this goroutine
+// does via cancelConn. Any frame refreshes lastHeartbeat via handleFrame,
+// so the watchdog also covers a server that stops emitting heartbeats but
+// keeps the connection open.
+func (d *sseDispatcher) heartbeatWatchdog() {
+	defer close(d.heartbeatDone)
+	defer recoverPanic(d.logger.load(), "sseDispatcher.heartbeatWatchdog")
+	logger := d.logger.load()
+	ticker := time.NewTicker(heartbeatTimeout)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-d.stopCh:
+			return
+		case <-ticker.C:
+			last := d.getLastHeartbeat()
+			if elapsed := time.Since(last); elapsed > heartbeatTimeout {
+				logger.Info("sse heartbeat timeout, forcing reconnect",
+					"elapsed_s", elapsed.Seconds())
+				d.cancelConn()
+			}
+		}
+	}
+}
+
+func (d *sseDispatcher) updateHeartbeat() {
+	d.lastHeartbeatMu.Lock()
+	d.lastHeartbeat = time.Now()
+	d.lastHeartbeatMu.Unlock()
+}
+
+func (d *sseDispatcher) getLastHeartbeat() time.Time {
+	d.lastHeartbeatMu.Lock()
+	defer d.lastHeartbeatMu.Unlock()
+	return d.lastHeartbeat
+}
+
+func (d *sseDispatcher) setConnCancel(cancel context.CancelFunc) {
+	d.connCancelMu.Lock()
+	d.connCancel = cancel
+	d.connCancelMu.Unlock()
+}
+
+func (d *sseDispatcher) clearConnCancel() {
+	d.connCancelMu.Lock()
+	d.connCancel = nil
+	d.connCancelMu.Unlock()
+}
+
+// cancelConn cancels the active SSE connection (if any). Idempotent:
+// repeated watchdog ticks are harmless because context.CancelFunc is.
+func (d *sseDispatcher) cancelConn() {
+	d.connCancelMu.Lock()
+	cancel := d.connCancel
+	d.connCancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // run is the dispatcher goroutine. Maintains a single SSE connection to
-// /event; on transport error or server-initiated close, reconnects after
-// reconnBackoff. Returns when stop() is called.
+// /event; on transport error or server-initiated close, reconnects with
+// exponential backoff (reconnectBackoffMin → reconnectBackoffMax) so a
+// crashing or flapping server cannot trigger a reconnect storm. Returns
+// when stop() is called. A panic anywhere in the connection loop is
+// recovered so a single malformed frame cannot kill the global SSE
+// subscription (and with it every in-flight Run).
 func (d *sseDispatcher) run() {
 	defer close(d.done)
+	defer recoverPanic(d.logger.load(), "sseDispatcher.run")
 	logger := d.logger.load()
 	logger.Debug("sse dispatcher started", "base_url", d.baseURL)
+	backoff := reconnectBackoffMin
 	for {
 		select {
 		case <-d.stopCh:
@@ -171,26 +281,63 @@ func (d *sseDispatcher) run() {
 			return
 		default:
 		}
-		if !d.connect() {
-			// stop signal received during connect
+		failed, shortLived := d.connect()
+		if !failed {
+			// stop signal received during connect; do not retry.
 			return
 		}
+		// Reset backoff when the prior connection lived long enough to be
+		// considered healthy: its close was a transient blip, not flapping.
+		if !shortLived {
+			backoff = reconnectBackoffMin
+		}
+		// Wait via a cancellable timer so stop() does not stall for up to
+		// backoff before exiting.
+		timer := time.NewTimer(backoff)
 		select {
 		case <-d.stopCh:
+			timer.Stop()
 			return
-		case <-time.After(reconnBackoff):
+		case <-timer.C:
+		}
+		// Grow backoff on errors and on rapid repeated clean closes so a
+		// flapping upstream cannot trigger a reconnect storm.
+		backoff *= 2
+		if backoff > reconnectBackoffMax {
+			backoff = reconnectBackoffMax
 		}
 	}
 }
 
+// recoverPanic is the goroutine-entry defer net for the SSE subsystem: a
+// panic in a malformed frame or JSON parse path is logged, not propagated,
+// so the global SSE subscription (and every in-flight Run depending on it)
+// is never killed by a single bad event.
+func recoverPanic(logger *log.Logger, where string) {
+	if r := recover(); r != nil {
+		logger.Error("opencodeserve goroutine panic recovered", "where", where, "panic", fmt.Sprintf("%v", r))
+	}
+}
+
 // connect opens one SSE request and pumps frames until the body closes or
-// an error occurs. Returns false if the dispatcher was stopped mid-connect.
-// The request context is tied to d.stopCh so stop() unblocks the scanner
-// via http.Client's body-close-on-ctx-cancel behaviour.
-func (d *sseDispatcher) connect() bool {
+// an error occurs. Returns (retry, shortLived):
+//   - retry=false: the dispatcher was stopped mid-connect; the caller exits.
+//   - retry=true: the connection ended (clean close, transport error, or
+//     heartbeat-forced cancel); the caller backs off and reconnects.
+//   - shortLived=true: the connection ended within healthyConnMinDuration,
+//     signalling upstream flapping; the caller should grow the backoff.
+//
+// The request context is derived from a per-connection cancel so the
+// heartbeat watchdog can break a half-open read; stopCh also cancels it.
+func (d *sseDispatcher) connect() (retry, shortLived bool) {
 	logger := d.logger.load()
+	start := time.Now()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Register the per-connection cancel so the heartbeat watchdog can
+	// cancelConn() to break a half-open read, and stopCh cancels on exit.
+	d.setConnCancel(cancel)
+	defer d.clearConnCancel()
 	go func() {
 		select {
 		case <-d.stopCh:
@@ -201,24 +348,27 @@ func (d *sseDispatcher) connect() bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.baseURL+"/event", nil)
 	if err != nil {
 		logger.Warn("sse request", "error", err)
-		return true
+		return true, false
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	resp, err := d.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config, not user input
+	resp, err := d.httpClient.Do(req) //nolint:gosec,bodyclose // G704: baseURL trusted; body closed via drainAndClose
 	if err != nil {
 		if ctx.Err() != nil {
 			// stop fired mid-connect; do not retry.
-			return false
+			return false, false
 		}
 		logger.Debug("sse connect failed (will retry)", "error", err)
-		return true
+		return true, time.Since(start) < healthyConnMinDuration
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("sse http status", "status", resp.StatusCode)
-		return true
+		return true, time.Since(start) < healthyConnMinDuration
 	}
+	// Reset the watchdog for the fresh connection so a stale lastHeartbeat
+	// from the previous connection cannot trip an immediate timeout.
+	d.updateHeartbeat()
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 4<<10), sseLineLimit)
 	for scanner.Scan() {
@@ -229,16 +379,20 @@ func (d *sseDispatcher) connect() bool {
 		body := strings.TrimPrefix(line, "data: ")
 		d.handleFrame(body)
 	}
-	// scanner stopped: either body closed (stop) or transport error. The
-	// ctx check distinguishes them so stop() does not trigger a retry loop.
-	return ctx.Err() == nil
+	// scanner stopped: either body closed (stop), heartbeat-forced cancel,
+	// or transport error. shortLived distinguishes a flap from a clean
+	// shutdown of a long-lived connection.
+	return ctx.Err() == nil, time.Since(start) < healthyConnMinDuration
 }
 
 // handleFrame parses one SSE data payload and routes the resulting Event to
 // the session-bound subscriber. session.idle is handled specially: it
 // synthesises an EventResult so a Run that did not see a step-finish
 // reason=stop (e.g. a pure chat reply with no tool calls) still terminates.
+// Every handled frame refreshes the heartbeat watchdog so it can only trip
+// when the connection truly goes silent (half-open TCP / server hang).
 func (d *sseDispatcher) handleFrame(body string) {
+	d.updateHeartbeat()
 	if sid, ok := parseSessionIdle(body); ok {
 		d.deliver(sid, Event{kind: EventResult, sessionID: sid})
 		return
@@ -629,12 +783,12 @@ func (c *Client) abort(sessionID string) {
 		return
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config
+	resp, err := c.httpClient.Do(req) //nolint:gosec,bodyclose // G704: baseURL trusted; body closed via drainAndClose
 	if err != nil {
 		c.logger.Debug("abort session", "session_id", sessionID, "error", err)
 		return
 	}
-	_ = resp.Body.Close()
+	drainAndClose(resp.Body)
 }
 
 // AbortSession is the exported wrapper around abort for callers outside the
@@ -650,11 +804,11 @@ func (c *Client) AbortSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config
+	resp, err := c.httpClient.Do(req) //nolint:gosec,bodyclose // G704: baseURL trusted; body closed via drainAndClose
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("abort %s: %d", sessionID, resp.StatusCode)
 	}
@@ -684,16 +838,18 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, headers ma
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config
+	resp, err := c.httpClient.Do(req) //nolint:gosec,bodyclose // G704: baseURL trusted; body closed via drainAndClose
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("%s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(buf)))
+		drainAndClose(resp.Body)
+		return nil, fmt.Errorf("%s: %w", path, apiError(resp.StatusCode, truncateDetail(buf)))
 	}
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, drainLimit))
+	drainAndClose(resp.Body)
+	return data, err
 }
 
 // splitProviderModel splits a "provider/model" spec into its two halves.

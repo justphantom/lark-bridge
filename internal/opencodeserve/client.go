@@ -176,16 +176,21 @@ func (c *Client) fetchJSON(ctx context.Context, path string, headers map[string]
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config, not user input
+	resp, err := c.httpClient.Do(req) //nolint:gosec,bodyclose // G704: baseURL trusted; body closed via drainAndClose
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("%s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+		drainAndClose(resp.Body)
+		return nil, fmt.Errorf("%s: %w", path, apiError(resp.StatusCode, truncateDetail(body)))
 	}
-	return io.ReadAll(resp.Body)
+	// Bound the success body too: a malicious or stuck upstream could
+	// stream a multi-GB JSON response and OOM the process. The largest
+	// legitimate payload here is the model/agent catalog (~tens of KB).
+	data, err := io.ReadAll(io.LimitReader(resp.Body, drainLimit))
+	drainAndClose(resp.Body)
+	return data, err
 }
 
 // cachedList serves a list query from cache when fresh, otherwise invokes
