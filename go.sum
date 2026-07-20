@@ -4,6 +4,10 @@ github.com/gorilla/websocket v1.5.0 h1:PPwGk2jz7EePpoHN/+ClbZu8SPxiqlu12wZP/3sWm
 github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720110318-f85b70440746 h1:AHHDbC4sY54yanZLTC/u5K4Aksqt0lHZaho5EdU8LpQ=
 github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720110318-f85b70440746/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720140945-af83d1a10530 h1:xMwJma8oeGy1T3kTvRl4oSS+s0ViRlXAseZjUN6q+gU=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720140945-af83d1a10530/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720142406-be8c69b2e47c h1:9zbCap1dD/uI5YGIJIl4OmfAHCmg6yCz0/j+qlH6lAg=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260720142406-be8c69b2e47c/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/larksuite/oapi-sdk-go/v3 v3.9.7 h1:0AlevGG8zJ5uLhDuxgG4N1ULc6s7GEenV7ZRfER2R+Y=
