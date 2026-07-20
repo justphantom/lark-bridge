@@ -15,11 +15,10 @@ import (
 //   - /cd clear      → clear the pin (fall back to the per-chat default dir)
 //   - /cd <path>     → pin <path> directly (must be under WORKSPACE_ROOT)
 //
-// NOTE: opencode serve 1.17 binds the session cwd at process start and
-// ignores any HTTP-level directory override. /cd here is recorded on the
-// binding (so the user's intent is visible via /current) but does NOT change
-// the actual cwd the agent runs in. To change the agent cwd, restart
-// `opencode serve` with a different working directory.
+// Changing the directory resets the session: --session would otherwise resume
+// a conversation referencing files under the old directory. opencode serve
+// 1.18 honours the directory via the createSession query string; 1.17 ignored
+// it (the bridge logs a WARN in that case).
 func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
@@ -51,11 +50,7 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) 
 	h.Router.SetDirectory(chatID, dir)
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
-	// opencode serve does not honour HTTP-level directory overrides; surface
-	// that limit alongside the success message so the user is not surprised
-	// when the next prompt still runs under the server process's cwd.
-	return cmdutil.ChangeResult("工作目录", b.Directory, dir,
-		"会话已重置，下次提问生效。\n⚠️ opencode serve 模式下 cwd 由 serve 进程启动时决定，/cd 仅记录意图，不实际切换；要真正改 cwd 请重启 opencode serve 到目标目录。"), nil
+	return cmdutil.ChangeResult("工作目录", b.Directory, dir, "会话已重置，下次提问生效。"), nil
 }
 
 // runDirPicker drives the interactive directory selection. It lists
@@ -111,8 +106,7 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 	h.Router.SetDirectory(chatID, dir)
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
-	res := cmdutil.ChangeResult("工作目录", old, dir,
-		"会话已重置，下次提问生效。\n⚠️ opencode serve 模式下 cwd 由 serve 进程启动时决定，/cd 仅记录意图，不实际切换；要真正改 cwd 请重启 opencode serve 到目标目录。")
+	res := cmdutil.ChangeResult("工作目录", old, dir, "会话已重置，下次提问生效。")
 	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
