@@ -503,10 +503,12 @@ func (c *Client) drain(ch <-chan Event) {
 	}
 }
 
-// createSession POSTs /session with an optional working directory override
-// and returns the new session id. opencode serve binds the cwd from the
-// server's process dir at creation unless overridden via the "directory"
-// field on the body.
+// createSession POSTs /session and returns the new session id. opencode serve
+// 1.17 ignores any HTTP-level directory override — the session's cwd is
+// always the serve process's cwd. We send the directory field anyway (for
+// forward compatibility) and log a warning when the server's reported
+// directory differs from what the caller asked for, so a misconfigured serve
+// process cwd is visible in the bridge logs.
 func (c *Client) createSession(ctx context.Context, directory string) (string, error) {
 	body := map[string]any{}
 	if directory != "" {
@@ -517,13 +519,20 @@ func (c *Client) createSession(ctx context.Context, directory string) (string, e
 		return "", err
 	}
 	var resp struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		Directory string `json:"directory"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return "", fmt.Errorf("parse /session: %w", err)
 	}
 	if resp.ID == "" {
 		return "", errors.New("session id missing in response")
+	}
+	if directory != "" && resp.Directory != "" && resp.Directory != directory {
+		c.logger.Warn("opencode serve ignored requested directory",
+			"requested", directory,
+			"actual", resp.Directory,
+			"hint", "restart `opencode serve` with the target as cwd; HTTP-level directory override is not honoured")
 	}
 	return resp.ID, nil
 }
