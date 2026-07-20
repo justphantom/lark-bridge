@@ -16,10 +16,13 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// subscriberBuf bounds the per-session event channel. Large enough that a
-// brief consumer stall does not drop events; small enough that a forgotten
-// unsubscribe cannot leak megabytes.
-const subscriberBuf = 64
+// subscriberBuf bounds the per-session event channel. opencode serve pushes
+// text deltas at very high frequency (one frame per token, hundreds per
+// second on a fast model), so this must be large enough to absorb a brief
+// consumer stall without dropping. 256 covers ~2s of peak delta rate; the
+// dispatcher coalesces deltas further via per-session accumulators (see
+// deliver).
+const subscriberBuf = 256
 
 // reconnBackoff is the delay between SSE reconnect attempts. opencode serve
 // closes the connection on shutdown and we want to ride a restart without
@@ -257,11 +260,13 @@ func parseSessionIdle(body string) (sessionID string, ok bool) {
 	return probe.Properties.SessionID, true
 }
 
-// deliver writes ev to the subscriber bound to ev.sessionID. Non-blocking:
-// a full channel drops the event (the consumer is already behind and will
-// catch up via the next frame). Events without a sessionID are dropped
-// (they belong to server-level frames that should not surface in any
-// specific turn).
+// deliver writes ev to the subscriber bound to ev.sessionID. Non-blocking
+// for ordinary events: a full channel drops the event (the consumer is
+// already behind and will catch up via the next frame). Terminal events
+// (EventResult/EventError) are NEVER dropped — the pump relies on them to
+// close the caller's channel, and losing one would hang the turn forever.
+// Events without a sessionID are dropped (they belong to server-level
+// frames that should not surface in any specific turn).
 func (d *sseDispatcher) deliver(sessionID string, ev Event) {
 	if sessionID == "" {
 		return
@@ -275,6 +280,17 @@ func (d *sseDispatcher) deliver(sessionID string, ev Event) {
 	select {
 	case ch <- ev:
 	default:
+		if ev.kind == EventResult || ev.kind == EventError {
+			// Terminal events must reach the subscriber; block until it
+			// drains or the dispatcher is stopped. The pump drains on
+			// terminal arrival, so this cannot wedge beyond one consumer
+			// stall.
+			select {
+			case ch <- ev:
+			case <-d.stopCh:
+			}
+			return
+		}
 		d.logger.load().Debug("sse subscriber full, dropping event",
 			"session_id", sessionID, "event_type", ev.kind)
 	}
@@ -338,19 +354,49 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	return out, nil
 }
 
+// textFlushInterval bounds how frequently the pump flushes accumulated text
+// deltas to the caller-facing channel. opencode serve pushes one SSE frame
+// per token (hundreds per second on a fast model); merging them into ~20/s
+// batches keeps the process card responsive without overflowing the
+// subscriber channel.
+const textFlushInterval = 50 * time.Millisecond
+
 // pump forwards frames from the dispatcher-bound ch to the caller-facing out
 // channel. It owns the sem slot and the subscription; both are released
 // (LIFO) on exit. On ctx cancellation it POSTs /abort and keeps forwarding
 // for a short grace window so the server-emitted idle/error event still
 // surfaces as the terminal.
+//
+// Text deltas are coalesced in a local buffer and flushed at most every
+// textFlushInterval; non-text events flush any pending text first and pass
+// through immediately. This keeps the out channel rate manageable despite
+// the high token-push frequency of the serve SSE stream.
 func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch <-chan Event, out chan<- Event) {
 	defer func() { <-c.sem }()
 	defer close(out)
+
+	var (
+		textBuf   strings.Builder
+		lastFlush time.Time
+	)
+	flushText := func() {
+		if textBuf.Len() == 0 {
+			lastFlush = time.Now()
+			return
+		}
+		select {
+		case out <- Event{kind: EventText, sessionID: sessionID, text: textBuf.String()}:
+		case <-ctx.Done():
+		}
+		textBuf.Reset()
+		lastFlush = time.Now()
+	}
 
 	for {
 		select {
 		case ev, ok := <-ch:
 			if !ok {
+				flushText()
 				return
 			}
 			// LineSink tee: verbatim raw isn't available here (the dispatcher
@@ -360,6 +406,16 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 			if opts.LineSink != nil && ev.kind != "" {
 				_, _ = io.WriteString(opts.LineSink, ev.kind+"\n")
 			}
+			if ev.kind == EventText {
+				textBuf.WriteString(ev.text)
+				if time.Since(lastFlush) >= textFlushInterval {
+					flushText()
+				}
+				continue
+			}
+			// A non-text event would otherwise overtake pending text; flush
+			// first so the consumer sees text before the tool/step/result.
+			flushText()
 			select {
 			case out <- ev:
 			case <-ctx.Done():
@@ -373,6 +429,7 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 				return
 			}
 		case <-ctx.Done():
+			flushText()
 			c.abort(sessionID)
 			// Wait briefly for the server's idle/error frame so the caller
 			// still sees a terminal event. If none arrives, synthesise one.
