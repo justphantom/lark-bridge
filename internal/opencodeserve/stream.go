@@ -330,10 +330,14 @@ type messagePart struct {
 //  1. Acquire sem.
 //  2. Resolve sessionID (use opts.SessionID or POST /session to create).
 //  3. Subscribe dispatcher → ch.
-//  4. POST /session/{sid}/message?async=true.
-//  5. Spawn a goroutine that forwards ch → out, watches ctx for abort, and
-//     closes out on terminal event / channel close. The goroutine also
-//     releases sem + unsubscribes.
+//  4. Fire POST /session/{sid}/message?async=true in a goroutine. opencode
+//     serve's async=true is NOT truly async — the response header arrives
+//     only after the turn finishes (15-20s observed). We do not wait for it:
+//     the SSE subscription is the real async channel, and pump consumes
+//     events as they arrive. The POST goroutine surfaces a transport error
+//     (e.g. 404 unknown session) to pump via postErr.
+//  5. Spawn pump goroutine that forwards ch → out, watches postErr and ctx,
+//     and closes out on terminal event. pump releases sem + unsubscribes.
 func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error) {
 	select {
 	case c.sem <- struct{}{}:
@@ -352,22 +356,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	}
 
 	ch := c.dispatcher.subscribe(sessionID)
-	if err := c.postMessage(ctx, sessionID, opts); err != nil {
-		c.dispatcher.unsubscribe(sessionID, ch)
-		<-c.sem
-		// A timeout here most often means the session is still 'busy' from
-		// a prior turn that never reached session.idle (e.g. the backend
-		// crashed mid-turn). Surface that hint so the user can issue
-		// /session-abort manually rather than have us silently abort — the
-		// user may prefer to wait for the stuck turn to finish on its own.
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("send message: %w (会话仍忙，请发送 /session-abort 后重试)", err)
-		}
-		return nil, fmt.Errorf("send message: %w", err)
-	}
+	postErr := make(chan error, 1)
+	go func() {
+		postErr <- c.postMessage(ctx, sessionID, opts)
+	}()
 
 	out := make(chan Event, subscriberBuf)
-	go c.pump(ctx, sessionID, opts, ch, out)
+	go c.pump(ctx, sessionID, opts, ch, out, postErr)
 	return out, nil
 }
 
@@ -380,21 +375,25 @@ const textFlushInterval = 50 * time.Millisecond
 
 // pump forwards frames from the dispatcher-bound ch to the caller-facing out
 // channel. It owns the sem slot and the subscription; both are released
-// (LIFO) on exit. On ctx cancellation it POSTs /abort and keeps forwarding
-// for a short grace window so the server-emitted idle/error event still
-// surfaces as the terminal.
+// (LIFO) on exit. postErr carries the result of the fire-and-forget POST:
+// if it arrives BEFORE any SSE event (i.e. the POST failed fast without the
+// server having started the turn), pump emits an EventError; otherwise the
+// error is swallowed — the SSE subscription is authoritative once events
+// start flowing, and opencode serve's async POST can take 15-20s to return
+// even on success.
 //
 // Text deltas are coalesced in a local buffer and flushed at most every
 // textFlushInterval; non-text events flush any pending text first and pass
-// through immediately. This keeps the out channel rate manageable despite
-// the high token-push frequency of the serve SSE stream.
-func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch <-chan Event, out chan<- Event) {
+// through immediately.
+func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch chan Event, out chan<- Event, postErr <-chan error) {
 	defer func() { <-c.sem }()
+	defer c.dispatcher.unsubscribe(sessionID, ch)
 	defer close(out)
 
 	var (
 		textBuf   strings.Builder
 		lastFlush time.Time
+		sawEvent  bool // flips true once any SSE frame for this session arrives
 	)
 	flushText := func() {
 		if textBuf.Len() == 0 {
@@ -409,6 +408,11 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 		lastFlush = time.Now()
 	}
 
+	// postMessageTimeout is retained as the upper bound for "POST failed
+	// fast without any SSE traffic": if neither postErr nor any event
+	// arrives within it, the server is unreachable or wedged and we surface
+	// a hint rather than hanging the prompt goroutine.
+	probeDeadline := time.After(postMessageTimeout)
 	for {
 		select {
 		case ev, ok := <-ch:
@@ -416,10 +420,7 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 				flushText()
 				return
 			}
-			// LineSink tee: verbatim raw isn't available here (the dispatcher
-			// parsed the frame). Bridge-side archiving is the canonical path
-			// for serve mode; the LineSink hook is preserved for symmetry
-			// with the CLI client but is a no-op when nil.
+			sawEvent = true
 			if opts.LineSink != nil && ev.kind != "" {
 				_, _ = io.WriteString(opts.LineSink, ev.kind+"\n")
 			}
@@ -430,8 +431,6 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 				}
 				continue
 			}
-			// A non-text event would otherwise overtake pending text; flush
-			// first so the consumer sees text before the tool/step/result.
 			flushText()
 			select {
 			case out <- ev:
@@ -439,17 +438,34 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 				return
 			}
 			if ev.kind == EventResult || ev.kind == EventError {
-				// Drain any trailing frames buffered behind the terminal
-				// without blocking; the dispatcher will keep delivering
-				// until unsubscribe closes ch.
 				c.drain(ch)
+				return
+			}
+		case err := <-postErr:
+			// If events already flow, the POST's late return (success or
+			// timeout) is irrelevant — the SSE subscription is
+			// authoritative. Otherwise surface the error.
+			if sawEvent {
+				continue
+			}
+			if err != nil {
+				select {
+				case out <- Event{kind: EventError, sessionID: sessionID, text: "send message: " + err.Error(), isError: true}:
+				default:
+				}
+				return
+			}
+		case <-probeDeadline:
+			if !sawEvent {
+				select {
+				case out <- Event{kind: EventError, sessionID: sessionID, text: "opencode serve " + sessionID + " 在 " + postMessageTimeout.String() + " 内未推送任何事件（可能服务端 turn 卡死，请发 /session-abort 后重试）", isError: true}:
+				default:
+				}
 				return
 			}
 		case <-ctx.Done():
 			flushText()
 			c.abort(sessionID)
-			// Wait briefly for the server's idle/error frame so the caller
-			// still sees a terminal event. If none arrives, synthesise one.
 			select {
 			case ev, ok := <-ch:
 				if !ok {
@@ -529,7 +545,12 @@ func (c *Client) postMessage(ctx context.Context, sessionID string, opts RunOpti
 	}
 	postCtx, cancel := context.WithTimeout(ctx, postMessageTimeout)
 	defer cancel()
+	start := time.Now()
 	_, err := c.postJSON(postCtx, "/session/"+sessionID+"/message?async=true", mb, nil)
+	c.logger.Debug("postMessage timing",
+		"session_id", sessionID,
+		"elapsed_ms", time.Since(start).Milliseconds(),
+		"error", err)
 	return err
 }
 
