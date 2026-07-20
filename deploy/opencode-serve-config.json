@@ -1,0 +1,10 @@
+{
+  "backend_id":   "opencode-serve-1",
+  "frontend_url": "http://localhost:6060",
+  "ipc_secret":   "${IPC_SECRET}",
+  "state_dir":    "/var/lib/lark-bridge",
+  "opencode_serve": {
+    "base_url":       "http://127.0.0.1:4096",
+    "max_concurrent": 4
+  }
+}

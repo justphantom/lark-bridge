@@ -240,8 +240,8 @@ done
 
 # 服务短名 ↔ unit/配置/依赖/提权 映射。新增 backend 仅在此登记四处即可被
 # --services 识别，无需改部署流程的各操作点。
-svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
-svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; miniagent) echo miniagent-config.json;; esac; }
+svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; opencode-serve) echo lark-opencode-serve-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
+svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; opencode-serve) echo opencode-serve-config.json;; miniagent) echo miniagent-config.json;; esac; }
 # backend 依赖前端 listen 且需提权（透传外部 CLI）；feishu-front 两者皆无。
 svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
@@ -252,7 +252,7 @@ SELECTED=()
 if [[ -n "$SERVICES_ARG" ]]; then
     IFS=',' read -ra _parts <<< "$SERVICES_ARG"
     for s in "${_parts[@]}"; do
-        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode miniagent）"
+        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode opencode-serve miniagent）"
         SELECTED+=("$s")
     done
 else
@@ -393,6 +393,15 @@ inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
+
+# opencode-serve-back：派生自 opencode-config（保留 opencode_serve 字段即用）。
+# 仅当 --services 显式选择 opencode-serve 时生成；默认不部署（要求外部 opencode
+# serve 进程已就绪，盲目启用会启动失败）。
+if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
+    cp "$STAGE/opencode-config.json" "$STAGE/opencode-serve-config.json"
+    sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-serve-1",|' "$STAGE/opencode-serve-config.json"
+    inject_router_path "$STAGE/opencode-serve-config.json" "$STATE_DIR/opencode-serve-router.json"
+fi
 
 # miniagent-back：独立 backend_id + 独立 router_path（同 opencode 模式）
 cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"

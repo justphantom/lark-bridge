@@ -31,6 +31,13 @@
     "list_cache_ttl":    3600
   },
 
+  "opencode_serve": {
+    "base_url":         "http://127.0.0.1:4096",
+    "max_concurrent":   4,
+    "stream_history":   50,
+    "list_cache_ttl":   600
+  },
+
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",
     "base_url":        "${MINIAGENT_BASE_URL}",
