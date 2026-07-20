@@ -210,6 +210,15 @@ func (c *Client) cachedList(
 	if err != nil {
 		return nil, err
 	}
+	// Do NOT cache an empty result: opencode serve loads its catalog
+	// asynchronously after startup (plugin providers populate over tens of
+	// seconds), and the first picker call can race that window — fetching an
+	// empty data array with HTTP 200. Caching that empty slice for listTTL
+	// would pin "没有可用的模型" for 10 minutes. A retry on the next call
+	// re-fetches and picks up the now-populated catalog.
+	if len(values) == 0 {
+		return values, nil
+	}
 	snapshot := make([]string, len(values))
 	copy(snapshot, values)
 	c.listMu.Lock()
