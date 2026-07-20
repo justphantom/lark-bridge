@@ -71,6 +71,8 @@ func run(cfgPath string) error {
 
 	client, err := opencodeservebridge.NewAgent(opencodeservebridge.AgentConfig{
 		BaseURL:       cfg.OpencodeServe.BaseURL,
+		Username:      cfg.OpencodeServe.Username,
+		Password:      cfg.OpencodeServe.Password,
 		MaxConcurrent: cfg.OpencodeServe.MaxConcurrent,
 	}, componentLogger(cfg, baseLevel, output, "opencode"))
 	if err != nil {

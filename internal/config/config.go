@@ -137,6 +137,11 @@ type OpencodeServe struct {
 	// BaseURL is the opencode serve root (e.g. "http://127.0.0.1:4096").
 	// Required.
 	BaseURL string `json:"base_url,omitempty"`
+	// Username/Password carry HTTP Basic auth credentials for `opencode serve`
+	// (started with OPENCODE_SERVER_PASSWORD). Empty means no auth header.
+	// Use ${VAR} to pull from the environment.
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 	// MaxConcurrent caps parallel in-flight sessions. The serve server
 	// already serialises requests per session; this only guards against
 	// runaway per-chat fan-out. <=0 → 4.

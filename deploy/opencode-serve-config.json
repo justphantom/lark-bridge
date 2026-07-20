@@ -5,6 +5,8 @@
   "state_dir":    "/var/lib/lark-bridge",
   "opencode_serve": {
     "base_url":       "http://127.0.0.1:4096",
+    "username":       "opencode",
+    "password":       "${OPENCODE_SERVER_PASSWORD}",
     "max_concurrent": 4
   }
 }

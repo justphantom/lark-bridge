@@ -2,6 +2,7 @@ package opencodeservebridge
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,17 @@ import (
 // running when this client starts, so the probe is normally sub-second; 10s
 // leaves room for a remote link without wedging startup.
 const readyTimeout = 10 * time.Second
+
+// newSDKClient builds the SDK client, attaching HTTP Basic auth when either
+// Username or Password is set (opencode serve only checks the password; the
+// username defaults to "opencode" server-side).
+func newSDKClient(cfg AgentConfig) (*oc.Client, error) {
+	if cfg.Username == "" && cfg.Password == "" {
+		return oc.New(cfg.BaseURL)
+	}
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.Username+":"+cfg.Password))
+	return oc.New(cfg.BaseURL, oc.WithHeader("Authorization", auth))
+}
 
 // listCacheTTLDefault is used when Config.ListCacheTTL is non-positive. The
 // catalog rarely changes within a session, so a 10-minute TTL keeps the
@@ -36,6 +48,10 @@ var hiddenAgents = map[string]struct{}{
 type AgentConfig struct {
 	// BaseURL is the opencode serve root, e.g. "http://127.0.0.1:4096".
 	BaseURL string
+	// Username/Password are HTTP Basic auth credentials; both empty means
+	// no Authorization header.
+	Username string
+	Password string
 	// MaxConcurrent caps parallel in-flight Runs. The serve server already
 	// serialises requests per session, so this only guards against runaway
 	// per-chat fan-out. <=0 → default (4).
@@ -72,7 +88,7 @@ func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 	if cfg.BaseURL == "" {
 		return nil, errors.New("opencodeserve: base_url is empty")
 	}
-	client, err := oc.New(cfg.BaseURL)
+	client, err := newSDKClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("opencodeserve: build sdk client: %w", err)
 	}
