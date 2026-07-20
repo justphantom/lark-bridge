@@ -169,6 +169,12 @@ func (a *Agent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEven
 
 // ListModels returns one "provider/model" entry per active model. Cached for
 // listCacheTTLDefault.
+//
+// 走 ListModels（/api/model）而非 ListAllModels（/config/providers）：后者
+// 返回 auth.json 里注册的完整模型目录（含 kimi-for-coding/zhipuai-coding-plan），
+// 但 serve 的 v2 prompt 路径 ModelResolver 只识别 /api/model 里的目录（实测
+// 只含 opencode provider 的免费模型）——选 /config/providers 里列出但 serve
+// 不认识的模型会触发 ModelUnavailableError。picker 只列 serve 实际能跑的。
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 	return a.cachedList(ctx, &a.modelsCache, func(ctx context.Context) ([]string, error) {
 		models, err := a.client.ListModels(ctx, nil)
