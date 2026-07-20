@@ -353,19 +353,17 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 
 	ch := c.dispatcher.subscribe(sessionID)
 	if err := c.postMessage(ctx, sessionID, opts); err != nil {
-		// A postMessage timeout typically means the session is stuck 'busy'
-		// from a prior crashed turn that never reached session.idle. Abort
-		// releases that stuck turn (no-op on an idle session), then we
-		// re-subscribe so the pump does not observe the stale idle the
-		// abort itself emits, and retry the message once.
 		c.dispatcher.unsubscribe(sessionID, ch)
-		c.abort(sessionID)
-		ch = c.dispatcher.subscribe(sessionID)
-		if err := c.postMessage(ctx, sessionID, opts); err != nil {
-			c.dispatcher.unsubscribe(sessionID, ch)
-			<-c.sem
-			return nil, fmt.Errorf("send message: %w", err)
+		<-c.sem
+		// A timeout here most often means the session is still 'busy' from
+		// a prior turn that never reached session.idle (e.g. the backend
+		// crashed mid-turn). Surface that hint so the user can issue
+		// /session-abort manually rather than have us silently abort — the
+		// user may prefer to wait for the stuck turn to finish on its own.
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("send message: %w (会话仍忙，请发送 /session-abort 后重试)", err)
 		}
+		return nil, fmt.Errorf("send message: %w", err)
 	}
 
 	out := make(chan Event, subscriberBuf)
