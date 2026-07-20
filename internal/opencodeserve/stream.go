@@ -38,6 +38,15 @@ const sseLineLimit = 1 << 20
 // goroutine that has already given up on the turn.
 const abortTimeout = 5 * time.Second
 
+// postMessageTimeout bounds the POST /session/{id}/message call independently
+// of the caller's ctx. With async=true the server normally returns within
+// a few seconds (it accepts the message into a queue and replies 200), but
+// a session left in 'busy' by a prior crashed turn blocks the POST until
+// that stuck turn finishes — which can be never. Bounding the header wait
+// surfaces the failure fast so the caller can abort and retry instead of
+// hanging the prompt goroutine.
+const postMessageTimeout = 30 * time.Second
+
 // RunOptions describes one agent turn against the serve server. Mirrors
 // opencode.RunOptions so the bridge stays mode-agnostic at the call site.
 type RunOptions struct {
@@ -344,9 +353,19 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 
 	ch := c.dispatcher.subscribe(sessionID)
 	if err := c.postMessage(ctx, sessionID, opts); err != nil {
+		// A postMessage timeout typically means the session is stuck 'busy'
+		// from a prior crashed turn that never reached session.idle. Abort
+		// releases that stuck turn (no-op on an idle session), then we
+		// re-subscribe so the pump does not observe the stale idle the
+		// abort itself emits, and retry the message once.
 		c.dispatcher.unsubscribe(sessionID, ch)
-		<-c.sem
-		return nil, fmt.Errorf("send message: %w", err)
+		c.abort(sessionID)
+		ch = c.dispatcher.subscribe(sessionID)
+		if err := c.postMessage(ctx, sessionID, opts); err != nil {
+			c.dispatcher.unsubscribe(sessionID, ch)
+			<-c.sem
+			return nil, fmt.Errorf("send message: %w", err)
+		}
 	}
 
 	out := make(chan Event, subscriberBuf)
@@ -497,7 +516,8 @@ func (c *Client) createSession(ctx context.Context, directory string) (string, e
 
 // postMessage fires one user message at the session. The async=true query
 // makes the call return immediately so all turn events arrive through the
-// SSE subscription.
+// SSE subscription. Bounded by postMessageTimeout so a stalled server
+// surfaces as an error instead of wedging the prompt goroutine.
 func (c *Client) postMessage(ctx context.Context, sessionID string, opts RunOptions) error {
 	mb := messageBody{Role: "user", Parts: []messagePart{{Type: "text", Text: opts.Prompt}}}
 	if opts.Model != "" {
@@ -509,7 +529,9 @@ func (c *Client) postMessage(ctx context.Context, sessionID string, opts RunOpti
 	if opts.Agent != "" {
 		mb.Agent = opts.Agent
 	}
-	_, err := c.postJSON(ctx, "/session/"+sessionID+"/message?async=true", mb, nil)
+	postCtx, cancel := context.WithTimeout(ctx, postMessageTimeout)
+	defer cancel()
+	_, err := c.postJSON(postCtx, "/session/"+sessionID+"/message?async=true", mb, nil)
 	return err
 }
 
