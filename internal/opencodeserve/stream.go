@@ -306,15 +306,21 @@ func (d *sseDispatcher) deliver(sessionID string, ev Event) {
 	}
 }
 
-// messageBody is the JSON body POSTed to /session/{id}/message. All fields
-// are required by the serve API except Agent (which falls back to the
-// session's configured agent when omitted).
-type messageBody struct {
-	ProviderID string        `json:"providerID,omitempty"`
-	ModelID    string        `json:"modelID,omitempty"`
-	Agent      string        `json:"agent,omitempty"`
-	Role       string        `json:"role"` // always "user"
-	Parts      []messagePart `json:"parts"`
+// promptAsyncBody is the JSON body POSTed to /session/{id}/prompt_async.
+// Matches the opencode 1.18 openapi schema (additionalProperties: false):
+// parts is required; messageID (^msg) is the only handle on the user turn
+// since the 204 response carries no body — pre-generate and ALWAYS send it.
+// model is nested {providerID, modelID}; agent is optional.
+type promptAsyncBody struct {
+	Parts     []messagePart `json:"parts"`
+	MessageID string        `json:"messageID"`
+	Agent     string        `json:"agent,omitempty"`
+	Model     *asyncModel   `json:"model,omitempty"`
+}
+
+type asyncModel struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
 }
 
 type messagePart struct {
@@ -330,15 +336,18 @@ type messagePart struct {
 // Lifecycle:
 //  1. Acquire sem.
 //  2. Resolve sessionID (use opts.SessionID or POST /session to create).
-//  3. Subscribe dispatcher → ch.
-//  4. Fire POST /session/{sid}/message?async=true in a goroutine. opencode
-//     serve's async=true is NOT truly async — the response header arrives
-//     only after the turn finishes (15-20s observed). We do not wait for it:
-//     the SSE subscription is the real async channel, and pump consumes
-//     events as they arrive. The POST goroutine surfaces a transport error
+//  3. Pre-generate messageID for this turn (opencode prompt_async returns
+//     204 with no body, so the client-supplied id is the ONLY handle on
+//     the turn; it also tags every part-level event the SSE stream emits
+//     for this assistant reply).
+//  4. Subscribe dispatcher → ch.
+//  5. Fire POST /session/{sid}/prompt_async in a goroutine. Unlike the old
+//     /message?async=true hack, prompt_async is truly async and returns
+//     204 immediately. The POST goroutine surfaces a transport error
 //     (e.g. 404 unknown session) to pump via postErr.
-//  5. Spawn pump goroutine that forwards ch → out, watches postErr and ctx,
-//     and closes out on terminal event. pump releases sem + unsubscribes.
+//  6. Spawn pump goroutine that forwards ch → out (filtering part-level
+//     events by messageID), watches postErr and ctx, and closes out on
+//     terminal event. pump releases sem + unsubscribes.
 func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error) {
 	select {
 	case c.sem <- struct{}{}:
@@ -356,14 +365,20 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 		}
 	}
 
+	messageID, err := generateMessageID()
+	if err != nil {
+		<-c.sem
+		return nil, fmt.Errorf("generate message id: %w", err)
+	}
+
 	ch := c.dispatcher.subscribe(sessionID)
 	postErr := make(chan error, 1)
 	go func() {
-		postErr <- c.postMessage(ctx, sessionID, opts)
+		postErr <- c.promptAsync(ctx, sessionID, opts, messageID)
 	}()
 
 	out := make(chan Event, subscriberBuf)
-	go c.pump(ctx, sessionID, opts, ch, out, postErr)
+	go c.pump(ctx, sessionID, messageID, opts, ch, out, postErr)
 	return out, nil
 }
 
@@ -380,21 +395,43 @@ const textFlushInterval = 50 * time.Millisecond
 // if it arrives BEFORE any SSE event (i.e. the POST failed fast without the
 // server having started the turn), pump emits an EventError; otherwise the
 // error is swallowed — the SSE subscription is authoritative once events
-// start flowing, and opencode serve's async POST can take 15-20s to return
-// even on success.
+// start flowing.
+//
+// messageID is the user prompt's messageID (pre-generated for prompt_async).
+// The SSE part events carry the ASSISTANT messageID, which is a different
+// id — so pump locks the first part event's messageID as assistantID on
+// arrival, then strictly filters subsequent part events by it. This relies
+// on pump being the sole active subscriber for the turn (guaranteed by the
+// per-Run sem slot and the bridge's per-chat serialisation). Session-level
+// events (EventSession, idle-synthesised EventResult) carry no messageID
+// and always pass — idle is the turn-termination fallback for pure-chat
+// replies.
+//
+// The FIRST event emitted on out is always EventPrompt, carrying sessionID
+// and the user messageID so callers can correlate the stream with the
+// prompt_async POST (whose 204 carries no body).
 //
 // Text deltas are coalesced in a local buffer and flushed at most every
 // textFlushInterval; non-text events flush any pending text first and pass
 // through immediately.
-func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch chan Event, out chan<- Event, postErr <-chan error) {
+func (c *Client) pump(ctx context.Context, sessionID, messageID string, opts RunOptions, ch chan Event, out chan<- Event, postErr <-chan error) {
 	defer func() { <-c.sem }()
 	defer c.dispatcher.unsubscribe(sessionID, ch)
 	defer close(out)
 
+	// Emit the prompt marker first so callers have the messageID handle
+	// before any part-level event arrives.
+	select {
+	case out <- Event{kind: EventPrompt, sessionID: sessionID, messageID: messageID}:
+	case <-ctx.Done():
+		return
+	}
+
 	var (
-		textBuf   strings.Builder
-		lastFlush time.Time
-		sawEvent  bool // flips true once any SSE frame for this session arrives
+		textBuf     strings.Builder
+		lastFlush   time.Time
+		sawEvent    bool   // flips true once any matching SSE frame arrives
+		assistantID string // locked from first part event; "" until then
 	)
 	flushText := func() {
 		if textBuf.Len() == 0 {
@@ -402,7 +439,7 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 			return
 		}
 		select {
-		case out <- Event{kind: EventText, sessionID: sessionID, text: textBuf.String()}:
+		case out <- Event{kind: EventText, sessionID: sessionID, messageID: assistantID, text: textBuf.String()}:
 		case <-ctx.Done():
 		}
 		textBuf.Reset()
@@ -420,6 +457,17 @@ func (c *Client) pump(ctx context.Context, sessionID string, opts RunOptions, ch
 			if !ok {
 				flushText()
 				return
+			}
+			// Strict assistantID filter: lock onto the first part event's
+			// messageID, then drop subsequent part events that belong to a
+			// different assistant reply (stale or concurrent). Session-level
+			// events (messageID == "") always pass.
+			if ev.messageID != "" {
+				if assistantID == "" {
+					assistantID = ev.messageID
+				} else if ev.messageID != assistantID {
+					continue
+				}
 			}
 			sawEvent = true
 			if opts.LineSink != nil && ev.kind != "" {
@@ -537,27 +585,34 @@ func (c *Client) createSession(ctx context.Context, directory string) (string, e
 	return resp.ID, nil
 }
 
-// postMessage fires one user message at the session. The async=true query
-// makes the call return immediately so all turn events arrive through the
-// SSE subscription. Bounded by postMessageTimeout so a stalled server
-// surfaces as an error instead of wedging the prompt goroutine.
-func (c *Client) postMessage(ctx context.Context, sessionID string, opts RunOptions) error {
-	mb := messageBody{Role: "user", Parts: []messagePart{{Type: "text", Text: opts.Prompt}}}
+// promptAsync fires one user message at the session via
+// POST /session/{id}/prompt_async (opencode 1.18 true-async endpoint,
+// returns 204 No Content). All turn events arrive through the SSE
+// subscription. messageID MUST be pre-generated by the caller; it is the
+// only correlation handle for the part-level events (which carry the
+// assistant message's own id, not this user messageID — but it tags the
+// turn). Bounded by postMessageTimeout so a stalled server surfaces as an
+// error instead of wedging the prompt goroutine.
+func (c *Client) promptAsync(ctx context.Context, sessionID string, opts RunOptions, messageID string) error {
+	body := promptAsyncBody{
+		Parts:     []messagePart{{Type: "text", Text: opts.Prompt}},
+		MessageID: messageID,
+	}
 	if opts.Model != "" {
 		if provider, model, ok := splitProviderModel(opts.Model); ok {
-			mb.ProviderID = provider
-			mb.ModelID = model
+			body.Model = &asyncModel{ProviderID: provider, ModelID: model}
 		}
 	}
 	if opts.Agent != "" {
-		mb.Agent = opts.Agent
+		body.Agent = opts.Agent
 	}
 	postCtx, cancel := context.WithTimeout(ctx, postMessageTimeout)
 	defer cancel()
 	start := time.Now()
-	_, err := c.postJSON(postCtx, "/session/"+sessionID+"/message?async=true", mb, nil)
-	c.logger.Debug("postMessage timing",
+	_, err := c.postJSON(postCtx, "/session/"+sessionID+"/prompt_async", body, nil)
+	c.logger.Debug("promptAsync timing",
 		"session_id", sessionID,
+		"message_id", messageID,
 		"elapsed_ms", time.Since(start).Milliseconds(),
 		"error", err)
 	return err

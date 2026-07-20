@@ -27,15 +27,18 @@ type partFrame struct {
 
 // partBody is the "part" payload inside message.part.updated. The "type"
 // field discriminates text / tool / step-start / step-finish / reason.
+// messageID is required by the opencode Part schema and tags the event to
+// the assistant message it belongs to.
 type partBody struct {
-	Type   string          `json:"type"`
-	Text   string          `json:"text"`   // type=text
-	ID     string          `json:"id"`     // part id
-	Tool   string          `json:"tool"`   // type=tool
-	State  json.RawMessage `json:"state"`  // type=tool
-	Reason string          `json:"reason"` // type=step-finish
-	Tokens json.RawMessage `json:"tokens"` // type=step-finish
-	Cost   float64         `json:"cost"`   // type=step-finish
+	Type      string          `json:"type"`
+	Text      string          `json:"text"` // type=text
+	ID        string          `json:"id"`   // part id
+	MessageID string          `json:"messageID"`
+	Tool      string          `json:"tool"`   // type=tool
+	State     json.RawMessage `json:"state"`  // type=tool
+	Reason    string          `json:"reason"` // type=step-finish
+	Tokens    json.RawMessage `json:"tokens"` // type=step-finish
+	Cost      float64         `json:"cost"`   // type=step-finish
 }
 
 // toolState is the "state" payload inside a type=tool part.
@@ -140,17 +143,17 @@ func parsePartUpdated(raw json.RawMessage) Event {
 	}
 	switch body.Type {
 	case "step-start":
-		return Event{kind: EventStepStart, sessionID: p.SessionID}
+		return Event{kind: EventStepStart, sessionID: p.SessionID, messageID: body.MessageID}
 	case "step-finish":
-		return parseStepFinish(p.SessionID, body)
+		return parseStepFinish(p.SessionID, body.MessageID, body)
 	case "tool":
-		return parseToolPart(p.SessionID, body)
+		return parseToolPart(p.SessionID, body.MessageID, body)
 	}
 	return Event{}
 }
 
-func parseStepFinish(sessionID string, body partBody) Event {
-	ev := Event{kind: EventStepFinish, sessionID: sessionID, cost: body.Cost}
+func parseStepFinish(sessionID, messageID string, body partBody) Event {
+	ev := Event{kind: EventStepFinish, sessionID: sessionID, messageID: messageID, cost: body.Cost}
 	if len(body.Tokens) > 0 {
 		var t tokenSet
 		if err := json.Unmarshal(body.Tokens, &t); err == nil {
@@ -170,8 +173,8 @@ func parseStepFinish(sessionID string, body partBody) Event {
 	return ev
 }
 
-func parseToolPart(sessionID string, body partBody) Event {
-	ev := Event{sessionID: sessionID, toolName: body.Tool}
+func parseToolPart(sessionID, messageID string, body partBody) Event {
+	ev := Event{sessionID: sessionID, messageID: messageID, toolName: body.Tool}
 	if len(body.State) == 0 {
 		return Event{}
 	}
@@ -222,9 +225,9 @@ func parsePartDelta(raw json.RawMessage) Event {
 	}
 	switch p.Field {
 	case "text":
-		return Event{kind: EventText, sessionID: p.SessionID, text: p.Delta}
+		return Event{kind: EventText, sessionID: p.SessionID, messageID: p.MessageID, text: p.Delta}
 	case "reasoning":
-		return Event{kind: EventThinking, sessionID: p.SessionID, text: p.Delta}
+		return Event{kind: EventThinking, sessionID: p.SessionID, messageID: p.MessageID, text: p.Delta}
 	}
 	return Event{}
 }

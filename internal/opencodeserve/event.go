@@ -11,6 +11,13 @@ package opencodeserve
 // EventType constants mirror the opencode CLI bridge's event discriminator so
 // the serve bridge's stream loop can switch on the same vocabulary.
 const (
+	// EventPrompt: synthesised by Run as the FIRST event on the caller's
+	// channel, carrying the session id and the client-generated messageID
+	// that will tag every part-level event of this turn. Lets callers
+	// correlate the SSE stream with the prompt_async POST (whose 204
+	// response carries no body). Session-level events (EventSession,
+	// idle-synthesised EventResult) keep messageID empty.
+	EventPrompt = "prompt"
 	// EventSession: session.created arrived, carrying the session id and the
 	// model the server bound for this turn.
 	EventSession = "session"
@@ -48,6 +55,11 @@ const (
 type Event struct {
 	kind      string // one of the Event* constants; named "kind" not "type" (reserved word)
 	sessionID string
+	// messageID tags part-level events (EventText/EventThinking/
+	// EventToolUse/EventToolResult/EventStepStart/EventStepFinish) with the
+	// assistant message id they belong to. Empty on session-level events
+	// (EventPrompt/EventSession/idle-synthesised EventResult).
+	messageID string
 	text      string
 
 	toolName  string
@@ -76,6 +88,11 @@ func (e Event) GetType() string { return e.kind }
 
 // GetSessionID returns the session id from session.created / equivalent events.
 func (e Event) GetSessionID() string { return e.sessionID }
+
+// GetMessageID returns the assistant message id tagged on part-level events.
+// Empty for session-level events (EventPrompt carries the prompt's user
+// messageID; session.created/idle carry none).
+func (e Event) GetMessageID() string { return e.messageID }
 
 // GetText returns the assistant text/thinking chunk or tool output.
 func (e Event) GetText() string { return e.text }
