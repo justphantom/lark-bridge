@@ -47,10 +47,11 @@ type AgentConfig struct {
 // the lifetime of the process; each Run is one SDK Run (CreateSession or
 // resume + Prompt + pump). Safe for concurrent use.
 type Agent struct {
-	client *oc.Client
-	stream *oc.GlobalEventStream
-	logger *log.Logger
-	sem    chan struct{}
+	baseURL string
+	client  *oc.Client
+	stream  *oc.GlobalEventStream
+	logger  *log.Logger
+	sem     chan struct{}
 
 	listMu      sync.Mutex
 	modelsCache *listCache
@@ -84,10 +85,11 @@ func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 		n = 4
 	}
 	return &Agent{
-		client: client,
-		stream: stream,
-		logger: logger,
-		sem:    make(chan struct{}, n),
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		client:  client,
+		stream:  stream,
+		logger:  logger,
+		sem:     make(chan struct{}, n),
 	}, nil
 }
 
@@ -106,7 +108,7 @@ func (a *Agent) IsReady(ctx context.Context) error {
 	if err := a.client.Health(rctx); err != nil {
 		return fmt.Errorf("opencode serve not ready: %w", err)
 	}
-	a.logger.Info("opencode serve ready", "base_url", a.client.Health)
+	a.logger.Info("opencode serve ready", "base_url", a.baseURL)
 	return nil
 }
 
