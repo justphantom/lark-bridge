@@ -7,12 +7,12 @@ import (
 	"runtime/debug"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
-	"github.com/justphantom/lark-bridge/internal/streamarchive"
 	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
@@ -20,10 +20,10 @@ import (
 // notice after the prompt ctx is already cancelled.
 const cancelNoticeTimeout = 5 * time.Second
 
-// runPrompt drives one opencode turn for chatID: it starts an `opencode` CLI
-// subprocess, streams its events, and emits the terminal control. The
-// session.created session id is back-filled onto the binding so the next turn
-// resumes it.
+// runPrompt drives one opencode turn for chatID: it starts a turn via the
+// SDK Run, streams its HighEvents, and emits the terminal control. The
+// sessionID is captured from the first HighEvent and back-filled onto the
+// binding so the next turn resumes it.
 func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *bridgebase.PromptCancel) {
 	// Recover so a panic in this goroutine never crashes the process.
 	defer func() {
@@ -32,8 +32,6 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 				log.FieldChatID, chatID,
 				log.FieldPanic, r,
 				log.FieldStack, debug.Stack())
-			// Gate on appCtx, not parent: parent is cancelled by mine.Cancel()
-			// below so reading it here would always see "cancelled".
 			if h.AppCtx.Err() == nil {
 				h.emitLogged(context.Background(), replyToID, chatID, &protocol.Control{
 					Type:   protocol.TypeNotice,
@@ -43,9 +41,6 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 			}
 		}
 	}()
-	// Mark the prompt done after endPrompt/cancel unwind (LIFO) and before the
-	// recover above, so Close's waitPrompts unblocks only when the goroutine
-	// has fully released its slot — including the subprocess kill on cancel.
 	defer h.Wg.Done()
 	defer h.EndPrompt(chatID, mine)
 	defer mine.Cancel()
@@ -53,8 +48,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	// Re-read the binding here rather than trusting the snapshot the caller
 	// took in handlePromptEvent: a concurrent /cd, /session-del or /model
 	// command (run in a separate goroutine) could have mutated the router
-	// between ensureBinding and this point. Fall back to the passed snapshot
-	// only if the binding was removed entirely.
+	// between ensureBinding and this point.
 	if fresh, ok := h.Router.Lookup(chatID); ok {
 		binding = fresh
 	}
@@ -66,9 +60,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 
 	// Wrap parent with WithCancelCause so emitTerminal can distinguish a
 	// user-initiated cancel (context.Canceled) from a prompt timeout
-	// (context.DeadlineExceeded) via context.Cause. PromptTimeout defaults
-	// to 0 (disabled) — the subprocess exits on its own when the task is
-	// done.
+	// (context.DeadlineExceeded) via context.Cause.
 	ctx, cancel := context.WithCancelCause(parent)
 	if h.PromptTimeout > 0 {
 		timer := time.AfterFunc(h.PromptTimeout, func() {
@@ -79,28 +71,32 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	defer cancel(nil)
 
 	modelSpec := binding.ModelSpec
-	opts := opencodeserve.RunOptions{
+	opts := oc.RunOptions{
 		Prompt:    prompt,
-		Directory: binding.Directory,
 		SessionID: binding.SessionID,
-		Model:     modelSpec,
-		Agent:     binding.Agent,
+		Location:  &oc.LocationRef{Directory: binding.Directory},
+	}
+	// 仅在创建新 session（SessionID 空）时传 Model/Agent；后续 turn 通过
+	// SwitchModel/SwitchAgent 切换（见 commands_config.go）。
+	if binding.SessionID == "" {
+		if ref, err := parseModelSpec(modelSpec); err == nil && ref.ID != "" {
+			opts.Model = &ref
+		}
+		if binding.Agent != "" {
+			opts.Agent = binding.Agent
+		}
 	}
 
 	result := h.runOpencode(ctx, chatID, replyToID, opts, modelSpec)
 
-	// recordUsage before emitTerminal: emitTerminal reads the store to fill
-	// the cumulative TotalTokens on the result card, so this turn must be
-	// counted first. Add is an in-memory map update (the async save is
-	// non-blocking), so this does not delay the terminal emit.
 	h.recordUsage(chatID, result)
 	h.emitTerminal(ctx, chatID, replyToID, result)
 }
 
 // recordUsage feeds the turn's token breakdown to the usage store. A cancelled
-// turn is skipped: the subprocess was SIGKILLed and its terminal step_finish
-// (the source of these counts) typically did not arrive. Errors are still
-// recorded — a failed run that consumed tokens is real cost.
+// turn is skipped: the SDK's abort fires an Interrupt and the terminal
+// step_finish (the source of these counts) typically did not arrive. Errors
+// are still recorded — a failed run that consumed tokens is real cost.
 func (h *Handler) recordUsage(chatID string, result promptResult) {
 	if h.Usage == nil || result.isCancelled || result.sessionID == "" {
 		return
@@ -117,17 +113,9 @@ func (h *Handler) recordUsage(chatID string, result promptResult) {
 	})
 }
 
-// runOpencode starts one opencode subprocess, streams its events into
-// Controls, and reduces the stream to a promptResult.
-func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts opencodeserve.RunOptions, modelSpec string) promptResult {
-	// Archive the raw stream for this run before launching the subprocess so
-	// the sink is wired for the whole lifetime. Best-effort: nil sink = off.
-	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "opencode", chatID, promptID, h.StreamHistory)
-	if sink != nil {
-		opts.LineSink = sink
-		defer func() { _ = closeSink() }() // archive already flushed
-	}
-
+// runOpencode starts one SDK Run, streams its HighEvents into Controls, and
+// reduces the stream to a promptResult.
+func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts oc.RunOptions, modelSpec string) promptResult {
 	events, err := h.agent.Run(ctx, opts)
 	if err != nil {
 		return promptResult{
@@ -168,9 +156,6 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 			Error:  &protocol.ErrorPayload{Message: result.err.Error()},
 		})
 	default:
-		// Cumulative input+output across this session's turns (including this
-		// one, already recorded by recordUsage above). 0 when no store or no
-		// history; the renderer hides the cumulative portion then.
 		var totalTokens int
 		if e, ok := h.Usage.Get(result.sessionID); ok {
 			totalTokens = e.Input + e.Output

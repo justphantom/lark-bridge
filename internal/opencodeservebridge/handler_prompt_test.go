@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -84,7 +85,9 @@ type panicOpencode struct{}
 func (panicOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) AbortSession(context.Context, string) error   { return nil }
-func (panicOpencode) Run(context.Context, opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
+func (panicOpencode) SwitchModel(context.Context, string, string) error { return nil }
+func (panicOpencode) SwitchAgent(context.Context, string, string) error { return nil }
+func (panicOpencode) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent, error) {
 	panic("simulated agent panic")
 }
 

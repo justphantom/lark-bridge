@@ -24,8 +24,9 @@ type Handler struct {
 
 // HandlerConfig carries the scalar runtime config the Handler reads. It is
 // populated from the config file's opencode + state_dir sections by
-// cmd/opencode-back/main.go. PromptTimeout defaults to 0 (disabled): the CLI
-// exits on its own when the turn is done, and users abort via /session-abort.
+// cmd/opencode-serve-back/main.go. PromptTimeout defaults to 0 (disabled):
+// the SDK Run's internal probe already covers stuck turns, and users abort
+// via /session-abort.
 type HandlerConfig struct {
 	// DefaultDirectory is reserved as the base for per-chat working dirs but
 	// is currently unused: opencode takes its working dir from the /cd pin or
@@ -33,8 +34,6 @@ type HandlerConfig struct {
 	// config parity with the other bridges.
 	DefaultDirectory string
 	StateDir         string
-	// StreamHistory caps raw SSE captures kept under StateDir/streams.
-	StreamHistory int
 	// PromptTimeout is the per-prompt safety net. 0 disables it.
 	PromptTimeout time.Duration
 	// DebugRedact controls whether prompt/error text in debug logs is
@@ -54,7 +53,6 @@ func NewWithLogger(r *router.Router, api opencodeAPI, rpc *backendrpc.Client, cf
 		Core: bridgebase.NewCore(r, rpc, bridgebase.CoreConfig{
 			DefaultDirectory: cfg.DefaultDirectory,
 			StateDir:         cfg.StateDir,
-			StreamHistory:    cfg.StreamHistory,
 			PromptTimeout:    cfg.PromptTimeout,
 			DebugRedact:      cfg.DebugRedact,
 			WorkspaceRoot:    cfg.WorkspaceRoot,

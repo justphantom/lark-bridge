@@ -130,9 +130,9 @@ type Opencode struct {
 }
 
 // OpencodeServe holds settings for the opencode-serve backend, which talks
-// to a running `opencode serve` HTTP server over JSON+SSE. Unlike Opencode
-// (CLI mode), the server is started and managed by the operator; the bridge
-// only connects.
+// to a running `opencode serve` HTTP server over JSON+SSE via the
+// opencode-go-sdk-lite SDK. Unlike Opencode (CLI mode), the server is
+// started and managed by the operator; the bridge only connects.
 type OpencodeServe struct {
 	// BaseURL is the opencode serve root (e.g. "http://127.0.0.1:4096").
 	// Required.
@@ -141,14 +141,6 @@ type OpencodeServe struct {
 	// already serialises requests per session; this only guards against
 	// runaway per-chat fan-out. <=0 → 4.
 	MaxConcurrent int `json:"max_concurrent,omitempty"`
-	// StreamHistory caps how many recent per-run raw SSE captures are kept
-	// under {state_dir}/streams. <=0/unset → 50.
-	StreamHistory int `json:"stream_history,omitempty"`
-	// ListCacheTTL bounds how long /model and /agent results stay cached
-	// (seconds). The serve server holds the catalog in memory so listings
-	// are sub-second; the cache mainly avoids re-serialising JSON.
-	// <=0/unset → 600 (10 min).
-	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which

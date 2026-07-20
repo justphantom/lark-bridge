@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
@@ -19,10 +20,10 @@ import (
 // immediately so the user sees them without delay.
 const textEmitInterval = 200 * time.Millisecond
 
-// streamRun consumes an opencode event stream for one turn and translates each
+// streamRun consumes an SDK HighEvent stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
 // to a promptResult.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan opencodeserve.Event, modelSpec string) promptResult {
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan oc.HighEvent, modelSpec string) promptResult {
 	var (
 		text      strings.Builder
 		sessionID string
@@ -42,10 +43,10 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	for ev := range events {
 		h.Logger.Debug("bridge received opencode event",
 			log.FieldChatID, chatID,
-			log.FieldEventType, ev.GetType(),
-			log.FieldSessionID, ev.GetSessionID(),
-			"text_length", len(ev.GetText()),
-			log.FieldToolName, ev.GetToolName())
+			log.FieldEventType, string(ev.Kind()),
+			log.FieldSessionID, ev.SessionID(),
+			"text_length", len(ev.Text()),
+			log.FieldToolName, ev.ToolName())
 
 		if ctx.Err() != nil {
 			return promptResult{
@@ -59,15 +60,18 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// Only write the session id back when the chat is still bound: a
 		// concurrent /session-del or /cd may have Unbound it, and a recreated
 		// binding (new prompt) must not be clobbered with this turn's id.
-		if sessionID == "" && ev.GetSessionID() != "" {
-			sessionID = ev.GetSessionID()
+		if sessionID == "" && ev.SessionID() != "" {
+			sessionID = ev.SessionID()
 			if _, ok := h.Router.Lookup(chatID); ok {
 				h.Router.SetSessionID(chatID, sessionID)
 			}
 		}
 
-		switch ev.GetType() {
-		case opencodeserve.EventSession:
+		switch ev.Kind() {
+		case oc.HighEventPrompt:
+			// First event of every turn. Emit SessionInit using the sessionID
+			// carried on the prompt marker (SDK's Run pre-fills it from
+			// CreateSession/Prompt).
 			if sessionID != "" {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeSessionInit,
@@ -77,7 +81,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					},
 				})
 			}
-		case opencodeserve.EventStepStart:
+		case oc.HighEventStepStart:
 			stepCount++
 			if startTime.IsZero() {
 				startTime = time.Now()
@@ -89,78 +93,74 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					Description: fmt.Sprintf("🔄 第 %d 轮…", stepCount),
 				},
 			})
-		case opencodeserve.EventStepFinish:
-			// Non-terminal step (reason != "stop"): accumulate its tokens and
+		case oc.HighEventStepFinish:
+			// Non-terminal step (finish != "stop"): accumulate its tokens and
 			// cost so the usage store gets the full turn total. It produces no
 			// card update — the progress card already shows the running step.
-			accInput += ev.GetInputTokens()
-			accOutput += ev.GetOutputTokens()
-			accCacheRead += ev.GetCacheRead()
-			accCacheWrite += ev.GetCacheWrite()
-			accCost += ev.GetCost()
-		case opencodeserve.EventText:
-			text.WriteString(ev.GetText())
+			accInput += ev.InputTokens()
+			accOutput += ev.OutputTokens()
+			accCacheRead += ev.CacheRead()
+			accCacheWrite += ev.CacheWrite()
+			accCost += ev.Cost()
+		case oc.HighEventText:
+			text.WriteString(ev.Text())
 			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
-					Text: &protocol.TextPayload{Delta: ev.GetText()},
+					Text: &protocol.TextPayload{Delta: ev.Text()},
 				})
 			}
-		case opencodeserve.EventThinking:
+		case oc.HighEventThinking:
 			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type:     protocol.TypeThinking,
-					Thinking: &protocol.ThinkingPayload{Delta: ev.GetText()},
+					Thinking: &protocol.ThinkingPayload{Delta: ev.Text()},
 				})
 			}
-		case opencodeserve.EventToolUse:
-			// opencode emits one completed event per call (parsed into
-			// EventToolResult below), so this case is reached only if a
-			// future CLI change reintroduces a separate use event. Kept for
-			// forward-compat so the row still opens as running.
+		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName(), Input: bridgebase.SummarizeToolInput(ev.ToolInput())},
 			})
-		case opencodeserve.EventToolResult:
+		case oc.HighEventToolResult:
 			// opencode's "task" tool IS the subagent delegation.
-			isSub := ev.GetToolName() == "task"
+			isSub := ev.ToolName() == "task"
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
-					Name:       ev.GetToolName(),
-					Input:      bridgebase.SummarizeToolInput(ev.GetToolInput()),
-					Output:     ev.GetText(),
-					IsError:    ev.GetIsToolError(),
+					Name:       ev.ToolName(),
+					Input:      bridgebase.SummarizeToolInput(ev.ToolInput()),
+					Output:     ev.Text(),
+					IsError:    ev.IsToolError(),
 					IsSubagent: isSub,
 				},
 			})
-		case opencodeserve.EventResult:
+		case oc.HighEventResult:
 			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,
 				accInput, accOutput, accCacheRead, accCacheWrite, accCost)
-		case opencodeserve.EventError:
+		case oc.HighEventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
-				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
+				"error_text", truncateForDebug(ev.Text(), h.debugRedact()))
 			return promptResult{
-				err:       errors.New(nonEmpty(ev.GetText(), "opencode 运行出错")),
+				err:       errors.New(nonEmpty(ev.Text(), "opencode 运行出错")),
 				model:     resolveModel("", modelSpec),
 				sessionID: sessionID,
 			}
 		default:
-			// Forward-compat: the parser forwards unknown line types verbatim.
-			// Log at debug so a schema change is observable without breaking
-			// the turn.
+			// Forward-compat: the SDK may emit new HighEventKind values; log
+			// at debug so a schema change is observable without breaking the
+			// turn.
 			h.Logger.Debug("opencode: unhandled event type",
 				log.FieldChatID, chatID,
-				log.FieldEventType, ev.GetType())
+				log.FieldEventType, string(ev.Kind()))
 		}
 	}
 
-	// Channel closed without a terminal event (defensive; the client
-	// normally synthesises an EventError). If the context was cancelled
-	// (user abort or prompt timeout), surface it as a cancellation rather
-	// than a generic error so emitTerminal shows the right notice.
+	// Channel closed without a terminal event (defensive; the SDK normally
+	// synthesises a HighEventError). If the context was cancelled (user abort
+	// or prompt timeout), surface it as a cancellation rather than a generic
+	// error so emitTerminal shows the right notice.
 	if ctx.Err() != nil {
 		return promptResult{
 			err:         ctx.Err(),
@@ -177,7 +177,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 }
 
 // finalizeResult builds the promptResult from a result event.
-func (h *Handler) finalizeResult(ev opencodeserve.Event, accText, sessionID, modelSpec, chatID string, stepCount int, startTime time.Time,
+func (h *Handler) finalizeResult(ev oc.HighEvent, accText, sessionID, modelSpec, chatID string, stepCount int, startTime time.Time,
 	accInput, accOutput, accCacheRead, accCacheWrite int, accCost float64) promptResult {
 	var durationMs int64
 	if !startTime.IsZero() {
@@ -186,10 +186,10 @@ func (h *Handler) finalizeResult(ev opencodeserve.Event, accText, sessionID, mod
 
 	// Add the terminal (stop) step's tokens to the accumulated tool-calls
 	// steps so the usage breakdown reflects the whole turn.
-	totalInput := accInput + ev.GetInputTokens()
-	totalOutput := accOutput + ev.GetOutputTokens()
-	totalCacheRead := accCacheRead + ev.GetCacheRead()
-	totalCacheWrite := accCacheWrite + ev.GetCacheWrite()
+	totalInput := accInput + ev.InputTokens()
+	totalOutput := accOutput + ev.OutputTokens()
+	totalCacheRead := accCacheRead + ev.CacheRead()
+	totalCacheWrite := accCacheWrite + ev.CacheWrite()
 
 	result := promptResult{
 		model:      resolveModel("", modelSpec),
@@ -200,8 +200,8 @@ func (h *Handler) finalizeResult(ev opencodeserve.Event, accText, sessionID, mod
 		// jump when usage accounting started summing every step. The full
 		// per-turn breakdown lives in inputTokens/outputTokens/cacheRead/
 		// cacheWrite below for the usage store.
-		contextTokens: ev.GetInputTokens() + ev.GetOutputTokens(),
-		costUSD:       accCost + ev.GetCost(),
+		contextTokens: ev.InputTokens() + ev.OutputTokens(),
+		costUSD:       accCost + ev.Cost(),
 		steps:         stepCount,
 
 		inputTokens:  totalInput,
@@ -210,8 +210,8 @@ func (h *Handler) finalizeResult(ev opencodeserve.Event, accText, sessionID, mod
 		cacheWrite:   totalCacheWrite,
 	}
 
-	if ev.GetIsError() {
-		msg := ev.GetResult()
+	if ev.IsError() {
+		msg := ev.Result()
 		if strings.TrimSpace(msg) == "" {
 			msg = "opencode 返回错误"
 		}
@@ -219,7 +219,7 @@ func (h *Handler) finalizeResult(ev opencodeserve.Event, accText, sessionID, mod
 		return result
 	}
 
-	reply := ev.GetResult()
+	reply := ev.Result()
 	if reply == "" {
 		reply = bridgebase.StripThinking(accText, "> ")
 	} else {

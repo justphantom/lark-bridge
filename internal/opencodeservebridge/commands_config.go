@@ -6,10 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
+
+// switchTimeout bounds SwitchModel/SwitchAgent calls. A wedged server must not
+// freeze the slash-command goroutine.
+const switchTimeout = 10 * time.Second
 
 // cmdModel pins, clears, or interactively selects the model for the current
 // chat. Forms:
@@ -41,6 +47,13 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 	}
 	h.Router.SetModelSpec(chatID, spec)
 	cmdutil.LogSettingChange(h.Logger, chatID, "model", spec)
+	// 若 session 已存在则立即同步到服务端，下次 prompt 才能用上新 model；
+	// session 尚未创建时由 runPrompt 在 CreateSession 时传入。
+	if b.SessionID != "" {
+		if err := h.agent.SwitchModel(ctx, b.SessionID, spec); err != nil {
+			h.Logger.Warn("switch model on server", log.FieldChatID, chatID, log.FieldError, err)
+		}
+	}
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
@@ -65,6 +78,14 @@ func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
 		}
 		h.Router.SetModelSpec(chatID, choice)
 		cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
+		// 同步到服务端（若 session 已存在）
+		if b, ok := h.Router.Lookup(chatID); ok && b.SessionID != "" {
+			sctx, cancel := context.WithTimeout(h.AppCtx, switchTimeout)
+			defer cancel()
+			if err := h.agent.SwitchModel(sctx, b.SessionID, choice); err != nil {
+				h.Logger.Warn("switch model on server", log.FieldChatID, chatID, log.FieldError, err)
+			}
+		}
 		res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
 		h.emitCardUpdateLogged(chatID, messageID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
 	})
@@ -110,6 +131,12 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 	}
 	h.Router.SetAgent(chatID, agent)
 	cmdutil.LogSettingChange(h.Logger, chatID, "agent", agent)
+	// 若 session 已存在则立即同步到服务端。
+	if b.SessionID != "" {
+		if err := h.agent.SwitchAgent(ctx, b.SessionID, agent); err != nil {
+			h.Logger.Warn("switch agent on server", log.FieldChatID, chatID, log.FieldError, err)
+		}
+	}
 	return cmdutil.ChangeResult("agent", old, agent, "下次提问生效。"), nil
 }
 
@@ -129,6 +156,14 @@ func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
 		}
 		h.Router.SetAgent(chatID, choice)
 		cmdutil.LogSettingChange(h.Logger, chatID, "agent", choice)
+		// 同步到服务端（若 session 已存在）
+		if b, ok := h.Router.Lookup(chatID); ok && b.SessionID != "" {
+			sctx, cancel := context.WithTimeout(h.AppCtx, switchTimeout)
+			defer cancel()
+			if err := h.agent.SwitchAgent(sctx, b.SessionID, choice); err != nil {
+				h.Logger.Warn("switch agent on server", log.FieldChatID, chatID, log.FieldError, err)
+			}
+		}
 		res := cmdutil.ChangeResult("agent", old, choice, "下次提问生效。")
 		h.emitCardUpdateLogged(chatID, messageID, "success", "已切换 agent", res.Body, res.Field, res.Before, res.After)
 	})

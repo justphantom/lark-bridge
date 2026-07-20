@@ -24,7 +24,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/opencodeservebridge"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
@@ -70,10 +69,9 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	client, err := opencodeserve.New(opencodeserve.Config{
+	client, err := opencodeservebridge.NewAgent(opencodeservebridge.AgentConfig{
 		BaseURL:       cfg.OpencodeServe.BaseURL,
 		MaxConcurrent: cfg.OpencodeServe.MaxConcurrent,
-		ListCacheTTL:  cfg.OpencodeServe.ListCacheTTL,
 	}, componentLogger(cfg, baseLevel, output, "opencode"))
 	if err != nil {
 		return fmt.Errorf("opencode serve client: %w", err)
@@ -112,7 +110,6 @@ func run(cfgPath string) error {
 	bridgeLogger := componentLogger(cfg, baseLevel, output, "bridge")
 	h := opencodeservebridge.NewWithLogger(r, client, rpc, opencodeservebridge.HandlerConfig{
 		StateDir:      cfg.StateDir,
-		StreamHistory: cfg.OpencodeServe.StreamHistory,
 		PromptTimeout: time.Duration(cfg.Timeouts.PromptTimeout),
 		DebugRedact:   cfg.LogDebugRedact,
 		WorkspaceRoot: os.Getenv("WORKSPACE_ROOT"),

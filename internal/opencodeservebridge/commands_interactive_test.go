@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
@@ -21,13 +22,15 @@ type pickerFakeAgent struct {
 	agents []string
 }
 
-func (pickerFakeAgent) Run(context.Context, opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
-	ch := make(chan opencodeserve.Event)
+func (pickerFakeAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent, error) {
+	ch := make(chan oc.HighEvent)
 	close(ch)
 	return ch, nil
 }
 
-func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil }
+func (pickerFakeAgent) AbortSession(context.Context, string) error            { return nil }
+func (pickerFakeAgent) SwitchModel(context.Context, string, string) error     { return nil }
+func (pickerFakeAgent) SwitchAgent(context.Context, string, string) error     { return nil }
 
 func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return f.models, nil }
 
@@ -38,13 +41,15 @@ func (f pickerFakeAgent) ListAgents(context.Context) ([]string, error) { return 
 // Notice; the test asserts no pending slot is left behind).
 type failingListAgent struct{}
 
-func (failingListAgent) Run(context.Context, opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
-	ch := make(chan opencodeserve.Event)
+func (failingListAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent, error) {
+	ch := make(chan oc.HighEvent)
 	close(ch)
 	return ch, nil
 }
 
-func (failingListAgent) AbortSession(context.Context, string) error { return nil }
+func (failingListAgent) AbortSession(context.Context, string) error        { return nil }
+func (failingListAgent) SwitchModel(context.Context, string, string) error { return nil }
+func (failingListAgent) SwitchAgent(context.Context, string, string) error { return nil }
 
 func (failingListAgent) ListModels(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")

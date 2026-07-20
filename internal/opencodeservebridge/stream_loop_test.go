@@ -4,9 +4,10 @@ import (
 	"context"
 	"testing"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -81,10 +82,10 @@ func TestSummarizeToolInput(t *testing.T) {
 	}
 }
 
-// eventChan buffers events into a closed channel the way a real opencode Run
-// would, so streamRun can be driven directly without a subprocess.
-func eventChan(events []opencodeserve.Event) <-chan opencodeserve.Event {
-	ch := make(chan opencodeserve.Event, len(events))
+// eventChan buffers events into a closed channel the way a real SDK Run would,
+// so streamRun can be driven directly without a live serve connection.
+func eventChan(events []oc.HighEvent) <-chan oc.HighEvent {
+	ch := make(chan oc.HighEvent, len(events))
 	for _, e := range events {
 		ch <- e
 	}
@@ -92,30 +93,18 @@ func eventChan(events []opencodeserve.Event) <-chan opencodeserve.Event {
 	return ch
 }
 
-// parseLines turns SSE event frames into an event slice via the exported
-// opencodeserve.ParseEvent (opencodeserve.Event fields are unexported).
-func parseLines(t *testing.T, lines ...string) []opencodeserve.Event {
-	t.Helper()
-	var out []opencodeserve.Event
-	for _, l := range lines {
-		evs, err := opencodeserve.ParseEvent(l)
-		if err != nil {
-			t.Fatalf("ParseEvent(%q): %v", l, err)
-		}
-		out = append(out, evs...)
-	}
-	return out
-}
-
 // TestStreamRun_AccumulatesCostAndTokensAcrossSteps verifies that a multi-step
 // turn (N tool-calls steps + a terminal stop step) sums every step's tokens
 // AND cost into the result. Previously only the terminal step's cost was kept,
 // undercounting cost on tool-heavy turns while tokens were already summed.
 func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
-	const toolStep = `{"type":"message.part.updated","properties":{"sessionID":"s1","part":{"type":"step-finish","reason":"tool-calls","tokens":{"total":800,"input":200,"output":80,"cache":{"read":400,"write":0}},"cost":0.01}}}`
-	const stopStep = `{"type":"message.part.updated","properties":{"sessionID":"s1","part":{"type":"step-finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}}`
+	// 两个非终止 step_finish（finish=tool-calls）+ 一个终止 result（finish=stop）。
+	toolStep := oc.NewHighEvent(oc.HighEventStepFinish, "s1", "m1",
+		oc.WithTokens(200, 80, 400, 0), oc.WithCost(0.01))
+	stopStep := oc.NewHighEvent(oc.HighEventResult, "s1", "m1",
+		oc.WithTokens(1000, 500, 300, 50), oc.WithCost(0.02), oc.WithResult("stop"))
 
-	events := parseLines(t, toolStep, toolStep, stopStep)
+	events := []oc.HighEvent{toolStep, toolStep, stopStep}
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
@@ -140,14 +129,14 @@ func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
 // TestStreamRun_SingleStepCostIsTerminal guards the single-step turn: no
 // accumulation, the result cost equals the sole stop step's cost.
 func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
-	const stopStep = `{"type":"message.part.updated","properties":{"sessionID":"s1","part":{"type":"step-finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}}`
+	stopStep := oc.NewHighEvent(oc.HighEventResult, "s1", "m1",
+		oc.WithTokens(1000, 500, 300, 50), oc.WithCost(0.02), oc.WithResult("stop"))
 
-	events := parseLines(t, stopStep)
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan([]oc.HighEvent{stopStep}), "")
 	if res.costUSD != 0.02 {
 		t.Errorf("costUSD = %v, want 0.02", res.costUSD)
 	}

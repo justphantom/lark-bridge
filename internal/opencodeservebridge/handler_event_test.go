@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/opencodeserve"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // closedStreamOpencode is a fake opencodeAPI whose Run returns an already-
 // closed event channel. streamRun falls through to its defensive "no
-// terminal event" return path, so runPrompt completes without needing to
-// construct opencodeserve.Event values (whose fields are unexported).
+// terminal event" return path, so runPrompt completes without live SDK work.
 type closedStreamOpencode struct{}
 
 func (closedStreamOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
@@ -26,15 +26,19 @@ func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) AbortSession(context.Context, string) error { return nil }
 
-func (closedStreamOpencode) Run(_ context.Context, _ opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
-	ch := make(chan opencodeserve.Event)
+func (closedStreamOpencode) SwitchModel(context.Context, string, string) error { return nil }
+
+func (closedStreamOpencode) SwitchAgent(context.Context, string, string) error { return nil }
+
+func (closedStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
+	ch := make(chan oc.HighEvent)
 	close(ch)
 	return ch, nil
 }
 
-// blockingOpencode mimics an opencode subprocess whose stdout stays open
-// until the run context is cancelled. It lets timeout/cancel tests exercise
-// runPrompt without a real subprocess.
+// blockingOpencode mimics an SDK Run whose stream stays open until the run
+// context is cancelled. It lets timeout/cancel tests exercise runPrompt
+// without a live serve connection.
 type blockingOpencode struct{}
 
 func (blockingOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
@@ -43,8 +47,12 @@ func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return n
 
 func (blockingOpencode) AbortSession(context.Context, string) error { return nil }
 
-func (blockingOpencode) Run(ctx context.Context, _ opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
-	ch := make(chan opencodeserve.Event)
+func (blockingOpencode) SwitchModel(context.Context, string, string) error { return nil }
+
+func (blockingOpencode) SwitchAgent(context.Context, string, string) error { return nil }
+
+func (blockingOpencode) Run(ctx context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
+	ch := make(chan oc.HighEvent)
 	go func() {
 		<-ctx.Done()
 		close(ch)
