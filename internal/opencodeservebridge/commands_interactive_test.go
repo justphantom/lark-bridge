@@ -27,6 +27,8 @@ func (pickerFakeAgent) Run(context.Context, opencodeserve.RunOptions) (<-chan op
 	return ch, nil
 }
 
+func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil }
+
 func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return f.models, nil }
 
 func (f pickerFakeAgent) ListAgents(context.Context) ([]string, error) { return f.agents, nil }
@@ -41,6 +43,8 @@ func (failingListAgent) Run(context.Context, opencodeserve.RunOptions) (<-chan o
 	close(ch)
 	return ch, nil
 }
+
+func (failingListAgent) AbortSession(context.Context, string) error { return nil }
 
 func (failingListAgent) ListModels(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")

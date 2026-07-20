@@ -552,6 +552,30 @@ func (c *Client) abort(sessionID string) {
 	_ = resp.Body.Close()
 }
 
+// AbortSession is the exported wrapper around abort for callers outside the
+// package (the bridge's /session-abort slash command). It is idempotent: an
+// idle session's abort returns true from the server without side effects, so
+// calling it speculatively to release a stuck 'busy' session is safe.
+func (c *Client) AbortSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("abort: empty session id")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/session/"+sessionID+"/abort", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: baseURL is trusted config
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("abort %s: %d", sessionID, resp.StatusCode)
+	}
+	return nil
+}
+
 // postJSON is the JSON-POST counterpart to fetchJSON. body is marshalled as
 // JSON; the response body (if any) is returned for callers that need it.
 // headers is optional.

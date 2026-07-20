@@ -21,10 +21,15 @@ type opencodeAPI interface {
 	// drains the channel until it is closed; a terminal event (result/error)
 	// precedes close.
 	Run(ctx context.Context, opts opencodeserve.RunOptions) (<-chan opencodeserve.Event, error)
-	// ListModels runs `opencode models` for the interactive /model picker.
-	// Returns one `provider/model` entry per line.
+	// ListModels queries the serve catalog for the interactive /model picker.
+	// Returns one "provider/model" entry per active model.
 	ListModels(ctx context.Context) ([]string, error)
-	// ListAgents runs `opencode agent list` for the interactive /agent picker.
-	// Returns user-visible agent names (hidden internal agents filtered).
+	// ListAgents queries the serve catalog for the interactive /agent picker.
+	// Returns user-visible agent ids (hidden internal agents filtered).
 	ListAgents(ctx context.Context) ([]string, error)
+	// AbortSession POSTs /session/{id}/abort on the serve server. Unlike CLI
+	// mode, a stuck 'busy' session lives server-side and is not released by
+	// cancelling the local pump context — the slash command must call this
+	// to recover from a wedged turn.
+	AbortSession(ctx context.Context, sessionID string) error
 }

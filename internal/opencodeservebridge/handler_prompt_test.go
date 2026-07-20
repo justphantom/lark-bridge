@@ -83,6 +83,7 @@ type panicOpencode struct{}
 
 func (panicOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
+func (panicOpencode) AbortSession(context.Context, string) error   { return nil }
 func (panicOpencode) Run(context.Context, opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
 	panic("simulated agent panic")
 }

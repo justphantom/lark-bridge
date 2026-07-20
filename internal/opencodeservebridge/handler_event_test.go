@@ -24,6 +24,8 @@ func (closedStreamOpencode) ListModels(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 
+func (closedStreamOpencode) AbortSession(context.Context, string) error { return nil }
+
 func (closedStreamOpencode) Run(_ context.Context, _ opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
 	ch := make(chan opencodeserve.Event)
 	close(ch)
@@ -38,6 +40,8 @@ type blockingOpencode struct{}
 func (blockingOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 
 func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
+
+func (blockingOpencode) AbortSession(context.Context, string) error { return nil }
 
 func (blockingOpencode) Run(ctx context.Context, _ opencodeserve.RunOptions) (<-chan opencodeserve.Event, error) {
 	ch := make(chan opencodeserve.Event)
