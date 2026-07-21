@@ -76,15 +76,13 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		SessionID: binding.SessionID,
 		Location:  &oc.LocationRef{Directory: binding.Directory},
 	}
-	// 仅在创建新 session（SessionID 空）时传 Model/Agent；后续 turn 通过
-	// SwitchModel/SwitchAgent 切换（见 commands_config.go）。
-	if binding.SessionID == "" {
-		if ref, err := parseModelSpec(modelSpec); err == nil && ref.ID != "" {
-			opts.Model = &ref
-		}
-		if binding.Agent != "" {
-			opts.Agent = binding.Agent
-		}
+	// v1 无 Switch 接口，Model/Agent 随每条 prompt 生效，故每 turn 都从
+	// binding 传（空值表示用服务端默认）。
+	if ref, err := parseModelSpec(modelSpec); err == nil && ref.ID != "" {
+		opts.Model = &ref
+	}
+	if binding.Agent != "" {
+		opts.Agent = binding.Agent
 	}
 
 	result := h.runOpencode(ctx, chatID, replyToID, opts, modelSpec)

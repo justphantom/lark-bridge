@@ -28,9 +28,7 @@ func (pickerFakeAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent,
 	return ch, nil
 }
 
-func (pickerFakeAgent) AbortSession(context.Context, string) error            { return nil }
-func (pickerFakeAgent) SwitchModel(context.Context, string, string) error     { return nil }
-func (pickerFakeAgent) SwitchAgent(context.Context, string, string) error     { return nil }
+func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil }
 
 func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return f.models, nil }
 
@@ -47,9 +45,7 @@ func (failingListAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent
 	return ch, nil
 }
 
-func (failingListAgent) AbortSession(context.Context, string) error        { return nil }
-func (failingListAgent) SwitchModel(context.Context, string, string) error { return nil }
-func (failingListAgent) SwitchAgent(context.Context, string, string) error { return nil }
+func (failingListAgent) AbortSession(context.Context, string) error { return nil }
 
 func (failingListAgent) ListModels(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")

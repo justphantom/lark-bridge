@@ -2,7 +2,6 @@ package opencodeservebridge
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,8 +25,7 @@ func newSDKClient(cfg AgentConfig) (*oc.Client, error) {
 	if cfg.Username == "" && cfg.Password == "" {
 		return oc.New(cfg.BaseURL)
 	}
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.Username+":"+cfg.Password))
-	return oc.New(cfg.BaseURL, oc.WithHeader("Authorization", auth))
+	return oc.New(cfg.BaseURL, oc.WithBasicAuth(cfg.Username, cfg.Password))
 }
 
 // listCacheTTLDefault is used when Config.ListCacheTTL is non-positive. The
@@ -58,16 +56,19 @@ type AgentConfig struct {
 	MaxConcurrent int
 }
 
-// Agent wraps the opencode-go-sdk-lite Client + GlobalEventStream as the
-// production opencodeAPI implementation. One global SSE connection lives for
-// the lifetime of the process; each Run is one SDK Run (CreateSession or
-// resume + Prompt + pump). Safe for concurrent use.
+// Agent wraps the opencode-go-sdk-lite Client as the production opencodeAPI
+// implementation. The v1 event bus is isolated by directory, so SSE streams
+// are pooled per working directory (lazy, lives until Close); each Run is one
+// SDK Run (CreateSession or resume + Prompt + pump) on its directory's
+// stream. Safe for concurrent use.
 type Agent struct {
 	baseURL string
 	client  *oc.Client
-	stream  *oc.GlobalEventStream
 	logger  *log.Logger
 	sem     chan struct{}
+
+	streamsMu sync.Mutex
+	streams   map[string]*oc.GlobalEventStream
 
 	listMu      sync.Mutex
 	modelsCache *listCache
@@ -79,8 +80,8 @@ type listCache struct {
 	fetchedAt time.Time
 }
 
-// NewAgent builds an Agent. The SDK's GlobalEventStream goroutine is started
-// here and lives until Close. The logger defaults to a no-op logger if nil.
+// NewAgent builds an Agent. Event streams are created lazily per directory on
+// the first Run. The logger defaults to a no-op logger if nil.
 func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 	if logger == nil {
 		logger = log.Nop()
@@ -92,10 +93,6 @@ func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opencodeserve: build sdk client: %w", err)
 	}
-	stream, err := client.NewGlobalEventStream(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("opencodeserve: open global stream: %w", err)
-	}
 	n := cfg.MaxConcurrent
 	if n <= 0 {
 		n = 4
@@ -103,9 +100,9 @@ func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 	return &Agent{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		client:  client,
-		stream:  stream,
 		logger:  logger,
 		sem:     make(chan struct{}, n),
+		streams: make(map[string]*oc.GlobalEventStream),
 	}, nil
 }
 
@@ -128,9 +125,19 @@ func (a *Agent) IsReady(ctx context.Context) error {
 	return nil
 }
 
-// Close stops the SDK GlobalEventStream. Idempotent.
+// Close stops all pooled SDK GlobalEventStreams. Idempotent.
 func (a *Agent) Close() error {
-	return a.stream.Close()
+	a.streamsMu.Lock()
+	streams := a.streams
+	a.streams = make(map[string]*oc.GlobalEventStream)
+	a.streamsMu.Unlock()
+	var err error
+	for _, s := range streams {
+		if e := s.Close(); e != nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // Run starts one agent turn via SDK Run. The caller drains the returned
@@ -142,7 +149,7 @@ func (a *Agent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEven
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	out, err := a.client.Run(ctx, a.stream, opts)
+	out, err := a.client.Run(ctx, a.streamFor(opts.Location), opts)
 	if err != nil {
 		<-a.sem
 		return nil, err
@@ -170,11 +177,9 @@ func (a *Agent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEven
 // ListModels returns one "provider/model" entry per active model. Cached for
 // listCacheTTLDefault.
 //
-// 走 ListModels（/api/model）而非 ListAllModels（/config/providers）：后者
-// 返回 auth.json 里注册的完整模型目录（含 kimi-for-coding/zhipuai-coding-plan），
-// 但 serve 的 v2 prompt 路径 ModelResolver 只识别 /api/model 里的目录（实测
-// 只含 opencode provider 的免费模型）——选 /config/providers 里列出但 serve
-// 不认识的模型会触发 ModelUnavailableError。picker 只列 serve 实际能跑的。
+// SDK v1 的 ListModels 拍平 GET /provider 全部 provider 的模型目录（不再
+// 区分 serve 实际可跑的子集）；按 Connected provider 过滤待实测，见
+// docs/opencode-sdk-v1-migration.md P1。
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 	return a.cachedList(ctx, &a.modelsCache, func(ctx context.Context) ([]string, error) {
 		models, err := a.client.ListModels(ctx, nil)
@@ -210,43 +215,24 @@ func (a *Agent) ListAgents(ctx context.Context) ([]string, error) {
 			if ag.Hidden {
 				continue
 			}
-			if _, hidden := hiddenAgents[ag.ID]; hidden {
+			if _, hidden := hiddenAgents[ag.Name]; hidden {
 				continue
 			}
-			if ag.ID == "" {
+			if ag.Name == "" {
 				continue
 			}
-			out = append(out, ag.ID)
+			out = append(out, ag.Name)
 		}
 		return out, nil
 	})
 }
 
-// AbortSession POSTs /api/session/{id}/interrupt via SDK. Idempotent.
+// AbortSession POSTs /session/{id}/abort via SDK. Idempotent.
 func (a *Agent) AbortSession(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return errors.New("abort: empty session id")
 	}
 	return a.client.Interrupt(ctx, sessionID)
-}
-
-// SwitchModel POSTs /api/session/{id}/model. spec is "provider/model" or
-// empty (empty leaves the server default). Returns ok=false when spec is
-// unparseable so the caller can surface a clear error.
-func (a *Agent) SwitchModel(ctx context.Context, sessionID, spec string) error {
-	ref, err := parseModelSpec(spec)
-	if err != nil {
-		return err
-	}
-	return a.client.SwitchModel(ctx, sessionID, ref)
-}
-
-// SwitchAgent POSTs /api/session/{id}/agent.
-func (a *Agent) SwitchAgent(ctx context.Context, sessionID, agent string) error {
-	if agent == "" {
-		return errors.New("switch agent: empty name")
-	}
-	return a.client.SwitchAgent(ctx, sessionID, agent)
 }
 
 // parseModelSpec turns "provider/model" into an SDK ModelRef. Empty spec is

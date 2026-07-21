@@ -27,14 +27,9 @@ type opencodeAPI interface {
 	// ListAgents queries the serve catalog for the interactive /agent picker.
 	// Returns user-visible agent ids (hidden internal agents filtered).
 	ListAgents(ctx context.Context) ([]string, error)
-	// AbortSession POSTs /api/session/{id}/interrupt on the serve server.
+	// AbortSession POSTs /session/{id}/abort on the serve server.
 	// Required even when the bridge believes no local turn is running: a
 	// stuck server-side 'busy' session is not released by cancelling the
 	// local ctx.
 	AbortSession(ctx context.Context, sessionID string) error
-	// SwitchModel POSTs /api/session/{id}/model; spec is "provider/model"
-	// or empty (clears the pin).
-	SwitchModel(ctx context.Context, sessionID, spec string) error
-	// SwitchAgent POSTs /api/session/{id}/agent.
-	SwitchAgent(ctx context.Context, sessionID, agent string) error
 }

@@ -26,10 +26,6 @@ func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) AbortSession(context.Context, string) error { return nil }
 
-func (closedStreamOpencode) SwitchModel(context.Context, string, string) error { return nil }
-
-func (closedStreamOpencode) SwitchAgent(context.Context, string, string) error { return nil }
-
 func (closedStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)
 	close(ch)
@@ -46,10 +42,6 @@ func (blockingOpencode) ListModels(context.Context) ([]string, error) { return n
 func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 
 func (blockingOpencode) AbortSession(context.Context, string) error { return nil }
-
-func (blockingOpencode) SwitchModel(context.Context, string, string) error { return nil }
-
-func (blockingOpencode) SwitchAgent(context.Context, string, string) error { return nil }
 
 func (blockingOpencode) Run(ctx context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)
