@@ -2,9 +2,9 @@
 #
 # upgrade-monitor.sh — 独立管理 lark-deploy-monitor 的部署。
 #
-# 与 deploy.sh 完全解耦：deploy.sh 只管 4 个业务服务（feishu-front/claude/
-# opencode/miniagent），不碰 monitor。monitor 是「部署的触发者」，让它管自己
-# 的升级会形成循环依赖，故分离。
+# 与 deploy.sh 完全解耦：deploy.sh 默认管 5 个业务服务（feishu-front/claude/
+# opencode/opencode-serve/miniagent），不碰 monitor。monitor 是「部署的触发者」，
+# 让它管自己的升级会形成循环依赖，故分离。
 #
 # 用法：
 #   ./deploy/upgrade-monitor.sh           # 升级（构建 + 替换二进制 + restart）
