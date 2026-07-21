@@ -174,14 +174,24 @@ func (a *Agent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEven
 	return released, nil
 }
 
-// ListModels returns one "provider/model" entry per active model. Cached for
-// listCacheTTLDefault.
+// ListModels returns one "provider/model" entry per active model belonging to
+// a connected provider. Cached for listCacheTTLDefault.
 //
-// SDK v1 的 ListModels 拍平 GET /provider 全部 provider 的模型目录（不再
-// 区分 serve 实际可跑的子集）；按 Connected provider 过滤待实测，见
-// docs/opencode-sdk-v1-migration.md P1。
+// SDK v1 的 ListModels 拍平 GET /provider 全部 provider 的模型目录（5518+
+// 条），全量塞进飞书卡片会触发 ErrCode 11310 element exceeds the limit。
+// 用 ListConnectedProviders 拿 serve 实际配置了凭证的 provider id 子集
+// （实测通常 1~5 个），按它过滤后才落到卡片可承载的量级。
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 	return a.cachedList(ctx, &a.modelsCache, func(ctx context.Context) ([]string, error) {
+		// Connected 是全局配置，拉取与模型目录分开调用；失败时退化为
+		// 不过滤（保留旧行为），避免 serve 短暂抖动让卡片整个不返回。
+		connected, connErr := a.client.ListConnectedProviders(ctx)
+		connectedSet := make(map[string]struct{}, len(connected))
+		if connErr == nil {
+			for _, id := range connected {
+				connectedSet[id] = struct{}{}
+			}
+		}
 		models, err := a.client.ListModels(ctx, nil)
 		if err != nil {
 			return nil, err
@@ -196,6 +206,13 @@ func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 			}
 			if !m.Enabled {
 				continue
+			}
+			// Connected 拉取成功时按它过滤；失败时（len=0）跳过过滤，
+			// 由 bridgebase.maxQuestionOptions 截断兜底。
+			if len(connectedSet) > 0 {
+				if _, ok := connectedSet[m.ProviderID]; !ok {
+					continue
+				}
 			}
 			out = append(out, m.ProviderID+"/"+m.ID)
 		}

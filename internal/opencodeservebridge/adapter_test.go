@@ -52,6 +52,92 @@ func TestNewSDKClientBasicAuth(t *testing.T) {
 	}
 }
 
+// providerFixture samples a /provider response: 3 providers, 2 connected
+// (connected-a, connected-b), one disconnected. Models include one
+// deprecated entry to also exercise the status filter.
+var providerFixture = `{
+	"all": [
+		{"id":"connected-a","name":"A","models":{
+			"m-active":{"id":"m-active","providerID":"connected-a","status":"active"},
+			"m-deprecated":{"id":"m-deprecated","providerID":"connected-a","status":"deprecated"}
+		}},
+		{"id":"connected-b","name":"B","models":{
+			"m-b1":{"id":"m-b1","providerID":"connected-b","status":"active"}
+		}},
+		{"id":"disconnected-c","name":"C","models":{
+			"m-c1":{"id":"m-c1","providerID":"disconnected-c","status":"active"}
+		}}
+	],
+	"connected":["connected-a","connected-b"]
+}`
+
+// TestListModels_FiltersByConnected verifies ListModels drops models whose
+// provider is not in the connected set (the 5500+ catalog → picker-card
+// overflow root cause). Deprecated models in connected providers are still
+// excluded by the status filter.
+func TestListModels_FiltersByConnected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/provider" || r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(providerFixture))
+	}))
+	defer srv.Close()
+
+	a, err := NewAgent(AgentConfig{BaseURL: srv.URL}, nil)
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+
+	got, err := a.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	want := map[string]bool{
+		"connected-a/m-active": false,
+		"connected-b/m-b1":     false,
+	}
+	for _, m := range got {
+		if _, ok := want[m]; !ok {
+			t.Errorf("unexpected model %q (should be filtered out)", m)
+		}
+		want[m] = true
+	}
+	for m, found := range want {
+		if !found {
+			t.Errorf("missing expected model %q", m)
+		}
+	}
+}
+
+// TestListModels_ConnectedFailureFallsBack verifies that when the connected
+// list is empty (e.g. serve cold-start, or response missing the field),
+// ListModels falls back to returning all active models rather than an empty
+// list — bridgebase.maxQuestionOptions then truncates to keep the card valid.
+func TestListModels_ConnectedFailureFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// connected 字段缺失 → SDK 解析为 nil。
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"all":[
+			{"id":"p","name":"P","models":{"m1":{"id":"m1","providerID":"p","status":"active"}}}
+		]}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAgent(AgentConfig{BaseURL: srv.URL}, nil)
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	got, err := a.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(got) != 1 || got[0] != "p/m1" {
+		t.Errorf("got=%v, want [p/m1] (fallback when connected is empty)", got)
+	}
+}
+
 // TestStreamForPoolsPerDirectory: the v1 event bus is isolated by directory,
 // so streamFor must hand out one stream per directory — same directory
 // (modulo filepath.Clean) reuses the stream, different directories get

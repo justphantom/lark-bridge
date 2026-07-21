@@ -2,6 +2,7 @@ package bridgebase
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -121,5 +122,49 @@ func TestAskAndWait_ReturnsMessageID(t *testing.T) {
 	}
 	if gotMessageID != "om_card" {
 		t.Errorf("messageID = %q, want om_card", gotMessageID)
+	}
+}
+
+// TestAskAndWait_TruncatesOptionsAtCap verifies an oversized option list is
+// truncated to maxQuestionOptions before reaching the card. Feishu rejects
+// larger cards with ErrCode 11310 "element exceeds the limit".
+func TestAskAndWait_TruncatesOptionsAtCap(t *testing.T) {
+	big := make([]string, maxQuestionOptions+50)
+	for i := range big {
+		big[i] = "opt-" + strconv.Itoa(i)
+	}
+
+	var emitted *protocol.Control
+	emit := func(_ context.Context, _ string, c *protocol.Control) error {
+		emitted = c
+		return nil
+	}
+
+	answers := NewAnswerBroker()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		AskAndWait(context.Background(), answers, emit, "chat-cap", "", "模型", "选择模型", StaticOptions(big), true)
+	}()
+
+	reqID := ""
+	for reqID == "" {
+		if ids := answers.PendingIDs(); len(ids) > 0 {
+			reqID = ids[0]
+		}
+	}
+	answers.Deliver(reqID, &protocol.AnswerPayload{RequestID: reqID, ChatID: "chat-cap", Choices: []string{"opt-0"}})
+	<-done
+
+	if emitted == nil || len(emitted.Question.Questions) != 1 {
+		t.Fatalf("emitted = %+v, want one question", emitted)
+	}
+	got := emitted.Question.Questions[0].Options
+	if len(got) != maxQuestionOptions {
+		t.Fatalf("options len = %d, want %d", len(got), maxQuestionOptions)
+	}
+	// Truncation keeps the prefix in list order.
+	if got[0] != "opt-0" || got[maxQuestionOptions-1] != "opt-"+strconv.Itoa(maxQuestionOptions-1) {
+		t.Errorf("prefix not preserved: first=%q last=%q", got[0], got[maxQuestionOptions-1])
 	}
 }

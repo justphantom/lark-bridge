@@ -27,6 +27,14 @@ const (
 	// take 25–50s observed on opencode; 90s covers the worst seen while still
 	// bounding a hang.
 	listFnTimeout = 90 * time.Second
+
+	// maxQuestionOptions caps the number of options shown in a single picker
+	// card. Feishu rejects oversized cards with ErrCode 11310 "element
+	// exceeds the limit" (observed ~270-entry renderer budget; 100 stays
+	// well under with room for future renderer changes). Truncates in list
+	// order; callers should surface common items first or expose a custom
+	// input box (allowCustom=true) so omitted entries remain reachable.
+	maxQuestionOptions = 100
 )
 
 // EmitFunc matches the bridges' Handler.emit signature: promptID scopes the
@@ -74,6 +82,9 @@ func AskAndWait(
 	}
 	if len(options) == 0 {
 		return "", "", fmt.Errorf("没有可用的%s", kind)
+	}
+	if len(options) > maxQuestionOptions {
+		options = options[:maxQuestionOptions]
 	}
 
 	requestID, err := newRequestID()
