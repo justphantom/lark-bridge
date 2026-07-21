@@ -12,7 +12,7 @@
 #                                # <dir>：已解包目录，内含 lark-* 二进制。
 #   ./deploy/deploy.sh --services claude,opencode
 #                                # 只部署指定服务子集（逗号分隔，可用：feishu claude
-#                                # opencode miniagent）。默认全量。多主机部署时每台机
+#                                # opencode opencode-serve miniagent）。默认全量。多主机部署时每台机
 #                                # 用不同子集：前端机 --services feishu，后端机 --services claude,...
 #
 # 可选环境变量：
@@ -53,7 +53,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
 # ── 服务列表 ──────────────────────────────────────────
-# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 4 个业务服务。
+# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 5 个业务服务（含 opencode-serve）。
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -126,6 +126,57 @@ preflight_inflight_check() {
         fail "检测到 ${inflight} 个运行中会话（in-flight turn），中止部署以避免打断对话。请在对话结束后重试"
     fi
     info "无运行中会话，可安全部署"
+}
+
+# 检查外部 opencode serve 进程是否就绪。opencode-serve-back 是客户端，连一个
+# operator-managed 的 `opencode serve` HTTP 服务器（base_url 取自 config 的
+# opencode_serve.base_url，默认 http://127.0.0.1:4096）。serve 未就绪时 backend
+# 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重启——表现为"部署成功
+# 但 backend 反复崩溃"。本检查在部署时提前告警 + 给安装指引，避免运维事后翻
+# journalctl 排障。不 fail：尊重"先部署 backend，稍后再起 serve"的顺序（backend
+# 重启循环会自己等 serve 上线）。
+#
+# base_url 真源是 STAGE 里刚生成的 opencode-serve-config.json（从 config 模板的
+# opencode_serve 块派生），而非硬编码端口，以贴合 backend 启动时实际读到的值。
+check_opencode_serve_ready() {
+    # 仅当本次部署含 opencode-serve 时检查。
+    [[ " ${SELECTED[*]} " == *" opencode-serve "* ]] || return 0
+
+    local cfg="$STAGE/opencode-serve-config.json"
+    if [[ ! -f "$cfg" ]]; then
+        warn "opencode-serve-config 未生成，跳过 serve 就绪检查"
+        return 0
+    fi
+
+    # 无 jq，用 grep+sed 容错提取 opencode_serve.base_url。
+    local base_url
+    base_url="$(grep -oE '"base_url"[[:space:]]*:[[:space:]]*"[^"]+"' "$cfg" \
+        | sed -E 's/.*"base_url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)"
+    if [[ -z "$base_url" ]]; then
+        warn "opencode-serve-config 缺 opencode_serve.base_url，跳过 serve 就绪检查"
+        return 0
+    fi
+
+    info "检查 opencode serve 就绪（$base_url/global/health）..."
+    local code body
+    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$base_url/global/health" 2>/dev/null || echo 000)"
+    if [[ "$code" == "000" ]]; then
+        warn "opencode serve 不可达（$base_url）"
+        warn "  opencode-serve-back 会反复重启直到 serve 上线。请确认 opencode serve 已启动："
+        warn "    opencode serve  # 默认监听 :4096；或用 systemd 独立管理该进程"
+        warn "  安装 opencode（独立项目，不归本 deploy.sh 管）：https://github.com/sst/opencode"
+        return 0
+    fi
+    if [[ "$code" != "200" ]]; then
+        warn "opencode serve /global/health 返回 $code（期望 200）；backend 可能启动失败"
+        return 0
+    fi
+    body="$(curl -s -m 3 "$base_url/global/health" 2>/dev/null || true)"
+    if echo "$body" | grep -q '"healthy"[[:space:]]*:[[:space:]]*true'; then
+        info "opencode serve 就绪"
+    else
+        warn "opencode serve /global/health 返回 200 但 body 非 {healthy:true}：$body"
+    fi
 }
 
 # 轮询等待服务 active，最多 ~15s；避免冷启动时固定 sleep 导致的误判
@@ -256,7 +307,7 @@ if [[ -n "$SERVICES_ARG" ]]; then
         SELECTED+=("$s")
     done
 else
-    SELECTED=(feishu claude opencode miniagent)
+    SELECTED=(feishu claude opencode opencode-serve miniagent)
 fi
 SERVICES=()
 for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
@@ -395,8 +446,9 @@ sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/op
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
 
 # opencode-serve-back：派生自 opencode-config（保留 opencode_serve 字段即用）。
-# 仅当 --services 显式选择 opencode-serve 时生成；默认不部署（要求外部 opencode
-# serve 进程已就绪，盲目启用会启动失败）。
+# 默认部署（与其他 backend 同级）。外部 opencode serve 进程是否就绪由
+# check_opencode_serve_ready 在 stop_services 前探测并告警；不就绪时 backend
+# 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重试直到 serve 上线。
 if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
     cp "$STAGE/opencode-config.json" "$STAGE/opencode-serve-config.json"
     sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-serve-1",|' "$STAGE/opencode-serve-config.json"
@@ -412,6 +464,10 @@ inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.j
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
 info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"
+
+# opencode-serve-back 的外部依赖（opencode serve 进程）就绪检查。放在 STAGE
+# config 生成后、stop_services 前：此时 base_url 已可读，且告警先于服务重启。
+check_opencode_serve_ready
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
