@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721155353-ea2030cbb98d
-	github.com/larksuite/oapi-sdk-go/v3 v3.9.7
+	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 )
 
 require (
