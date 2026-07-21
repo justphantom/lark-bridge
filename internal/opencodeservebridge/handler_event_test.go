@@ -26,6 +26,14 @@ func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) AbortSession(context.Context, string) error { return nil }
 
+func (closedStreamOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+
+func (closedStreamOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
+	return nil, nil
+}
+
+func (closedStreamOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
+
 func (closedStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)
 	close(ch)
@@ -42,6 +50,14 @@ func (blockingOpencode) ListModels(context.Context) ([]string, error) { return n
 func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 
 func (blockingOpencode) AbortSession(context.Context, string) error { return nil }
+
+func (blockingOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+
+func (blockingOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
+	return nil, nil
+}
+
+func (blockingOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
 
 func (blockingOpencode) Run(ctx context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)

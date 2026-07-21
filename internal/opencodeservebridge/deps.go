@@ -32,4 +32,10 @@ type opencodeAPI interface {
 	// stuck server-side 'busy' session is not released by cancelling the
 	// local ctx.
 	AbortSession(ctx context.Context, sessionID string) error
+	// ListSessions returns all sessions from the serve server.
+	ListSessions(ctx context.Context) ([]oc.SessionInfo, error)
+	// SessionStatuses returns the status map of all sessions.
+	SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error)
+	// DeleteSessionIfIdle deletes a session only if it is idle.
+	DeleteSessionIfIdle(ctx context.Context, sessionID string) error
 }

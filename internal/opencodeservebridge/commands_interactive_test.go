@@ -30,6 +30,14 @@ func (pickerFakeAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent,
 
 func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil }
 
+func (pickerFakeAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+
+func (pickerFakeAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
+	return nil, nil
+}
+
+func (pickerFakeAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
+
 func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return f.models, nil }
 
 func (f pickerFakeAgent) ListAgents(context.Context) ([]string, error) { return f.agents, nil }
@@ -46,6 +54,14 @@ func (failingListAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent
 }
 
 func (failingListAgent) AbortSession(context.Context, string) error { return nil }
+
+func (failingListAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+
+func (failingListAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
+	return nil, nil
+}
+
+func (failingListAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
 
 func (failingListAgent) ListModels(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")

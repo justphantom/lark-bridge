@@ -85,6 +85,9 @@ type panicOpencode struct{}
 func (panicOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 func (panicOpencode) AbortSession(context.Context, string) error   { return nil }
+func (panicOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+func (panicOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) { return nil, nil }
+func (panicOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
 func (panicOpencode) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent, error) {
 	panic("simulated agent panic")
 }

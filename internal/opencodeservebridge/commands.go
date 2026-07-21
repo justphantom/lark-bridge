@@ -28,6 +28,8 @@ func init() {
 			Title: "已请求中止", Level: "success"}, Handler: (*Handler).cmdSessionAbort},
 		{Spec: cmdutil.Spec{Name: "/session-del", Summary: "删除当前群绑定的会话（下次提问会重建）",
 			Title: "已删除", Level: "success"}, Handler: (*Handler).cmdSessionDel},
+		{Spec: cmdutil.Spec{Name: "/delete-idle", Summary: "删除所有未绑定且空闲的会话",
+			Title: "已清理空闲会话", Level: "success"}, Handler: (*Handler).cmdDeleteIdleSessions},
 		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前会话、目录、模型与 agent",
 			Level: "info"}, Handler: (*Handler).cmdCurrent},
 		{Spec: cmdutil.Spec{Name: "/model", Summary: "设置模型；不带参数弹出选择；传 clear 清除",

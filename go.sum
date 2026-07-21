@@ -6,6 +6,8 @@ github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721072227-9ef0ee72becd h
 github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721072227-9ef0ee72becd/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
 github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721145045-23a1937fbc19 h1:ZMWd74ootDI7RoRPFXq9JrZdbibiTlbIxupF04sDRT8=
 github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721145045-23a1937fbc19/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721155353-ea2030cbb98d h1:tJewgsNngptM68AJ90Uvp0x+KOFx8PT6LzlvFoZqjjQ=
+github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721155353-ea2030cbb98d/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/larksuite/oapi-sdk-go/v3 v3.9.7 h1:0AlevGG8zJ5uLhDuxgG4N1ULc6s7GEenV7ZRfER2R+Y=

@@ -252,6 +252,24 @@ func (a *Agent) AbortSession(ctx context.Context, sessionID string) error {
 	return a.client.Interrupt(ctx, sessionID)
 }
 
+// ListSessions returns all sessions from the serve server.
+func (a *Agent) ListSessions(ctx context.Context) ([]oc.SessionInfo, error) {
+	return a.client.ListSessions(ctx, nil)
+}
+
+// SessionStatuses returns the status map of all sessions.
+func (a *Agent) SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error) {
+	return a.client.SessionStatuses(ctx)
+}
+
+// DeleteSessionIfIdle deletes a session only if it is idle.
+func (a *Agent) DeleteSessionIfIdle(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("delete idle: empty session id")
+	}
+	return a.client.DeleteSessionIfIdle(ctx, sessionID)
+}
+
 // parseModelSpec turns "provider/model" into an SDK ModelRef. Empty spec is
 // allowed (clears the pin) and yields a zero ModelRef.
 func parseModelSpec(spec string) (oc.ModelRef, error) {
