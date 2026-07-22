@@ -443,3 +443,64 @@ func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 		t.Errorf("submitted card should contain the answer '选项A', got: %s", submittedCard)
 	}
 }
+
+// TestInteractiveMultipleCardsInOneTurn verifies that several permission/question
+// cards emitted during the same turn each get their own standalone message.
+// Regression guard: no shared requestID collision or progress-card takeover
+// should swallow a later interactive card.
+func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
+	const backendID = "opencode-9"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_chat9"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress"
+	disp.turns.Start("msg-9", chatID, progressMID, backendID)
+
+	seenMIDs := make(map[string]bool)
+	for i := 0; i < 3; i++ {
+		reqID := "req-multi-" + itoa(i)
+		qCtrl := &protocol.Control{
+			Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-9",
+			Question: &protocol.QuestionPayload{
+				RequestID: reqID,
+				PromptID:  "msg-9",
+				Questions: []protocol.QuestionItem{{Label: "q" + itoa(i), Options: []string{"a", "b"}}},
+			},
+		}
+		if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+			t.Fatalf("question %d: %v", i, err)
+		}
+		mid, ok := disp.turns.InteractiveMessageID(reqID)
+		if !ok {
+			t.Fatalf("question %d not bound", i)
+		}
+		if mid == progressMID {
+			t.Fatalf("question %d reused progress messageID %q", i, progressMID)
+		}
+		if seenMIDs[mid] {
+			t.Fatalf("question %d reused messageID %q from an earlier card", i, mid)
+		}
+		seenMIDs[mid] = true
+	}
+
+	sink.mu.Lock()
+	sends := len(sink.sends)
+	var progressOverwritten bool
+	for _, u := range sink.updates {
+		if u.messageID == progressMID {
+			progressOverwritten = true
+		}
+	}
+	sink.mu.Unlock()
+
+	if sends != 3 {
+		t.Errorf("sends = %d, want 3", sends)
+	}
+	if progressOverwritten {
+		t.Error("progress card must not receive UpdateCard from interactive cards")
+	}
+}
