@@ -195,10 +195,17 @@ func run(cfgPath, addr string) error {
 				return
 			case <-ticker.C:
 				if feishu.ShouldExitUnhealthy(time.Now(), bot.LastHealthy(), startedAt, wsFatalAfter) {
-					logger.Error("bot watchdog: websocket unhealthy, exiting for restart",
+					// 软重启优先:Stop 旧 WS + 新建一条,业务状态/IPC/turn 全保留。
+					// Restart 失败仍 os.Exit(1) 兜底,等价现行 fail-safe;新连接若再失败,
+					// 下一轮 watchdog tick 会再次触发 Restart 或最终兜底退出。
+					logger.Warn("bot unhealthy, soft-restarting",
 						"last_healthy", bot.LastHealthy(),
 						"fatal_after", wsFatalAfter)
-					os.Exit(1)
+					if err := bot.Restart(ctx); err != nil {
+						logger.Error("soft restart failed, fall back to exit", log.FieldError, err)
+						os.Exit(1)
+					}
+					startedAt = time.Now() // 重置宽限窗口,给新连接同样 5min
 				}
 			}
 		}

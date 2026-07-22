@@ -48,7 +48,7 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 		log.FieldChatID, chatID,
 		"reply_to", replyToID,
 		"card", strutil.DebugRedact(string(card), b.logDebugRedact.Load()))
-	res, err := b.ch.Send(ctx, &sdktypes.SendInput{
+	res, err := (*b.ch.Load()).Send(ctx, &sdktypes.SendInput{
 		ChatID:         chatID,
 		Card:           string(card),
 		ReplyMessageID: replyToID,
@@ -76,7 +76,7 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 // for being too large (230025). The text is fixed so it can never itself trip
 // the size limit.
 func (b *Bot) sendFallbackText(ctx context.Context, chatID, replyToID string) (string, error) {
-	res, err := b.ch.Send(ctx, &sdktypes.SendInput{
+	res, err := (*b.ch.Load()).Send(ctx, &sdktypes.SendInput{
 		ChatID:         chatID,
 		Text:           fallbackText,
 		ReplyMessageID: replyToID,

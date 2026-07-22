@@ -66,8 +66,21 @@ type CardActionHandler func(context.Context, *CardAction) error
 // events to registered handlers, manages reconnection, and exposes
 // send helpers via its methods.
 type Bot struct {
-	ch        sdktypes.Channel
+	appID      string
+	appSecret  string
+	botOpts    []BotOption // 留底供 Restart 重建 ws 配置
+	larkClient *lark.Client
+
+	// ch 用 atomic.Pointer 而非直接字段:支持 Restart 期间并发 Send 调用,Load
+	// 总返回可用 channel(旧或新),不会读到中间态。详见
+	// docs/feishu-ws-soft-restart.md §3。
+	ch        atomic.Pointer[sdktypes.Channel]
 	imService *larkim.Service
+
+	// newChannelFn overrides newChannel when non-nil. Always nil in production;
+	// tests inject a fakeChannel factory to exercise Restart/NewBotWithLogger
+	// without a real WS handshake.
+	newChannelFn func() sdktypes.Channel
 
 	// onIncoming/onCardAction are stored atomically: OnIncoming/OnCardAction
 	// run on the main goroutine while handleP2MessageReceiveV1/handleCardAction
@@ -94,6 +107,9 @@ type BotOption func(*botConfig)
 type botConfig struct {
 	Domain   string
 	LogLevel string
+	// channelFactory overrides newChannel for tests; nil in production.
+	// Wired in via withChannelFactory (defined in bot_test.go).
+	channelFactory func() sdktypes.Channel
 }
 
 // WithDomain overrides the default Feishu API domain (e.g. for testing).
@@ -111,23 +127,68 @@ func NewBotWithLogger(appID, appSecret string, logger *log.Logger, opts ...BotOp
 	if appID == "" || appSecret == "" {
 		return nil, errors.New("feishu: appID/appSecret required")
 	}
-	cfg := botConfig{Domain: "feishu", LogLevel: "info"}
-	for _, o := range opts {
-		o(&cfg)
-	}
 	if logger == nil {
 		logger = log.Nop()
 	}
-	b := &Bot{logger: logger}
+	cfg := applyBotOpts(opts)
+	b := &Bot{
+		appID:        appID,
+		appSecret:    appSecret,
+		botOpts:      opts,
+		logger:       logger,
+		newChannelFn: cfg.channelFactory,
+	}
 
 	lvl := toLarkLogLevel(cfg.LogLevel)
 	// WithReqTimeout: SDK leaves ReqTimeout==0 → http.DefaultClient (no
 	// Timeout), so a stuck Feishu API would block dispatcher goroutines
 	// forever. Bound it explicitly.
-	larkClient := lark.NewClient(appID, appSecret,
+	// larkClient 一次构造全期复用:SDK 评估项 2 已证 Im 服务无状态、并发安全。
+	b.larkClient = lark.NewClient(appID, appSecret,
 		lark.WithLogLevel(lvl),
 		lark.WithReqTimeout(30*time.Second),
 	)
+	b.imService = b.larkClient.Im
+
+	ch := b.freshChannel()
+	b.ch.Store(&ch)
+	b.registerHandlersOn(ch)
+	return b, nil
+}
+
+// applyBotOpts folds the option chain onto a default botConfig. Shared by
+// NewBotWithLogger and newChannel so the two paths cannot drift on defaults.
+func applyBotOpts(opts []BotOption) botConfig {
+	cfg := botConfig{Domain: "feishu", LogLevel: "info"}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return cfg
+}
+
+// freshChannel returns a channel for NewBotWithLogger / Restart. It routes
+// through newChannelFn when set (tests only); production always calls
+// newChannel.
+func (b *Bot) freshChannel() sdktypes.Channel {
+	if b.newChannelFn != nil {
+		return b.newChannelFn()
+	}
+	return b.newChannel()
+}
+
+// newChannel constructs a fresh underlying WS channel with its own wsClient
+// (the SDK's wsClient is stateful; reusing one across Stop/Start would keep
+// stale conn state). Handlers are NOT registered here — that is
+// registerHandlersOn's job, kept separate so Restart can re-mount them on
+// each fresh channel.
+func (b *Bot) newChannel() sdktypes.Channel {
+	cfg := applyBotOpts(b.botOpts)
+	lvl := toLarkLogLevel(cfg.LogLevel)
+
+	// Each channel needs its own event dispatcher: the SDK routes inbound
+	// P2MessageReceiveV1 through the dispatcher bound at wsClient
+	// construction, so a shared dispatcher would silently drop events on the
+	// new channel after Restart.
 	eventDispatcher := dispatcher.NewEventDispatcher("", "")
 	eventDispatcher.OnP2MessageReceiveV1(b.handleP2MessageReceiveV1)
 	wsOpts := []larkws.ClientOption{
@@ -137,24 +198,46 @@ func NewBotWithLogger(appID, appSecret string, logger *log.Logger, opts ...BotOp
 	if cfg.Domain != "" && cfg.Domain != "feishu" {
 		wsOpts = append(wsOpts, larkws.WithDomain(cfg.Domain))
 	}
-	wsClient := larkws.NewClient(appID, appSecret, wsOpts...)
+	wsClient := larkws.NewClient(b.appID, b.appSecret, wsOpts...)
 
 	outboundCfg := sdktypes.DefaultChannelConfig().Outbound
 	outboundCfg.TextChunkLimit = maxContentSize
-	b.ch = channel.NewChannel(larkClient, wsClient,
+	return channel.NewChannel(b.larkClient, wsClient,
 		sdktypes.WithOutboundConfig(outboundCfg),
 	)
-	b.imService = larkClient.Im
-	b.registerHandlers()
-	return b, nil
 }
 
 // Start connects the WebSocket channel and blocks until ctx is done.
 func (b *Bot) Start(ctx context.Context) error {
-	if err := b.ch.Start(ctx); err != nil {
+	ch := b.ch.Load()
+	if ch == nil {
+		return errors.New("feishu: bot channel not initialized")
+	}
+	if err := (*ch).Start(ctx); err != nil {
 		return fmt.Errorf("feishu: channel start: %w", err)
 	}
 	return nil
+}
+
+// Restart swaps the underlying WS channel for a fresh one in place. On success
+// subsequent Load() returns the new channel; the old channel is stopped.
+//
+// 旧 goroutine leak 不可根除:larksuite SDK 在 ws/client.go:230 用裸 select{}
+// 结束 Start,既不监听 ctx 也不响应 Close,所以旧 Start goroutine 永不返回。每次
+// Restart 必 leak 一个旧 goroutine(P1 将加 restartCount 限流),详见
+// docs/feishu-ws-soft-restart.md §8「已知限制」。
+//
+// P0 未做串行化:并发 Restart 会丢失对中间 channel 的引用,watchdog tick 间隔
+// 30s 远大于 Restart 耗时,P1 加 sync.Mutex 收口。
+func (b *Bot) Restart(ctx context.Context) error {
+	fresh := b.freshChannel()
+	b.registerHandlersOn(fresh)
+	old := b.ch.Swap(&fresh)
+	go func() { _ = fresh.Start(ctx) }() //nolint:errcheck // 新 goroutine;旧 goroutine leak(见上)
+	if old == nil {
+		return nil
+	}
+	return (*old).Stop(ctx)
 }
 
 // LastHealthy returns the time of the most recent OnReady/OnReconnected, or
@@ -186,12 +269,13 @@ func ShouldExitUnhealthy(now, lastHealthy, startedAt time.Time, fatalAfter time.
 	return now.Sub(lastHealthy) > fatalAfter
 }
 
-// Stop gracefully shuts down the WebSocket channel.
+// Stop gracefully shuts down the current WebSocket channel.
 func (b *Bot) Stop(ctx context.Context) error {
-	if b.ch == nil {
+	ch := b.ch.Load()
+	if ch == nil {
 		return nil
 	}
-	return b.ch.Stop(ctx)
+	return (*ch).Stop(ctx)
 }
 
 // OnIncoming registers the handler invoked for each inbound message.

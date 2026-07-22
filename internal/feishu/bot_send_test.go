@@ -130,12 +130,11 @@ func (f *fakeChannel) Stop(context.Context) error                           { re
 // long conversation with no inbound WS traffic (the root cause of Claude
 // being killed mid-conversation).
 func TestSendCard_RefreshesWatchdog(t *testing.T) {
-	b := &Bot{
-		logger: log.Nop(),
-		ch: &fakeChannel{
-			sendResult: &sdktypes.SendResult{MessageID: "om_test"},
-		},
+	b := &Bot{logger: log.Nop()}
+	fake := &fakeChannel{
+		sendResult: &sdktypes.SendResult{MessageID: "om_test"},
 	}
+	setCh(b, fake)
 	if !b.LastHealthy().IsZero() {
 		t.Fatal("expected zero lastHealthy before any send")
 	}
@@ -150,12 +149,11 @@ func TestSendCard_RefreshesWatchdog(t *testing.T) {
 // TestSendCard_ErrorDoesNotRefreshWatchdog verifies a failed send does not
 // refresh the watchdog — only success proves the connection is alive.
 func TestSendCard_ErrorDoesNotRefreshWatchdog(t *testing.T) {
-	b := &Bot{
-		logger: log.Nop(),
-		ch: &fakeChannel{
-			sendErr: errors.New("network error"),
-		},
+	b := &Bot{logger: log.Nop()}
+	fake := &fakeChannel{
+		sendErr: errors.New("network error"),
 	}
+	setCh(b, fake)
 	if _, err := b.SendCard(context.Background(), "oc_chat", []byte("{}"), ""); err == nil {
 		t.Fatal("expected error from failed send")
 	}

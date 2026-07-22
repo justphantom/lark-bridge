@@ -9,28 +9,31 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-func (b *Bot) registerHandlers() {
-	b.ch.OnCardAction(func(ctx context.Context, ev *sdktypes.CardActionEvent) error {
+// registerHandlersOn mounts all lifecycle/card-action callbacks on the given
+// channel. Each Restart must re-mount them on the fresh channel; the SDK
+// stores callbacks per channel instance.
+func (b *Bot) registerHandlersOn(ch sdktypes.Channel) {
+	ch.OnCardAction(func(ctx context.Context, ev *sdktypes.CardActionEvent) error {
 		return b.handleCardAction(ctx, ev)
 	})
 
-	b.ch.OnReady(func() {
+	ch.OnReady(func() {
 		b.logger.Info("websocket connection established")
 		b.markHealthy()
 	})
 
-	b.ch.OnError(func(err error) {
+	ch.OnError(func(err error) {
 		b.logger.Error("websocket connection error",
 			log.FieldError, err.Error())
 	})
-	b.ch.OnReconnecting(func() {
+	ch.OnReconnecting(func() {
 		b.logger.Info("websocket reconnection started")
 	})
-	b.ch.OnReconnected(func() {
+	ch.OnReconnected(func() {
 		b.logger.Info("websocket reconnected successfully")
 		b.markHealthy()
 	})
-	b.ch.OnDisconnected(func() {
+	ch.OnDisconnected(func() {
 		b.logger.Warn("websocket connection closed",
 			log.FieldReason, "server_initiated_or_network_error")
 	})
