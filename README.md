@@ -29,7 +29,7 @@
 - 前端：`/backend list|use {id}`（绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
 - claude-back：`/running` `/session-list` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/help`。
 - opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/agent` `/cd` `/help`。
-- opencode-serve-back：与 opencode-back 同（连 opencode serve HTTP server，而非 fork CLI）。
+- opencode-serve-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-clean` `/session-list` `/session-use` `/current` `/model` `/agent` `/cd` `/help`（连 opencode serve HTTP server，而非 fork CLI）。
 - miniagent-back：`/session-new` `/session-list` `/session-use` `/session-del` `/current` `/model` `/models` `/cd` `/perm` `/memory-list` `/memory-del` `/memory-search` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/pull` `/push` `/running`。
 
