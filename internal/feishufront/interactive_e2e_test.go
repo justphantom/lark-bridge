@@ -325,11 +325,12 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 	}
 }
 
-// TestInteractiveReusesProgressCard covers the reuse path: when a question
-// arrives mid-turn, it takes over the in-flight "处理中" card in place (same
-// messageID) instead of shipping a second card, and the result card then
-// replaces that same messageID — no standalone "已完成" flip may clobber it.
-func TestInteractiveReusesProgressCard(t *testing.T) {
+// TestInteractiveSendsNewCard pins the post-takeover behaviour: a question
+// arriving mid-turn ships a fresh standalone card with its own messageID. The
+// in-flight progress card is never touched (no UpdateCard on its messageID).
+// The result card later ships as another fresh SendCard and the interactive
+// binding is released.
+func TestInteractiveSendsNewCard(t *testing.T) {
 	const backendID = "opencode-7"
 	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
@@ -346,22 +347,30 @@ func TestInteractiveReusesProgressCard(t *testing.T) {
 		Question: &protocol.QuestionPayload{RequestID: "req-r", PromptID: "msg-7", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
 	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("permission: %v", err)
+		t.Fatalf("question: %v", err)
 	}
-	// The interactive card reuses the progress card's messageID — no extra
-	// SendCard beyond the initial progress placeholder.
+	// The question card must ship as a fresh SendCard with its own messageID.
 	mid, _ := disp.turns.InteractiveMessageID("req-r")
-	if mid != progressMID {
-		t.Fatalf("interactive messageID = %q, want reused %q", mid, progressMID)
+	if mid == "" {
+		t.Fatal("interactive card not bound")
+	}
+	if mid == progressMID {
+		t.Fatalf("interactive messageID = %q, must NOT equal progress messageID %q", mid, progressMID)
 	}
 	sink.mu.Lock()
-	sends, updates := len(sink.sends), len(sink.updates)
-	sink.mu.Unlock()
-	if sends != 0 {
-		t.Errorf("expected no fresh SendCard for a reused card, got %d sends", sends)
+	sends := len(sink.sends)
+	var progressOverwritten bool
+	for _, u := range sink.updates {
+		if u.messageID == progressMID {
+			progressOverwritten = true
+		}
 	}
-	if updates == 0 {
-		t.Error("expected an UpdateCard replacing the progress card")
+	sink.mu.Unlock()
+	if sends == 0 {
+		t.Error("expected a fresh SendCard for the question, got 0 sends")
+	}
+	if progressOverwritten {
+		t.Error("progress card must NOT receive any UpdateCard from the question")
 	}
 
 	resCtrl := &protocol.Control{
@@ -371,25 +380,12 @@ func TestInteractiveReusesProgressCard(t *testing.T) {
 	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
 		t.Fatalf("result: %v", err)
 	}
-
-	// The result ships a fresh standalone card; the reused progress
-	// messageID stays frozen at the submitted-question state and must not
-	// receive a standalone finalize flip.
 	sink.mu.Lock()
-	var finalizeSeen bool
-	for _, u := range sink.updates {
-		if u.messageID == progressMID && strings.Contains(string(u.card), "本轮已完成") {
-			finalizeSeen = true
-		}
-	}
 	lastSend := ""
 	if len(sink.sends) > 0 {
 		lastSend = string(sink.sends[len(sink.sends)-1].card)
 	}
 	sink.mu.Unlock()
-	if finalizeSeen {
-		t.Error("reused card must not receive a standalone finalize (result ships a new card)")
-	}
 	if !strings.Contains(lastSend, "done") {
 		t.Errorf("result should ship as a fresh SendCard carrying the result text, got: %s", lastSend)
 	}
@@ -398,87 +394,52 @@ func TestInteractiveReusesProgressCard(t *testing.T) {
 	}
 }
 
-// TestQuestionTakeover_StaleFrameCannotOverwrite pins the debouncer race fix:
-// a question card taking over the progress card must land AFTER any queued
-// progress frame (flush-before-update) and must block straggler frames while
-// it owns the card (markFinalized); after the user submits, progress updates
-// reach the card again (unmarkFinalized).
-func TestQuestionTakeover_StaleFrameCannotOverwrite(t *testing.T) {
-	const backendID = "opencode-7"
+// TestQuestionSubmit_ShowsAnswerOnCard verifies that submitting a question
+// form flips the card to show "✓ 已回答: <answer>" — the user sees what was
+// picked at a glance instead of a generic "已提交" placeholder.
+func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
+	const backendID = "opencode-8"
 	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
-	// Long interval: flushes happen only via explicit flush() calls, making
-	// the enqueue/flush ordering deterministic.
-	disp.InitDebouncer(context.Background(), time.Hour)
 
-	chatID := "oc_chat7"
+	chatID := "oc_chat8"
 	if err := router.Set(chatID, backendID); err != nil {
 		t.Fatal(err)
 	}
-	disp.turns.Start("msg-7", chatID, "om_prog7", backendID)
 
-	// A progress frame lands in the debouncer queue (not yet flushed).
-	must := func(c *protocol.Control) {
-		t.Helper()
-		if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: c}); err != nil {
-			t.Fatal(err)
-		}
+	qCtrl := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-8",
+		Question: &protocol.QuestionPayload{RequestID: "req-a", PromptID: "msg-8",
+			Questions: []protocol.QuestionItem{{Label: "选什么", Options: []string{"选项A", "选项B"}}}},
 	}
-	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
-		Text: &protocol.TextPayload{Delta: "frame-stale"}})
-	if n := len(sink.updates); n != 0 {
-		t.Fatalf("progress frame should sit in the debouncer, got %d direct updates", n)
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+		t.Fatalf("question: %v", err)
+	}
+	mid, _ := disp.turns.InteractiveMessageID("req-a")
+	if mid == "" {
+		t.Fatal("interactive card not bound")
 	}
 
-	// The question card takes over the progress card.
-	must(&protocol.Control{Type: protocol.TypeQuestion, PromptID: "msg-7", ChatID: chatID,
-		Question: &protocol.QuestionPayload{RequestID: "req-t", PromptID: "msg-7",
-			Questions: []protocol.QuestionItem{{Label: "选哪个", Options: []string{"a"}}}}})
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: mid,
+		Value:     map[string]any{"requestID": "req-a", "kind": "question"},
+		FormValue: map[string]any{"q_0": "选项A"},
+	}); err != nil {
+		t.Fatalf("DispatchCardAction: %v", err)
+	}
 
 	sink.mu.Lock()
-	var seq []string
+	var submittedCard string
 	for _, u := range sink.updates {
-		if u.messageID == "om_prog7" {
-			seq = append(seq, string(u.card))
+		if u.messageID == mid {
+			submittedCard = string(u.card)
 		}
 	}
 	sink.mu.Unlock()
-	if len(seq) != 2 {
-		t.Fatalf("want [flushed progress frame, question card] on om_prog7, got %d updates", len(seq))
+	if !strings.Contains(submittedCard, "已回答") {
+		t.Errorf("submitted card should contain '已回答', got: %s", submittedCard)
 	}
-	if !strings.Contains(seq[0], "frame-stale") {
-		t.Error("first update must be the flushed stale progress frame")
-	}
-	if !strings.Contains(seq[1], "选哪个") {
-		t.Error("second update must be the question card (lands last)")
-	}
-
-	// A straggler progress frame while the question owns the card is dropped.
-	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
-		Text: &protocol.TextPayload{Delta: "frame-straggler"}})
-	disp.debouncer.flush()
-	sink.mu.Lock()
-	n := len(sink.updates)
-	sink.mu.Unlock()
-	if n != 2 {
-		t.Fatalf("straggler frame must be dropped (finalized), got %d updates", n)
-	}
-
-	// User submits → guard lifts → progress frames reach the card again.
-	disp.DispatchCardAction(context.Background(), &feishu.CardAction{
-		ChatID: chatID, MessageID: "om_prog7",
-		Value: map[string]any{"requestID": "req-t", "kind": "question"},
-	})
-	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
-		Text: &protocol.TextPayload{Delta: "frame-after-answer"}})
-	disp.debouncer.flush()
-	sink.mu.Lock()
-	last := ""
-	if len(sink.updates) > 0 {
-		last = string(sink.updates[len(sink.updates)-1].card)
-	}
-	sink.mu.Unlock()
-	if !strings.Contains(last, "frame-after-answer") {
-		t.Errorf("post-answer progress frame must reach the card, last update: %s", last)
+	if !strings.Contains(submittedCard, "选项A") {
+		t.Errorf("submitted card should contain the answer '选项A', got: %s", submittedCard)
 	}
 }

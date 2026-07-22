@@ -2,13 +2,16 @@ package opencodeservebridge
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
 
+	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 // replyCall records one serve reply invocation: kind is "permission" /
@@ -203,5 +206,58 @@ func TestHandleQuestionAsked_IncompleteRejects(t *testing.T) {
 	call := waitCall(t, agent)
 	if call.kind != "reject" || call.requestID != "q-3" {
 		t.Errorf("call = %+v, want reject q-3", call)
+	}
+}
+
+// TestHandleQuestionAsked_EmitsAnswerFeedback verifies that after a successful
+// ReplyQuestion the backend emits a TypeText control echoing the answer onto
+// the progress card, so the user sees the answer in the ongoing turn without
+// scrolling back to the standalone question card.
+func TestHandleQuestionAsked_EmitsAnswerFeedback(t *testing.T) {
+	agent := newRecordingAgent()
+	client, reg, rpcCleanup := connectTestRPC(t)
+	defer rpcCleanup()
+
+	r, err := router.New("", log.Nop())
+	if err != nil {
+		t.Fatalf("router new: %v", err)
+	}
+	h := NewWithLogger(r, agent, client, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+
+	q := &oc.QuestionAskedData{
+		ID:        "q-fb",
+		SessionID: "s1",
+		Questions: []oc.QuestionInfo{
+			{Question: "选模型", Options: []oc.QuestionOption{{Label: "gpt-4"}}},
+		},
+	}
+
+	go h.handleQuestionAsked(context.Background(), "c1", "p1", q)
+	waitPending(t, h, 2*time.Second)
+	h.Answers.Deliver("q-fb", &protocol.AnswerPayload{Choices: []string{"gpt-4"}})
+
+	call := waitCall(t, agent)
+	if call.kind != "question" || call.requestID != "q-fb" {
+		t.Fatalf("call = %+v, want question q-fb", call)
+	}
+
+	// Drain emitted controls until a TypeText carrying "已回答" arrives.
+	deadline := time.Now().Add(2 * time.Second)
+	var feedback *protocol.Control
+	for time.Now().Before(deadline) && feedback == nil {
+		select {
+		case rc := <-reg.Controls():
+			c := rc.Control
+			if c.Type == protocol.TypeText && strings.Contains(c.Text.Delta, "已回答") {
+				feedback = c
+			}
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if feedback == nil {
+		t.Fatal("expected a TypeText answer feedback control, got none")
+	}
+	if !strings.Contains(feedback.Text.Delta, "gpt-4") {
+		t.Errorf("feedback delta = %q, want contains 'gpt-4'", feedback.Text.Delta)
 	}
 }

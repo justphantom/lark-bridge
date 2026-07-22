@@ -109,6 +109,18 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 			log.FieldChatID, chatID,
 			"request_id", q.ID,
 			log.FieldError, err)
+		return
+	}
+	// Echo the answer onto the progress card so the user can see what was
+	// answered without scrolling back to the standalone question card.
+	if ok {
+		if summary := bridgebase.PickAnswerValue(ans); summary != "" {
+			h.emitAsync(promptID, &protocol.Control{
+				Type:   protocol.TypeText,
+				ChatID: chatID,
+				Text:   &protocol.TextPayload{Delta: "✓ 已回答: " + summary + "\n"},
+			})
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package feishufront
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
@@ -11,16 +12,14 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// sendInteractive renders a permission-request or question card and ships it.
-// When the owning turn already has a "处理中" progress card in flight, the
-// interactive card replaces it in place (UpdateCard on the same messageID) so
-// the chat keeps a single message rather than a placeholder next to a fresh
-// question card. It then binds requestID → messageID so a later card action can
+// sendInteractive renders a permission-request or question card and ships it
+// as a standalone card (its own messageID), leaving any in-flight progress
+// card untouched. It binds requestID → messageID so a later card action can
 // find it, caches the rendered card bytes for the submitted/expired/finalised
 // state flips, and schedules the TTL expiry notice. Called by DispatchControl
 // for TypeQuestion controls.
 func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control, backendType string) error {
-	turn, _, chatID, footer := d.resolveFooter(ctrl, backendType)
+	_, _, chatID, footer := d.resolveFooter(ctrl, backendType)
 	footer.Status = "待确认"
 	header := cardkit.HeaderInfo{BackendType: backendType}
 	card, err := renderer.RenderQuestion(ctrl, header, footer)
@@ -28,29 +27,9 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		return err
 	}
 	requestID := ctrl.Question.RequestID
-	// Take over the in-flight progress card when one exists; otherwise fall
-	// back to a standalone card.
-	reusesProgress := turn.MessageID != ""
-	var messageID string
-	if reusesProgress {
-		// Progress frames go through the debouncer; this UpdateCard does not.
-		// Without a guard the next debouncer tick would flush the stale queued
-		// frame over the question card (observed: card flashes, then the old
-		// progress frame overwrites it). Mark first so new frames drop at
-		// updateCard, then flush the queued ones, so this update lands last.
-		d.markFinalized(turn.MessageID)
-		if d.debouncer != nil {
-			d.debouncer.flush()
-		}
-		if err := d.bot.UpdateCard(ctx, turn.MessageID, card); err != nil {
-			return err
-		}
-		messageID = turn.MessageID
-	} else {
-		messageID, err = d.bot.SendCard(ctx, chatID, card, "")
-		if err != nil {
-			return err
-		}
+	messageID, err := d.bot.SendCard(ctx, chatID, card, "")
+	if err != nil {
+		return err
 	}
 	if requestID != "" {
 		// Evict expired interactive bindings (and their cached card bytes)
@@ -61,7 +40,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 			delete(d.cards, rid)
 			d.cardMu.Unlock()
 		}
-		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID, reusesProgress)
+		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID)
 		d.cardMu.Lock()
 		d.cards[requestID] = card
 		// Schedule the expiry notice; if the user never responds within the
@@ -77,18 +56,34 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 	return nil
 }
 
-// submitSummary renders the "✓ 你选择了「允许」" / "✓ 已提交" line that
-// RenderInteractiveSubmitted prepends to a submitted card. A permission card
-// carries the choice in value["choice"]; a question card's selections are
-// free-form and kept short — confirming submission is enough. The generic
-// question line ("正在处理") fits both model/agent pickers and any future
-// question card: the per-turn result, when it lands, tells the user what
-// actually happened.
+// submitSummary renders the confirmation line prepended to a submitted card.
+// A permission card carries the choice in value["choice"]; a question card's
+// selections arrive in form_value (parsed into choices + custom). Both produce
+// a "✓ 已回答: …" echo so the user sees what was picked at a glance.
 func submitSummary(action *feishu.CardAction) string {
 	if c, ok := action.Value["choice"].(string); ok && c != "" {
 		return "✓ 你选择了「" + choiceLabel(c) + "」"
 	}
+	if len(action.FormValue) > 0 {
+		choices, custom := parseQuestionFormValue(action.FormValue)
+		if s := questionAnswerSummary(choices, custom); s != "" {
+			return "✓ 已回答: " + s
+		}
+	}
 	return "✓ 已提交，正在处理…"
+}
+
+// questionAnswerSummary picks the most meaningful answer text from parsed form
+// values: a custom input wins over a listed selection (the user explicitly
+// overrode the list).
+func questionAnswerSummary(choices []string, custom string) string {
+	if custom != "" {
+		return custom
+	}
+	if len(choices) > 0 {
+		return strings.Join(choices, "、")
+	}
+	return ""
 }
 
 // choiceLabel turns the machine choice value into the button label the user
@@ -123,10 +118,6 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 		_ = d.bot.UpdateCard(ctx, messageID, expired)
 	}
 	d.turns.UnbindInteractive(requestID)
-	// The turn may continue after an unanswered expiry (the backend rejects
-	// the request server-side and the agent moves on); let its progress
-	// frames reach the card again.
-	d.unmarkFinalized(messageID)
 }
 
 // finalizeLinkedInteractive flips every still-pending interactive card tied to
@@ -135,10 +126,6 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 // gatekept completed. No-op when the turn had no interactive card or the user
 // already submitted (the binding is gone). Each card's TTL timer is cancelled
 // so it cannot later overwrite the finalised form with an expiry notice.
-//
-// A card that took over its turn's progress card (reusesProgress) is skipped:
-// the result card already replaced the same messageID, so a separate
-// "已完成" flip would clobber it. Its timer and binding are still released.
 func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID string) {
 	for _, b := range d.turns.InteractiveByPromptID(promptID) {
 		d.cardMu.Lock()
@@ -150,7 +137,7 @@ func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID str
 		delete(d.cards, b.RequestID)
 		d.cardMu.Unlock()
 		d.turns.UnbindInteractive(b.RequestID)
-		if orig == nil || b.ReusesProgress {
+		if orig == nil {
 			continue
 		}
 		if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
@@ -203,9 +190,6 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			delete(d.cards, requestID)
 			d.cardMu.Unlock()
 			d.turns.UnbindInteractive(requestID)
-			// Lift the takeover guard: post-answer progress frames may
-			// update the card again as the turn continues.
-			d.unmarkFinalized(messageID)
 		}
 	}
 	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}

@@ -21,22 +21,17 @@ type Turn struct {
 // interactiveEntry pairs a card's messageID with its bind time so the TTL
 // sweeper can evict ignored cards. promptID links the card back to the turn
 // whose backend interaction triggered it, so the result card can finalise it.
-// reusesProgress marks a card that took over its turn's progress card in place
-// (same messageID): its terminal state is the result card itself, so
-// finalizeLinkedInteractive must not overwrite it with a standalone "已完成" card.
 type interactiveEntry struct {
-	messageID      string
-	boundAt        time.Time
-	promptID       string
-	reusesProgress bool
+	messageID string
+	boundAt   time.Time
+	promptID  string
 }
 
 // InteractiveBinding is the finalized-callers' view of one pending interactive
 // card linked to a prompt.
 type InteractiveBinding struct {
-	RequestID      string
-	MessageID      string
-	ReusesProgress bool
+	RequestID string
+	MessageID string
 }
 
 // TurnManager tracks promptID → Turn (progress card) plus requestID →
@@ -172,15 +167,12 @@ func (m *TurnManager) InFlightTurns() []Turn {
 // BindInteractive records the messageID of an interactive card by requestID.
 // promptID links it to the turn whose backend interaction triggered the card,
 // so the result card can flip it to a finalised state instead of leaving it
-// grey forever. reusesProgress marks a card that replaced its turn's progress
-// card in place (same messageID); such a card is finalised by the result card
-// itself, not by a separate "已完成" flip. Callers pair this with
-// SweepInteractive to evict expired bindings (and any paired card state) so
-// the set cannot grow without bound.
-func (m *TurnManager) BindInteractive(requestID, messageID, promptID string, reusesProgress bool) {
+// grey forever. Callers pair this with SweepInteractive to evict expired
+// bindings (and any paired card state) so the set cannot grow without bound.
+func (m *TurnManager) BindInteractive(requestID, messageID, promptID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.interactive[requestID] = interactiveEntry{messageID: messageID, boundAt: time.Now(), promptID: promptID, reusesProgress: reusesProgress}
+	m.interactive[requestID] = interactiveEntry{messageID: messageID, boundAt: time.Now(), promptID: promptID}
 }
 
 // InteractiveMessageID returns the interactive card messageID for requestID.
@@ -200,7 +192,7 @@ func (m *TurnManager) InteractiveByPromptID(promptID string) []InteractiveBindin
 	var out []InteractiveBinding
 	for rid, e := range m.interactive {
 		if e.promptID == promptID {
-			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID, ReusesProgress: e.reusesProgress})
+			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID})
 		}
 	}
 	return out
