@@ -261,3 +261,54 @@ func TestHandleQuestionAsked_EmitsAnswerFeedback(t *testing.T) {
 		t.Errorf("feedback delta = %q, want contains 'gpt-4'", feedback.Text.Delta)
 	}
 }
+
+// TestHandlePermissionAsked_EmitsAnswerFeedback mirrors the question-path
+// feedback test: after a successful ReplyPermission the backend emits a
+// TypeText control echoing the picked option onto the progress card.
+func TestHandlePermissionAsked_EmitsAnswerFeedback(t *testing.T) {
+	agent := newRecordingAgent()
+	client, reg, rpcCleanup := connectTestRPC(t)
+	defer rpcCleanup()
+
+	r, err := router.New("", log.Nop())
+	if err != nil {
+		t.Fatalf("router new: %v", err)
+	}
+	h := NewWithLogger(r, agent, client, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+
+	p := &oc.PermissionAskedData{
+		ID:         "perm-fb",
+		SessionID:  "s1",
+		Permission: "bash",
+		Patterns:   []string{"make test"},
+	}
+
+	go h.handlePermissionAsked(context.Background(), "c1", "p1", p)
+	waitPending(t, h, 2*time.Second)
+	h.Answers.Deliver("perm-fb", &protocol.AnswerPayload{Choices: []string{"允许一次"}})
+
+	call := waitCall(t, agent)
+	if call.kind != "permission" || call.requestID != "perm-fb" {
+		t.Fatalf("call = %+v, want permission perm-fb", call)
+	}
+
+	// Drain emitted controls until a TypeText carrying "已应答权限请求" arrives.
+	deadline := time.Now().Add(2 * time.Second)
+	var feedback *protocol.Control
+	for time.Now().Before(deadline) && feedback == nil {
+		select {
+		case rc := <-reg.Controls():
+			c := rc.Control
+			if c.Type == protocol.TypeText && strings.Contains(c.Text.Delta, "已应答权限请求") {
+				feedback = c
+			}
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if feedback == nil {
+		t.Fatal("expected a TypeText permission feedback control, got none")
+	}
+	if !strings.Contains(feedback.Text.Delta, "允许一次") {
+		t.Errorf("feedback delta = %q, want contains '允许一次'", feedback.Text.Delta)
+	}
+}

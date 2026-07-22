@@ -64,6 +64,17 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 		log.FieldChatID, chatID,
 		"request_id", p.ID,
 		"reply", reply)
+	// Echo the answer onto the progress card so the user can see what was
+	// answered without scrolling back to the standalone permission card.
+	if ans != nil {
+		if summary := bridgebase.PickAnswerValue(ans); summary != "" {
+			h.emitAsync(promptID, &protocol.Control{
+				Type:   protocol.TypeText,
+				ChatID: chatID,
+				Text:   &protocol.TextPayload{Delta: "✓ 已应答权限请求: " + summary + "\n"},
+			})
+		}
+	}
 }
 
 // permissionReplyOf maps a card option label to a serve reply value.
