@@ -148,6 +148,10 @@ func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, bac
 	d.progressMu.Unlock()
 	footer.Status = "已完成"
 	header := cardkit.HeaderInfo{BackendType: backendType}
+	d.logger.Load().Debug("sendResult",
+		"prompt_id", ctrl.PromptID,
+		"text_len", len(ctrl.Result.Text),
+		"summary_len", len(summary))
 	card, err := renderer.RenderResult(ctrl, header, footer, summary)
 	if err != nil {
 		// Drop the in-memory turn/progress so a render failure does not leak

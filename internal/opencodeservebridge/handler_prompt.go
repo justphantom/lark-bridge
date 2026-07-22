@@ -158,6 +158,10 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 		if e, ok := h.Usage.Get(result.sessionID); ok {
 			totalTokens = e.Input + e.Output
 		}
+		h.Logger.Debug("emit result control",
+			log.FieldChatID, chatID,
+			"reply_len", len(result.reply),
+			"reply_preview", truncateForDebug(result.reply, h.debugRedact()))
 		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
 			Type:   protocol.TypeResult,
 			ChatID: chatID,

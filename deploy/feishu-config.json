@@ -4,7 +4,7 @@
   "ipc_secret":        "${IPC_SECRET}",
   "ipc_addr":          "localhost:6060",
   "state_dir":         "/var/lib/lark-bridge",
-  "log_level":         "info",
+  "log_level":         "debug",
   "log_debug_redact":  true,
   "timeouts": {
     "backend_health": "90s"

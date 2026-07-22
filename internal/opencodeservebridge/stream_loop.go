@@ -225,6 +225,12 @@ func (h *Handler) finalizeResult(ev oc.HighEvent, accText, sessionID, modelSpec,
 	} else {
 		reply = bridgebase.StripThinking(reply, "> ")
 	}
+	h.Logger.Debug("finalize result",
+		log.FieldChatID, chatID,
+		"result_len", len(ev.Result()),
+		"acc_text_len", len(accText),
+		"reply_len", len(reply),
+		"reply_preview", truncateForDebug(reply, h.debugRedact()))
 	result.reply = reply
 	return result
 }
