@@ -33,6 +33,15 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 	reusesProgress := turn.MessageID != ""
 	var messageID string
 	if reusesProgress {
+		// Progress frames go through the debouncer; this UpdateCard does not.
+		// Without a guard the next debouncer tick would flush the stale queued
+		// frame over the question card (observed: card flashes, then the old
+		// progress frame overwrites it). Mark first so new frames drop at
+		// updateCard, then flush the queued ones, so this update lands last.
+		d.markFinalized(turn.MessageID)
+		if d.debouncer != nil {
+			d.debouncer.flush()
+		}
 		if err := d.bot.UpdateCard(ctx, turn.MessageID, card); err != nil {
 			return err
 		}
@@ -114,6 +123,10 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 		_ = d.bot.UpdateCard(ctx, messageID, expired)
 	}
 	d.turns.UnbindInteractive(requestID)
+	// The turn may continue after an unanswered expiry (the backend rejects
+	// the request server-side and the agent moves on); let its progress
+	// frames reach the card again.
+	d.unmarkFinalized(messageID)
 }
 
 // finalizeLinkedInteractive flips every still-pending interactive card tied to
@@ -190,6 +203,9 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			delete(d.cards, requestID)
 			d.cardMu.Unlock()
 			d.turns.UnbindInteractive(requestID)
+			// Lift the takeover guard: post-answer progress frames may
+			// update the card again as the turn continues.
+			d.unmarkFinalized(messageID)
 		}
 	}
 	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}

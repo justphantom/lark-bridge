@@ -269,6 +269,19 @@ func (d *Dispatcher) markFinalized(messageID string) {
 	d.progressMu.Unlock()
 }
 
+// unmarkFinalized lifts the progress-update drop on messageID. sendInteractive
+// marks the progress card it takes over so stale frames cannot overwrite the
+// question card; once the user submits (or the card expires) the turn
+// continues and its progress frames must reach the card again.
+func (d *Dispatcher) unmarkFinalized(messageID string) {
+	if messageID == "" {
+		return
+	}
+	d.progressMu.Lock()
+	delete(d.finalized, messageID)
+	d.progressMu.Unlock()
+}
+
 // noticeFooterStatus picks the footer state word for a notice/error card. A
 // cancellation (level info with a "取消"/"超时" title, emitted by emitTerminal)
 // reads as 已取消/超时; errors read as 错误; everything else is a plain 通知.

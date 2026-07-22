@@ -397,3 +397,88 @@ func TestInteractiveReusesProgressCard(t *testing.T) {
 		t.Error("interactive binding should be released after result")
 	}
 }
+
+// TestQuestionTakeover_StaleFrameCannotOverwrite pins the debouncer race fix:
+// a question card taking over the progress card must land AFTER any queued
+// progress frame (flush-before-update) and must block straggler frames while
+// it owns the card (markFinalized); after the user submits, progress updates
+// reach the card again (unmarkFinalized).
+func TestQuestionTakeover_StaleFrameCannotOverwrite(t *testing.T) {
+	const backendID = "opencode-7"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+	// Long interval: flushes happen only via explicit flush() calls, making
+	// the enqueue/flush ordering deterministic.
+	disp.InitDebouncer(context.Background(), time.Hour)
+
+	chatID := "oc_chat7"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	disp.turns.Start("msg-7", chatID, "om_prog7", backendID)
+
+	// A progress frame lands in the debouncer queue (not yet flushed).
+	must := func(c *protocol.Control) {
+		t.Helper()
+		if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: c}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
+		Text: &protocol.TextPayload{Delta: "frame-stale"}})
+	if n := len(sink.updates); n != 0 {
+		t.Fatalf("progress frame should sit in the debouncer, got %d direct updates", n)
+	}
+
+	// The question card takes over the progress card.
+	must(&protocol.Control{Type: protocol.TypeQuestion, PromptID: "msg-7", ChatID: chatID,
+		Question: &protocol.QuestionPayload{RequestID: "req-t", PromptID: "msg-7",
+			Questions: []protocol.QuestionItem{{Label: "选哪个", Options: []string{"a"}}}}})
+
+	sink.mu.Lock()
+	var seq []string
+	for _, u := range sink.updates {
+		if u.messageID == "om_prog7" {
+			seq = append(seq, string(u.card))
+		}
+	}
+	sink.mu.Unlock()
+	if len(seq) != 2 {
+		t.Fatalf("want [flushed progress frame, question card] on om_prog7, got %d updates", len(seq))
+	}
+	if !strings.Contains(seq[0], "frame-stale") {
+		t.Error("first update must be the flushed stale progress frame")
+	}
+	if !strings.Contains(seq[1], "选哪个") {
+		t.Error("second update must be the question card (lands last)")
+	}
+
+	// A straggler progress frame while the question owns the card is dropped.
+	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
+		Text: &protocol.TextPayload{Delta: "frame-straggler"}})
+	disp.debouncer.flush()
+	sink.mu.Lock()
+	n := len(sink.updates)
+	sink.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("straggler frame must be dropped (finalized), got %d updates", n)
+	}
+
+	// User submits → guard lifts → progress frames reach the card again.
+	disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: "om_prog7",
+		Value: map[string]any{"requestID": "req-t", "kind": "question"},
+	})
+	must(&protocol.Control{Type: protocol.TypeText, PromptID: "msg-7", ChatID: chatID,
+		Text: &protocol.TextPayload{Delta: "frame-after-answer"}})
+	disp.debouncer.flush()
+	sink.mu.Lock()
+	last := ""
+	if len(sink.updates) > 0 {
+		last = string(sink.updates[len(sink.updates)-1].card)
+	}
+	sink.mu.Unlock()
+	if !strings.Contains(last, "frame-after-answer") {
+		t.Errorf("post-answer progress frame must reach the card, last update: %s", last)
+	}
+}
