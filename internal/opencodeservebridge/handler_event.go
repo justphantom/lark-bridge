@@ -31,7 +31,17 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		// askAndWait. A reply with no waiter is a late/duplicate click after
 		// the backend already timed out; discard it.
 		if ev.Answer != nil {
-			h.Answers.Deliver(ev.Answer.RequestID, ev.Answer)
+			h.Logger.Debug("answer received",
+				"request_id", ev.Answer.RequestID,
+				"chat_id", ev.Answer.ChatID,
+				"message_id", ev.Answer.MessageID,
+				"choices", ev.Answer.Choices,
+				"choice", ev.Answer.Choice,
+				"custom", ev.Answer.Custom)
+			delivered := h.Answers.Deliver(ev.Answer.RequestID, ev.Answer)
+			h.Logger.Debug("answer deliver result",
+				"request_id", ev.Answer.RequestID,
+				"delivered", delivered)
 		}
 		return nil
 	case protocol.TypeAbort:

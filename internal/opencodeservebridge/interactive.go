@@ -34,6 +34,11 @@ var permissionOptions = []struct {
 // Runs in its own goroutine spawned by streamRun; ctx is the prompt ctx so
 // an abort/timeout turns into a reject instead of a hung serve-side agent.
 func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID string, p *oc.PermissionAskedData) {
+	h.Logger.Debug("permission asked",
+		log.FieldChatID, chatID,
+		"prompt_id", promptID,
+		"request_id", p.ID,
+		"permission", p.Permission)
 	label := "opencode 请求权限：" + p.Permission
 	if len(p.Patterns) > 0 {
 		label += "\n" + strings.Join(p.Patterns, "\n")
@@ -47,6 +52,18 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 		PromptID:  promptID,
 		Questions: []protocol.QuestionItem{{Label: label, Options: opts}},
 	})
+	h.Logger.Debug("permission answer received",
+		log.FieldChatID, chatID,
+		"request_id", p.ID,
+		"has_answer", ans != nil)
+	if ans != nil {
+		h.Logger.Debug("permission answer details",
+			log.FieldChatID, chatID,
+			"request_id", p.ID,
+			"choice", ans.Choice,
+			"choices", ans.Choices,
+			"custom", ans.Custom)
+	}
 	reply := oc.PermissionReplyReject
 	if ans != nil {
 		reply = permissionReplyOf(bridgebase.PickAnswerValue(ans))
@@ -93,6 +110,11 @@ func permissionReplyOf(label string) string {
 // incomplete answer (user cancelled, timed out, or skipped a question)
 // rejects the request so the serve-side agent is released.
 func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID string, q *oc.QuestionAskedData) {
+	h.Logger.Debug("question asked",
+		log.FieldChatID, chatID,
+		"prompt_id", promptID,
+		"request_id", q.ID,
+		"question_count", len(q.Questions))
 	items := make([]protocol.QuestionItem, 0, len(q.Questions))
 	for _, qi := range q.Questions {
 		item := protocol.QuestionItem{Label: qi.Question, Multiple: qi.Multiple, Custom: qi.Custom}
@@ -106,13 +128,32 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 		PromptID:  promptID,
 		Questions: items,
 	})
+	h.Logger.Debug("question answer received",
+		log.FieldChatID, chatID,
+		"request_id", q.ID,
+		"has_answer", ans != nil)
+	if ans != nil {
+		h.Logger.Debug("question answer details",
+			log.FieldChatID, chatID,
+			"request_id", q.ID,
+			"choice", ans.Choice,
+			"choices", ans.Choices,
+			"custom", ans.Custom)
+	}
 	rctx, cancel := context.WithTimeout(context.Background(), interactiveOpTimeout)
 	defer cancel()
 	reply, ok := questionReplyFromAnswer(q, ans)
 	var err error
 	if !ok {
+		h.Logger.Debug("rejecting question",
+			log.FieldChatID, chatID,
+			"request_id", q.ID)
 		err = h.agent.RejectQuestion(rctx, q.ID)
 	} else {
+		h.Logger.Debug("replying question",
+			log.FieldChatID, chatID,
+			"request_id", q.ID,
+			"answer_count", len(reply.Answers))
 		err = h.agent.ReplyQuestion(rctx, q.ID, reply)
 	}
 	if err != nil {
@@ -166,6 +207,10 @@ func questionReplyFromAnswer(q *oc.QuestionAskedData, ans *protocol.AnswerPayloa
 // (prompt cancelled, wait timeout, duplicate request, or emit failure);
 // callers translate nil into a reject.
 func (h *Handler) askAndWait(ctx context.Context, chatID, promptID string, q *protocol.QuestionPayload) *protocol.AnswerPayload {
+	h.Logger.Debug("askAndWait: registering request",
+		log.FieldChatID, chatID,
+		"prompt_id", promptID,
+		"request_id", q.RequestID)
 	ch, ok := h.Answers.Register(q.RequestID)
 	if !ok {
 		h.Logger.Warn("duplicate interactive request",
@@ -173,6 +218,10 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID string, q *pr
 			"request_id", q.RequestID)
 		return nil
 	}
+	h.Logger.Debug("askAndWait: request registered, emitting card",
+		log.FieldChatID, chatID,
+		"prompt_id", promptID,
+		"request_id", q.RequestID)
 	ectx, ecancel := context.WithTimeout(h.AppCtx, interactiveOpTimeout)
 	err := h.emit(ectx, promptID, &protocol.Control{
 		Type:     protocol.TypeQuestion,
@@ -188,17 +237,33 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID string, q *pr
 			log.FieldError, err)
 		return nil
 	}
+	h.Logger.Debug("askAndWait: card emitted, waiting for answer",
+		log.FieldChatID, chatID,
+		"prompt_id", promptID,
+		"request_id", q.RequestID)
 	select {
 	case a, ok := <-ch:
 		if !ok {
 			// Broker drained on shutdown.
+			h.Logger.Debug("askAndWait: channel closed",
+				log.FieldChatID, chatID,
+				"request_id", q.RequestID)
 			return nil
 		}
+		h.Logger.Debug("askAndWait: answer received",
+			log.FieldChatID, chatID,
+			"request_id", q.RequestID)
 		return a
 	case <-ctx.Done():
+		h.Logger.Debug("askAndWait: context cancelled",
+			log.FieldChatID, chatID,
+			"request_id", q.RequestID)
 		h.Answers.Cancel(q.RequestID)
 		return nil
 	case <-time.After(bridgebase.AskWaitTimeout):
+		h.Logger.Debug("askAndWait: timeout",
+			log.FieldChatID, chatID,
+			"request_id", q.RequestID)
 		h.Answers.Cancel(q.RequestID)
 		return nil
 	}

@@ -60,10 +60,12 @@ func (b *AnswerBroker) Deliver(requestID string, ans *protocol.AnswerPayload) bo
 	}
 	b.mu.Unlock()
 	if !ok {
+		// No waiter found - requestID not registered or already timed out
 		return false
 	}
 	select {
 	case ch <- ans:
+		// Successfully delivered
 	default:
 		// Channel has buffer 1; a drop means a double-answer (e.g. user
 		// clicked twice before dedup caught it). Keep the first.

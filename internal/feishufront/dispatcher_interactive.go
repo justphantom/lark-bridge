@@ -198,13 +198,40 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	} else if c, ok := action.Value["choice"].(string); ok {
 		answer.Choice = c
 	}
+	d.logger.Load().Debug("card action: sending answer to backend",
+		"chat_id", action.ChatID,
+		"request_id", requestID,
+		"message_id", action.MessageID,
+		"choice", answer.Choice,
+		"choices", answer.Choices,
+		"custom", answer.Custom)
 	ev := &protocol.Event{Type: protocol.TypeAnswer, PromptID: action.MessageID, Answer: answer}
 	if d.router == nil {
+		d.logger.Load().Debug("card action: router is nil, skipping")
 		return nil
 	}
 	backendID, err := d.router.Resolve(action.ChatID)
 	if err != nil {
+		d.logger.Load().Debug("card action: failed to resolve backend",
+			"chat_id", action.ChatID,
+			log.FieldError, err)
 		return err
 	}
-	return d.registry.SendEvent(backendID, ev)
+	d.logger.Load().Debug("card action: sending event to backend",
+		"chat_id", action.ChatID,
+		"backend_id", backendID,
+		"request_id", requestID)
+	if err := d.registry.SendEvent(backendID, ev); err != nil {
+		d.logger.Load().Warn("card action: SendEvent failed",
+			"chat_id", action.ChatID,
+			"backend_id", backendID,
+			"request_id", requestID,
+			log.FieldError, err)
+		return err
+	}
+	d.logger.Load().Debug("card action: event sent successfully",
+		"chat_id", action.ChatID,
+		"backend_id", backendID,
+		"request_id", requestID)
+	return nil
 }
