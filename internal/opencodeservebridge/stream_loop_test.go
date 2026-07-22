@@ -124,6 +124,9 @@ func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
 	if res.cacheRead != 1100 { // 400 + 400 + 300
 		t.Errorf("cacheRead = %v, want 1100", res.cacheRead)
 	}
+	if res.reply == "" {
+		t.Error("multi-step turn should yield non-empty reply")
+	}
 }
 
 // TestStreamRun_SingleStepCostIsTerminal guards the single-step turn: no
