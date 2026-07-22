@@ -60,6 +60,12 @@ const maxErrBody = 4 << 10
 // dial and header-read latency via the Transport and apply per-request
 // deadlines at the call sites (SendControl takes a ctx; the SSE handshake
 // uses a dedicated connect ctx).
+//
+// The Transport is a Clone of the default, never the shared global: Run's
+// reconnect loop calls Connect (and thus newHTTPClient) while the previous
+// client's requests may still be in flight, so mutating the shared
+// DefaultTransport is a data race — and would impose this header timeout on
+// every default client in the process.
 func newHTTPClient() *http.Client {
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -68,8 +74,9 @@ func newHTTPClient() *http.Client {
 		// then come from net/http defaults.
 		return &http.Client{}
 	}
-	tr.ResponseHeaderTimeout = handshakeTimeout
-	return &http.Client{Transport: tr}
+	clone := tr.Clone()
+	clone.ResponseHeaderTimeout = handshakeTimeout
+	return &http.Client{Transport: clone}
 }
 
 // Client is one backend's connection to the frontend.
@@ -312,6 +319,9 @@ func (c *Client) Close() error {
 			_ = c.sseBody.Close()
 		}
 		close(c.closeCh)
+		// Each client owns a cloned Transport (see newHTTPClient); its idle
+		// pool is not shared, so it must be released explicitly.
+		c.httpClient.CloseIdleConnections()
 	}
 	return nil
 }

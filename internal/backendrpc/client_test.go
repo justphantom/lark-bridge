@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,6 +128,63 @@ func TestClose_Idempotent(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatalf("Close2: %v", err)
 	}
+}
+
+// TestNewHTTPClient_ClonesDefaultTransport pins the race fix: every client
+// owns a cloned Transport with the handshake timeout applied, and the shared
+// DefaultTransport is never mutated.
+func TestNewHTTPClient_ClonesDefaultTransport(t *testing.T) {
+	shared, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Skip("DefaultTransport wrapped; newHTTPClient takes the fallback path")
+	}
+	before := shared.ResponseHeaderTimeout
+
+	c := newHTTPClient()
+	if shared.ResponseHeaderTimeout != before {
+		t.Fatalf("DefaultTransport.ResponseHeaderTimeout mutated: %v -> %v", before, shared.ResponseHeaderTimeout)
+	}
+	own, ok := c.Transport.(*http.Transport)
+	if !ok || own == shared {
+		t.Fatal("client must own a cloned Transport, not the shared default")
+	}
+	if own.ResponseHeaderTimeout != handshakeTimeout {
+		t.Errorf("clone ResponseHeaderTimeout = %v, want %v", own.ResponseHeaderTimeout, handshakeTimeout)
+	}
+}
+
+// TestConnect_ParallelWithInFlight exercises the production race shape:
+// goroutines Connect (which builds a Transport) while others still run
+// requests. Clean only when no client touches shared Transport state;
+// verified by the race detector, not assertions.
+func TestConnect_ParallelWithInFlight(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			client, err := Connect(fmt.Sprintf("b-%d", i), "claude", ts.URL, "")
+			if err != nil {
+				t.Errorf("Connect: %v", err)
+				return
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			// Keep a request in flight while other goroutines Connect.
+			_ = client.SendControl(ctx, &protocol.Control{
+				Type:   protocol.TypeNotice,
+				ChatID: "c1",
+				Notice: &protocol.NoticePayload{Level: "info", Title: "t", Message: "m"},
+			})
+		}(i)
+	}
+	wg.Wait()
 }
 
 // TestStatus_ReturnsInFlightTurns drives GET /v1/status end to end: the
