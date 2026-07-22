@@ -31,6 +31,7 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 
 	n, err := strconv.Atoi(args[0])
 	if err != nil {
+		//nolint:nilerr // 用户输入错误以提示文案返回；非内部错误，不配 ⚠️ 前缀与 error 级别
 		return commandResult{Body: fmt.Sprintf("会话序号必须是数字：%q", args[0])}, nil
 	}
 	sessions, err := h.agent.ListSessions(ctx, b.Directory)
