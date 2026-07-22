@@ -5,26 +5,46 @@ import (
 	"fmt"
 	"strings"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // cmdDeleteIdleSessions deletes all sessions that are both unbound (no chatID
-// maps to them) and idle (not busy).
+// maps to them) and idle (not busy). The serve server scopes sessions by
+// project directory, so the listing iterates every bound directory and merges
+// by session ID; sessions under directories no chat is bound to are out of
+// scope (serve has no global list API).
 func (h *Handler) cmdDeleteIdleSessions(ctx context.Context, chatID string, _ []string) (commandResult, error) {
-	// Get all sessions from the serve server.
-	sessions, err := h.agent.ListSessions(ctx)
-	if err != nil {
-		return commandResult{Body: fmt.Sprintf("列出会话失败：%v", err)}, err
-	}
-
 	// Get all bindings to determine which sessions are bound.
 	bindings := h.Router.AllBindings()
 
-	// Build a set of bound session IDs.
+	// Build a set of bound session IDs and the deduped directory set.
 	boundSessionIDs := make(map[string]struct{}, len(bindings))
+	dirs := make(map[string]struct{}, len(bindings))
 	for _, b := range bindings {
 		if b.SessionID != "" {
 			boundSessionIDs[b.SessionID] = struct{}{}
+		}
+		if b.Directory != "" {
+			dirs[b.Directory] = struct{}{}
+		}
+	}
+
+	// List sessions per bound directory and merge by session ID.
+	seen := make(map[string]struct{})
+	var sessions []oc.SessionInfo
+	for dir := range dirs {
+		list, err := h.agent.ListSessions(ctx, dir)
+		if err != nil {
+			return commandResult{Body: fmt.Sprintf("列出会话失败：%v", err)}, err
+		}
+		for _, sess := range list {
+			if _, dup := seen[sess.ID]; dup {
+				continue
+			}
+			seen[sess.ID] = struct{}{}
+			sessions = append(sessions, sess)
 		}
 	}
 

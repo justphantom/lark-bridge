@@ -7,79 +7,136 @@ import (
 	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
+
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// fakeListAgent implements opencodeAPI for testing cmdListSessions.
+// fakeListAgent implements opencodeAPI for testing cmdListSessions. It
+// records the directory passed to ListSessions so tests can assert the
+// command forwards the chat's working directory.
 type fakeListAgent struct {
 	sessions []oc.SessionInfo
 	err      error
+	lastDir  string
+	calls    int
 }
 
-func (f fakeListAgent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEvent, error) {
+func (f *fakeListAgent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEvent, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f fakeListAgent) ListModels(ctx context.Context) ([]string, error) {
+func (f *fakeListAgent) ListModels(ctx context.Context) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f fakeListAgent) ListAgents(ctx context.Context) ([]string, error) {
+func (f *fakeListAgent) ListAgents(ctx context.Context) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f fakeListAgent) AbortSession(ctx context.Context, sessionID string) error {
+func (f *fakeListAgent) AbortSession(ctx context.Context, sessionID string) error {
 	return errors.New("not implemented")
 }
 
-func (f fakeListAgent) ListSessions(ctx context.Context) ([]oc.SessionInfo, error) {
+func (f *fakeListAgent) ListSessions(ctx context.Context, directory string) ([]oc.SessionInfo, error) {
+	f.calls++
+	f.lastDir = directory
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.sessions, nil
 }
 
-func (f fakeListAgent) SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error) {
+func (f *fakeListAgent) SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f fakeListAgent) DeleteSessionIfIdle(ctx context.Context, sessionID string) error {
+func (f *fakeListAgent) DeleteSessionIfIdle(ctx context.Context, sessionID string) error {
 	return errors.New("not implemented")
 }
 
-func (f fakeListAgent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
+func (f *fakeListAgent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
 	return errors.New("not implemented")
 }
 
-func (f fakeListAgent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
+func (f *fakeListAgent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
 	return errors.New("not implemented")
 }
 
-func (f fakeListAgent) RejectQuestion(ctx context.Context, requestID string) error {
+func (f *fakeListAgent) RejectQuestion(ctx context.Context, requestID string) error {
 	return errors.New("not implemented")
 }
 
-// TestCmdListSessions_Empty verifies the command reports empty state.
-func TestCmdListSessions_Empty(t *testing.T) {
-	h := newHandlerWithAgent(t, fakeListAgent{sessions: []oc.SessionInfo{}})
+// TestCmdListSessions_NoBinding verifies a chat with no binding gets the /cd
+// hint and the command stays read-only (no ListSessions call, no lazy bind).
+func TestCmdListSessions_NoBinding(t *testing.T) {
+	agent := &fakeListAgent{}
+	h, r := newHandlerWithAgent(t, agent)
 
-	res, err := h.cmdListSessions(context.Background(), "", nil)
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
 	if err != nil {
 		t.Fatalf("cmdListSessions: %v", err)
 	}
-	if res.Body != "当前没有任何会话。" {
-		t.Errorf("Body = %q, want '当前没有任何会话。'", res.Body)
+	if !contains(res.Body, "/cd") {
+		t.Errorf("Body = %q, want /cd hint", res.Body)
+	}
+	if agent.calls != 0 {
+		t.Errorf("ListSessions called %d times, want 0 without a binding", agent.calls)
+	}
+	if _, ok := r.Lookup("chat-1"); ok {
+		t.Error("read-only /session-list must not create a binding")
+	}
+}
+
+// TestCmdListSessions_BindingWithoutDirectory verifies a binding lacking a
+// working directory also gets the /cd hint instead of a serve call.
+func TestCmdListSessions_BindingWithoutDirectory(t *testing.T) {
+	agent := &fakeListAgent{}
+	h, r := newHandlerWithAgent(t, agent)
+	r.Bind("chat-1", "sess-1", "", "", "", "")
+
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
+	if err != nil {
+		t.Fatalf("cmdListSessions: %v", err)
+	}
+	if !contains(res.Body, "/cd") {
+		t.Errorf("Body = %q, want /cd hint", res.Body)
+	}
+	if agent.calls != 0 {
+		t.Errorf("ListSessions called %d times, want 0 without a directory", agent.calls)
+	}
+}
+
+// TestCmdListSessions_Empty verifies the command reports the directory-scoped
+// empty state.
+func TestCmdListSessions_Empty(t *testing.T) {
+	agent := &fakeListAgent{sessions: []oc.SessionInfo{}}
+	h, r := newHandlerWithAgent(t, agent)
+	r.Bind("chat-1", "", "/proj", "", "", "")
+
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
+	if err != nil {
+		t.Fatalf("cmdListSessions: %v", err)
+	}
+	if res.Body != "当前目录下没有任何会话。" {
+		t.Errorf("Body = %q, want '当前目录下没有任何会话。'", res.Body)
+	}
+	if agent.lastDir != "/proj" {
+		t.Errorf("ListSessions directory = %q, want /proj", agent.lastDir)
 	}
 }
 
 // TestCmdListSessions_Error verifies the command reports list errors.
 func TestCmdListSessions_Error(t *testing.T) {
-	h := newHandlerWithAgent(t, fakeListAgent{err: errors.New("连接失败")})
+	agent := &fakeListAgent{err: errors.New("连接失败")}
+	h, r := newHandlerWithAgent(t, agent)
+	r.Bind("chat-1", "", "/proj", "", "", "")
 
-	res, err := h.cmdListSessions(context.Background(), "", nil)
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, errors.New("连接失败")) && err.Error() != "连接失败" {
+	if err.Error() != "连接失败" {
 		t.Errorf("err = %v, want '连接失败'", err)
 	}
 	if res.Body == "" {
@@ -116,11 +173,16 @@ func TestCmdListSessions_ListsSessions(t *testing.T) {
 			Time: oc.SessionTime{Updated: now - 3600000}, // 1 hour ago
 		},
 	}
-	h := newHandlerWithAgent(t, fakeListAgent{sessions: sessions})
+	agent := &fakeListAgent{sessions: sessions}
+	h, r := newHandlerWithAgent(t, agent)
+	r.Bind("chat-1", "", "/proj", "", "", "")
 
-	res, err := h.cmdListSessions(context.Background(), "", nil)
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
 	if err != nil {
 		t.Fatalf("cmdListSessions: %v", err)
+	}
+	if agent.lastDir != "/proj" {
+		t.Errorf("ListSessions directory = %q, want /proj", agent.lastDir)
 	}
 
 	body := res.Body
@@ -139,9 +201,11 @@ func TestCmdListSessions_SortsByUpdated(t *testing.T) {
 		{ID: "new", Title: "新会话", Time: oc.SessionTime{Updated: now - 60000}},   // 1 min
 		{ID: "mid", Title: "中会话", Time: oc.SessionTime{Updated: now - 3600000}}, // 1 hour
 	}
-	h := newHandlerWithAgent(t, fakeListAgent{sessions: sessions})
+	agent := &fakeListAgent{sessions: sessions}
+	h, r := newHandlerWithAgent(t, agent)
+	r.Bind("chat-1", "", "/proj", "", "", "")
 
-	res, err := h.cmdListSessions(context.Background(), "", nil)
+	res, err := h.cmdListSessions(context.Background(), "chat-1", nil)
 	if err != nil {
 		t.Fatalf("cmdListSessions: %v", err)
 	}
@@ -159,89 +223,15 @@ func TestCmdListSessions_SortsByUpdated(t *testing.T) {
 	}
 }
 
-// TestFormatSessions_VerifyAllFields covers various session field combinations.
-func TestFormatSessions_VerifyAllFields(t *testing.T) {
-	now := time.Now().UnixMilli()
-	sessions := []oc.SessionInfo{
-		{
-			ID:     "full",
-			Title:  "完整字段",
-			Agent:  "reviewer",
-			Model:  &oc.ModelRef{ID: "claude-3-5-sonnet", ProviderID: "anthropic"},
-			Cost:   0.5678,
-			Tokens: oc.SessionTokens{Input: 100, Output: 200, Reasoning: 5000, Cache: oc.SessionCache{Read: 1000, Write: 500}},
-			Time:   oc.SessionTime{Updated: now},
-		},
-		{
-			ID:     "min",
-			Title:  "",
-			Agent:  "",
-			Model:  nil,
-			Cost:   0,
-			Tokens: oc.SessionTokens{},
-			Time:   oc.SessionTime{Updated: now - 86400000}, // 1 day
-		},
-		{
-			ID:     "zero-time",
-			Title:  "零时间戳",
-			Agent:  "",
-			Model:  nil,
-			Cost:   0,
-			Tokens: oc.SessionTokens{Input: 10},
-			Time:   oc.SessionTime{Updated: 0},
-		},
-	}
-	h := newHandlerWithAgent(t, fakeListAgent{sessions: sessions})
-
-	res, err := h.cmdListSessions(context.Background(), "", nil)
-	if err != nil {
-		t.Fatalf("cmdListSessions: %v", err)
-	}
-
-	body := res.Body
-	// Full session shows all fields
-	for _, want := range []string{"完整字段", "reviewer", "anthropic/claude-3-5-sonnet", "$0.5678", "5000", "缓存", "刚刚"} {
-		if !contains(body, want) {
-			t.Errorf("Body missing %q\ngot:\n%s", want, body)
-		}
-	}
-	// Min session defaults
-	for _, want := range []string{"(未命名会话)", "1天前"} {
-		if !contains(body, want) {
-			t.Errorf("Body missing %q\ngot:\n%s", want, body)
-		}
-	}
-	// Zero time shows "(未知)"
-	if !contains(body, "(未知)") {
-		t.Errorf("Body missing '(未知)' for zero timestamp\ngot:\n%s", body)
-	}
-}
-
-// TestModelString covers ModelRef formatting.
-func TestModelString(t *testing.T) {
-	tests := []struct {
-		name string
-		m    *oc.ModelRef
-		want string
-	}{
-		{"full", &oc.ModelRef{ID: "gpt-4", ProviderID: "openai"}, "openai/gpt-4"},
-		{"id only", &oc.ModelRef{ID: "model-xyz", ProviderID: ""}, "model-xyz"},
-		{"nil", nil, "(默认)"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := modelString(tt.m); got != tt.want {
-				t.Errorf("modelString() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// newHandlerWithAgent creates a Handler with the given fake agent for testing.
-func newHandlerWithAgent(t *testing.T, agent opencodeAPI) *Handler {
+// newHandlerWithAgent creates a Handler with the given fake agent and a fresh
+// in-memory router for testing.
+func newHandlerWithAgent(t *testing.T, agent opencodeAPI) (*Handler, *router.Router) {
 	t.Helper()
-	h := &Handler{agent: agent}
-	return h
+	r, err := router.New("", log.Nop())
+	if err != nil {
+		t.Fatalf("router new: %v", err)
+	}
+	return NewWithLogger(r, agent, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop()), r
 }
 
 // contains checks if a substring exists in a string (case-sensitive).

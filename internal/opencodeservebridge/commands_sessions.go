@@ -10,15 +10,22 @@ import (
 	oc "github.com/justphantom/opencode-go-sdk-lite"
 )
 
-// cmdListSessions lists all sessions from the opencode serve server.
-func (h *Handler) cmdListSessions(ctx context.Context, _ string, _ []string) (commandResult, error) {
-	sessions, err := h.agent.ListSessions(ctx)
+// cmdListSessions lists the sessions of the chat's working directory. It is
+// read-only: it uses Lookup (not ensureBinding) so it never creates a
+// binding as a side effect.
+func (h *Handler) cmdListSessions(ctx context.Context, chatID string, _ []string) (commandResult, error) {
+	b, ok := h.Router.Lookup(chatID)
+	if !ok || b.Directory == "" {
+		return commandResult{Body: "尚未设置工作目录。发送 `/cd` 选择一个项目目录后再查看会话。"}, nil
+	}
+
+	sessions, err := h.agent.ListSessions(ctx, b.Directory)
 	if err != nil {
 		return commandResult{Body: fmt.Sprintf("获取会话列表失败：%v", err)}, err
 	}
 
 	if len(sessions) == 0 {
-		return commandResult{Body: "当前没有任何会话。"}, nil
+		return commandResult{Body: "当前目录下没有任何会话。"}, nil
 	}
 
 	return commandResult{Body: formatSessions(sessions)}, nil

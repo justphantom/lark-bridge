@@ -267,9 +267,13 @@ func (a *Agent) AbortSession(ctx context.Context, sessionID string) error {
 	return a.client.Interrupt(ctx, sessionID)
 }
 
-// ListSessions returns all sessions from the serve server.
-func (a *Agent) ListSessions(ctx context.Context) ([]oc.SessionInfo, error) {
-	return a.client.ListSessions(ctx, nil)
+// ListSessions returns the sessions of one project directory; an empty
+// directory falls back to the serve process's own CWD project.
+func (a *Agent) ListSessions(ctx context.Context, directory string) ([]oc.SessionInfo, error) {
+	if directory == "" {
+		return a.client.ListSessions(ctx, nil)
+	}
+	return a.client.ListSessions(ctx, &oc.ListSessionsOpt{Directory: directory})
 }
 
 // SessionStatuses returns the status map of all sessions.

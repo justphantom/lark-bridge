@@ -30,7 +30,9 @@ func (pickerFakeAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent,
 
 func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil }
 
-func (pickerFakeAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+func (pickerFakeAgent) ListSessions(context.Context, string) ([]oc.SessionInfo, error) {
+	return nil, nil
+}
 
 func (pickerFakeAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
 	return map[string]oc.SessionStatus{}, nil
@@ -65,7 +67,9 @@ func (failingListAgent) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent
 
 func (failingListAgent) AbortSession(context.Context, string) error { return nil }
 
-func (failingListAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+func (failingListAgent) ListSessions(context.Context, string) ([]oc.SessionInfo, error) {
+	return nil, nil
+}
 
 func (failingListAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
 	return map[string]oc.SessionStatus{}, nil

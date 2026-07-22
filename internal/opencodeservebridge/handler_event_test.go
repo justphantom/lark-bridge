@@ -26,7 +26,9 @@ func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) AbortSession(context.Context, string) error { return nil }
 
-func (closedStreamOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+func (closedStreamOpencode) ListSessions(context.Context, string) ([]oc.SessionInfo, error) {
+	return nil, nil
+}
 
 func (closedStreamOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
 	return map[string]oc.SessionStatus{}, nil
@@ -61,7 +63,9 @@ func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return n
 
 func (blockingOpencode) AbortSession(context.Context, string) error { return nil }
 
-func (blockingOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
+func (blockingOpencode) ListSessions(context.Context, string) ([]oc.SessionInfo, error) {
+	return nil, nil
+}
 
 func (blockingOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
 	return map[string]oc.SessionStatus{}, nil

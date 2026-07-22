@@ -32,8 +32,11 @@ type opencodeAPI interface {
 	// stuck server-side 'busy' session is not released by cancelling the
 	// local ctx.
 	AbortSession(ctx context.Context, sessionID string) error
-	// ListSessions returns all sessions from the serve server.
-	ListSessions(ctx context.Context) ([]oc.SessionInfo, error)
+	// ListSessions returns the sessions of one project directory. The serve
+	// server scopes GET /session by project: directory must be non-empty or
+	// serve resolves the project from its own CWD ("/" under systemd), which
+	// never matches a user session.
+	ListSessions(ctx context.Context, directory string) ([]oc.SessionInfo, error)
 	// SessionStatuses returns the status map of all sessions.
 	SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error)
 	// DeleteSessionIfIdle deletes a session only if it is idle.
