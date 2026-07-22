@@ -31,12 +31,21 @@ func (h *Handler) cmdListSessions(ctx context.Context, chatID string, _ []string
 	return commandResult{Body: formatSessions(sessions)}, nil
 }
 
+// sortedSessions returns a copy of sessions sorted by updated time, most
+// recent first. /session-list (formatSessions) and /session-use share this
+// ordering so their 1-based numbering never drifts apart.
+func sortedSessions(sessions []oc.SessionInfo) []oc.SessionInfo {
+	sorted := make([]oc.SessionInfo, len(sessions))
+	copy(sorted, sessions)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Time.Updated > sorted[j].Time.Updated
+	})
+	return sorted
+}
+
 // formatSessions renders the session list for display.
 func formatSessions(sessions []oc.SessionInfo) string {
-	// Sort by updated time (most recent first)
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Time.Updated > sessions[j].Time.Updated
-	})
+	sessions = sortedSessions(sessions)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📋 **所有会话** (%d)\n\n", len(sessions))
