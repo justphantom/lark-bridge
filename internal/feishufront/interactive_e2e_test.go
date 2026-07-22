@@ -461,7 +461,7 @@ func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 	disp.turns.Start("msg-9", chatID, progressMID, backendID)
 
 	seenMIDs := make(map[string]bool)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		reqID := "req-multi-" + itoa(i)
 		qCtrl := &protocol.Control{
 			Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-9",
