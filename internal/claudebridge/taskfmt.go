@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/claude"
+	"github.com/justphantom/claude-go-sdk"
 )
 
 // taskToolName renders the subagent as a tool-row name. taskKind discriminates
@@ -30,7 +30,7 @@ func taskToolName(subagentType, taskKind string) string {
 // rides on the ToolUse/ToolResult Input so the usage shows in the row
 // description rather than the tool output (the progress card omits output).
 func taskProgressDesc(ev claude.Event) string {
-	desc := ev.GetTaskDesc()
+	desc := ev.TaskDesc
 	stats := taskUsageStats(ev)
 	if stats == "" {
 		return desc
@@ -45,13 +45,13 @@ func taskProgressDesc(ev claude.Event) string {
 // Mk tokens" string, omitting any zero fields.
 func taskUsageStats(ev claude.Event) string {
 	var parts []string
-	if steps := ev.GetTaskSteps(); steps > 0 {
+	if steps := ev.TaskSteps; steps > 0 {
 		parts = append(parts, strconv.Itoa(steps)+"步")
 	}
-	if ms := ev.GetTaskMs(); ms > 0 {
+	if ms := ev.TaskMs; ms > 0 {
 		parts = append(parts, fmt.Sprintf("%.1fs", float64(ms)/1000))
 	}
-	if tokens := ev.GetTaskTokens(); tokens > 0 {
+	if tokens := ev.TaskTokens; tokens > 0 {
 		parts = append(parts, formatTokenCount(tokens))
 	}
 	return strings.Join(parts, " · ")

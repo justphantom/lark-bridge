@@ -15,8 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/justphantom/claude-go-sdk"
+
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
-	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/claudebridge"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -79,7 +80,15 @@ func run(cfgPath string) error {
 	}
 	defer usageStore.Close()
 
-	api := claude.New(cfg.Claude, logger)
+	api := claude.New(claude.Options{
+		CLIPath:            cfg.Claude.CLIPath,
+		PermissionMode:     cfg.Claude.PermissionMode,
+		AppendSystemPrompt: cfg.Claude.AppendSystemPrompt,
+		MaxConcurrent:      cfg.Claude.MaxConcurrent,
+		SettingsDir:        cfg.Claude.SettingsDir,
+		SettingsCacheTTL:   time.Duration(cfg.Claude.SettingsCacheTTL) * time.Second,
+		Logger:             logger,
+	})
 
 	rpc, err := backendrpc.Connect(cfg.BackendID, "claude", cfg.FrontendURL, cfg.IPCSecret)
 	if err != nil {

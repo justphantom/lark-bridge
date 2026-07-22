@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justphantom/claude-go-sdk"
+
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
-	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/strutil"
@@ -38,11 +39,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	for ev := range events {
 		h.Logger.Debug("bridge received claude event",
 			log.FieldChatID, chatID,
-			log.FieldEventType, ev.GetType(),
-			log.FieldEventSubtype, ev.GetSubtype(),
-			log.FieldSessionID, ev.GetSessionID(),
-			"text_length", len(ev.GetText()),
-			log.FieldToolName, ev.GetToolName())
+			log.FieldEventType, ev.Type,
+			log.FieldEventSubtype, ev.Subtype,
+			log.FieldSessionID, ev.SessionID,
+			"text_length", len(ev.Text),
+			log.FieldToolName, ev.ToolName)
 
 		// Stop early once the turn is cancelled.
 		if ctx.Err() != nil {
@@ -61,8 +62,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// freshly recreated binding (a new prompt sneaking in) it would clobber
 		// that new prompt's empty sessionID — so only write when the chat is
 		// still bound.
-		if sessionID == "" && ev.GetSessionID() != "" {
-			sessionID = ev.GetSessionID()
+		if sessionID == "" && ev.SessionID != "" {
+			sessionID = ev.SessionID
 			if _, ok := h.Router.Lookup(chatID); ok {
 				h.Router.SetSessionID(chatID, sessionID)
 			}
@@ -70,17 +71,17 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				log.FieldChatID, chatID,
 				log.FieldSessionID, sessionID)
 		}
-		if model == "" && ev.GetModel() != "" {
-			model = ev.GetModel()
+		if model == "" && ev.Model != "" {
+			model = ev.Model
 		}
 
-		switch ev.GetType() {
+		switch ev.Type {
 		case claude.EventSystem:
 			// Only init is actionable (carries session id + model). Other
 			// system subtypes — chiefly thinking_tokens (the bulk of the
 			// stream), but also any future internal signal — are ignored by
 			// falling through this case to the loop.
-			if ev.GetSubtype() == claude.SubtypeInit && sessionID != "" {
+			if ev.Subtype == claude.SubtypeInit && sessionID != "" {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeSessionInit,
 					SessionInit: &protocol.SessionInitPayload{
@@ -96,14 +97,14 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// though name/desc drift across the lifecycle.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.GetTaskType(), ev.GetTaskKind()), Input: ev.GetTaskDesc(), IsSubagent: true, TaskID: ev.GetTaskID()},
+				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, ev.TaskKind), Input: ev.TaskDesc, IsSubagent: true, TaskID: ev.TaskID},
 			})
 		case claude.EventTaskProgress:
 			// Live subagent progress: re-emit as a ToolUse so the existing
 			// same-TaskID row updates its description while staying running.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.GetTaskType(), ev.GetTaskKind()), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.GetTaskID()},
+				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, ev.TaskKind), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.TaskID},
 			})
 		case claude.EventTaskNotification:
 			// Subagent finished: close the running row by TaskID. The terminal
@@ -113,49 +114,49 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
-					Name:       taskToolName(ev.GetTaskType(), ev.GetTaskKind()),
+					Name:       taskToolName(ev.TaskType, ev.TaskKind),
 					Input:      taskProgressDesc(ev),
-					IsError:    ev.GetIsToolError(),
+					IsError:    ev.IsToolError,
 					IsSubagent: true,
-					TaskID:     ev.GetTaskID(),
+					TaskID:     ev.TaskID,
 				},
 			})
 		case claude.EventText:
-			text.WriteString(ev.GetText())
+			text.WriteString(ev.Text)
 			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
-					Text: &protocol.TextPayload{Delta: ev.GetText()},
+					Text: &protocol.TextPayload{Delta: ev.Text},
 				})
 			}
 		case claude.EventThinking:
 			if throttle.ShouldEmitText(time.Now()) {
 				h.emitAsync(promptID, &protocol.Control{
 					Type:     protocol.TypeThinking,
-					Thinking: &protocol.ThinkingPayload{Delta: ev.GetText()},
+					Thinking: &protocol.ThinkingPayload{Delta: ev.Text},
 				})
 			}
 		case claude.EventToolUse:
-			if id := ev.GetToolID(); id != "" {
-				toolNames[id] = ev.GetToolName()
+			if id := ev.ToolID; id != "" {
+				toolNames[id] = ev.ToolName
 			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName, Input: bridgebase.SummarizeToolInput(ev.ToolInput)},
 			})
 		case claude.EventToolResult:
 			// claude tool_result carries only the id; look up the name
 			// recorded at tool_use time so the card can match the row.
-			name := ev.GetToolName()
+			name := ev.ToolName
 			if name == "" {
-				name = toolNames[ev.GetToolID()]
+				name = toolNames[ev.ToolID]
 			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:    name,
-					Output:  ev.GetText(),
-					IsError: ev.GetIsToolError(),
+					Output:  ev.Text,
+					IsError: ev.IsToolError,
 				},
 			})
 		case claude.EventResult:
@@ -163,9 +164,9 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case claude.EventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
-				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
+				"error_text", truncateForDebug(ev.Text, h.debugRedact()))
 			return promptResult{
-				err:       errors.New(nonEmpty(ev.GetText(), "Claude 运行出错")),
+				err:       errors.New(nonEmpty(ev.Text, "Claude 运行出错")),
 				model:     firstNonEmpty(model, modelSpec),
 				sessionID: sessionID,
 			}
@@ -175,8 +176,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// without dropping the event silently or breaking the turn.
 			h.Logger.Debug("claude: unhandled event type",
 				log.FieldChatID, chatID,
-				log.FieldEventType, ev.GetType(),
-				log.FieldEventSubtype, ev.GetSubtype())
+				log.FieldEventType, ev.Type,
+				log.FieldEventSubtype, ev.Subtype)
 		}
 	}
 
@@ -205,28 +206,28 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, modelSpec, chatID string) promptResult {
 	h.Logger.Debug("bridge: result event",
 		log.FieldChatID, chatID,
-		"is_error", ev.GetIsError(),
-		"cost_usd", ev.GetCostUSD(),
-		log.FieldDuration, ev.GetDurationMs(),
+		"is_error", ev.IsError,
+		"cost_usd", ev.CostUSD,
+		log.FieldDuration, ev.DurationMs,
 		log.FieldModel, firstNonEmpty(model, modelSpec),
-		"result_preview", truncateForDebug(ev.GetResult(), h.debugRedact()))
+		"result_preview", truncateForDebug(ev.Result, h.debugRedact()))
 
 	result := promptResult{
 		model:         firstNonEmpty(model, modelSpec),
 		sessionID:     sessionID,
-		durationMs:    ev.GetDurationMs(),
-		contextTokens: ev.GetInputTokens() + ev.GetOutputTokens(),
-		costUSD:       ev.GetCostUSD(),
-		steps:         ev.GetNumTurns(),
+		durationMs:    ev.DurationMs,
+		contextTokens: ev.InputTokens + ev.OutputTokens,
+		costUSD:       ev.CostUSD,
+		steps:         ev.NumTurns,
 
-		inputTokens:   ev.GetInputTokens(),
-		outputTokens:  ev.GetOutputTokens(),
-		cacheRead:     ev.GetCacheRead(),
-		cacheCreation: ev.GetCacheCreation(),
+		inputTokens:   ev.InputTokens,
+		outputTokens:  ev.OutputTokens,
+		cacheRead:     ev.CacheRead,
+		cacheCreation: ev.CacheCreation,
 	}
 
-	if ev.GetIsError() {
-		msg := ev.GetResult()
+	if ev.IsError {
+		msg := ev.Result
 		if strings.TrimSpace(msg) == "" {
 			msg = "Claude 返回错误"
 		}
@@ -234,7 +235,7 @@ func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, mod
 		return result
 	}
 
-	reply := ev.GetResult()
+	reply := ev.Result
 	if reply == "" {
 		reply = bridgebase.StripThinking(accText, "> 💭 ")
 	} else {
