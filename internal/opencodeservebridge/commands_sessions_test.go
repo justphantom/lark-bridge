@@ -123,9 +123,9 @@ func TestCmdListSessions_ListsSessions(t *testing.T) {
 func TestCmdListSessions_SortsByUpdated(t *testing.T) {
 	now := time.Now().UnixMilli()
 	sessions := []oc.SessionInfo{
-		{ID: "old", Title: "旧会话", Time: oc.SessionTime{Updated: now - 7200000}},  // 2 hours
+		{ID: "old", Title: "旧会话", Time: oc.SessionTime{Updated: now - 7200000}}, // 2 hours
 		{ID: "new", Title: "新会话", Time: oc.SessionTime{Updated: now - 60000}},   // 1 min
-		{ID: "mid", Title: "中会话", Time: oc.SessionTime{Updated: now - 3600000}},  // 1 hour
+		{ID: "mid", Title: "中会话", Time: oc.SessionTime{Updated: now - 3600000}}, // 1 hour
 	}
 	h := newHandlerWithAgent(t, fakeListAgent{sessions: sessions})
 
@@ -142,7 +142,7 @@ func TestCmdListSessions_SortsByUpdated(t *testing.T) {
 	if newIdx < 0 || midIdx < 0 || oldIdx < 0 {
 		t.Fatalf("missing session titles in body")
 	}
-	if !(newIdx < midIdx && midIdx < oldIdx) {
+	if newIdx >= midIdx || midIdx >= oldIdx {
 		t.Errorf("sessions not sorted by updated time (newest first)\ngot order indices: new=%d mid=%d old=%d", newIdx, midIdx, oldIdx)
 	}
 }

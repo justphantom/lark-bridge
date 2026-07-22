@@ -29,7 +29,7 @@ func (closedStreamOpencode) AbortSession(context.Context, string) error { return
 func (closedStreamOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
 
 func (closedStreamOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
-	return nil, nil
+	return map[string]oc.SessionStatus{}, nil
 }
 
 func (closedStreamOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
@@ -54,7 +54,7 @@ func (blockingOpencode) AbortSession(context.Context, string) error { return nil
 func (blockingOpencode) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
 
 func (blockingOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
-	return nil, nil
+	return map[string]oc.SessionStatus{}, nil
 }
 
 func (blockingOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }

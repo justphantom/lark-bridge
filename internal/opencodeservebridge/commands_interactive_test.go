@@ -33,7 +33,7 @@ func (pickerFakeAgent) AbortSession(context.Context, string) error { return nil 
 func (pickerFakeAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
 
 func (pickerFakeAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
-	return nil, nil
+	return map[string]oc.SessionStatus{}, nil
 }
 
 func (pickerFakeAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
@@ -58,7 +58,7 @@ func (failingListAgent) AbortSession(context.Context, string) error { return nil
 func (failingListAgent) ListSessions(context.Context) ([]oc.SessionInfo, error) { return nil, nil }
 
 func (failingListAgent) SessionStatuses(context.Context) (map[string]oc.SessionStatus, error) {
-	return nil, nil
+	return map[string]oc.SessionStatus{}, nil
 }
 
 func (failingListAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
