@@ -416,6 +416,14 @@ else
     fail "找不到 config 基底（claude-config.json / config.example.json）"
 fi
 
+# log_level 改写为 ${LOG_LEVEL} 占位符：与 ${STATE_DIR} / ${IPC_ADDR} 同一展开
+# 机制（进程启动时 config.Load 从 EnvironmentFile 展开，见下方注释）。运维改
+# repo 根 .env 的 LOG_LEVEL 重新部署即全服务生效，无需碰 JSON。改的是 STAGE
+# 副本，repo 里的基底原样保留；注入后显式校验，防基底缺字段时 sed 静默失败。
+sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/claude-config.json"
+grep -Fq '"log_level":            "${LOG_LEVEL}"' "$STAGE/claude-config.json" \
+    || fail "log_level 占位符注入失败：$STAGE/claude-config.json 缺少 log_level 字段（注入锚点缺失）"
+
 # state_dir / ipc_addr / frontend_url 已在 config 模板里写成 ${STATE_DIR} / ${IPC_ADDR}
 # 占位符，由各进程的 config.Load 在启动时从环境变量展开（见 internal/config 的
 # expandEnvVars）。deploy.sh 只需保证 IPC_ADDR / STATE_DIR 进入 EnvironmentFile（见
@@ -517,6 +525,12 @@ update_env_key() {
 update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
 update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
 update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
+# LOG_LEVEL：缺省补 info（config 的 ${LOG_LEVEL} 展开对未设/空值报错）；已设值
+# 不覆盖，运维调 debug 后重新部署即生效。
+if ! grep -q '^LOG_LEVEL=' "$PROJECT_ROOT/.env" 2>/dev/null; then
+    update_env_key LOG_LEVEL info "$PROJECT_ROOT/.env"
+    warn ".env 缺少 LOG_LEVEL，已追加 LOG_LEVEL=info（改 debug 后重新部署生效）"
+fi
 # WORKSPACE_ROOT: 如果 .env 里没设或仍是占位值，自动推导为 PROJECT_ROOT 的上一级
 # （repo 的父目录，通常是所有项目的公共根）。运维可在 .env 里显式覆盖。
 if ! grep -q '^WORKSPACE_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null || \

@@ -3,7 +3,6 @@
   "frontend_url": "http://localhost:6060",
   "ipc_secret":   "${IPC_SECRET}",
   "state_dir":    "/var/lib/lark-bridge",
-  "log_level":    "debug",
   "opencode_serve": {
     "base_url":       "http://127.0.0.1:4096",
     "username":       "opencode",
