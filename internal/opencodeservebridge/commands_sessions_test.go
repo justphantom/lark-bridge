@@ -46,6 +46,18 @@ func (f fakeListAgent) DeleteSessionIfIdle(ctx context.Context, sessionID string
 	return errors.New("not implemented")
 }
 
+func (f fakeListAgent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
+	return errors.New("not implemented")
+}
+
+func (f fakeListAgent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
+	return errors.New("not implemented")
+}
+
+func (f fakeListAgent) RejectQuestion(ctx context.Context, requestID string) error {
+	return errors.New("not implemented")
+}
+
 // TestCmdListSessions_Empty verifies the command reports empty state.
 func TestCmdListSessions_Empty(t *testing.T) {
 	h := newHandlerWithAgent(t, fakeListAgent{sessions: []oc.SessionInfo{}})

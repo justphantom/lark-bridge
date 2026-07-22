@@ -38,4 +38,11 @@ type opencodeAPI interface {
 	SessionStatuses(ctx context.Context) (map[string]oc.SessionStatus, error)
 	// DeleteSessionIfIdle deletes a session only if it is idle.
 	DeleteSessionIfIdle(ctx context.Context, sessionID string) error
+	// ReplyPermission answers a pending permission request (once/always/reject).
+	ReplyPermission(ctx context.Context, requestID, reply, message string) error
+	// ReplyQuestion answers a pending question request; RejectQuestion
+	// declines it. One of the two MUST eventually be called for every
+	// question.asked event or the serve-side agent hangs forever.
+	ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error
+	RejectQuestion(ctx context.Context, requestID string) error
 }

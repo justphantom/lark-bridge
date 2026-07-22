@@ -125,6 +125,21 @@ func (a *Agent) IsReady(ctx context.Context) error {
 	return nil
 }
 
+// ReplyPermission forwards a permission answer to the serve server.
+func (a *Agent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
+	return a.client.ReplyPermission(ctx, requestID, reply, message)
+}
+
+// ReplyQuestion forwards question answers to the serve server.
+func (a *Agent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
+	return a.client.ReplyQuestion(ctx, requestID, r)
+}
+
+// RejectQuestion declines a pending question request.
+func (a *Agent) RejectQuestion(ctx context.Context, requestID string) error {
+	return a.client.RejectQuestion(ctx, requestID)
+}
+
 // Close stops all pooled SDK GlobalEventStreams. Idempotent.
 func (a *Agent) Close() error {
 	a.streamsMu.Lock()

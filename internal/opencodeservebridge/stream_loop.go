@@ -135,6 +135,25 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					IsSubagent: isSub,
 				},
 			})
+		case oc.HighEventPermissionAsked:
+			// Spawn per asked event: the serve-side agent blocks until the
+			// reply, but the event loop must keep draining. The goroutine's
+			// ctx is the prompt ctx, so an abort rejects the request.
+			if p := ev.PermissionAsked(); p != nil {
+				h.Wg.Add(1)
+				bridgebase.GoSafe(h.Logger, "permission-asked:"+p.ID, func() {
+					defer h.Wg.Done()
+					h.handlePermissionAsked(ctx, chatID, promptID, p)
+				})
+			}
+		case oc.HighEventQuestionAsked:
+			if q := ev.QuestionAsked(); q != nil {
+				h.Wg.Add(1)
+				bridgebase.GoSafe(h.Logger, "question-asked:"+q.ID, func() {
+					defer h.Wg.Done()
+					h.handleQuestionAsked(ctx, chatID, promptID, q)
+				})
+			}
 		case oc.HighEventResult:
 			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,
 				accInput, accOutput, accCacheRead, accCacheWrite, accCost)

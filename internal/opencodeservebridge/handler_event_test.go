@@ -34,6 +34,16 @@ func (closedStreamOpencode) SessionStatuses(context.Context) (map[string]oc.Sess
 
 func (closedStreamOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
 
+func (closedStreamOpencode) ReplyPermission(context.Context, string, string, string) error {
+	return nil
+}
+
+func (closedStreamOpencode) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+	return nil
+}
+
+func (closedStreamOpencode) RejectQuestion(context.Context, string) error { return nil }
+
 func (closedStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)
 	close(ch)
@@ -58,6 +68,16 @@ func (blockingOpencode) SessionStatuses(context.Context) (map[string]oc.SessionS
 }
 
 func (blockingOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
+
+func (blockingOpencode) ReplyPermission(context.Context, string, string, string) error {
+	return nil
+}
+
+func (blockingOpencode) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+	return nil
+}
+
+func (blockingOpencode) RejectQuestion(context.Context, string) error { return nil }
 
 func (blockingOpencode) Run(ctx context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
 	ch := make(chan oc.HighEvent)
