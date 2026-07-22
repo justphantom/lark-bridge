@@ -178,12 +178,15 @@ func validateAbsDir(dir string) error {
 // validateSessionDirPath checks the shape of a session directory the bridge is
 // about to create from an Event-carried override: it must be an absolute path.
 // Event.Directory is empty in production (the frontend never sets it), so this
-// is defence in depth — the workspace boundary itself is enforced by /cd. A
-// relative path is rejected so an untrusted Event cannot make the subprocess
-// CWD relative to the process working directory. ".." is not checked: for an
-// absolute path filepath.Clean resolves it away, so IsAbs is sufficient here.
-// Existence is not required (unlike /cd's validateAbsDir) — ensureBinding
-// creates the dir via MkdirAll on demand.
+// is defence in depth — the workspace boundary is enforced by /cd.
+//
+// IsAbs only, by design: a relative path (including "..") does not begin with
+// "/", so IsAbs already rejects it; a ".." segment inside an absolute path
+// (e.g. "/a/../b") is resolved by the filesystem to a concrete path at
+// MkdirAll/CWD time and is not a traversal escape. The workspace root boundary
+// is enforced separately — /cd's validateAbsDir and bridgebase's filepath.Rel
+// check both Clean before comparing. Existence is not required (unlike /cd's
+// validateAbsDir) — ensureBinding creates the dir via MkdirAll on demand.
 func validateSessionDirPath(dir string) error {
 	if !filepath.IsAbs(dir) {
 		return fmt.Errorf("路径必须是绝对路径：%s", dir)
