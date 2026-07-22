@@ -42,10 +42,13 @@ type opencodeAPI interface {
 	// DeleteSessionIfIdle deletes a session only if it is idle.
 	DeleteSessionIfIdle(ctx context.Context, sessionID string) error
 	// ReplyPermission answers a pending permission request (once/always/reject).
-	ReplyPermission(ctx context.Context, requestID, reply, message string) error
+	// directory scopes the request to the serve workspace that owns it; opencode
+	// serve isolates pending requests by directory and returns 404 without it.
+	ReplyPermission(ctx context.Context, requestID, directory, reply, message string) error
 	// ReplyQuestion answers a pending question request; RejectQuestion
 	// declines it. One of the two MUST eventually be called for every
-	// question.asked event or the serve-side agent hangs forever.
-	ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error
-	RejectQuestion(ctx context.Context, requestID string) error
+	// question.asked event or the serve-side agent hangs forever. directory
+	// scopes the request to its owning serve workspace (same reason as above).
+	ReplyQuestion(ctx context.Context, requestID, directory string, r *oc.QuestionReply) error
+	RejectQuestion(ctx context.Context, requestID, directory string) error
 }

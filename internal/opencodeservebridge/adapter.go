@@ -126,18 +126,18 @@ func (a *Agent) IsReady(ctx context.Context) error {
 }
 
 // ReplyPermission forwards a permission answer to the serve server.
-func (a *Agent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
-	return a.client.ReplyPermission(ctx, requestID, reply, message)
+func (a *Agent) ReplyPermission(ctx context.Context, requestID, directory, reply, message string) error {
+	return a.client.ReplyPermission(ctx, requestID, directory, reply, message)
 }
 
 // ReplyQuestion forwards question answers to the serve server.
-func (a *Agent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
-	return a.client.ReplyQuestion(ctx, requestID, r)
+func (a *Agent) ReplyQuestion(ctx context.Context, requestID, directory string, r *oc.QuestionReply) error {
+	return a.client.ReplyQuestion(ctx, requestID, directory, r)
 }
 
 // RejectQuestion declines a pending question request.
-func (a *Agent) RejectQuestion(ctx context.Context, requestID string) error {
-	return a.client.RejectQuestion(ctx, requestID)
+func (a *Agent) RejectQuestion(ctx context.Context, requestID, directory string) error {
+	return a.client.RejectQuestion(ctx, requestID, directory)
 }
 
 // Close stops all pooled SDK GlobalEventStreams. Idempotent.

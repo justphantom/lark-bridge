@@ -55,15 +55,15 @@ func (f *fakeListAgent) DeleteSessionIfIdle(ctx context.Context, sessionID strin
 	return errors.New("not implemented")
 }
 
-func (f *fakeListAgent) ReplyPermission(ctx context.Context, requestID, reply, message string) error {
+func (f *fakeListAgent) ReplyPermission(ctx context.Context, requestID, directory, reply, message string) error {
 	return errors.New("not implemented")
 }
 
-func (f *fakeListAgent) ReplyQuestion(ctx context.Context, requestID string, r *oc.QuestionReply) error {
+func (f *fakeListAgent) ReplyQuestion(ctx context.Context, requestID, directory string, r *oc.QuestionReply) error {
 	return errors.New("not implemented")
 }
 
-func (f *fakeListAgent) RejectQuestion(ctx context.Context, requestID string) error {
+func (f *fakeListAgent) RejectQuestion(ctx context.Context, requestID, directory string) error {
 	return errors.New("not implemented")
 }
 

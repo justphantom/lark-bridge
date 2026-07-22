@@ -68,18 +68,21 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 	if ans != nil {
 		reply = permissionReplyOf(bridgebase.PickAnswerValue(ans))
 	}
+	directory := h.directoryOf(chatID)
 	rctx, cancel := context.WithTimeout(context.Background(), interactiveOpTimeout)
 	defer cancel()
-	if err := h.agent.ReplyPermission(rctx, p.ID, reply, ""); err != nil {
+	if err := h.agent.ReplyPermission(rctx, p.ID, directory, reply, ""); err != nil {
 		h.Logger.Warn("reply permission failed",
 			log.FieldChatID, chatID,
 			"request_id", p.ID,
+			"directory", directory,
 			log.FieldError, err)
 		return
 	}
 	h.Logger.Debug("permission replied",
 		log.FieldChatID, chatID,
 		"request_id", p.ID,
+		"directory", directory,
 		"reply", reply)
 	// Echo the answer onto the progress card so the user can see what was
 	// answered without scrolling back to the standalone permission card.
@@ -142,24 +145,28 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 	}
 	rctx, cancel := context.WithTimeout(context.Background(), interactiveOpTimeout)
 	defer cancel()
+	directory := h.directoryOf(chatID)
 	reply, ok := questionReplyFromAnswer(q, ans)
 	var err error
 	if !ok {
 		h.Logger.Debug("rejecting question",
 			log.FieldChatID, chatID,
-			"request_id", q.ID)
-		err = h.agent.RejectQuestion(rctx, q.ID)
+			"request_id", q.ID,
+			"directory", directory)
+		err = h.agent.RejectQuestion(rctx, q.ID, directory)
 	} else {
 		h.Logger.Debug("replying question",
 			log.FieldChatID, chatID,
 			"request_id", q.ID,
+			"directory", directory,
 			"answer_count", len(reply.Answers))
-		err = h.agent.ReplyQuestion(rctx, q.ID, reply)
+		err = h.agent.ReplyQuestion(rctx, q.ID, directory, reply)
 	}
 	if err != nil {
 		h.Logger.Warn("reply question failed",
 			log.FieldChatID, chatID,
 			"request_id", q.ID,
+			"directory", directory,
 			log.FieldError, err)
 		return
 	}
@@ -174,6 +181,18 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 			})
 		}
 	}
+}
+
+// directoryOf resolves the working directory bound to chatID. opencode serve
+// isolates pending permission/question requests by directory, so the reply
+// must carry the same directory the Run used or serve returns 404. Returns
+// "" when no binding exists (the reply then hits serve's default workspace,
+// which is correct only for a default-directory session).
+func (h *Handler) directoryOf(chatID string) string {
+	if b, ok := h.Router.Lookup(chatID); ok {
+		return b.Directory
+	}
+	return ""
 }
 
 // questionReplyFromAnswer builds the serve reply from the card answer.

@@ -4,8 +4,8 @@ github.com/gorilla/websocket v1.5.0 h1:PPwGk2jz7EePpoHN/+ClbZu8SPxiqlu12wZP/3sWm
 github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/justphantom/claude-go-sdk v0.0.0-20260722001100-3bd8cf91e7b4 h1:kOTzYYOqB6YBmoImZMsLMtcaRO+CCDvls5XY4tYxCN8=
 github.com/justphantom/claude-go-sdk v0.0.0-20260722001100-3bd8cf91e7b4/go.mod h1:iG+0+Tfh9NPnUns1cA6RONQ2N7JD6TATtgMKl8d49fk=
-github.com/justphantom/opencode-go-sdk-lite v0.0.3 h1:0oWEnMgSYoG9USVMpa1aicPVvvF9NOFVn1t1nL6mX0I=
-github.com/justphantom/opencode-go-sdk-lite v0.0.3/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
+github.com/justphantom/opencode-go-sdk-lite v0.0.4 h1:FAB1rHOssBI18SKY8ClWUk0m+6LvDEELLyF6b4AnLt8=
+github.com/justphantom/opencode-go-sdk-lite v0.0.4/go.mod h1:QZ8GMxCOQAynujbWaKb7a5nkQQJDv4bkDJ7FGOZn/GQ=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/larksuite/oapi-sdk-go/v3 v3.9.9 h1:qzVK5U1AuT/n0Z4LqCN2ATU6MlYp2Iipa7q+fVK5Nh8=

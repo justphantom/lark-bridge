@@ -40,15 +40,15 @@ func (pickerFakeAgent) SessionStatuses(context.Context) (map[string]oc.SessionSt
 
 func (pickerFakeAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
 
-func (pickerFakeAgent) ReplyPermission(context.Context, string, string, string) error {
+func (pickerFakeAgent) ReplyPermission(context.Context, string, string, string, string) error {
 	return nil
 }
 
-func (pickerFakeAgent) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+func (pickerFakeAgent) ReplyQuestion(context.Context, string, string, *oc.QuestionReply) error {
 	return nil
 }
 
-func (pickerFakeAgent) RejectQuestion(context.Context, string) error { return nil }
+func (pickerFakeAgent) RejectQuestion(context.Context, string, string) error { return nil }
 
 func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return f.models, nil }
 
@@ -77,15 +77,15 @@ func (failingListAgent) SessionStatuses(context.Context) (map[string]oc.SessionS
 
 func (failingListAgent) DeleteSessionIfIdle(context.Context, string) error { return nil }
 
-func (failingListAgent) ReplyPermission(context.Context, string, string, string) error {
+func (failingListAgent) ReplyPermission(context.Context, string, string, string, string) error {
 	return nil
 }
 
-func (failingListAgent) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+func (failingListAgent) ReplyQuestion(context.Context, string, string, *oc.QuestionReply) error {
 	return nil
 }
 
-func (failingListAgent) RejectQuestion(context.Context, string) error { return nil }
+func (failingListAgent) RejectQuestion(context.Context, string, string) error { return nil }
 
 func (failingListAgent) ListModels(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")

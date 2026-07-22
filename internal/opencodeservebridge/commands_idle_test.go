@@ -60,15 +60,15 @@ func (f *idleFakeAgent) DeleteSessionIfIdle(_ context.Context, sessionID string)
 	return nil
 }
 
-func (f *idleFakeAgent) ReplyPermission(context.Context, string, string, string) error {
+func (f *idleFakeAgent) ReplyPermission(context.Context, string, string, string, string) error {
 	return errors.New("not implemented")
 }
 
-func (f *idleFakeAgent) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+func (f *idleFakeAgent) ReplyQuestion(context.Context, string, string, *oc.QuestionReply) error {
 	return errors.New("not implemented")
 }
 
-func (f *idleFakeAgent) RejectQuestion(context.Context, string) error {
+func (f *idleFakeAgent) RejectQuestion(context.Context, string, string) error {
 	return errors.New("not implemented")
 }
 

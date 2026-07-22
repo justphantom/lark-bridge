@@ -19,6 +19,7 @@ import (
 type replyCall struct {
 	kind      string
 	requestID string
+	directory string
 	reply     string
 	answers   [][]string
 }
@@ -45,25 +46,25 @@ func (a *recordingAgent) notify() {
 	}
 }
 
-func (a *recordingAgent) ReplyPermission(_ context.Context, requestID, reply, _ string) error {
+func (a *recordingAgent) ReplyPermission(_ context.Context, requestID, directory, reply, _ string) error {
 	a.mu.Lock()
-	a.calls = append(a.calls, replyCall{kind: "permission", requestID: requestID, reply: reply})
+	a.calls = append(a.calls, replyCall{kind: "permission", requestID: requestID, reply: reply, directory: directory})
 	a.mu.Unlock()
 	a.notify()
 	return nil
 }
 
-func (a *recordingAgent) ReplyQuestion(_ context.Context, requestID string, r *oc.QuestionReply) error {
+func (a *recordingAgent) ReplyQuestion(_ context.Context, requestID, directory string, r *oc.QuestionReply) error {
 	a.mu.Lock()
-	a.calls = append(a.calls, replyCall{kind: "question", requestID: requestID, answers: r.Answers})
+	a.calls = append(a.calls, replyCall{kind: "question", requestID: requestID, answers: r.Answers, directory: directory})
 	a.mu.Unlock()
 	a.notify()
 	return nil
 }
 
-func (a *recordingAgent) RejectQuestion(_ context.Context, requestID string) error {
+func (a *recordingAgent) RejectQuestion(_ context.Context, requestID, directory string) error {
 	a.mu.Lock()
-	a.calls = append(a.calls, replyCall{kind: "reject", requestID: requestID})
+	a.calls = append(a.calls, replyCall{kind: "reject", requestID: requestID, directory: directory})
 	a.mu.Unlock()
 	a.notify()
 	return nil
@@ -160,6 +161,49 @@ func TestHandleQuestionAsked_MapsAnswers(t *testing.T) {
 	if len(call.answers) != 2 || call.answers[0][0] != "a" ||
 		len(call.answers[1]) != 2 || call.answers[1][0] != "x" || call.answers[1][1] != "y" {
 		t.Errorf("answers = %v, want [[a] [x y]]", call.answers)
+	}
+}
+
+// TestHandleQuestionAsked_RepliesWithDirectory pins the directory fix: the
+// reply MUST carry the chat binding's directory, or opencode serve (which
+// isolates pending requests by directory) returns 404 "unknown request".
+func TestHandleQuestionAsked_RepliesWithDirectory(t *testing.T) {
+	agent := newRecordingAgent()
+	h, r := newPickerHandlerWithAgent(t, agent)
+	r.Bind("c1", "s1", "/repo", "", "", "")
+	q := &oc.QuestionAskedData{
+		ID:        "q-dir",
+		SessionID: "s1",
+		Questions: []oc.QuestionInfo{
+			{Question: "选", Options: []oc.QuestionOption{{Label: "a"}}},
+		},
+	}
+
+	go h.handleQuestionAsked(context.Background(), "c1", "p1", q)
+	waitPending(t, h, 2*time.Second)
+	h.Answers.Deliver("q-dir", &protocol.AnswerPayload{Choices: []string{"a"}})
+
+	call := waitCall(t, agent)
+	if call.directory != "/repo" {
+		t.Errorf("directory = %q, want /repo (serve isolates requests by directory)", call.directory)
+	}
+}
+
+// TestHandlePermissionAsked_RepliesWithDirectory is the permission analogue
+// of the question directory test above.
+func TestHandlePermissionAsked_RepliesWithDirectory(t *testing.T) {
+	agent := newRecordingAgent()
+	h, r := newPickerHandlerWithAgent(t, agent)
+	r.Bind("c1", "s1", "/repo", "", "", "")
+	p := &oc.PermissionAskedData{ID: "perm-dir", SessionID: "s1", Permission: "bash"}
+
+	go h.handlePermissionAsked(context.Background(), "c1", "p1", p)
+	waitPending(t, h, 2*time.Second)
+	h.Answers.Deliver("perm-dir", &protocol.AnswerPayload{Choices: []string{"允许一次"}})
+
+	call := waitCall(t, agent)
+	if call.directory != "/repo" {
+		t.Errorf("directory = %q, want /repo", call.directory)
 	}
 }
 

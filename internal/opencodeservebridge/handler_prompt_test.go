@@ -92,13 +92,13 @@ func (panicOpencode) SessionStatuses(context.Context) (map[string]oc.SessionStat
 	return map[string]oc.SessionStatus{}, nil
 }
 func (panicOpencode) DeleteSessionIfIdle(context.Context, string) error { return nil }
-func (panicOpencode) ReplyPermission(context.Context, string, string, string) error {
+func (panicOpencode) ReplyPermission(context.Context, string, string, string, string) error {
 	return nil
 }
-func (panicOpencode) ReplyQuestion(context.Context, string, *oc.QuestionReply) error {
+func (panicOpencode) ReplyQuestion(context.Context, string, string, *oc.QuestionReply) error {
 	return nil
 }
-func (panicOpencode) RejectQuestion(context.Context, string) error { return nil }
+func (panicOpencode) RejectQuestion(context.Context, string, string) error { return nil }
 func (panicOpencode) Run(context.Context, oc.RunOptions) (<-chan oc.HighEvent, error) {
 	panic("simulated agent panic")
 }
