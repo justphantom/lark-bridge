@@ -32,6 +32,8 @@ func init() {
 			Title: "已清理空闲会话", Level: "success"}, Handler: (*Handler).cmdDeleteIdleSessions},
 		{Spec: cmdutil.Spec{Name: "/session-list", Summary: "列出当前目录下的 opencode 会话",
 			Level: "info"}, Handler: (*Handler).cmdListSessions},
+		{Spec: cmdutil.Spec{Name: "/session-use", Summary: "切换到同目录下的其他会话（无参数弹出选择）",
+			Args: "[n]", Title: "已切换会话", Level: "success"}, Handler: (*Handler).cmdSessionUse},
 		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前会话、目录、模型与 agent",
 			Level: "info"}, Handler: (*Handler).cmdCurrent},
 		{Spec: cmdutil.Spec{Name: "/model", Summary: "设置模型；不带参数弹出选择；传 clear 清除",
