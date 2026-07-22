@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/justphantom/claude-go-sdk v0.0.0-20260722001100-3bd8cf91e7b4
-	github.com/justphantom/opencode-go-sdk-lite v0.0.0-20260721161739-5d617cacd0b7
+	github.com/justphantom/opencode-go-sdk-lite v0.0.1
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 )
 
