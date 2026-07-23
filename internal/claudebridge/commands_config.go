@@ -39,14 +39,14 @@ func isSettablePermissionMode(m string) bool {
 // No session reset is needed: permission mode is orthogonal to conversation
 // context. "default" is rejected on the direct-pin path — it would hang the
 // non-interactive stream subprocess.
-func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdPermission(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runPermPicker(chatID, b.PermissionMode), nil
+		return h.runPermPicker(chatID, b.PermissionMode, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearPermissionMode(h, chatID, b.PermissionMode), nil
@@ -68,10 +68,10 @@ func (h *Handler) cmdPermission(_ context.Context, chatID string, args []string)
 
 // runPermPicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
-func (h *Handler) runPermPicker(chatID, oldMode string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, "", "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
+func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult {
+	choice, messageID, err := h.AskAndWait(chatID, replyToID, "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	old := oldMode
@@ -110,14 +110,14 @@ func clearPermissionMode(h *Handler, chatID, oldMode string) commandResult {
 // A free-form path argument is intentionally NOT accepted: the file must come
 // from the settings directory scan so only files an operator placed there are
 // selectable. Changing the settings file does not reset the session.
-func (h *Handler) cmdSettings(_ context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdSettings(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runSettingsPicker(chatID, b.SettingsFile), nil
+		return h.runSettingsPicker(chatID, b.SettingsFile, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearSettingsFile(h, chatID, b.SettingsFile), nil
@@ -129,15 +129,17 @@ func (h *Handler) cmdSettings(_ context.Context, chatID string, args []string) (
 // settings files via the agent, shows their basenames as options, and pins the
 // chosen file's full path. allowCustom=false: the user can only pick a listed
 // file, so the pinned path always comes from the trusted settings-directory
-// scan and never from free-form input.
-func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
+// scan and never from free-form input. replyToID keeps the flow on the
+// command's progress card (see runModelPicker); pre-answer failures terminate
+// that card via emitPromptNotice, post-answer failures patch the picker card.
+func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandResult {
 	paths, err := h.agent.ListSettings(h.AppCtx)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", "获取 settings 文件列表失败："+err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", "获取 settings 文件列表失败："+err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	if len(paths) == 0 {
-		h.emitNoticeLogged(chatID, "warning", "无可选项",
+		h.emitPromptNotice(chatID, replyToID, "warning", "无可选项",
 			"settings 目录下没有 settings.json 或 *-settings.json 文件。")
 		return commandResult{Body: "没有可用的 settings 文件", Handled: true}
 	}
@@ -152,9 +154,9 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 		byName[name] = p
 	}
 
-	choice, messageID, err := h.AskAndWait(chatID, "", "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
+	choice, messageID, err := h.AskAndWait(chatID, replyToID, "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 
@@ -162,7 +164,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile string) commandResult {
 	// path. An unknown value is a defensive reject (it should not happen).
 	path, ok := byName[choice]
 	if !ok {
-		h.emitNoticeLogged(chatID, "error", "选择无效", "未知的 settings 文件："+choice)
+		h.emitCardUpdateLogged(chatID, messageID, "error", "选择无效", "未知的 settings 文件："+choice)
 		return commandResult{Body: "未知的 settings 文件：" + choice, Handled: true}
 	}
 	old := oldFile

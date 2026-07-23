@@ -16,14 +16,14 @@ import (
 //   - /model <spec>     → pin <spec> directly (e.g. /model claude-sonnet-4-5)
 //
 // The spec is passed verbatim to the CLI as --model on the next run.
-func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runModelPicker(chatID, b.ModelSpec), nil
+		return h.runModelPicker(chatID, b.ModelSpec, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearModelSpec(h, chatID, b.ModelSpec), nil
@@ -44,10 +44,13 @@ func (h *Handler) cmdModel(_ context.Context, chatID string, args []string) (com
 // user's answer), pins the result, and emits a confirmation Notice. Returns
 // Handled so the dispatcher skips its default Notice (the confirmation is
 // already emitted by emitNotice, and the dispatcher's ctx may have expired).
-func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, "", "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
+// replyToID carries the triggering message's ID so the Question card morphs
+// the command's progress card in place (one card end-to-end); a failure
+// terminates that same card via emitPromptNotice.
+func (h *Handler) runModelPicker(chatID, oldSpec, replyToID string) commandResult {
+	choice, messageID, err := h.AskAndWait(chatID, replyToID, "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	old := oldSpec
@@ -96,14 +99,14 @@ func isSettableEffortLevel(level string) bool {
 //
 // The level is passed to the CLI as --effort on the next run. No session reset
 // is needed since effort is orthogonal to conversation context.
-func (h *Handler) cmdEffort(_ context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdEffort(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runEffortPicker(chatID, b.EffortLevel), nil
+		return h.runEffortPicker(chatID, b.EffortLevel, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearEffortLevel(h, chatID, b.EffortLevel), nil
@@ -125,10 +128,10 @@ func (h *Handler) cmdEffort(_ context.Context, chatID string, args []string) (co
 
 // runEffortPicker is the effort analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured effort options.
-func (h *Handler) runEffortPicker(chatID, oldLevel string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, "", "推理级别", "选择推理级别", bridgebase.StaticOptions(h.effortOptions), false)
+func (h *Handler) runEffortPicker(chatID, oldLevel, replyToID string) commandResult {
+	choice, messageID, err := h.AskAndWait(chatID, replyToID, "推理级别", "选择推理级别", bridgebase.StaticOptions(h.effortOptions), false)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	old := oldLevel
