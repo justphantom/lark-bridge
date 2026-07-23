@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sync/atomic"
 	"time"
 
@@ -11,10 +12,15 @@ import (
 )
 
 // reconnectBackoff is the delay before the first reconnect attempt; each
-// subsequent failure doubles the delay, capped at reconnectMaxBackoff.
+// subsequent failure doubles the delay, capped at reconnectMaxBackoff. Each
+// wait is padded with up to reconnectJitter×backoff of random slack.
 const (
-	reconnectBackoff    = 2 * time.Second
+	reconnectBackoff    = 5 * time.Second
 	reconnectMaxBackoff = 60 * time.Second
+	// reconnectJitter is the random fraction of backoff added to each wait so
+	// concurrent disconnected backends don't retry in lockstep. The actual wait
+	// lies in [backoff, backoff*(1+reconnectJitter)].
+	reconnectJitter = 0.5
 )
 
 // Run connects to the frontend, drains Events via handle, and reconnects with
@@ -105,7 +111,7 @@ func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(*backoff):
+		case <-time.After(jitteredBackoff(*backoff)):
 		}
 		c, err := Connect(backendID, backendType, frontendURL, secret)
 		if err == nil {
@@ -123,4 +129,13 @@ func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret 
 			*backoff = reconnectMaxBackoff
 		}
 	}
+}
+
+// jitteredBackoff returns d plus up to reconnectJitter×d of uniformly random
+// slack, decoupling concurrent backends' retry cadence.
+func jitteredBackoff(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + time.Duration(rand.Int64N(int64(float64(d)*reconnectJitter)+1)) //nolint:gosec // G404: 重连退避抖动仅为打散同步重连，非密码学场景
 }

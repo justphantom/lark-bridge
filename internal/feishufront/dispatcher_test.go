@@ -561,21 +561,23 @@ func (blockingSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) 
 }
 func (blockingSink) UpdateCard(context.Context, string, []byte) error { return nil }
 
-// TestOnBackendOffline_BoundedByTimeout verifies a stalled Feishu send cannot
-// wedge the notify loop: SendCard honors the context deadline and returns
-// within noticeSendTimeout, not hanging forever.
-func TestOnBackendOffline_BoundedByTimeout(t *testing.T) {
+// TestSendOfflineNotices_BoundedByTimeout verifies a stalled Feishu send
+// cannot wedge the notify path: SendCard honors the context deadline and
+// returns within noticeSendTimeout, not hanging forever. OnBackendOffline
+// itself now returns immediately — it only arms a debounce timer — so the
+// timeout boundary lives in the notice-sending path exercised here.
+func TestSendOfflineNotices_BoundedByTimeout(t *testing.T) {
 	d := NewDispatcher(blockingSink{}, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
 	done := make(chan struct{})
 	go func() {
-		d.OnBackendOffline("back-1", "claude")
+		d.sendOfflineNotices("back-1", "claude")
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(noticeSendTimeout + 2*time.Second):
-		t.Fatal("OnBackendOffline was not bounded by noticeSendTimeout")
+		t.Fatal("sendOfflineNotices was not bounded by noticeSendTimeout")
 	}
 }
 
@@ -821,5 +823,77 @@ func TestOnBackendOffline_PreservesAllTurns(t *testing.T) {
 	}
 	if _, ok := d.turns.Get("p-B"); !ok {
 		t.Fatal("back-B turn must survive back-A going offline")
+	}
+}
+
+func sinkSendCount(s *fakeSink) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sends)
+}
+
+func waitForSends(t *testing.T, s *fakeSink, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if sinkSendCount(s) >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := sinkSendCount(s); got != want {
+		t.Fatalf("want %d sends, got %d", want, got)
+	}
+}
+
+// TestOnBackendOffline_FlapDebounceSuppressed verifies the core anti-flap
+// behavior: an offline immediately followed by a reconnect (within the debounce
+// window) produces NO cards — neither offline nor recovery.
+func TestOnBackendOffline_FlapDebounceSuppressed(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+	d.offlineNoticeDebounce = 20 * time.Millisecond
+
+	d.OnBackendOffline("back-1", "claude")
+	d.OnBackendOnline("back-1", "claude")
+
+	// Wait well past the debounce window to prove the timer was cancelled.
+	time.Sleep(100 * time.Millisecond)
+	if got := sinkSendCount(sink); got != 0 {
+		t.Fatalf("flap suppressed: want 0 cards, got %d", got)
+	}
+}
+
+// TestOnBackendOffline_DebounceFiresAfterWindow verifies a backend that stays
+// down past the debounce window triggers exactly one offline notice, and a
+// later reconnect triggers exactly one recovery notice.
+func TestOnBackendOffline_DebounceFiresAfterWindow(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+	d.offlineNoticeDebounce = 20 * time.Millisecond
+
+	d.OnBackendOffline("back-1", "claude")
+	if got := sinkSendCount(sink); got != 0 {
+		t.Fatalf("pre-window: want 0 cards, got %d", got)
+	}
+	waitForSends(t, sink, 1, time.Second) // past window: one offline card
+
+	d.OnBackendOnline("back-1", "claude")
+	waitForSends(t, sink, 2, time.Second) // reconnect: one recovery card
+}
+
+// TestOnBackendOffline_NoDuplicateAfterNotified ensures a second offline event
+// while already shown offline does not post a second card.
+func TestOnBackendOffline_NoDuplicateAfterNotified(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+	d.offlineNoticeDebounce = 20 * time.Millisecond
+
+	d.OnBackendOffline("back-1", "claude")
+	waitForSends(t, sink, 1, time.Second) // first notice fires
+	d.OnBackendOffline("back-1", "claude")
+	time.Sleep(50 * time.Millisecond)
+	if got := sinkSendCount(sink); got != 1 {
+		t.Fatalf("duplicate offline suppressed: want 1 card, got %d", got)
 	}
 }

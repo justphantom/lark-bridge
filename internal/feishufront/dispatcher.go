@@ -93,6 +93,18 @@ type Dispatcher struct {
 	// user submits (DispatchCardAction). Guarded by cardMu alongside cards.
 	interactiveTimers map[string]*time.Timer
 
+	// flapMu guards flap, the per-backend debounce state for online/offline
+	// notices. A flapping backend (rapid disconnect/reconnect) would otherwise
+	// spam every bound chat with offline→online card pairs: an offline event
+	// arms a timer, and a reconnect before it fires cancels the pending notice
+	// silently. Only a backend down for the whole window triggers a notice.
+	flapMu sync.Mutex
+	flap   map[string]*flapState
+
+	// offlineNoticeDebounce is how long an offline event must persist before a
+	// notice is sent. Defaults to the package const; overridable for tests.
+	offlineNoticeDebounce time.Duration
+
 	// logger is stored atomically: SetLogger runs on the main goroutine while
 	// notifyBackendChat reads it from the IPCServer.fireCallback goroutine.
 	logger atomic.Pointer[log.Logger]
@@ -100,17 +112,19 @@ type Dispatcher struct {
 
 func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, router ChatRouter) *Dispatcher {
 	d := &Dispatcher{
-		bot:               bot,
-		registry:          registry,
-		turns:             turns,
-		router:            router,
-		progress:          make(map[string]*renderer.ProgressState),
-		finalized:         make(map[string]struct{}),
-		eventIDs:          newDedupSet(eventDedupTTL, eventDedupMaxEntries),
-		actionIDs:         newDedupSet(actionDedupTTL, 0),
-		terminals:         newDedupSet(terminalDedupTTL, 0),
-		cards:             make(map[string][]byte),
-		interactiveTimers: make(map[string]*time.Timer),
+		bot:                   bot,
+		registry:              registry,
+		turns:                 turns,
+		router:                router,
+		progress:              make(map[string]*renderer.ProgressState),
+		finalized:             make(map[string]struct{}),
+		eventIDs:              newDedupSet(eventDedupTTL, eventDedupMaxEntries),
+		actionIDs:             newDedupSet(actionDedupTTL, 0),
+		terminals:             newDedupSet(terminalDedupTTL, 0),
+		cards:                 make(map[string][]byte),
+		interactiveTimers:     make(map[string]*time.Timer),
+		flap:                  make(map[string]*flapState),
+		offlineNoticeDebounce: offlineNoticeDebounce,
 	}
 	d.logger.Store(log.Nop())
 	return d

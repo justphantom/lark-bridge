@@ -144,14 +144,16 @@ func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 		_ = c
 	}
 
-	// After reconnect (backoff starts at reconnectBackoff=2s), send a second
-	// event. Give the reconnect one round.
+	// After reconnect (backoff starts at reconnectBackoff, jittered up to
+	// backoff*(1+reconnectJitter)), send a second event. Give the reconnect
+	// one round — wait past the jittered window first.
+	maxFirstWait := time.Duration(float64(reconnectBackoff) * (1 + reconnectJitter))
 	go func() {
-		time.Sleep(reconnectBackoff + 500*time.Millisecond)
+		time.Sleep(maxFirstWait + 500*time.Millisecond)
 		_ = reg.SendEvent("back-rc", &protocol.Event{Type: protocol.TypePing, PromptID: "second", Ping: &protocol.PingPayload{}})
 	}()
 
-	deadline := time.After(reconnectBackoff + 5*time.Second)
+	deadline := time.After(maxFirstWait + 5*time.Second)
 	for got.Load() < 2 {
 		select {
 		case <-deadline:
@@ -167,5 +169,29 @@ func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// TestJitteredBackoff_Range verifies the wait always lies in
+// [backoff, backoff*(1+reconnectJitter)] and that jitter is actually applied
+// (not a constant floor).
+func TestJitteredBackoff_Range(t *testing.T) {
+	d := reconnectBackoff
+	hi := time.Duration(float64(d) * (1 + reconnectJitter))
+	var jitteredSeen bool
+	for range 1000 {
+		got := jitteredBackoff(d)
+		if got < d || got > hi {
+			t.Fatalf("jitteredBackoff(%v) = %v, want [%v, %v]", d, got, d, hi)
+		}
+		if got > d {
+			jitteredSeen = true
+		}
+	}
+	if !jitteredSeen {
+		t.Fatal("jitteredBackoff never added slack across 1000 samples; jitter not applied")
+	}
+	if got := jitteredBackoff(0); got != 0 {
+		t.Fatalf("jitteredBackoff(0) = %v, want 0", got)
 	}
 }

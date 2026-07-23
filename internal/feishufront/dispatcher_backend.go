@@ -15,13 +15,109 @@ import (
 // A stalled API call cannot wedge the notify goroutine indefinitely.
 const noticeSendTimeout = 10 * time.Second
 
+// offlineNoticeDebounce delays an offline notice so a flapping backend (rapid
+// disconnect/reconnect) cannot spam every bound chat with offline→online card
+// pairs. An offline event arms a timer; a reconnect before it fires cancels
+// the pending notice silently. Only a backend that stays down for the whole
+// window triggers a notice — and only a backend whose offline notice was
+// actually shown triggers a matching "recovered" notice, so flapping produces
+// zero cards.
+const offlineNoticeDebounce = 30 * time.Second
+
+// flapState is the per-backend debounce state for online/offline notices.
+// timer != nil means an offline notice is pending confirmation; notifiedOffline
+// is true once an offline card has actually been shown to users. Guarded by
+// Dispatcher.flapMu.
+type flapState struct {
+	timer           *time.Timer
+	pendingType     string
+	notifiedOffline bool
+}
+
+// OnBackendOffline arms a debounce timer rather than posting immediately: a
+// reconnect within offlineNoticeDebounce cancels it (see OnBackendOnline), so a
+// flapping backend produces no notice. Only when the timer fires does the
+// offline card reach every bound chat.
+//
+// Per project policy a turn ends ONLY when the user sends /session-abort, so
+// turns are NOT released here — stranded turns stay in-flight, visible via GET
+// /v1/status, until the user aborts or the frontend restarts.
 func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
-	// A disconnecting backend never sends the terminal control that would
-	// Finish its turns. Per project policy a turn ends ONLY when the user
-	// sends /session-abort, so we do NOT release them here — the stranded
-	// turns stay in the in-flight set, visible by name via GET /v1/status's
-	// turns list, until the user explicitly aborts or the frontend restarts.
-	// (Interactive/card bindings are still reclaimed by their own TTL sweep.)
+	if d.router == nil {
+		return
+	}
+	d.flapMu.Lock()
+	st := d.flap[backendID]
+	if st == nil {
+		st = &flapState{}
+		d.flap[backendID] = st
+	}
+	// Already shown offline: no duplicate notice, nothing to arm.
+	if st.notifiedOffline {
+		d.flapMu.Unlock()
+		return
+	}
+	st.pendingType = backendType
+	if st.timer != nil {
+		st.timer.Reset(d.offlineNoticeDebounce)
+	} else {
+		st.timer = time.AfterFunc(d.offlineNoticeDebounce, func() {
+			d.fireOfflineNotice(backendID)
+		})
+	}
+	d.flapMu.Unlock()
+}
+
+// fireOfflineNotice runs in the debounce timer's goroutine once an offline
+// event has persisted for the whole window. It flips the backend to
+// offline-presented and posts the offline card to every bound chat.
+func (d *Dispatcher) fireOfflineNotice(backendID string) {
+	d.flapMu.Lock()
+	st := d.flap[backendID]
+	if st == nil {
+		d.flapMu.Unlock()
+		return
+	}
+	typ := st.pendingType
+	st.notifiedOffline = true
+	st.timer = nil
+	d.flapMu.Unlock()
+	d.sendOfflineNotices(backendID, typ)
+}
+
+// OnBackendOnline either cancels a pending offline notice (the backend blipped
+// and came back → silent) or, if an offline card was actually shown, posts the
+// matching recovery card. A reconnect with no prior notice produces nothing.
+func (d *Dispatcher) OnBackendOnline(backendID, backendType string) {
+	if d.router == nil {
+		return
+	}
+	d.flapMu.Lock()
+	st := d.flap[backendID]
+	if st == nil {
+		d.flapMu.Unlock()
+		return // never went offline-presented; nothing to recover
+	}
+	// A pending offline notice means the backend blipped and came back: cancel
+	// it silently — no offline card, no recovery card.
+	if st.timer != nil {
+		st.timer.Stop()
+		st.timer = nil
+		d.flapMu.Unlock()
+		return
+	}
+	// Only send a recovery if we previously showed an offline card.
+	if !st.notifiedOffline {
+		d.flapMu.Unlock()
+		return
+	}
+	st.notifiedOffline = false
+	d.flapMu.Unlock()
+	d.sendOnlineNotices(backendID, backendType)
+}
+
+// sendOfflineNotices posts the offline card to every chat bound to backendID.
+func (d *Dispatcher) sendOfflineNotices(backendID, backendType string) {
 	if d.router == nil {
 		return
 	}
@@ -37,7 +133,8 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 	}
 }
 
-func (d *Dispatcher) OnBackendOnline(backendID, backendType string) {
+// sendOnlineNotices posts the recovered card to every chat bound to backendID.
+func (d *Dispatcher) sendOnlineNotices(backendID, backendType string) {
 	if d.router == nil {
 		return
 	}
