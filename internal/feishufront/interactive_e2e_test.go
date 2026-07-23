@@ -444,6 +444,110 @@ func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 	}
 }
 
+// TestInteractiveTakeOverProgressCard pins the slash-command picker flow: a
+// question carrying TakeOverProgress morphs the command's progress card into
+// the picker card (UpdateCard on the progress messageID, no fresh SendCard),
+// finishes the turn, and still binds requestID → that messageID so submit and
+// expiry flips keep working on the same card.
+func TestInteractiveTakeOverProgressCard(t *testing.T) {
+	const backendID = "opencode-10"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_chat10"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress-10"
+	disp.turns.Start("msg-10", chatID, progressMID, backendID)
+
+	qCtrl := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-10",
+		Question: &protocol.QuestionPayload{
+			RequestID: "req-tk", PromptID: "msg-10", TakeOverProgress: true,
+			Questions: []protocol.QuestionItem{{Label: "选择模型", Options: []string{"a", "b"}}},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+		t.Fatalf("question: %v", err)
+	}
+
+	mid, ok := disp.turns.InteractiveMessageID("req-tk")
+	if !ok {
+		t.Fatal("interactive card not bound")
+	}
+	if mid != progressMID {
+		t.Errorf("bound messageID = %q, want progress card %q", mid, progressMID)
+	}
+	sink.mu.Lock()
+	sends := len(sink.sends)
+	var progressUpdated bool
+	for _, u := range sink.updates {
+		if u.messageID == progressMID && strings.Contains(string(u.card), "选择模型") {
+			progressUpdated = true
+		}
+	}
+	sink.mu.Unlock()
+	if sends != 0 {
+		t.Errorf("sends = %d, want 0 (no fresh card)", sends)
+	}
+	if !progressUpdated {
+		t.Error("progress card should have been updated into the question card")
+	}
+	if _, turnOpen := disp.turns.Get("msg-10"); turnOpen {
+		t.Error("turn should be finished after takeover")
+	}
+
+	// Submit still works on the same card.
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: progressMID,
+		Value:     map[string]any{"requestID": "req-tk", "kind": "question"},
+		FormValue: map[string]any{"q_0": "a"},
+	}); err != nil {
+		t.Fatalf("DispatchCardAction: %v", err)
+	}
+	sink.mu.Lock()
+	var submitted bool
+	for _, u := range sink.updates {
+		if u.messageID == progressMID && strings.Contains(string(u.card), "已回答") {
+			submitted = true
+		}
+	}
+	sink.mu.Unlock()
+	if !submitted {
+		t.Error("submitted flip should target the taken-over progress card")
+	}
+}
+
+// TestInteractiveTakeOverFallbackNoTurn verifies a TakeOverProgress question
+// with no open turn ships a fresh standalone card exactly like before.
+func TestInteractiveTakeOverFallbackNoTurn(t *testing.T) {
+	const backendID = "opencode-11"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_chat11"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	qCtrl := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-11",
+		Question: &protocol.QuestionPayload{
+			RequestID: "req-nf", PromptID: "msg-11", TakeOverProgress: true,
+			Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+		t.Fatalf("question: %v", err)
+	}
+	sink.mu.Lock()
+	sends := len(sink.sends)
+	sink.mu.Unlock()
+	if sends != 1 {
+		t.Errorf("sends = %d, want 1 (standalone fallback)", sends)
+	}
+}
+
 // TestInteractiveMultipleCardsInOneTurn verifies that several permission/question
 // cards emitted during the same turn each get their own standalone message.
 // Regression guard: no shared requestID collision or progress-card takeover

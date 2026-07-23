@@ -11,8 +11,23 @@ import (
 )
 
 // CommandHandler runs one slash command bound to a bridge's handler type H.
-// ctx is bounded by cmdutil.Timeout.
+// ctx is bounded by cmdutil.Timeout and carries the triggering message's ID
+// (see ReplyToID).
 type CommandHandler[H any] func(h H, ctx context.Context, chatID string, args []string) (cmdutil.Result, error)
+
+// replyToIDKey is the ctx key under which Dispatch stamps the triggering
+// message's ID.
+type replyToIDKey struct{}
+
+// ReplyToID returns the ID of the user message that triggered the command,
+// stamped on the handler ctx by Dispatch. Picker-style handlers (/model, /cd…)
+// pass it as their Question card's promptID so the frontend can morph the
+// progress card it already opened for that message into the picker card,
+// keeping the whole interaction on one card. Empty outside Dispatch.
+func ReplyToID(ctx context.Context) string {
+	id, _ := ctx.Value(replyToIDKey{}).(string)
+	return id
+}
 
 // CommandSpec is one slash command's metadata plus its handler. The display
 // metadata (Name/Summary/Args/Title/Level) is shared infrastructure from
@@ -54,6 +69,7 @@ func (c *Commands[H]) RenderHelp() string {
 func (c *Commands[H]) Dispatch(h H, emit EmitFunc, logger *log.Logger, parentCtx context.Context, chatID, prompt, replyToID string) {
 	ctx, cancel := context.WithTimeout(parentCtx, cmdutil.Timeout)
 	defer cancel()
+	ctx = context.WithValue(ctx, replyToIDKey{}, replyToID)
 
 	cmd, args := cmdutil.ParseCommand(prompt)
 	var title, body, level string

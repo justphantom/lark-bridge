@@ -106,6 +106,12 @@ func AskAndWait(
 				Options: options,
 				Custom:  allowCustom,
 			}},
+			// AskAndWait serves only setting pickers, never mid-turn
+			// permission gates, so every card it emits is a takeover
+			// candidate. The takeover still requires replyToID to match an
+			// open turn on the frontend; callers passing "" get a standalone
+			// card exactly as before.
+			TakeOverProgress: true,
 		},
 	}
 	emitCtx, emitCancel := context.WithTimeout(appCtx, emitNoticeTimeout)

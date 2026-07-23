@@ -100,6 +100,34 @@ func TestDispatch_HandlerError(t *testing.T) {
 	}
 }
 
+// TestDispatch_StampsReplyToID verifies Dispatch carries the triggering
+// message's ID on the handler ctx so picker handlers can target the progress
+// card the frontend opened for that message.
+func TestDispatch_StampsReplyToID(t *testing.T) {
+	var got string
+	specs := []CommandSpec[int]{{
+		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
+		Handler: func(_ int, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
+			got = ReplyToID(ctx)
+			return cmdutil.Result{Handled: true}, nil
+		},
+	}}
+	cmds := newCmdCommands(specs)
+	var mu sync.Mutex
+	var controls []*protocol.Control
+	cmds.Dispatch(0, capturingEmit(&controls, &mu), log.Nop(), context.Background(), "C", "/pick", "om_user_msg")
+	if got != "om_user_msg" {
+		t.Errorf("ReplyToID = %q, want om_user_msg", got)
+	}
+}
+
+// TestReplyToID_OutsideDispatch verifies the zero value outside a Dispatch ctx.
+func TestReplyToID_OutsideDispatch(t *testing.T) {
+	if got := ReplyToID(context.Background()); got != "" {
+		t.Errorf("ReplyToID = %q, want empty", got)
+	}
+}
+
 // TestDispatch_HandledSkipsEmit verifies a handler that signals Handled
 // (e.g. an interactive picker that emits its own card) does NOT get a
 // default TypeNotice — that would clobber the picker's card.

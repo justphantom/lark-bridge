@@ -27,7 +27,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		return err
 	}
 	requestID := ctrl.Question.RequestID
-	messageID, err := d.bot.SendCard(ctx, chatID, card, "")
+	messageID, err := d.sendInteractiveCard(ctx, ctrl, chatID, card)
 	if err != nil {
 		return err
 	}
@@ -54,6 +54,32 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		d.cardMu.Unlock()
 	}
 	return nil
+}
+
+// sendInteractiveCard ships an interactive card. A slash-command picker
+// (TakeOverProgress set, e.g. /model) morphs the progress card the dispatcher
+// opened for the command message into the picker card, keeping the whole
+// command→pick→result interaction on one card; the turn is finished either
+// way because its progress lifecycle ends with the takeover. Mid-turn
+// permission/question cards (flag unset) ship standalone so the streaming
+// progress card stays untouched. Falls back to a fresh card when no turn is
+// open or the in-place update fails.
+func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Control, chatID string, card []byte) (string, error) {
+	if ctrl.Question.TakeOverProgress && ctrl.PromptID != "" {
+		if turn, ok := d.turns.Get(ctrl.PromptID); ok {
+			// Flush pending debounced progress frames first so they cannot
+			// land after the picker card and overwrite it.
+			if d.debouncer != nil {
+				d.debouncer.flush()
+			}
+			d.turns.Finish(ctrl.PromptID)
+			d.cleanupProgress(ctrl.PromptID, "")
+			if err := d.bot.UpdateCard(ctx, turn.MessageID, card); err == nil {
+				return turn.MessageID, nil
+			}
+		}
+	}
+	return d.bot.SendCard(ctx, chatID, card, "")
 }
 
 // submitSummary renders the confirmation line prepended to a submitted card.

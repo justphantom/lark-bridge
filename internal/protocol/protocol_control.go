@@ -123,6 +123,12 @@ type QuestionPayload struct {
 	RequestID string         `json:"requestID"`
 	PromptID  string         `json:"promptID"`
 	Questions []QuestionItem `json:"questions"`
+	// TakeOverProgress marks a slash-command picker card (/model, /cd…): the
+	// frontend morphs the progress card it opened for the command message into
+	// this question card instead of shipping a standalone one, so the whole
+	// command→pick→result interaction lives on one card. Mid-turn
+	// permission/question cards leave it unset and ship standalone.
+	TakeOverProgress bool `json:"takeOverProgress,omitempty"`
 }
 
 // QuestionItem is one question within a QuestionPayload.

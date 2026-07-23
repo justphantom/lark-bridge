@@ -125,6 +125,46 @@ func TestAskAndWait_ReturnsMessageID(t *testing.T) {
 	}
 }
 
+// TestAskAndWait_TakeOverProgress verifies the picker card is marked for
+// progress-card takeover and carries the caller's replyToID as its promptID,
+// so the frontend can morph the command's progress card into the picker card
+// (one-card flow).
+func TestAskAndWait_TakeOverProgress(t *testing.T) {
+	answers := NewAnswerBroker()
+	var emitted *protocol.Control
+	var gotPromptID string
+	emit := func(_ context.Context, promptID string, c *protocol.Control) error {
+		emitted = c
+		gotPromptID = promptID
+		return nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		AskAndWait(context.Background(), answers, emit, "chat-1", "om_cmd", "模型", "选择模型", StaticOptions([]string{"a"}), false)
+	}()
+
+	reqID := ""
+	for reqID == "" {
+		if ids := answers.PendingIDs(); len(ids) > 0 {
+			reqID = ids[0]
+		}
+	}
+	answers.Deliver(reqID, &protocol.AnswerPayload{RequestID: reqID, ChatID: "chat-1", Choices: []string{"a"}})
+	<-done
+
+	if emitted == nil {
+		t.Fatal("no question control emitted")
+	}
+	if !emitted.Question.TakeOverProgress {
+		t.Error("TakeOverProgress should be set on picker cards")
+	}
+	if gotPromptID != "om_cmd" {
+		t.Errorf("promptID = %q, want om_cmd", gotPromptID)
+	}
+}
+
 // TestAskAndWait_TruncatesOptionsAtCap verifies an oversized option list is
 // truncated to maxQuestionOptions before reaching the card. Feishu rejects
 // larger cards with ErrCode 11310 "element exceeds the limit".
