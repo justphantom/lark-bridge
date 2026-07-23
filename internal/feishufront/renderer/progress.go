@@ -25,13 +25,6 @@ const maxRunningTools = 5
 // timeout) without letting a verbose stack trace crowd the error zone.
 const maxToolOutputLen = 50
 
-// maxTextRunes caps the accumulated streaming text shown in the progress
-// card. The progress card is a preview, not the full reply — the result
-// card carries the complete text (maxResultRunes). 2000 runes (~20 lines
-// on mobile) is enough to convey what Claude is writing without making
-// the card extremely tall.
-const maxTextRunes = 2000
-
 // toolRow tracks one tool invocation through its lifecycle.
 type toolRow struct {
 	name       string
@@ -46,16 +39,12 @@ type toolRow struct {
 // ProgressState accumulates the streaming pieces of one prompt so each
 // progress update renders the whole card.
 type ProgressState struct {
-	textBuf   strings.Builder
 	tools     []toolRow
 	stepCount int
 }
 
 // NewProgressState builds an empty state.
 func NewProgressState() *ProgressState { return &ProgressState{} }
-
-// AddText appends a text delta.
-func (s *ProgressState) AddText(delta string) { s.textBuf.WriteString(delta) }
 
 // AddToolUse records a tool invocation start. A repeated call with the same
 // name+desc collapses into the existing row (incrementing count) rather than
@@ -231,12 +220,6 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// collapsing — failures are rare and each one's reason matters.
 	if len(errored) > 0 {
 		zones = append(zones, cardkit.MarkdownElement(strings.Join(errored, "\n")))
-	}
-
-	// Accumulated text (if any), capped so the card stays under Feishu's
-	// content limit even when the backend streams a long file.
-	if t := s.textBuf.String(); t != "" {
-		zones = append(zones, cardkit.MarkdownElement(truncateRunes(t, maxTextRunes)))
 	}
 
 	return cardkit.Card(header, footer, appendZones(zones), nil)

@@ -14,6 +14,5 @@ func (s *ProgressState) Clone() *ProgressState {
 		tools:     make([]toolRow, len(s.tools)),
 	}
 	copy(cp.tools, s.tools)
-	cp.textBuf.WriteString(s.textBuf.String())
 	return cp
 }

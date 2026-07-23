@@ -241,13 +241,15 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 		return d.notice(ctx, msg.ChatID, "warning", "后端离线",
 			"backend "+backendID+" 未连接。请用 /backend list 查看在线后端，或 /backend use {id} 切换。")
 	}
-	// 5. progress card with "starting" placeholder. Elapsed is empty here:
-	// the turn is started only after SendCard returns the messageID, so the
-	// first frame (updateProgress) is where elapsed begins to show.
+	// 5. progress card with "starting" placeholder. Body starts empty: the
+	// title "处理中" + footer status convey the state, and the first event
+	// (SessionInit/Progress) arrives shortly to populate the tool zones.
+	// Elapsed is empty here: the turn is started only after SendCard returns
+	// the messageID, so the first frame (updateProgress) is where elapsed
+	// begins to show.
 	header := cardkit.HeaderInfo{BackendType: backendType, Title: "处理中", Template: "blue"}
 	footer := cardkit.FooterInfo{BackendID: backendID, BackendType: backendType, Status: "处理中"}
 	placeholder := renderer.NewProgressState()
-	placeholder.AddText("🔄 正在启动…")
 	card, err := placeholder.Render(header, footer)
 	if err != nil {
 		// Nothing durable was established for this message yet: clear the

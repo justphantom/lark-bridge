@@ -70,8 +70,6 @@ func collectButtons(node map[string]any, out *[]any) {
 
 func TestProgressRender(t *testing.T) {
 	s := NewProgressState()
-	s.AddText("hello ")
-	s.AddText("world")
 	s.AddToolUse("bash", "ls", false, "")
 	s.AddToolResult("bash", "", "file.txt", false, false, "")
 	s.AddProgress()
@@ -82,7 +80,7 @@ func TestProgressRender(t *testing.T) {
 	all := string(mustMarshal(t, elements))
 	// "Bash" (name) and "ls" (desc) show; the completed tool's output
 	// "file.txt" does NOT — the progress card shows actions, not output.
-	for _, want := range []string{"hello world", "Bash", "ls"} {
+	for _, want := range []string{"Bash", "ls"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("progress missing %q", want)
 		}
@@ -149,23 +147,6 @@ func TestResultRender_WithSummary(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Errorf("missing %q in result card: %s", want, md)
 		}
-	}
-}
-
-// TestProgressRender_TruncatesLongText verifies accumulated streaming text is
-// capped so a long streamed file does not blow the card limit.
-func TestProgressRender_TruncatesLongText(t *testing.T) {
-	s := NewProgressState()
-	s.AddText(strings.Repeat("中", maxTextRunes*2))
-	b, err := s.Render(hdr(), ftr())
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if len(b) > 28*1024 {
-		t.Errorf("card json = %d bytes, want <= %d", len(b), 28*1024)
-	}
-	if !strings.Contains(string(b), "…") {
-		t.Error("expected truncation marker … in progress card")
 	}
 }
 

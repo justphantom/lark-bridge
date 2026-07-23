@@ -240,14 +240,14 @@ func TestRender_RunningToolsUnderCap(t *testing.T) {
 }
 
 // TestProgressRender_HrBetweenSections locks the divider behaviour: when
-// multiple zones (tools-running / text) are non-empty, hrs separate them;
+// multiple tool zones (running / completed) are non-empty, hrs separate them;
 // with only one zone, no hr is emitted. (The abort button is an action, not
 // a zone, so it does not add a divider.)
 func TestProgressRender_HrBetweenSections(t *testing.T) {
-	// running tool + text → 1 divider between 2 zones.
+	// one running + one completed → 1 divider between 2 zones.
 	s := NewProgressState()
 	s.AddToolUse("bash", "ls", false, "")
-	s.AddText("body text")
+	s.AddToolResult("read", "/a", "out", false, false, "")
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -258,7 +258,7 @@ func TestProgressRender_HrBetweenSections(t *testing.T) {
 
 	// Single zone → no divider.
 	s2 := NewProgressState()
-	s2.AddText("only text")
+	s2.AddToolUse("bash", "ls", false, "")
 	b2, err := s2.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)

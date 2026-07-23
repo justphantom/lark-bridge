@@ -142,6 +142,20 @@ func TestDispatcherThinkingIgnored(t *testing.T) {
 	}
 }
 
+// TestDispatcherTextIgnored pins that a streaming text control is a no-op:
+// the progress card no longer renders a text preview (the full reply ships
+// on the terminal result card), so TypeText must not touch the nil bot.
+func TestDispatcherTextIgnored(t *testing.T) {
+	d := NewDispatcher(nil, NewBackendRegistry(), NewTurnManager(), nil)
+	err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{
+		Type: protocol.TypeText,
+		Text: &protocol.TextPayload{Delta: "partial"},
+	}})
+	if err != nil {
+		t.Fatalf("text control should be ignored, got %v", err)
+	}
+}
+
 // TestDispatcherRememberAction verifies requestID idempotency for card
 // actions.
 func TestDispatcherRememberAction(t *testing.T) {
