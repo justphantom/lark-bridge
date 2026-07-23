@@ -25,9 +25,6 @@ const maxRunningTools = 5
 // timeout) without letting a verbose stack trace crowd the error zone.
 const maxToolOutputLen = 50
 
-// maxThinkingLen caps the visible thinking text per block.
-const maxThinkingLen = 200
-
 // maxTextRunes caps the accumulated streaming text shown in the progress
 // card. The progress card is a preview, not the full reply — the result
 // card carries the complete text (maxResultRunes). 2000 runes (~20 lines
@@ -49,17 +46,9 @@ type toolRow struct {
 // ProgressState accumulates the streaming pieces of one prompt so each
 // progress update renders the whole card.
 type ProgressState struct {
-	textBuf strings.Builder
-	// lastThinking keeps only the most recent thinking block. Both backends
-	// emit each thinking block whole (one Event per block, not token deltas),
-	// so AddThinking = one new block. Keeping just the latest reflects what the
-	// model is currently reasoning about; prior blocks are dropped to keep the
-	// card short. thinkingCount still rises with every block so the (第 k 段)
-	// marker tracks total progress.
-	lastThinking  string
-	thinkingCount int
-	tools         []toolRow
-	stepCount     int
+	textBuf   strings.Builder
+	tools     []toolRow
+	stepCount int
 }
 
 // NewProgressState builds an empty state.
@@ -67,16 +56,6 @@ func NewProgressState() *ProgressState { return &ProgressState{} }
 
 // AddText appends a text delta.
 func (s *ProgressState) AddText(delta string) { s.textBuf.WriteString(delta) }
-
-// AddThinking records a thinking block. Each call is one whole block (both
-// backends emit thinking block-wise, not as token deltas); the latest block
-// overwrites the prior so the card surfaces the model's current reasoning and
-// stays short. thinkingCount still rises with every block so the (第 k 段)
-// marker conveys how many reasoning steps have happened.
-func (s *ProgressState) AddThinking(delta string) {
-	s.lastThinking = delta
-	s.thinkingCount++
-}
 
 // AddToolUse records a tool invocation start. A repeated call with the same
 // name+desc collapses into the existing row (incrementing count) rather than
@@ -192,18 +171,9 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	}
 
 	// Each zone builds its own element (or nil when empty); appendZones
-	// inserts an hr between adjacent non-empty zones so thinking / tools /
-	// text don't run together when several are present.
+	// inserts an hr between adjacent non-empty zones so tools / text don't
+	// run together when several are present.
 	var zones []cardkit.Element
-
-	// Thinking: latest block only (capped, blockquote style). The running
-	// (第 k 段) marker tells the user reasoning is advancing even though earlier
-	// blocks are no longer shown — prior blocks are dropped to keep the card
-	// short and focused on the model's current thought.
-	if s.lastThinking != "" {
-		preview := truncateRunes(s.lastThinking, maxThinkingLen)
-		zones = append(zones, cardkit.MarkdownElement("> 💭 (第 "+strconv.Itoa(s.thinkingCount)+" 段) "+preview))
-	}
 
 	// Tools split into three zones (running → completed → error) per the
 	// four-zone card spec. Error rows are separated out so the completed

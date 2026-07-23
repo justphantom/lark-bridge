@@ -182,54 +182,6 @@ func TestAddToolResult_UpdatesDescOnNotification(t *testing.T) {
 	}
 }
 
-// TestAddThinking_KeepsLatestBlock locks the single-block behaviour: each call
-// is one whole thinking block, and only the most recent block survives (earlier
-// blocks are dropped so the card reflects current reasoning, not stacked
-// history). The count still tracks every block so the (第 k 段) marker rises.
-func TestAddThinking_KeepsLatestBlock(t *testing.T) {
-	s := NewProgressState()
-	s.AddThinking("first thought")
-	s.AddThinking("second thought that is longer")
-	s.AddThinking("third")
-	if s.lastThinking != "third" {
-		t.Errorf("lastThinking = %q, want %q", s.lastThinking, "third")
-	}
-	if s.thinkingCount != 3 {
-		t.Errorf("thinkingCount = %d, want 3", s.thinkingCount)
-	}
-	// Render shows only the latest block + the running 段 counter; earlier
-	// blocks must NOT appear (the card must not stack thinking history).
-	b, err := s.Render(hdr(), ftr())
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	body := string(b)
-	if !strings.Contains(body, "third") {
-		t.Errorf("render should contain latest block %q: %s", "third", body)
-	}
-	if !strings.Contains(body, "第 3 段") {
-		t.Errorf("render should contain 段 counter: %s", body)
-	}
-	if strings.Contains(body, "first thought") || strings.Contains(body, "second thought") {
-		t.Errorf("render must not contain dropped earlier blocks: %s", body)
-	}
-}
-
-// TestAddThinking_LongBlockTruncated pins the per-block cap so a single long
-// reasoning block (实测 claude 最长 3674 字) cannot crowd out the tool rows.
-func TestAddThinking_LongBlockTruncated(t *testing.T) {
-	s := NewProgressState()
-	long := strings.Repeat("啊", maxThinkingLen+500)
-	s.AddThinking(long)
-	b, err := s.Render(hdr(), ftr())
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if !strings.Contains(string(b), "…") {
-		t.Errorf("long thinking should be truncated with …")
-	}
-}
-
 // TestRender_RunningToolsCapped verifies that when running tools exceed
 // maxRunningTools, older ones are collapsed into a "... 及 N 个运行中"
 // summary and only the most recent maxRunningTools are shown.
@@ -287,22 +239,21 @@ func TestRender_RunningToolsUnderCap(t *testing.T) {
 	}
 }
 
-// TestProgressRender_HrBetweenSections locks the divider behaviour: when all
-// zones (thinking / tools-running / text) are non-empty, hrs separate them;
+// TestProgressRender_HrBetweenSections locks the divider behaviour: when
+// multiple zones (tools-running / text) are non-empty, hrs separate them;
 // with only one zone, no hr is emitted. (The abort button is an action, not
 // a zone, so it does not add a divider.)
 func TestProgressRender_HrBetweenSections(t *testing.T) {
-	// thinking + running tool + text → 2 dividers between 3 zones.
+	// running tool + text → 1 divider between 2 zones.
 	s := NewProgressState()
-	s.AddThinking("thinking here")
 	s.AddToolUse("bash", "ls", false, "")
 	s.AddText("body text")
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if got := strings.Count(string(b), `"tag":"hr"`); got != 2 {
-		t.Errorf("hr count = %d, want 2 (between 3 zones)", got)
+	if got := strings.Count(string(b), `"tag":"hr"`); got != 1 {
+		t.Errorf("hr count = %d, want 1 (between 2 zones)", got)
 	}
 
 	// Single zone → no divider.
@@ -567,20 +518,18 @@ func TestRender_ErrorZoneExcludesCompleted(t *testing.T) {
 	}
 }
 
-// TestRender_FourZoneOrder locks the spec's zone order — thinking → executing
-// → completed → error — by checking hr dividers appear between adjacent
-// non-empty zones. With all four content zones populated (the abort button is
-// (shown because a tool is still running) the card carries exactly 4 hrs.
-func TestRender_FourZoneOrder(t *testing.T) {
+// TestRender_ThreeZoneOrder locks the spec's zone order — executing →
+// completed → error — by checking hr dividers appear between adjacent
+// non-empty zones. With all three content zones populated the card carries
+// exactly 2 hrs.
+func TestRender_ThreeZoneOrder(t *testing.T) {
 	s := NewProgressState()
-	// Zone 1: thinking.
-	s.AddThinking("planning the approach")
-	// Zone 2: executing (one still running).
+	// Zone 1: executing (one still running).
 	s.AddToolUse("read", "/running.go", false, "")
-	// Zone 3: completed.
+	// Zone 2: completed.
 	s.AddToolUse("bash", "make build", false, "")
 	s.AddToolResult("bash", "", "ok", false, false, "")
-	// Zone 4: error.
+	// Zone 3: error.
 	s.AddToolUse("bash", "git push", false, "")
 	s.AddToolResult("bash", "", "denied", true, false, "")
 	b, err := s.Render(hdr(), ftr())
@@ -588,21 +537,20 @@ func TestRender_FourZoneOrder(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := string(b)
-	// Four content zones → 3 dividers between them. (The abort button is an
+	// Three content zones → 2 dividers between them. (The abort button is an
 	// action, not a zone.)
-	if got := strings.Count(body, `"tag":"hr"`); got != 3 {
-		t.Errorf("hr count = %d, want 3 (between 4 zones): %s", got, body)
+	if got := strings.Count(body, `"tag":"hr"`); got != 2 {
+		t.Errorf("hr count = %d, want 2 (between 3 zones): %s", got, body)
 	}
-	// Order check by byte index: thinking < running < completed < error.
+	// Order check by byte index: running < completed < error.
 	idx := func(sub string) int { return strings.Index(body, sub) }
-	for _, sub := range []string{"planning", "/running.go", "make build", "denied"} {
+	for _, sub := range []string{"/running.go", "make build", "denied"} {
 		if idx(sub) < 0 {
 			t.Fatalf("missing %q in render: %s", sub, body)
 		}
 	}
-	// Zone order must be strictly ascending: thinking < running < completed < error.
-	if idx("planning") >= idx("/running.go") || idx("/running.go") >= idx("make build") || idx("make build") >= idx("denied") {
-		t.Errorf("zone order wrong (want thinking<running<completed<error): %s", body)
+	if idx("/running.go") >= idx("make build") || idx("make build") >= idx("denied") {
+		t.Errorf("zone order wrong (want running<completed<error): %s", body)
 	}
 }
 

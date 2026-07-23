@@ -10,10 +10,8 @@ package renderer
 // turn's render no longer serialises another turn's update.
 func (s *ProgressState) Clone() *ProgressState {
 	cp := &ProgressState{
-		lastThinking:  s.lastThinking,
-		thinkingCount: s.thinkingCount,
-		stepCount:     s.stepCount,
-		tools:         make([]toolRow, len(s.tools)),
+		stepCount: s.stepCount,
+		tools:     make([]toolRow, len(s.tools)),
 	}
 	copy(cp.tools, s.tools)
 	cp.textBuf.WriteString(s.textBuf.String())

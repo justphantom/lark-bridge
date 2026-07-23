@@ -22,8 +22,11 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 			d.turns.SetSession(ctrl.PromptID, si.SessionID, si.Model)
 		}
 		return d.updateProgress(ctx, ctrl, backendType)
-	case protocol.TypeText, protocol.TypeThinking, protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress:
+	case protocol.TypeText, protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress:
 		return d.updateProgress(ctx, ctrl, backendType)
+	case protocol.TypeThinking:
+		// thinking 不再展示,忽略
+		return nil
 	case protocol.TypeResult, protocol.TypeError, protocol.TypeNotice:
 		if ctrl.PromptID != "" && !d.terminals.Add(ctrl.PromptID) {
 			return nil
@@ -76,8 +79,6 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 		// No state mutation; just re-render so footer picks up session/model.
 	case protocol.TypeText:
 		state.AddText(ctrl.Text.Delta)
-	case protocol.TypeThinking:
-		state.AddThinking(ctrl.Thinking.Delta)
 	case protocol.TypeToolUse:
 		state.AddToolUse(ctrl.ToolUse.Name, ctrl.ToolUse.Input, ctrl.ToolUse.IsSubagent, ctrl.ToolUse.TaskID)
 	case protocol.TypeToolResult:
