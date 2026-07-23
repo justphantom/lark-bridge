@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/justphantom/claude-go-sdk"
 
@@ -13,11 +12,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
-
-// textEmitInterval bounds how often TypeText deltas are
-// forwarded to the frontend. Tool/result/error controls are always sent
-// immediately so the user sees them without delay.
-const textEmitInterval = 200 * time.Millisecond
 
 // streamRun consumes a Claude event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
@@ -32,8 +26,6 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// tool_result (which carries only the id, not the name) can be
 		// rendered with the right tool row in the progress card.
 		toolNames = map[string]string{}
-
-		throttle = bridgebase.NewControlThrottle(textEmitInterval)
 	)
 
 	for ev := range events {
@@ -123,12 +115,6 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			})
 		case claude.EventText:
 			text.WriteString(ev.Text)
-			if throttle.ShouldEmitText(time.Now()) {
-				h.emitAsync(promptID, &protocol.Control{
-					Type: protocol.TypeText,
-					Text: &protocol.TextPayload{Delta: ev.Text},
-				})
-			}
 		case claude.EventToolUse:
 			if id := ev.ToolID; id != "" {
 				toolNames[id] = ev.ToolName

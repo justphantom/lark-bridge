@@ -15,11 +15,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
-// textEmitInterval bounds how often TypeText deltas are
-// forwarded to the frontend. Tool/result/error controls are always sent
-// immediately so the user sees them without delay.
-const textEmitInterval = 200 * time.Millisecond
-
 // streamRun consumes an SDK HighEvent stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
 // to a promptResult.
@@ -36,8 +31,6 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// intermediate steps' tokens and cost.
 		accInput, accOutput, accCacheRead, accCacheWrite int
 		accCost                                          float64
-
-		throttle = bridgebase.NewControlThrottle(textEmitInterval)
 	)
 
 	for ev := range events {
@@ -104,12 +97,6 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			accCost += ev.Cost()
 		case oc.HighEventText:
 			text.WriteString(ev.Text())
-			if throttle.ShouldEmitText(time.Now()) {
-				h.emitAsync(promptID, &protocol.Control{
-					Type: protocol.TypeText,
-					Text: &protocol.TextPayload{Delta: ev.Text()},
-				})
-			}
 		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
