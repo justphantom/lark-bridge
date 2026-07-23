@@ -200,24 +200,31 @@ func TestReconnect_NoBackoffResetOnConnectSuccess(t *testing.T) {
 	}
 }
 
-// TestJitteredBackoff_Range verifies the wait always lies in
-// [backoff, backoff*(1+reconnectJitter)] and that jitter is actually applied
-// (not a constant floor).
+// TestJitteredBackoff_Range verifies the wait always lies in the symmetric
+// window [backoff*(1-jitter), backoff*(1+jitter)] and that both halves of
+// the window are actually reachable (so a future tightening to
+// [backoff, backoff*(1+jitter)] would be caught).
 func TestJitteredBackoff_Range(t *testing.T) {
 	d := reconnectBackoff
+	lo := time.Duration(float64(d) * (1 - reconnectJitter))
 	hi := time.Duration(float64(d) * (1 + reconnectJitter))
-	var jitteredSeen bool
+	var belowFloor, aboveFloor int
 	for range 1000 {
 		got := jitteredBackoff(d)
-		if got < d || got > hi {
-			t.Fatalf("jitteredBackoff(%v) = %v, want [%v, %v]", d, got, d, hi)
+		if got < lo || got > hi {
+			t.Fatalf("jitteredBackoff(%v) = %v, want [%v, %v]", d, got, lo, hi)
 		}
-		if got > d {
-			jitteredSeen = true
+		if got < d {
+			belowFloor++
+		} else if got > d {
+			aboveFloor++
 		}
 	}
-	if !jitteredSeen {
-		t.Fatal("jitteredBackoff never added slack across 1000 samples; jitter not applied")
+	if belowFloor == 0 {
+		t.Fatal("jitteredBackoff never produced a wait below d across 1000 samples; lower half unreachable")
+	}
+	if aboveFloor == 0 {
+		t.Fatal("jitteredBackoff never produced a wait above d across 1000 samples; upper half unreachable")
 	}
 	if got := jitteredBackoff(0); got != 0 {
 		t.Fatalf("jitteredBackoff(0) = %v, want 0", got)

@@ -13,13 +13,15 @@ import (
 
 // reconnectBackoff is the delay before the first reconnect attempt; each
 // subsequent failure doubles the delay, capped at reconnectMaxBackoff. Each
-// wait is padded with up to reconnectJitter×backoff of random slack.
+// wait is padded with symmetric jitter of ±reconnectJitter×backoff.
 const (
 	reconnectBackoff    = 5 * time.Second
 	reconnectMaxBackoff = 60 * time.Second
-	// reconnectJitter is the random fraction of backoff added to each wait so
-	// concurrent disconnected backends don't retry in lockstep. The actual wait
-	// lies in [backoff, backoff*(1+reconnectJitter)].
+	// reconnectJitter is the half-width of the symmetric wait window used
+	// by jitteredBackoff, as a fraction of the current backoff. The actual
+	// wait lies in [backoff*(1-jitter), backoff*(1+jitter)], so concurrent
+	// disconnected backends don't retry in lockstep and a single retry
+	// can't run meaningfully earlier than the floor.
 	reconnectJitter = 0.5
 )
 
@@ -136,11 +138,15 @@ func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret 
 	}
 }
 
-// jitteredBackoff returns d plus up to reconnectJitter×d of uniformly random
-// slack, decoupling concurrent backends' retry cadence.
+// jitteredBackoff returns a uniformly random wait in
+// [d*(1-reconnectJitter), d*(1+reconnectJitter)], decoupling concurrent
+// backends' retry cadence. The window is symmetric around d so a wave of
+// simultaneous disconnects spreads both earlier and later than the floor.
 func jitteredBackoff(d time.Duration) time.Duration {
 	if d <= 0 {
 		return d
 	}
-	return d + time.Duration(rand.Int64N(int64(float64(d)*reconnectJitter)+1)) //nolint:gosec // G404: 重连退避抖动仅为打散同步重连，非密码学场景
+	lo := int64(float64(d) * (1 - reconnectJitter))
+	hi := int64(float64(d) * (1 + reconnectJitter))
+	return time.Duration(lo + rand.Int64N(hi-lo+1)) //nolint:gosec // G404: 重连退避抖动仅为打散同步重连，非密码学场景
 }
