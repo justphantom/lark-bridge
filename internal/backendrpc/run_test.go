@@ -172,6 +172,34 @@ func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 	}
 }
 
+// TestReconnect_NoBackoffResetOnConnectSuccess pins the oscillation-storm
+// fix: when Connect succeeds, reconnect must NOT reset *backoff to the
+// floor. A server that handshakes then immediately drops the stream would
+// otherwise pin backoff at reconnectBackoff forever, producing a tight
+// connect/drop storm. Reset belongs in Run, gated on a successful receive.
+func TestReconnect_NoBackoffResetOnConnectSuccess(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Pick a backoff != reconnectBackoff so a reset is detectable; keep it
+	// small so the test does not spend the backoff window waiting.
+	initial := 100 * time.Millisecond
+	backoff := initial
+	c, err := reconnect(ctx, "b-reset", "claude", ts.URL, "", &backoff, nil)
+	if err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	defer c.Close()
+	if backoff != initial {
+		t.Fatalf("backoff reset to %v after Connect success, want unchanged %v", backoff, initial)
+	}
+}
+
 // TestJitteredBackoff_Range verifies the wait always lies in
 // [backoff, backoff*(1+reconnectJitter)] and that jitter is actually applied
 // (not a constant floor).

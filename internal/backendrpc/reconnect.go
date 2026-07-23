@@ -118,7 +118,12 @@ func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret 
 			if eventErr != nil {
 				eventErr(errors.New("reconnected"))
 			}
-			*backoff = reconnectBackoff
+			// Do NOT reset backoff here: a server that accepts the SSE
+			// handshake and then immediately closes the stream would
+			// pin backoff at the floor forever, producing a tight
+			// connect/drop storm. Reset only happens in Run after a
+			// successful receive — that's the only proof the stream is
+			// actually healthy.
 			return c, nil
 		}
 		if eventErr != nil {
