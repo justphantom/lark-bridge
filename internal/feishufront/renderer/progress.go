@@ -175,8 +175,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// run together when several are present.
 	var zones []cardkit.Element
 
-	// Tools split into three zones (running → completed → error) per the
-	// four-zone card spec. Error rows are separated out so the completed
+	// Tools split into three zones (running → completed → error). Error rows are separated out so the completed
 	// zone's grouped summary counts only successes ("不含出错动作") and the
 	// error zone can list failures verbatim with their excerpts.
 	completed := 0

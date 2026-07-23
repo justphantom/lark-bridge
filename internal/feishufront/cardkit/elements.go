@@ -10,8 +10,8 @@ func MarkdownElement(text string) Element {
 	}
 }
 
-// HrElement builds a horizontal-rule divider. Used to separate the thinking /
-// tool / text zones on a progress card so adjacent markdown blocks don't run
+// HrElement builds a horizontal-rule divider. Used to separate the tool /
+// text zones on a progress card so adjacent markdown blocks don't run
 // together when several are non-empty.
 func HrElement() Element {
 	return Element{"tag": "hr"}
