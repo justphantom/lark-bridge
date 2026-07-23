@@ -89,10 +89,6 @@ func (h *Handler) emitLogged(ctx context.Context, promptID, chatID string, ctrl 
 	h.EmitLogged(ctx, promptID, chatID, ctrl)
 }
 
-func (h *Handler) emitNoticeLogged(chatID, level, title, body string, extra ...string) {
-	h.EmitNoticeLogged(chatID, level, title, body, extra...)
-}
-
 func (h *Handler) emitCardUpdateLogged(chatID, messageID, level, title, body string, extra ...string) {
 	h.EmitCardUpdateLogged(chatID, messageID, level, title, body, extra...)
 }
