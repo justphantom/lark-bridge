@@ -14,7 +14,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
-// textEmitInterval bounds how often TypeText/TypeThinking deltas are
+// textEmitInterval bounds how often TypeText deltas are
 // forwarded to the frontend. Tool/result/error controls are always sent
 // immediately so the user sees them without delay.
 const textEmitInterval = 200 * time.Millisecond
@@ -127,13 +127,6 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				h.emitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeText,
 					Text: &protocol.TextPayload{Delta: ev.Text},
-				})
-			}
-		case claude.EventThinking:
-			if throttle.ShouldEmitText(time.Now()) {
-				h.emitAsync(promptID, &protocol.Control{
-					Type:     protocol.TypeThinking,
-					Thinking: &protocol.ThinkingPayload{Delta: ev.Text},
 				})
 			}
 		case claude.EventToolUse:

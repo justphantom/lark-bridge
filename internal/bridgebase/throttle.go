@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ControlThrottle limits how often streaming text/thinking deltas are
+// ControlThrottle limits how often streaming text deltas are
 // forwarded to the frontend as Control messages, so a fast-typing model does
 // not flood the IPC channel (and the frontend's UpdateCard path). Tool,
 // result, and error controls bypass the throttle and are always sent
@@ -17,13 +17,13 @@ type ControlThrottle struct {
 	last     time.Time
 }
 
-// NewControlThrottle builds a throttle that emits at most one text/thinking
+// NewControlThrottle builds a throttle that emits at most one text
 // control per interval.
 func NewControlThrottle(interval time.Duration) *ControlThrottle {
 	return &ControlThrottle{interval: interval}
 }
 
-// ShouldEmitText reports whether a TypeText/TypeThinking control should be
+// ShouldEmitText reports whether a TypeText control should be
 // emitted now. Returns true on the first call and at most once per interval
 // thereafter. A zero or negative interval disables throttling.
 func (t *ControlThrottle) ShouldEmitText(now time.Time) bool {
