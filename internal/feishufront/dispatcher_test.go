@@ -128,6 +128,20 @@ func TestDispatcherUnknownControl(t *testing.T) {
 	}
 }
 
+// TestDispatcherThinkingIgnored pins that a thinking control is a no-op
+// (progress card no longer renders thinking): nil error, no bot call — the
+// nil bot would panic if the path touched it.
+func TestDispatcherThinkingIgnored(t *testing.T) {
+	d := NewDispatcher(nil, NewBackendRegistry(), NewTurnManager(), nil)
+	err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{
+		Type:     protocol.TypeThinking,
+		Thinking: &protocol.ThinkingPayload{Delta: "hmm"},
+	}})
+	if err != nil {
+		t.Fatalf("thinking control should be ignored, got %v", err)
+	}
+}
+
 // TestDispatcherRememberAction verifies requestID idempotency for card
 // actions.
 func TestDispatcherRememberAction(t *testing.T) {
