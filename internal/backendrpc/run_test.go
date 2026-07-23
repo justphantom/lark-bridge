@@ -2,6 +2,8 @@ package backendrpc
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
@@ -190,7 +192,8 @@ func TestReconnect_NoBackoffResetOnConnectSuccess(t *testing.T) {
 	// small so the test does not spend the backoff window waiting.
 	initial := 100 * time.Millisecond
 	backoff := initial
-	c, err := reconnect(ctx, "b-reset", "claude", ts.URL, "", &backoff, nil)
+	var failures int
+	c, err := reconnect(ctx, "b-reset", "claude", ts.URL, "", &backoff, &failures, nil)
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
@@ -228,5 +231,249 @@ func TestJitteredBackoff_Range(t *testing.T) {
 	}
 	if got := jitteredBackoff(0); got != 0 {
 		t.Fatalf("jitteredBackoff(0) = %v, want 0", got)
+	}
+}
+
+// patchReconnectTunables swaps the package-level reconnect tunables for
+// fast-testing values and returns a restore func. Tests for the give-up
+// path MUST call this: with the production 5s/60s/20 defaults a single
+// give-up takes ~15min, which is unacceptable in `go test`.
+func patchReconnectTunables(t *testing.T, backoff, maxBackoff time.Duration, maxFailures int) {
+	t.Helper()
+	origBackoff, origMaxBackoff, origMaxFailures :=
+		reconnectBackoff, reconnectMaxBackoff, maxReconnectFailures
+	reconnectBackoff, reconnectMaxBackoff, maxReconnectFailures = backoff, maxBackoff, maxFailures
+	t.Cleanup(func() {
+		reconnectBackoff, reconnectMaxBackoff, maxReconnectFailures =
+			origBackoff, origMaxBackoff, origMaxFailures
+	})
+}
+
+// TestReconnect_GivesUpAtThreshold pre-seeds the failure counter one below
+// the limit and points at an unreachable URL: reconnect must return after
+// exactly one more attempt with an ErrGiveUpReconnect error (verifiable
+// via errors.Is, so callers can branch on fatal-vs-transient).
+func TestReconnect_GivesUpAtThreshold(t *testing.T) {
+	patchReconnectTunables(t, time.Millisecond, 5*time.Millisecond, 3)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	backoff := time.Millisecond
+	failures := maxReconnectFailures - 2 // one wait, then give-up
+	start := time.Now()
+	_, err := reconnect(ctx, "b-giveup", "claude", "http://127.0.0.1:0", "",
+		&backoff, &failures, nil)
+	if err == nil {
+		t.Fatal("expected give-up error, got nil")
+	}
+	if !errors.Is(err, ErrGiveUpReconnect) {
+		t.Fatalf("errors.Is(err, ErrGiveUpReconnect) = false; err = %v", err)
+	}
+	if failures != maxReconnectFailures {
+		t.Fatalf("failures = %d, want %d", failures, maxReconnectFailures)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("give-up took %v, want fast from pre-seeded counter", d)
+	}
+}
+
+// TestReconnect_FailuresPersistAcrossConnectSuccess pins the symmetric
+// counterpart to change A: Connect success must NOT reset the failure
+// counter. Only Run's receive-success path may. Without this, a server
+// that handshakes then immediately drops the stream would never reach the
+// give-up threshold.
+func TestReconnect_FailuresPersistAcrossConnectSuccess(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	backoff := 100 * time.Millisecond
+	// Pre-seed below the threshold but well above 0; a successful Connect
+	// must increment by exactly one (the iter that succeeded), not reset.
+	preSeed := 5
+	failures := preSeed
+	c, err := reconnect(ctx, "b-persist", "claude", ts.URL, "",
+		&backoff, &failures, nil)
+	if err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	defer c.Close()
+	if failures != preSeed+1 {
+		t.Fatalf("failures = %d after Connect success, want %d (must increment by one, NOT reset to 0)",
+			failures, preSeed+1)
+	}
+}
+
+// TestRun_GivesUpAfterSustainedFailures exercises the end-to-end give-up
+// path: with patched tunables, Run connects to a live frontend, the
+// stream is broken, then every subsequent Connect is rejected — after
+// maxReconnectFailures attempts Run returns ErrGiveUpReconnect. The error
+// must be wrap-detectable so cmd/* can branch on fatal and let the
+// process exit for the supervisor to restart.
+//
+// A gating handler is used instead of httptest.Server.Close() because
+// Close blocks on outstanding SSE requests (which never finish naturally),
+// deadlocking the test against Run's blocked RecvEvent.
+func TestRun_GivesUpAfterSustainedFailures(t *testing.T) {
+	patchReconnectTunables(t, time.Millisecond, 5*time.Millisecond, 4)
+
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	var reject atomic.Bool
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reject.Load() {
+			http.Error(w, "frontend down", http.StatusServiceUnavailable)
+			return
+		}
+		srv.Routes().ServeHTTP(w, r)
+	})
+	ts := httptest.NewServer(wrapped)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, "b-e2e", "claude", ts.URL, "",
+			func(context.Context, *protocol.Event) error { return nil }, nil)
+	}()
+
+	// Wait for the initial Connect to register (proves the frontend was
+	// reachable at startup; the fail-fast path is covered by other tests).
+	regReady := time.After(2 * time.Second)
+	for {
+		if _, ok := reg.Get("b-e2e"); ok {
+			break
+		}
+		select {
+		case <-regReady:
+			t.Fatal("initial connect never registered")
+		case err := <-done:
+			t.Fatalf("Run exited before registration: %v", err)
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	// Break the live stream AND reject all new requests (including
+	// Connect's handshake). Run enters reconnect, every Connect fails, and
+	// after maxReconnectFailures attempts it gives up with ErrGiveUpReconnect.
+	reject.Store(true)
+	_ = reg.Unregister("b-e2e")
+
+	start := time.Now()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrGiveUpReconnect) {
+			t.Fatalf("errors.Is(err, ErrGiveUpReconnect) = false; err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not give up after frontend shutdown")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("give-up took %v, want fast with patched tunables", d)
+	}
+}
+
+// TestRun_RecvSuccessResetsFailures proves the give-up threshold is gated
+// on SUSTAINED failure, not lifetime attempts: each delivered event resets
+// the counter, so a stream that flaps but recovers between flaps survives
+// indefinitely. Cycles > maxReconnectFailures with a tight limit; if the
+// reset were broken, Run would give up mid-loop.
+func TestRun_RecvSuccessResetsFailures(t *testing.T) {
+	patchReconnectTunables(t, 2*time.Millisecond, 5*time.Millisecond, 3)
+
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var got atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, "b-rst", "claude", ts.URL, "",
+			func(_ context.Context, ev *protocol.Event) error {
+				if ev.Type == protocol.TypePing {
+					got.Add(1)
+				}
+				return nil
+			}, nil)
+	}()
+
+	// Wait for the first registration (Connect returns before the SSE
+	// handshake registers, so poll the registry).
+	regReady := time.After(2 * time.Second)
+	for {
+		if _, ok := reg.Get("b-rst"); ok {
+			break
+		}
+		select {
+		case <-regReady:
+			t.Fatal("backend never registered")
+		case err := <-done:
+			t.Fatalf("Run exited before first registration: %v", err)
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	// More break/recover cycles than maxReconnectFailures. Each Unregister
+	// closes the conn → RecvEvent errors → Run reconnects → Connect
+	// re-registers → we send a Ping → Run resets failures to 0.
+	cycles := maxReconnectFailures + 2
+	for range cycles {
+		reg.Unregister("b-rst")
+		// Wait for Run's reconnect to re-register.
+		rereg := time.After(2 * time.Second)
+		for {
+			if _, ok := reg.Get("b-rst"); ok {
+				break
+			}
+			select {
+			case <-rereg:
+				t.Fatal("backend did not re-register after Unregister")
+			case err := <-done:
+				t.Fatalf("Run gave up mid-cycle (failures not reset by recv): %v", err)
+			default:
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
+		if err := reg.SendEvent("b-rst", &protocol.Event{
+			Type: protocol.TypePing, Ping: &protocol.PingPayload{},
+		}); err != nil {
+			t.Fatalf("SendEvent: %v", err)
+		}
+		// Wait for the ping counter to tick.
+		prev := got.Load()
+		delivery := time.After(2 * time.Second)
+		for got.Load() == prev {
+			select {
+			case <-delivery:
+				t.Fatalf("ping %d not delivered", prev+1)
+			case err := <-done:
+				t.Fatalf("Run exited waiting for event (failures not reset): %v", err)
+			default:
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error after %d cycles: %v", cycles, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
 	}
 }
