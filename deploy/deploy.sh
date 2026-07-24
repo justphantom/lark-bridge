@@ -112,9 +112,13 @@ preflight_inflight_check() {
         return 0
     fi
 
-    local body code
-    body="$(curl -s -m 3 -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || true)"
-    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
+    # 单次 curl 用 -w $'\n%{http_code}' 把状态码追加到 body 末尾，再 tail/sed 拆分。
+    # 比原先 body 与 code 各请求一次少一轮 IPC 往返；失败时 resp 空 → code 兜底 000。
+    local resp body code
+    resp="$(curl -s -m 3 -w $'\n%{http_code}' -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || true)"
+    code="$(tail -1 <<<"$resp")"
+    [[ "$code" =~ ^[0-9]+$ ]] || code=000
+    body="$(sed '$d' <<<"$resp")"
 
     if [[ "$code" == "000" ]]; then
         # 端口不可达（服务在 active 但端口还没 listen）→ 放行，后续 stop_services 会处理。
@@ -154,8 +158,11 @@ probe_opencode_serve() {
     fi
 
     info "检查 opencode serve 就绪（$base_url/global/health）..."
-    local code body
-    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || echo 000)"
+    # 单次 curl 同时取 code+body（同 preflight 模式）。
+    local resp code body
+    resp="$(curl -s -m 3 -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
+    code="$(tail -1 <<<"$resp")"
+    [[ "$code" =~ ^[0-9]+$ ]] || code=000
     if [[ "$code" == "000" ]]; then
         warn "opencode serve 不可达（$base_url）"
         return 1
@@ -164,7 +171,7 @@ probe_opencode_serve() {
         warn "opencode serve /global/health 返回 $code（期望 200）"
         return 1
     fi
-    body="$(curl -s -m 3 -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
+    body="$(sed '$d' <<<"$resp")"
     if echo "$body" | grep -q '"healthy"[[:space:]]*:[[:space:]]*true'; then
         info "opencode serve 就绪"
         return 0
@@ -318,6 +325,23 @@ svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
 # CLI 二进制名（probe_cli 用）；feishu 无 CLI，opencode-serve 走 HTTP 探测（probe_opencode_serve）。
 svc_cli(){ case "$1" in claude) echo "claude";; opencode) echo "opencode";; miniagent) echo "miniagent";; *) echo "";; esac; }
+
+# SELECTED → SERVICES：短名 → unit 名重建。改 SELECTED 后必须调用，否则
+# stop/enable/start/验证等用 SERVICES 的地方会偏离。
+rebuild_services() {
+    SERVICES=()
+    local s
+    for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
+}
+
+# 从 SELECTED 剔除指定短名（probe 不就绪/env 占位时调用），再同步 SERVICES。
+# 用 _keep 数组保留除目标外的项，避免 splice 索引计算。
+drop_service() {
+    local drop="$1" s
+    _keep=(); for s in "${SELECTED[@]}"; do [[ "$s" != "$drop" ]] && _keep+=("$s"); done
+    SELECTED=("${_keep[@]}")
+    rebuild_services
+}
 
 # SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
 # SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
@@ -477,8 +501,7 @@ for s in "${SELECTED[@]}"; do
 done
 [[ ${#READY[@]} -gt 0 ]] || fail "选中服务均不具备部署条件"
 SELECTED=("${READY[@]}")
-SERVICES=()
-for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
+rebuild_services
 
 # 基础 config 真源优先级：repo 自定义 > repo example > tarball 解包的 example（--binaries
 # 部署目标机可能无 repo 源码，仅 tarball + deploy.sh）。
@@ -515,12 +538,15 @@ grep -Fq '"log_level":            "${LOG_LEVEL}"' "$STAGE/claude-config.json" \
 # 显式拆为 claude/opencode/miniagent-router.json（文件名仅本脚本约定，
 # 与 config 默认的 router.v5.json 不同；router_path 字段本身可配）。
 #
-# 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后追加。若
-# 用户自定义 config 缺 backend_id 字段，sed 静默不追加，回退到同一
+# 可选第 3 参数 backend_id：非空则同时改写 backend_id（opencode/miniagent 派生
+# 自 claude-config 时需改）；空则保留基底（claude/feishu）。
+# router_path 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后
+# 追加。若用户自定义 config 缺 backend_id 字段，sed 静默不追加，回退到同一
 # 默认 router.v5.json 会互相覆盖会话绑定，故注入后必须显式校验存在。
 inject_router_path() {
-    local file="$1" path="$2"
+    local file="$1" path="$2" backend_id="${3:-}"
     sed -i '/"router_path"/d' "$file"
+    [[ -n "$backend_id" ]] && sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "'"$backend_id"'",|' "$file"
     sed -i '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     grep -q '"router_path"' "$file" \
         || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），backend 将共用默认 router 文件互相覆盖"
@@ -530,8 +556,7 @@ inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 
 # opencode-back：独立 backend_id + 独立 router_path
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
-sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-1",|' "$STAGE/opencode-config.json"
-inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json"
+inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json" "opencode-1"
 
 # opencode-serve-back：派生自 opencode-config（保留 opencode_serve 字段即用）。
 # 默认部署（与其他 backend 同级）。外部 opencode serve 进程是否就绪由
@@ -539,14 +564,12 @@ inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.jso
 # 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重试直到 serve 上线。
 if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
     cp "$STAGE/opencode-config.json" "$STAGE/opencode-serve-config.json"
-    sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "opencode-serve-1",|' "$STAGE/opencode-serve-config.json"
-    inject_router_path "$STAGE/opencode-serve-config.json" "$STATE_DIR/opencode-serve-router.json"
+    inject_router_path "$STAGE/opencode-serve-config.json" "$STATE_DIR/opencode-serve-router.json" "opencode-serve-1"
 fi
 
 # miniagent-back：独立 backend_id + 独立 router_path（同 opencode 模式）
 cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
-sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "miniagent-1",|' "$STAGE/miniagent-config.json"
-inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json"
+inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
 # feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
@@ -566,10 +589,7 @@ if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
         warn "  安装 opencode（独立项目，不归本 deploy.sh 管）：https://github.com/sst/opencode"
         u="$(svc_unit opencode-serve)"
         sudo systemctl disable --now "$u" 2>/dev/null || true
-        _keep=(); for s in "${SELECTED[@]}"; do [[ "$s" != "opencode-serve" ]] && _keep+=("$s"); done
-        SELECTED=("${_keep[@]}")
-        _keep=(); for s in "${SERVICES[@]}"; do [[ "$s" != "$u" ]] && _keep+=("$s"); done
-        SERVICES=("${_keep[@]}")
+        drop_service opencode-serve
     fi
 fi
 
@@ -594,10 +614,7 @@ for s in "${SELECTED[@]}"; do
         miniagent) warn "  安装 miniagent CLI 后重新部署即可纳入：https://github.com/justphantom/miniagent" ;;
     esac
     sudo systemctl disable --now "$u" 2>/dev/null || true
-    _keep=(); for x in "${SELECTED[@]}"; do [[ "$x" != "$s" ]] && _keep+=("$x"); done
-    SELECTED=("${_keep[@]}")
-    _keep=(); for x in "${SERVICES[@]}"; do [[ "$x" != "$u" ]] && _keep+=("$x"); done
-    SERVICES=("${_keep[@]}")
+    drop_service "$s"
 done
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
