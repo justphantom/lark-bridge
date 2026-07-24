@@ -422,3 +422,78 @@ func TestIPCServer_SetLoggerConcurrent(t *testing.T) {
 	}
 	<-done
 }
+
+// TestSSESurvivesReadTimeout confirms a server-wide ReadTimeout does NOT kill
+// a healthy SSE long-poll: by the time the handler enters its flush loop the
+// request body is fully read, so the read phase is long-finished and the
+// deadline never applies to streaming endpoints. The connection must stay
+// writable well past ReadTimeout.
+func TestSSESurvivesReadTimeout(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "")
+	// Use a short ReadTimeout so the test is quick; the assertion is
+	// structural (SSE outlives ReadTimeout), not about any specific value.
+	const short = 200 * time.Millisecond
+	ts := httptest.NewUnstartedServer(srv.Routes())
+	ts.Config.ReadHeaderTimeout = ipcReadHeaderTimeout
+	ts.Config.ReadTimeout = short
+	ts.Config.IdleTimeout = ipcIdleTimeout
+	ts.Start()
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/v1/events?backendID=b1&backendType=claude")
+	if err != nil {
+		t.Fatalf("sse connect: %v", err)
+	}
+	defer resp.Body.Close()
+	// Sleep past ReadTimeout; if it applied to SSE the conn would now be dead.
+	time.Sleep(short + 100*time.Millisecond)
+	if err := reg.SendEvent("b1", &protocol.Event{Type: protocol.TypePing, Ping: &protocol.PingPayload{}}); err != nil {
+		t.Fatalf("SendEvent after ReadTimeout: %v", err)
+	}
+	reader := bufio.NewReader(resp.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read after ReadTimeout returned %v — SSE was killed by server ReadTimeout", err)
+	}
+	if !strings.HasPrefix(line, "data: ") {
+		t.Fatalf("frame prefix missing: %q", line)
+	}
+}
+
+// TestIPCReadTimeoutDropsSlowBody confirms ReadTimeout bounds the full request
+// read for non-streaming endpoints: a client that holds the body open past the
+// deadline gets cut instead of pinning a server goroutine forever. SSE is
+// exempt (proven by TestSSESurvivesReadTimeout); this test covers POST.
+func TestIPCReadTimeoutDropsSlowBody(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("b1", "claude")
+	srv := NewIPCServer(reg, "")
+	const short = 200 * time.Millisecond
+	ts := httptest.NewUnstartedServer(srv.Routes())
+	ts.Config.ReadHeaderTimeout = ipcReadHeaderTimeout
+	ts.Config.ReadTimeout = short
+	ts.Config.IdleTimeout = ipcIdleTimeout
+	ts.Start()
+	defer ts.Close()
+
+	// Open a POST whose body never completes. The server's Decode blocks
+	// waiting for the rest of the JSON; once ReadTimeout fires the conn
+	// is torn down and the client sees an error (not 202).
+	pr, pw := io.Pipe()
+	go func() {
+		// Write an INCOMPLETE JSON prefix; Decode waits for the closing
+		// brace, which never arrives within the deadline.
+		_, _ = pw.Write([]byte(`{"type":"text","backend_id":"b1"`))
+		time.Sleep(short * 4)
+		_ = pw.Close()
+	}()
+	resp, err := http.Post(ts.URL+"/v1/control/b1", "application/json", pr)
+	if err == nil {
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusAccepted {
+			t.Fatalf("slow body was accepted (status 202) — ReadTimeout did not bound the read phase")
+		}
+	}
+	// err != nil is the expected path: connection torn down by ReadTimeout.
+}

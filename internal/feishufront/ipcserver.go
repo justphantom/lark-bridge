@@ -129,9 +129,31 @@ func (s *IPCServer) Routes() http.Handler {
 // long-lived stream under its own per-frame write deadline.
 const ipcReadHeaderTimeout = 10 * time.Second
 
+// ipcReadTimeout bounds full request read (header + body) for non-streaming
+// endpoints. SSE is unaffected: by the time its handler enters the flush
+// loop the request body is already drained, so this deadline never fires on
+// a live SSE connection (verified by TestSSESurvivesReadTimeout).
+const ipcReadTimeout = 30 * time.Second
+
+// ipcIdleTimeout bounds how long a keep-alive connection may sit idle before
+// the server closes it. Backends reconnect promptly, so 120s comfortably
+// tolerates a healthy poll cycle while reaping abandoned connections.
+const ipcIdleTimeout = 120 * time.Second
+
 // Listen starts the HTTP server and blocks until it exits.
+//
+// WriteTimeout is intentionally NOT set: it would kill SSE long-polls, which
+// write for the connection's whole lifetime. The SSE handler already applies
+// a per-frame write deadline (sseWriteTimeout), which is the correct shape
+// for streaming endpoints.
 func (s *IPCServer) Listen(addr string) error {
-	srv := &http.Server{Addr: addr, Handler: s.Routes(), ReadHeaderTimeout: ipcReadHeaderTimeout}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.Routes(),
+		ReadHeaderTimeout: ipcReadHeaderTimeout,
+		ReadTimeout:       ipcReadTimeout,
+		IdleTimeout:       ipcIdleTimeout,
+	}
 	s.server.Store(srv)
 	return srv.ListenAndServe()
 }
