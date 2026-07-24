@@ -61,7 +61,8 @@
   "state_dir": "${STATE_DIR}",
 
   "timeouts": {
-    "backend_health":     "90s"
+    "backend_health":     "90s",
+    "usage_session_ttl":  "168h"
   },
 
   "dedup": {

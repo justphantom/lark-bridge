@@ -83,7 +83,7 @@ func run(cfgPath string) error {
 	// Per-session usage store: accumulates token/cost totals keyed by
 	// opencode session id. Own file (usage-opencode.json) so the claude
 	// backend sharing this state_dir never contends on the write.
-	usageStore, err := usage.New(filepath.Join(cfg.StateDir, "usage-opencode.json"), componentLogger(cfg, baseLevel, output, "usage"))
+	usageStore, err := usage.New(filepath.Join(cfg.StateDir, "usage-opencode.json"), componentLogger(cfg, baseLevel, output, "usage"), time.Duration(cfg.Timeouts.UsageSessionTTL))
 	if err != nil {
 		return fmt.Errorf("usage store: %w", err)
 	}

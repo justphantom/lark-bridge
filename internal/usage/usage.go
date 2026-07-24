@@ -24,6 +24,19 @@ const fileVersion = 1
 // filePerm is the permission for the persist file (carries cost data).
 const filePerm = 0o600
 
+// defaultSessionTTL bounds how long an idle session entry stays in memory
+// when no explicit TTL is supplied to New. 7d comfortably outlasts a typical
+// active conversation while preventing unbounded growth over a long-running
+// process. See Store.pruneLocked.
+const defaultSessionTTL = 7 * 24 * time.Hour
+
+// pruneInterval is how often saveLoop sweeps expired sessions. Long enough
+// that the steady-state cost is negligible (one map scan + at most one save
+// per 10min), short enough that stale entries do not accumulate between
+// saves. Run inside the existing saveLoop goroutine so no extra goroutine is
+// added.
+const pruneInterval = 10 * time.Minute
+
 // Delta is the per-turn contribution one Store.Add call adds. Fields not
 // relevant to a backend stay zero (e.g. opencode's Cost is usually 0).
 type Delta struct {
@@ -63,8 +76,13 @@ type fileShape struct {
 // Store accumulates per-session token/cost totals and persists them to path
 // atomically. Safe for concurrent use. An empty path makes it a pure in-memory
 // counter (no persistence) so callers can wire it unconditionally.
+//
+// Long-running processes would otherwise accumulate sessions without bound
+// (each new sessionID adds an entry that is never removed); a background
+// sweep inside saveLoop drops entries whose LastUpdate is older than ttl.
 type Store struct {
 	path   string
+	ttl    time.Duration
 	logger *log.Logger
 
 	mu       sync.Mutex
@@ -83,13 +101,18 @@ type Store struct {
 
 // New loads any existing totals from path and starts the save coalescer. A
 // missing file initialises an empty store (not an error). logger defaults to
-// a no-op when nil.
-func New(path string, logger *log.Logger) (*Store, error) {
+// a no-op when nil. ttl bounds how long an idle session entry survives; <=0
+// falls back to defaultSessionTTL so callers can pass 0 unconditionally.
+func New(path string, logger *log.Logger, ttl time.Duration) (*Store, error) {
 	if logger == nil {
 		logger = log.Nop()
 	}
+	if ttl <= 0 {
+		ttl = defaultSessionTTL
+	}
 	s := &Store{
 		path:     path,
+		ttl:      ttl,
 		logger:   logger,
 		sessions: make(map[string]*Entry),
 	}
@@ -141,6 +164,9 @@ func (s *Store) Close() {
 		}
 		close(s.saveStop)
 		<-s.saveDone
+		// Prune before the final save so the persisted file does not carry
+		// stale entries the loop had not yet swept.
+		s.pruneLocked()
 		if err := s.save(); err != nil {
 			s.logger.Error("usage final save failed",
 				log.FieldPath, s.path,
@@ -215,6 +241,10 @@ func (s *Store) saveAsync() {
 
 func (s *Store) saveLoop() {
 	defer close(s.saveDone)
+	// Drive periodic prune off the same goroutine so no extra goroutine is
+	// added. Reset each iteration; the loop exits when saveStop closes.
+	pruneTimer := time.NewTimer(pruneInterval)
+	defer pruneTimer.Stop()
 	for {
 		select {
 		case <-s.saveCh:
@@ -223,8 +253,33 @@ func (s *Store) saveLoop() {
 					log.FieldPath, s.path,
 					log.FieldError, err)
 			}
+		case <-pruneTimer.C:
+			s.pruneLocked()
+			// Trigger a save so the pruned state lands on disk; if a save
+			// is already queued the coalescer drops the duplicate signal.
+			s.saveAsync()
+			pruneTimer.Reset(pruneInterval)
 		case <-s.saveStop:
 			return
+		}
+	}
+}
+
+// pruneLocked removes entries whose LastUpdate is older than ttl. Called by
+// saveLoop on its periodic tick and by Close before the final save. Locks
+// s.mu; safe to call concurrent with Add (which also locks).
+//
+// Without this sweep the sessions map and the persisted JSON would grow
+// without bound: every /session-new or /session-del + next-prompt creates a
+// new sessionID that Add records forever. The sweep bounds steady-state
+// memory and the per-save serialisation cost (which is O(len(sessions))).
+func (s *Store) pruneLocked() {
+	cutoff := time.Now().Add(-s.ttl)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, e := range s.sessions {
+		if e.LastUpdate.Before(cutoff) {
+			delete(s.sessions, id)
 		}
 	}
 }

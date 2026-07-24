@@ -241,6 +241,12 @@ type Timeouts struct {
 	// on the process group) and the user sees a "请求超时" notice. Consumed
 	// by claude-back and opencode-back.
 	PromptTimeout Duration `json:"prompt_timeout,omitempty"`
+	// UsageSessionTTL bounds how long a per-session usage entry stays in
+	// memory (and on disk). Entries whose LastUpdate is older than this are
+	// pruned by a background sweep so the in-memory map and the persisted
+	// JSON cannot grow without bound over a long-running process.
+	// 0/absent → 7d. Consumed by every backend that wires a usage store.
+	UsageSessionTTL Duration `json:"usage_session_ttl,omitempty"`
 }
 
 // DedupConfig configures the frontend's application-layer replay guard.

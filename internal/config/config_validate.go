@@ -93,6 +93,11 @@ func validate(cfg *Config) error {
 	if d := time.Duration(cfg.Timeouts.PromptTimeout); d > 0 && d < minTunableTimeout {
 		return fmt.Errorf("timeouts.prompt_timeout must be >= %s when set, got %s", minTunableTimeout, d)
 	}
+	// 1h floor: anything tighter would drop normal session lifetimes (an
+	// active conversation can run hours) and serve no pruning purpose.
+	if d := time.Duration(cfg.Timeouts.UsageSessionTTL); d > 0 && d < time.Hour {
+		return fmt.Errorf("timeouts.usage_session_ttl must be >= 1h when set, got %s", d)
+	}
 
 	// Replay-guard ranges. Zero values are valid (means "use dispatcher default").
 	if d := time.Duration(cfg.Dedup.StaleWindow); d > 0 && d < minTunableTimeout {

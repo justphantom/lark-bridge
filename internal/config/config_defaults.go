@@ -96,4 +96,7 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Timeouts.BackendHealth == 0 {
 		cfg.Timeouts.BackendHealth = Duration(90 * time.Second)
 	}
+	if cfg.Timeouts.UsageSessionTTL == 0 {
+		cfg.Timeouts.UsageSessionTTL = Duration(7 * 24 * time.Hour)
+	}
 }

@@ -422,14 +422,15 @@ func TestDurationUnmarshal(t *testing.T) {
 }
 
 // TestLoad_TimeoutsDefaults verifies that a config without a "timeouts"
-// section gets the BackendHealth default.
+// section gets the BackendHealth and UsageSessionTTL defaults.
 func TestLoad_TimeoutsDefaults(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{}`))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	want := Timeouts{
-		BackendHealth: Duration(90 * time.Second),
+		BackendHealth:   Duration(90 * time.Second),
+		UsageSessionTTL: Duration(7 * 24 * time.Hour),
 	}
 	if cfg.Timeouts != want {
 		t.Fatalf("defaults = %+v, want %+v", cfg.Timeouts, want)
@@ -473,6 +474,35 @@ func TestLoad_PromptTimeoutMinDuration(t *testing.T) {
 	_, err := Load(writeConfig(t, `{"timeouts": {"prompt_timeout": "1ns"}}`))
 	if err == nil || !strings.Contains(err.Error(), "prompt_timeout must be >=") {
 		t.Fatalf("want err about prompt_timeout floor, got %v", err)
+	}
+}
+
+// TestLoad_UsageSessionTTL verifies UsageSessionTTL defaults to 7d when
+// omitted and that an explicit value is preserved.
+func TestLoad_UsageSessionTTL(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `{}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := Duration(7 * 24 * time.Hour); cfg.Timeouts.UsageSessionTTL != want {
+		t.Errorf("default usage_session_ttl = %v, want %v", cfg.Timeouts.UsageSessionTTL, want)
+	}
+
+	cfg2, err := Load(writeConfig(t, `{"timeouts": {"usage_session_ttl": "72h"}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := Duration(72 * time.Hour); cfg2.Timeouts.UsageSessionTTL != want {
+		t.Errorf("usage_session_ttl = %v, want %v", cfg2.Timeouts.UsageSessionTTL, want)
+	}
+}
+
+// TestLoad_UsageSessionTTLMinDuration verifies a sub-1h usage_session_ttl is
+// rejected so a misconfigured value cannot drop entries mid-conversation.
+func TestLoad_UsageSessionTTLMinDuration(t *testing.T) {
+	_, err := Load(writeConfig(t, `{"timeouts": {"usage_session_ttl": "30m"}}`))
+	if err == nil || !strings.Contains(err.Error(), "usage_session_ttl must be >= 1h") {
+		t.Fatalf("want err about usage_session_ttl floor, got %v", err)
 	}
 }
 

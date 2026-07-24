@@ -5,10 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStore_AddAccumulates(t *testing.T) {
-	s, _ := New("", nil)
+	s, _ := New("", nil, 0)
 	defer s.Close()
 
 	s.Add(Delta{SessionID: "s1", ChatID: "c1", Input: 100, Output: 50, CacheRead: 200, Cost: 1.0, Turns: 1})
@@ -28,7 +29,7 @@ func TestStore_AddAccumulates(t *testing.T) {
 }
 
 func TestStore_AddEmptySessionIgnored(t *testing.T) {
-	s, _ := New("", nil)
+	s, _ := New("", nil, 0)
 	defer s.Close()
 	s.Add(Delta{SessionID: "", Input: 999})
 	if len(s.Snapshot()) != 0 {
@@ -37,7 +38,7 @@ func TestStore_AddEmptySessionIgnored(t *testing.T) {
 }
 
 func TestStore_Get(t *testing.T) {
-	s, _ := New("", nil)
+	s, _ := New("", nil, 0)
 	defer s.Close()
 
 	// Missing session.
@@ -72,7 +73,7 @@ func TestStore_PersistsAndReloads(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "usage-test.json")
 
-	s1, err := New(path, nil)
+	s1, err := New(path, nil, 0)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestStore_PersistsAndReloads(t *testing.T) {
 	}
 
 	// Reload and verify accumulation continues.
-	s2, err := New(path, nil)
+	s2, err := New(path, nil, 0)
 	if err != nil {
 		t.Fatalf("reload New: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestStore_PersistsAndReloads(t *testing.T) {
 
 func TestStore_MissingFileNotError(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(filepath.Join(dir, "nonexistent.json"), nil)
+	s, err := New(filepath.Join(dir, "nonexistent.json"), nil, 0)
 	if err != nil {
 		t.Fatalf("missing file should not error, got %v", err)
 	}
@@ -121,7 +122,7 @@ func TestStore_MalformedFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
 	os.WriteFile(path, []byte("{not json"), 0o600)
-	if _, err := New(path, nil); err == nil {
+	if _, err := New(path, nil, 0); err == nil {
 		t.Fatal("malformed file should error")
 	}
 }
@@ -130,7 +131,7 @@ func TestStore_WrongVersionErrors(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "v.json")
 	os.WriteFile(path, []byte(`{"version":999,"sessions":{}}`), 0o600)
-	if _, err := New(path, nil); err == nil {
+	if _, err := New(path, nil, 0); err == nil {
 		t.Fatal("wrong version should error")
 	}
 }
@@ -143,7 +144,7 @@ func TestStore_CloseFlushesPendingSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "usage.json")
 
-	s, err := New(path, nil)
+	s, err := New(path, nil, 0)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -171,10 +172,66 @@ func TestStore_CloseFlushesPendingSave(t *testing.T) {
 func TestStore_CloseIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "usage.json")
-	s, err := New(path, nil)
+	s, err := New(path, nil, 0)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	s.Close()
 	s.Close() // must not panic or block
+}
+
+// TestStore_PruneRemovesExpired verifies the TTL sweep drops entries whose
+// LastUpdate is older than ttl and keeps the rest. Without this sweep the
+// sessions map and the persisted JSON would grow without bound over a long-
+// running process (every new sessionID adds an entry that is never removed).
+func TestStore_PruneRemovesExpired(t *testing.T) {
+	s, _ := New("", nil, time.Hour)
+	defer s.Close()
+
+	// Add a fresh session, then age its LastUpdate back beyond ttl.
+	s.Add(Delta{SessionID: "fresh", Input: 10, Turns: 1})
+	s.Add(Delta{SessionID: "stale", Input: 20, Turns: 1})
+
+	s.mu.Lock()
+	old := s.sessions["stale"]
+	old.LastUpdate = time.Now().Add(-2 * time.Hour) // older than the 1h ttl
+	s.mu.Unlock()
+
+	s.pruneLocked()
+
+	if _, ok := s.Get("stale"); ok {
+		t.Error("stale session was not pruned")
+	}
+	if _, ok := s.Get("fresh"); !ok {
+		t.Error("fresh session was incorrectly pruned")
+	}
+}
+
+// TestStore_PruneOnCloseFlushesToDisk verifies Close prunes before the final
+// save, so a stale entry does not survive across process restarts.
+func TestStore_PruneOnCloseFlushesToDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "usage.json")
+
+	s1, _ := New(path, nil, time.Hour)
+	s1.Add(Delta{SessionID: "stale", Input: 10, Turns: 1})
+	s1.Add(Delta{SessionID: "fresh", Input: 20, Turns: 1})
+
+	s1.mu.Lock()
+	s1.sessions["stale"].LastUpdate = time.Now().Add(-2 * time.Hour)
+	s1.mu.Unlock()
+
+	s1.Close()
+
+	data, _ := os.ReadFile(path)
+	var f fileShape
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, exists := f.Sessions["stale"]; exists {
+		t.Error("stale session persisted across Close (final save did not prune)")
+	}
+	if _, exists := f.Sessions["fresh"]; !exists {
+		t.Error("fresh session was lost on Close")
+	}
 }
