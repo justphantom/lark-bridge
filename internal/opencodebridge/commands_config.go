@@ -9,6 +9,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // cmdModel pins, clears, or interactively selects the model for the current
@@ -25,10 +26,10 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 	}
 
 	if len(args) == 0 {
-		// Interactive picker runs async (opencode models is slow); emit a
-		// placeholder Notice immediately, then Handled so the dispatcher
-		// does not also send one.
-		return h.runModelPicker(chatID, b.ModelSpec), nil
+		// Interactive picker runs async (opencode models is slow); the
+		// command's progress card becomes the picker card (see
+		// runModelPicker), so the dispatcher must not also send one.
+		return h.runModelPicker(chatID, b.ModelSpec, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearModelSpec(h, chatID, b.ModelSpec), nil
@@ -46,17 +47,23 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 
 // runModelPicker drives the interactive model selection in a background
 // goroutine. The opencode CLI takes 25–50s to list models, so the command
-// returns immediately with a placeholder Notice (Handled=true, dispatcher
-// skips its own Notice); goSafe runs the slow list → Question → wait →
-// confirm loop on h.AppCtx, emitting the selection card and result Notice
-// itself. oldSpec is captured by value so concurrent /model calls do not race
-// on the binding snapshot.
-func (h *Handler) runModelPicker(chatID, oldSpec string) commandResult {
-	h.emitNoticeLogged(chatID, "info", "正在加载模型列表", "正在获取可用模型，请稍候（约半分钟）…")
+// returns immediately (Handled=true, dispatcher skips its own Notice);
+// goSafe runs the slow list → Question → wait → confirm loop on h.AppCtx.
+// The whole flow lives on the command's progress card: a text delta marks the
+// loading phase, the Question control carries replyToID so the frontend
+// morphs that card into the picker (TakeOverProgress), and the result patches
+// the same card via UpdateMessageID. oldSpec is captured by value so
+// concurrent /model calls do not race on the binding snapshot.
+func (h *Handler) runModelPicker(chatID, oldSpec, replyToID string) commandResult {
+	h.emitAsync(replyToID, &protocol.Control{
+		Type:   protocol.TypeText,
+		ChatID: chatID,
+		Text:   &protocol.TextPayload{Delta: "🔍 正在获取可用模型，请稍候（约半分钟）…\n"},
+	})
 	bridgebase.GoSafe(h.Logger, "model-picker:"+chatID, func() {
-		choice, messageID, err := h.AskAndWait(chatID, "", "模型", "选择模型", h.agent.ListModels, true)
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "模型", "选择模型", h.agent.ListModels, true)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+			h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 			return
 		}
 		old := oldSpec
@@ -97,7 +104,7 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 	}
 
 	if len(args) == 0 {
-		return h.runAgentPicker(chatID, b.Agent), nil
+		return h.runAgentPicker(chatID, b.Agent, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearAgentSpec(h, chatID, b.Agent), nil
@@ -114,13 +121,18 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 }
 
 // runAgentPicker is the agent analogue of runModelPicker. See that function
-// for why it runs async, emits its own notices, and returns Handled.
-func (h *Handler) runAgentPicker(chatID, oldAgent string) commandResult {
-	h.emitNoticeLogged(chatID, "info", "正在加载 agent 列表", "正在获取可用 agent，请稍候（约半分钟）…")
+// for why it runs async, keeps the flow on the command's progress card, and
+// returns Handled.
+func (h *Handler) runAgentPicker(chatID, oldAgent, replyToID string) commandResult {
+	h.emitAsync(replyToID, &protocol.Control{
+		Type:   protocol.TypeText,
+		ChatID: chatID,
+		Text:   &protocol.TextPayload{Delta: "🔍 正在获取可用 agent，请稍候（约半分钟）…\n"},
+	})
 	bridgebase.GoSafe(h.Logger, "agent-picker:"+chatID, func() {
-		choice, messageID, err := h.AskAndWait(chatID, "", "agent", "选择 agent", h.agent.ListAgents, true)
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "agent", "选择 agent", h.agent.ListAgents, true)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+			h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 			return
 		}
 		old := oldAgent

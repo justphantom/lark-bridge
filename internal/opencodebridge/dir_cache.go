@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
@@ -17,14 +18,14 @@ import (
 //
 // Changing the directory resets the session: --session would otherwise resume
 // a conversation referencing files under the old directory.
-func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdDirectory(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runDirPicker(chatID, b.Directory), nil
+		return h.runDirPicker(chatID, b.Directory, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
 		return clearDirectory(h, chatID, b.Directory), nil
@@ -56,8 +57,11 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID string, args []string) 
 // input — selection is restricted to listed dirs), and pins the chosen
 // directory's full path. Uses askAndWait's listFn form so the (cached) scan
 // runs on the picker's own ctx, matching the opencode picker convention.
-func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, "", "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
+// replyToID keeps the flow on the command's progress card (see runModelPicker);
+// pre-answer failures terminate that card via emitPromptNotice, post-answer
+// failures patch the picker card.
+func (h *Handler) runDirPicker(chatID, oldDir, replyToID string) commandResult {
+	choice, messageID, err := h.AskAndWait(chatID, replyToID, "目录", "选择工作目录", func(_ context.Context) ([]string, error) {
 		dirs, err := h.DirCache.List()
 		if err != nil {
 			return nil, err
@@ -69,14 +73,14 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 		return names, nil
 	}, false)
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	// Resolve the basename back to its full path. listWorkspaceDirs is the
 	// source of truth; a re-scan is cheap and avoids a stale name→path map.
 	dirs, err := h.DirCache.List()
 	if err != nil {
-		h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+		h.emitCardUpdateLogged(chatID, messageID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	dir := ""
@@ -87,13 +91,14 @@ func (h *Handler) runDirPicker(chatID, oldDir string) commandResult {
 		}
 	}
 	if dir == "" {
-		h.emitNoticeLogged(chatID, "error", "选择失败", "选中的目录已不存在")
+		h.emitCardUpdateLogged(chatID, messageID, "error", "选择失败", "选中的目录已不存在")
 		return commandResult{Body: "选中的目录已不存在", Handled: true}
 	}
 	// Switching to the same directory is a no-op: skip the session reset so
-	// the user keeps their conversation context.
+	// the user keeps their conversation context. Patch the picker card in
+	// place rather than emitting a standalone info card.
 	if dir == filepath.Clean(oldDir) {
-		h.emitNoticeLogged(chatID, "info", "目录未变化", "选中的目录与当前一致，会话保留。")
+		h.emitCardUpdateLogged(chatID, messageID, "info", "目录未变化", "选中的目录与当前一致，会话保留。")
 		return commandResult{Handled: true}
 	}
 	old := oldDir
