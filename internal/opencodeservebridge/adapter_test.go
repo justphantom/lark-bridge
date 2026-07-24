@@ -85,7 +85,7 @@ func TestListModels_FiltersByConnected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a, err := NewAgent(AgentConfig{BaseURL: srv.URL}, nil)
+	a, err := NewAgent(context.Background(), AgentConfig{BaseURL: srv.URL}, nil)
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestListModels_ConnectedFailureFallsBack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a, err := NewAgent(AgentConfig{BaseURL: srv.URL}, nil)
+	a, err := NewAgent(context.Background(), AgentConfig{BaseURL: srv.URL}, nil)
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestListModels_ConnectedFailureFallsBack(t *testing.T) {
 func TestStreamForPoolsPerDirectory(t *testing.T) {
 	// The streams connect in the background; an unreachable URL is fine —
 	// the pool bookkeeping under test never touches the network.
-	a, err := NewAgent(AgentConfig{BaseURL: "http://127.0.0.1:1"}, nil)
+	a, err := NewAgent(context.Background(), AgentConfig{BaseURL: "http://127.0.0.1:1"}, nil)
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}
@@ -175,5 +175,67 @@ func TestStreamForPoolsPerDirectory(t *testing.T) {
 	}
 	if err := a.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
+	}
+}
+
+// TestStreamForEvictsLRUOnCapacity verifies the pool cap: once
+// maxConcurrentStreams directories are pooled, accessing a new directory
+// evicts the least-recently-used stream (closes it, drops it from the map)
+// and adds the new one. Without this cap a long-running process would
+// accumulate one stream (and its long-lived SSE connection + pump goroutine)
+// per directory ever /cd-ed.
+func TestStreamForEvictsLRUOnCapacity(t *testing.T) {
+	a, err := NewAgent(context.Background(), AgentConfig{BaseURL: "http://127.0.0.1:1"}, nil)
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	defer a.Close()
+
+	// Fill the pool exactly to capacity.
+	streams := make(map[string]*oc.GlobalEventStream, maxConcurrentStreams)
+	for i := range maxConcurrentStreams {
+		dir := "/repo/" + string(rune('a'+i))
+		s := a.streamFor(&oc.LocationRef{Directory: dir})
+		streams[dir] = s
+	}
+	if len(a.streams) != maxConcurrentStreams {
+		t.Fatalf("after fill: streams = %d, want %d", len(a.streams), maxConcurrentStreams)
+	}
+
+	// Access the first entry so the second entry becomes the LRU candidate.
+	// Use the cleaned key the pool stores ("/repo/a" with filepath.Clean).
+	a.streamFor(&oc.LocationRef{Directory: "/repo/a/"})
+
+	// Add one more directory: pool is full, the LRU entry must be evicted.
+	// After re-touching /repo/a, the LRU is /repo/b.
+	newStream := a.streamFor(&oc.LocationRef{Directory: "/repo/z"})
+	_ = newStream // presence in the pool is asserted below; pointer unused
+	if len(a.streams) != maxConcurrentStreams {
+		t.Errorf("after eviction: streams = %d, want %d (cap held)", len(a.streams), maxConcurrentStreams)
+	}
+	// /repo/b should be gone (it was the LRU).
+	if _, exists := a.streams["/repo/b"]; exists {
+		t.Error("LRU entry /repo/b was not evicted")
+	}
+	// /repo/a should still be present (we just touched it).
+	if _, exists := a.streams["/repo/a"]; !exists {
+		t.Error("/repo/a was evicted despite a recent touch")
+	}
+	// /repo/z should be present.
+	if _, exists := a.streams["/repo/z"]; !exists {
+		t.Error("/repo/z was not added to the pool")
+	}
+	// The evicted stream pointer must differ from any pooled stream.
+	for _, s := range a.streams {
+		if s.s == streams["/repo/b"] {
+			t.Error("evicted stream pointer is still reachable from the pool")
+		}
+	}
+	// Touching a still-pooled key must NOT close or replace its stream
+	// (the LRU update is metadata-only).
+	before := a.streams["/repo/a"].s
+	after := a.streamFor(&oc.LocationRef{Directory: "/repo/a"})
+	if before != after {
+		t.Error("touch of a pooled key returned a different stream (was replaced, not just refreshed)")
 	}
 }

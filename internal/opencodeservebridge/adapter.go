@@ -56,23 +56,42 @@ type AgentConfig struct {
 	MaxConcurrent int
 }
 
+// maxConcurrentStreams caps how many distinct directory-scoped event
+// streams live concurrently. Each GlobalEventStream holds one long-lived
+// HTTP SSE connection plus its pump goroutine, so without a cap a user
+// /cd-ing through many project directories would accumulate streams and
+// connections for the whole process lifetime. At capacity a new directory
+// evicts the least-recently-used stream and closes it. 8 comfortably covers
+// the number of directories a single user actively switches between; raising
+// it is a one-line change if a multi-user deployment ever needs more.
+const maxConcurrentStreams = 8
+
 // Agent wraps the opencode-go-sdk-lite Client as the production opencodeAPI
 // implementation. The v1 event bus is isolated by directory, so SSE streams
-// are pooled per working directory (lazy, lives until Close); each Run is one
-// SDK Run (CreateSession or resume + Prompt + pump) on its directory's
-// stream. Safe for concurrent use.
+// are pooled per working directory (lazy, lives until Close or LRU-evicted);
+// each Run is one SDK Run (CreateSession or resume + Prompt + pump) on its
+// directory's stream. Safe for concurrent use.
 type Agent struct {
 	baseURL string
 	client  *oc.Client
 	logger  *log.Logger
+	appCtx  context.Context
 	sem     chan struct{}
 
 	streamsMu sync.Mutex
-	streams   map[string]*oc.GlobalEventStream
+	streams   map[string]*streamEntry
 
 	listMu      sync.Mutex
 	modelsCache *listCache
 	agentsCache *listCache
+}
+
+// streamEntry pairs a pooled SDK stream with the last time it was handed
+// out, so streamFor can evict the least-recently-used entry when the pool
+// is at capacity. Guarded by Agent.streamsMu.
+type streamEntry struct {
+	s        *oc.GlobalEventStream
+	lastUsed time.Time
 }
 
 type listCache struct {
@@ -81,8 +100,14 @@ type listCache struct {
 }
 
 // NewAgent builds an Agent. Event streams are created lazily per directory on
-// the first Run. The logger defaults to a no-op logger if nil.
-func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
+// the first Run, pooled with an LRU cap (maxConcurrentStreams). appCtx is
+// passed to the SDK at stream creation; pass context.Background() to mirror
+// pre-existing behaviour (the pool is reaped by Close on shutdown). The
+// logger defaults to a no-op logger if nil.
+func NewAgent(appCtx context.Context, cfg AgentConfig, logger *log.Logger) (*Agent, error) {
+	if appCtx == nil {
+		appCtx = context.Background()
+	}
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -101,8 +126,9 @@ func NewAgent(cfg AgentConfig, logger *log.Logger) (*Agent, error) {
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		client:  client,
 		logger:  logger,
+		appCtx:  appCtx,
 		sem:     make(chan struct{}, n),
-		streams: make(map[string]*oc.GlobalEventStream),
+		streams: make(map[string]*streamEntry),
 	}, nil
 }
 
@@ -144,12 +170,12 @@ func (a *Agent) RejectQuestion(ctx context.Context, requestID, directory string)
 func (a *Agent) Close() error {
 	a.streamsMu.Lock()
 	streams := a.streams
-	a.streams = make(map[string]*oc.GlobalEventStream)
+	a.streams = make(map[string]*streamEntry)
 	a.streamsMu.Unlock()
 	var err error
-	for _, s := range streams {
-		if e := s.Close(); e != nil {
-			err = e
+	for _, e := range streams {
+		if closeErr := e.s.Close(); closeErr != nil {
+			err = closeErr
 		}
 	}
 	return err

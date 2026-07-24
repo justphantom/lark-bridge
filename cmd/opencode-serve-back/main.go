@@ -69,7 +69,7 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	client, err := opencodeservebridge.NewAgent(opencodeservebridge.AgentConfig{
+	client, err := opencodeservebridge.NewAgent(context.Background(), opencodeservebridge.AgentConfig{
 		BaseURL:       cfg.OpencodeServe.BaseURL,
 		Username:      cfg.OpencodeServe.Username,
 		Password:      cfg.OpencodeServe.Password,
