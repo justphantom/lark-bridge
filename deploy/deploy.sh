@@ -393,6 +393,19 @@ if $INIT; then
 fi
 [[ -f "$PROJECT_ROOT/.env" ]] || fail "未找到 .env（用 --init 自动生成或手动 cp deploy/env.example）"
 
+# 补齐缺失变量：env.example 里有、而 repo 根 .env 里没有的 KEY，用 example 的
+# 默认值整行追加。已存在的 KEY 一律不动（尊重运维已配置的值）。应对升级新增了
+# 变量、旧 .env 没有的情况（如 OPENCODE_SERVER_PASSWORD 缺失导致进程启动 expand 失败）。
+if [[ -f "$PROJECT_ROOT/deploy/env.example" ]]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] || continue
+        key="${BASH_REMATCH[1]}"
+        grep -q "^${key}=" "$PROJECT_ROOT/.env" && continue
+        printf '%s\n' "$line" >> "$PROJECT_ROOT/.env"
+        info "补齐缺失变量 ${key}（用 env.example 默认值）"
+    done < "$PROJECT_ROOT/deploy/env.example"
+fi
+
 # 检查 .env 是否仍含占位值（首次部署容易忘改）
 check_env_placeholder() {
     local key="$1" pattern="$2" hint="$3"
