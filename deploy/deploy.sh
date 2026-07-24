@@ -128,24 +128,19 @@ preflight_inflight_check() {
     info "无运行中会话，可安全部署"
 }
 
-# 检查外部 opencode serve 进程是否就绪。opencode-serve-back 是客户端，连一个
+# 探测外部 opencode serve 进程是否就绪。opencode-serve-back 是客户端，连一个
 # operator-managed 的 `opencode serve` HTTP 服务器（base_url 取自 config 的
-# opencode_serve.base_url，默认 http://127.0.0.1:4096）。serve 未就绪时 backend
-# 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重启——表现为"部署成功
-# 但 backend 反复崩溃"。本检查在部署时提前告警 + 给安装指引，避免运维事后翻
-# journalctl 排障。不 fail：尊重"先部署 backend，稍后再起 serve"的顺序（backend
-# 重启循环会自己等 serve 上线）。
+# opencode_serve.base_url，默认 http://127.0.0.1:4096）。就绪返回 0，否则 1 并
+# warn 原因。作为 opencode-serve-back 部署的硬性条件：不就绪时由调用方停止、
+# 禁用现有单元并从本次部署集合剔除，避免 backend 反复崩溃-重启。
 #
 # base_url 真源是 STAGE 里刚生成的 opencode-serve-config.json（从 config 模板的
 # opencode_serve 块派生），而非硬编码端口，以贴合 backend 启动时实际读到的值。
-check_opencode_serve_ready() {
-    # 仅当本次部署含 opencode-serve 时检查。
-    [[ " ${SELECTED[*]} " == *" opencode-serve "* ]] || return 0
-
+probe_opencode_serve() {
     local cfg="$STAGE/opencode-serve-config.json"
     if [[ ! -f "$cfg" ]]; then
-        warn "opencode-serve-config 未生成，跳过 serve 就绪检查"
-        return 0
+        warn "opencode-serve-config 未生成"
+        return 1
     fi
 
     # 无 jq，用 grep+sed 容错提取 opencode_serve.base_url。
@@ -153,8 +148,8 @@ check_opencode_serve_ready() {
     base_url="$(grep -oE '"base_url"[[:space:]]*:[[:space:]]*"[^"]+"' "$cfg" \
         | sed -E 's/.*"base_url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)"
     if [[ -z "$base_url" ]]; then
-        warn "opencode-serve-config 缺 opencode_serve.base_url，跳过 serve 就绪检查"
-        return 0
+        warn "opencode-serve-config 缺 opencode_serve.base_url"
+        return 1
     fi
 
     info "检查 opencode serve 就绪（$base_url/global/health）..."
@@ -162,21 +157,19 @@ check_opencode_serve_ready() {
     code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$base_url/global/health" 2>/dev/null || echo 000)"
     if [[ "$code" == "000" ]]; then
         warn "opencode serve 不可达（$base_url）"
-        warn "  opencode-serve-back 会反复重启直到 serve 上线。请确认 opencode serve 已启动："
-        warn "    opencode serve  # 默认监听 :4096；或用 systemd 独立管理该进程"
-        warn "  安装 opencode（独立项目，不归本 deploy.sh 管）：https://github.com/sst/opencode"
-        return 0
+        return 1
     fi
     if [[ "$code" != "200" ]]; then
-        warn "opencode serve /global/health 返回 $code（期望 200）；backend 可能启动失败"
-        return 0
+        warn "opencode serve /global/health 返回 $code（期望 200）"
+        return 1
     fi
     body="$(curl -s -m 3 "$base_url/global/health" 2>/dev/null || true)"
     if echo "$body" | grep -q '"healthy"[[:space:]]*:[[:space:]]*true'; then
         info "opencode serve 就绪"
-    else
-        warn "opencode serve /global/health 返回 200 但 body 非 {healthy:true}：$body"
+        return 0
     fi
+    warn "opencode serve /global/health 返回 200 但 body 非 {healthy:true}：$body"
+    return 1
 }
 
 # 轮询等待服务 active，最多 ~15s；避免冷启动时固定 sleep 导致的误判
@@ -417,6 +410,47 @@ check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
 check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
 check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
 
+# 服务部署条件：基于 repo 根 .env 的占位值判定（占位 = 不具备条件）。
+# feishu 依赖飞书凭证非占位；miniagent 依赖 MINIAGENT_API_KEY 非占位；
+# claude/opencode/opencode-serve 无需用户密钥（OPENCODE_SERVER_PASSWORD 有合法
+# 默认值 opencode）→ 恒具备。
+svc_env_ready() {
+    local envf="$PROJECT_ROOT/.env"
+    case "$1" in
+        feishu)
+            grep -q '^FEISHU_APP_ID=cli_xxx' "$envf" 2>/dev/null && return 1
+            grep -q '^FEISHU_APP_SECRET=xxx' "$envf" 2>/dev/null && return 1
+            return 0 ;;
+        miniagent)
+            grep -q '^MINIAGENT_API_KEY=sk-xxx' "$envf" 2>/dev/null && return 1
+            return 0 ;;
+        *) return 0 ;;
+    esac
+}
+
+# 按 env 条件筛选本次选中服务：不具备的停止并禁用现有单元（避免反复重启），
+# 并从 SELECTED 剔除。feishu 是前端基础（所有 backend 经 Wants= 依赖它），
+# 选中却不具备条件直接 fail——其余 backend 部署了也连不上前端。未选中的
+# 服务不触碰（多机分离部署时后端机 .env 无飞书凭证属正常）。
+READY=()
+for s in "${SELECTED[@]}"; do
+    if svc_env_ready "$s"; then READY+=("$s"); continue; fi
+    u="$(svc_unit "$s")"
+    if [[ "$s" == "feishu" ]]; then
+        fail "FEISHU_APP_ID/SECRET 仍为占位值，无法部署前端（所有 backend 依赖前端）。请编辑 .env 填入真实飞书凭证后重试"
+    fi
+    if systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null; then
+        warn "$s 不具备部署条件（env 占位值），停止并禁用 $u"
+        sudo systemctl disable --now "$u" 2>/dev/null || true
+    else
+        warn "$s 不具备部署条件（env 占位值），跳过"
+    fi
+done
+[[ ${#READY[@]} -gt 0 ]] || fail "选中服务均不具备部署条件"
+SELECTED=("${READY[@]}")
+SERVICES=()
+for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
+
 # 基础 config 真源优先级：repo 自定义 > repo example > tarball 解包的 example（--binaries
 # 部署目标机可能无 repo 源码，仅 tarball + deploy.sh）。
 if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
@@ -486,9 +520,25 @@ cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
 info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"
 
-# opencode-serve-back 的外部依赖（opencode serve 进程）就绪检查。放在 STAGE
-# config 生成后、stop_services 前：此时 base_url 已可读，且告警先于服务重启。
-check_opencode_serve_ready
+# opencode serve 进程就绪是 opencode-serve-back 部署的硬性条件：不就绪则停止、
+# 禁用现有单元并从 SELECTED/SERVICES 剔除（与 env 占位不具备条件的服务同处理），
+# 避免 backend 反复崩溃-重启。放在 STAGE config 生成后、stop_services 前：
+# base_url 此时可读，且停禁先于本次服务重启。
+if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
+    if probe_opencode_serve; then
+        info "opencode serve 就绪，opencode-serve-back 纳入部署"
+    else
+        warn "opencode serve 未就绪，停止并禁用 opencode-serve-back（本次不部署）"
+        warn "  启动后重新部署即可纳入：opencode serve（默认监听 :4096）"
+        warn "  安装 opencode（独立项目，不归本 deploy.sh 管）：https://github.com/sst/opencode"
+        u="$(svc_unit opencode-serve)"
+        sudo systemctl disable --now "$u" 2>/dev/null || true
+        _keep=(); for s in "${SELECTED[@]}"; do [[ "$s" != "opencode-serve" ]] && _keep+=("$s"); done
+        SELECTED=("${_keep[@]}")
+        _keep=(); for s in "${SERVICES[@]}"; do [[ "$s" != "$u" ]] && _keep+=("$s"); done
+        SERVICES=("${_keep[@]}")
+    fi
+fi
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
