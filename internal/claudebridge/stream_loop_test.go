@@ -17,14 +17,14 @@ func TestSummarizeToolInput_Subject(t *testing.T) {
 	// TaskCreate carries subject (short title) and description (long paragraph);
 	// subject must win so the card shows the title, not the paragraph.
 	input := `{"subject":"梳理架构","description":"通过阅读源码全面理解...","activeForm":"正在梳理"}`
-	if got := bridgebase.SummarizeToolInput(input); got != "梳理架构" {
+	if got := bridgebase.SummarizeToolInput("", input); got != "梳理架构" {
 		t.Errorf("summarizeToolInput subject = %q, want 梳理架构", got)
 	}
 }
 
 func TestSummarizeToolInput_FilePath(t *testing.T) {
 	input := `{"file_path":"/opt/codes/README.md"}`
-	if got := bridgebase.SummarizeToolInput(input); got != "/opt/codes/README.md" {
+	if got := bridgebase.SummarizeToolInput("", input); got != "/opt/codes/README.md" {
 		t.Errorf("summarizeToolInput = %q", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestSummarizeToolInput_MCPFields(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := bridgebase.SummarizeToolInput(tc.input); got != tc.want {
+			if got := bridgebase.SummarizeToolInput("", tc.input); got != tc.want {
 				t.Errorf("bridgebase.SummarizeToolInput(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
@@ -61,7 +61,7 @@ func TestSummarizeToolInput_ToolIdentifiers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := bridgebase.SummarizeToolInput(tc.input); got != tc.want {
+			if got := bridgebase.SummarizeToolInput("", tc.input); got != tc.want {
 				t.Errorf("bridgebase.SummarizeToolInput(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
@@ -72,7 +72,7 @@ func TestSummarizeToolInput_FirstStringValueFallback(t *testing.T) {
 	// Unrecognised tool with no common key: the first string value beats
 	// returning the raw JSON.
 	input := `{"foo":"bar","count":3}`
-	if got := bridgebase.SummarizeToolInput(input); got != "bar" {
+	if got := bridgebase.SummarizeToolInput("", input); got != "bar" {
 		t.Errorf("summarizeToolInput = %q, want bar (first string value)", got)
 	}
 }

@@ -13,10 +13,13 @@ import (
 )
 
 func TestSummarizeToolInput(t *testing.T) {
+	// toolName is the empty string for the generic cases below (the function
+	// only routes on exact "todowrite"); todowrite-specific cases set it.
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name     string
+		toolName string
+		input    string
+		want     string
 	}{
 		{
 			name:  "empty returns empty",
@@ -49,14 +52,26 @@ func TestSummarizeToolInput(t *testing.T) {
 			want:  "explore repo",
 		},
 		{
+			// Generic fallback still works for unknown tools carrying a
+			// string field — the todowrite special path is gated on toolName
+			// exact equality, so a non-todowrite tool with the same input
+			// shape must NOT fold to a count.
 			name:  "unknown fields with a string fall back to first string value",
-			input: `{"todos":[{"content":"a"}],"note":"hi"}`,
+			input: `{"records":[{"id":1}],"note":"hi"}`,
 			want:  "hi",
 		},
 		{
 			name:  "unknown fields with no string fall back to raw input",
-			input: `{"todos":[{"content":"a"}],"count":3}`,
-			want:  `{"todos":[{"content":"a"}],"count":3}`,
+			input: `{"records":[{"id":1}],"count":3}`,
+			want:  `{"records":[{"id":1}],"count":3}`,
+		},
+		{
+			// todowrite special path: a todos array folds to a count and
+			// the per-item content never leaks into the summary.
+			name:     "todowrite folds todos to count",
+			toolName: "todowrite",
+			input:    `{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"pending"}]}`,
+			want:     "清单 1/2",
 		},
 		{
 			name:  "MCP project (snake_case) extracted",
@@ -76,8 +91,8 @@ func TestSummarizeToolInput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := bridgebase.SummarizeToolInput(tc.input); got != tc.want {
-				t.Errorf("bridgebase.SummarizeToolInput(%q) = %q, want %q", tc.input, got, tc.want)
+			if got := bridgebase.SummarizeToolInput(tc.toolName, tc.input); got != tc.want {
+				t.Errorf("bridgebase.SummarizeToolInput(%q, %q) = %q, want %q", tc.toolName, tc.input, got, tc.want)
 			}
 		})
 	}

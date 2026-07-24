@@ -121,7 +121,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName, Input: bridgebase.SummarizeToolInput(ev.ToolInput)},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName, Input: bridgebase.SummarizeToolInput(ev.ToolName, ev.ToolInput)},
 			})
 		case claude.EventToolResult:
 			// claude tool_result carries only the id; look up the name

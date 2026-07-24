@@ -100,7 +100,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// forward-compat so the row still opens as running.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput())},
 			})
 		case opencode.EventToolResult:
 			// opencode's "task" tool IS the subagent delegation.
@@ -109,7 +109,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:       ev.GetToolName(),
-					Input:      bridgebase.SummarizeToolInput(ev.GetToolInput()),
+					Input:      bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput()),
 					Output:     ev.GetText(),
 					IsError:    ev.GetIsToolError(),
 					IsSubagent: isSub,

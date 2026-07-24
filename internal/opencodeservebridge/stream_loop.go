@@ -100,7 +100,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName(), Input: bridgebase.SummarizeToolInput(ev.ToolInput())},
+				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName(), Input: bridgebase.SummarizeToolInput(ev.ToolName(), ev.ToolInput())},
 			})
 		case oc.HighEventToolResult:
 			// opencode's "task" tool IS the subagent delegation.
@@ -109,7 +109,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:       ev.ToolName(),
-					Input:      bridgebase.SummarizeToolInput(ev.ToolInput()),
+					Input:      bridgebase.SummarizeToolInput(ev.ToolName(), ev.ToolInput()),
 					Output:     ev.Text(),
 					IsError:    ev.IsToolError(),
 					IsSubagent: isSub,

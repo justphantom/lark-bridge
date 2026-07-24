@@ -1,6 +1,9 @@
 package bridgebase
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // SummarizeToolInput extracts a human-readable description from a tool_use
 // JSON input. Instead of showing raw JSON like {"file_path":"..."}, it
@@ -8,7 +11,12 @@ import "encoding/json"
 // instead of "Read: {...}". Covers both naming generations: claude's
 // snake_case native tools (file_path) and opencode's camelCase ones
 // (filePath); MCP tools pass through server-defined params in either shape.
-func SummarizeToolInput(input string) string {
+//
+// toolName routes tool-specific summarisation: todowrite carries a todos
+// array (no single value conveys progress), so it folds to "清单 N/M"
+// (N=non-pending, M=total). The match is exact-equality — todoread is a
+// different tool and must NOT take this path.
+func SummarizeToolInput(toolName, input string) string {
 	if input == "" || input == "{}" {
 		return ""
 	}
@@ -16,6 +24,13 @@ func SummarizeToolInput(input string) string {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(input), &m); err != nil {
 		return input // not JSON, show as-is
+	}
+	if toolName == "todowrite" {
+		if summary := summarizeTodoWrite(m); summary != "" {
+			return summary
+		}
+		// Malformed todowrite input (no usable todos array): fall through
+		// to the generic path so the card still shows something.
 	}
 	// subject is a short title (TaskCreate); prefer it over description,
 	// which is a long paragraph.
@@ -40,4 +55,26 @@ func SummarizeToolInput(input string) string {
 		}
 	}
 	return input
+}
+
+// summarizeTodoWrite folds a todowrite tool input `{"todos":[...]}` into
+// "清单 N/M" (N=non-pending, M=total). Returns "" when there is no usable
+// todos array, so the caller can fall back to the generic summary path.
+func summarizeTodoWrite(m map[string]any) string {
+	arr, ok := m["todos"].([]any)
+	if !ok || len(arr) == 0 {
+		return ""
+	}
+	nonPending := 0
+	for _, raw := range arr {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		status, _ := item["status"].(string)
+		if status != "pending" {
+			nonPending++
+		}
+	}
+	return "清单 " + strconv.Itoa(nonPending) + "/" + strconv.Itoa(len(arr))
 }
