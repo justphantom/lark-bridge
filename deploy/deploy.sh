@@ -158,13 +158,18 @@ probe_opencode_serve() {
     fi
 
     info "检查 opencode serve 就绪（$base_url/global/health）..."
-    # 单次 curl 同时取 code+body（同 preflight 模式）。
+    # 单次 curl 同时取 code+body（同 preflight 模式）。code=000（不可达）时重试
+    # 1 次：opencode serve 在远端，瞬时网络抖动不应让 backend 被错误剔除。
     local resp code body
-    resp="$(curl -s -m 3 -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
-    code="$(tail -1 <<<"$resp")"
-    [[ "$code" =~ ^[0-9]+$ ]] || code=000
+    for _ in 1 2; do
+        resp="$(curl -s -m 3 -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
+        code="$(tail -1 <<<"$resp")"
+        [[ "$code" =~ ^[0-9]+$ ]] || code=000
+        [[ "$code" != "000" ]] && break
+        sleep 1
+    done
     if [[ "$code" == "000" ]]; then
-        warn "opencode serve 不可达（$base_url）"
+        warn "opencode serve 不可达（$base_url，重试 1 次仍失败）"
         return 1
     fi
     if [[ "$code" != "200" ]]; then
@@ -343,6 +348,24 @@ drop_service() {
     rebuild_services
 }
 
+# 等待单元就绪失败时先 stop 再 fail：单元已 enabled，systemd 会按 Restart=on-failure
+# 每 5s 反复重启留下半残状态，stop 后才让运维介入。$1=unit 名 $2=失败消息。
+fail_after_stop() {
+    local unit="$1" msg="$2"
+    sudo systemctl stop "$unit" 2>/dev/null || true
+    fail "$msg"
+}
+
+# 转义 sed replacement 文本里的元字符（& \ 和分隔符 |），避免 update_env_key
+# 写入 PROJECT_ROOT 等含特殊字符路径时被解释为反向引用或截断。
+escape_sed_replace() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//&/\\&}"
+    s="${s//|/\\|}"
+    printf '%s' "$s"
+}
+
 # SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
 # SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
 SELECTED=()
@@ -417,7 +440,10 @@ ensure_binaries
 # 所有 sed 在临时副本上操作，repo 里的源 config 不被污染（git 不变 dirty）。
 info "准备配置文件..."
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+# EXIT/HUP/INT/TERM 时清理 STAGE 临时目录与 DEPLOY_DIR 残留 .new 临时文件
+# （cp 后 mv 前被中断会留下 .X.new，归 root；不清理会污染目录但每次 cp 覆盖亦无害，
+# 仍清理以保持整洁）。trap 即使正常完成也触发一次，那时已 mv 完成，rm 无害。
+trap 'rm -rf "$STAGE"; sudo rm -f "$DEPLOY_DIR"/.lark-*.new 2>/dev/null || true' EXIT
 
 if $INIT; then
     if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
@@ -652,10 +678,14 @@ sudo chmod 600 "$CONFIG_DIR"/*.json
 # 了 .env 的任何键（凭证、模型、工作区等）重新部署即生效；不再保留
 # CONFIG_DIR 上的旧 .env。
 # update_env_key 幂等更新一个键：存在用 sed 改整行，不存在追加。
+# val 经 escape_sed_replace 转义后传入 sed，防止 PROJECT_ROOT 等路径含 & / |
+# 时被解释为反向引用或截断分隔符。
 update_env_key() {
     local key="$1" val="$2" file="$3"
+    local esc_val
+    esc_val="$(escape_sed_replace "$val")"
     if sudo grep -q "^${key}=" "$file"; then
-        sudo sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+        sudo sed -i "s|^${key}=.*|${key}=${esc_val}|" "$file"
     else
         echo "${key}=${val}" | sudo tee -a "$file" > /dev/null
     fi
@@ -704,15 +734,18 @@ done
 info "启动服务..."
 sudo systemctl daemon-reload
 # enable 所有服务开机自启，但不 --now；下面显式控制启动顺序。
-sudo systemctl enable "${SERVICES[@]}" 2>/dev/null || true
+# 不吞错到 /dev/null：write_unit 已生成文件，enable 真失败说明 systemd 自身
+# 异常（路径冲突等），保留 stderr 让 set -e 立即暴露根因。仍 || true：
+# 部分 systemctl 版本对已 enabled 的单元返回非 0，不视为部署失败。
+sudo systemctl enable "${SERVICES[@]}" || true
 
 # 先起前端（若本次部署含前端），等 IPC 端口 listen，避免后端连不上而崩溃-重启。
 # 仅部署 backend 时前端已在运行，跳过等待直接起 backend。
 if [[ " ${SELECTED[*]} " == *" feishu "* ]]; then
     front_unit="$(svc_unit feishu)"
     sudo systemctl start "$front_unit"
-    wait_active "$front_unit" || fail "$front_unit 启动失败"
-    wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
+    wait_active "$front_unit" || fail_after_stop "$front_unit" "$front_unit 启动失败"
+    wait_listen || fail_after_stop "$front_unit" "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 fi
 
 # 端口已通，再起选中的 backend（不含 feishu，并行互不依赖）
@@ -770,5 +803,11 @@ fi
 if $all_ok; then
     info "部署完成"
 else
-    fail "部分服务启动失败，请检查 journalctl -u {service}"
+    # 失败单元输出最近 10 行日志，避免运维手敲 journalctl；sudo 因为日志归 root。
+    for svc in "${SERVICES[@]}"; do
+        systemctl is-active --quiet "$svc" 2>/dev/null && continue
+        warn "$svc 最近日志（journalctl -u $svc -n 10）："
+        sudo journalctl -u "$svc" -n 10 --no-pager 2>/dev/null | sed 's/^/    /' || true
+    done
+    fail "部分服务启动失败（详见上方 journalctl 摘要）"
 fi
