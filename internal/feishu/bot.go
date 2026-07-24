@@ -99,6 +99,11 @@ type Bot struct {
 	// since Start blocks on select{} and never returns, a permanently-dead link
 	// leaves the process up but dropping every message. 0 means "never healthy".
 	lastHealthy atomic.Int64
+
+	// restartCount 累积 soft-restart 次数,达 restartMax 后 Restart 返回
+	// ErrTooManyRestarts,调用方应让进程退出交由 supervisor 重启。健康恢复时
+	// (markHealthy)清零,仅持续故障才触顶。
+	restartCount atomic.Int32
 }
 
 // BotOption configures a Bot at construction time.
@@ -219,17 +224,32 @@ func (b *Bot) Start(ctx context.Context) error {
 	return nil
 }
 
+// restartMax 限制 soft-restart 累积次数。每次 Restart 必 leak 一个旧 goroutine
+// (SDK 用 select{} 结束 Start,见 Restart 注释),达限后返回 ErrTooManyRestarts
+// 退出进程,由 systemd 拉起干净副本。健康恢复(markHealthy)清零,仅持续故障
+// 触顶。最快 wsFatalAfter/次,5 次即最坏 25min 故障容忍窗口。
+const restartMax = 5
+
+// ErrTooManyRestarts 由 Restart 返回:累计 soft-restart 次数已达 restartMax。
+// 调用方应让进程退出交由 supervisor(systemd Restart=on-failure)拉起干净副本,
+// 避免在 SDK 无法回收旧 Start goroutine 的情况下无限累积。
+var ErrTooManyRestarts = errors.New("feishu: too many soft restarts; exit for supervisor recovery")
+
 // Restart swaps the underlying WS channel for a fresh one in place. On success
 // subsequent Load() returns the new channel; the old channel is stopped.
 //
 // 旧 goroutine leak 不可根除:larksuite SDK 在 ws/client.go:230 用裸 select{}
 // 结束 Start,既不监听 ctx 也不响应 Close,所以旧 Start goroutine 永不返回。每次
-// Restart 必 leak 一个旧 goroutine(P1 将加 restartCount 限流),详见
-// docs/feishu-ws-soft-restart.md §8「已知限制」。
+// Restart 必 leak 一个旧 goroutine,由 restartCount+restartMax 限流:累计达
+// restartMax 后返回 ErrTooManyRestarts,调用方 os.Exit 让 supervisor 拉起干净
+// 副本。markHealthy 清零计数。详见 docs/feishu-ws-soft-restart.md §8「已知限制」。
 //
 // P0 未做串行化:并发 Restart 会丢失对中间 channel 的引用,watchdog tick 间隔
 // 30s 远大于 Restart 耗时,P1 加 sync.Mutex 收口。
 func (b *Bot) Restart(ctx context.Context) error {
+	if b.restartCount.Add(1) > restartMax {
+		return ErrTooManyRestarts
+	}
 	fresh := b.freshChannel()
 	b.registerHandlersOn(fresh)
 	old := b.ch.Swap(&fresh)
@@ -253,6 +273,7 @@ func (b *Bot) LastHealthy() time.Time {
 
 func (b *Bot) markHealthy() {
 	b.lastHealthy.Store(time.Now().UnixNano())
+	b.restartCount.Store(0)
 }
 
 // ShouldExitUnhealthy reports whether the watchdog should fatal-exit the

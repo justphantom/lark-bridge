@@ -180,6 +180,52 @@ func TestRestart_NoOldChannelNoStop(t *testing.T) {
 	}
 }
 
+// TestRestart_LimitReturnsAfterMax pins the leak-bounds contract: each
+// Restart increments restartCount; at restartMax+1 it returns
+// ErrTooManyRestarts so the watchdog can exit for supervisor recovery
+// instead of leaking goroutines unboundedly.
+func TestRestart_LimitReturnsAfterMax(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // 释放所有阻塞的 Start goroutine
+
+	b := &Bot{logger: log.Nop()}
+	b.newChannelFn = func() sdktypes.Channel { return newRecordingChannel() }
+
+	for i := 1; i <= restartMax; i++ {
+		if err := b.Restart(ctx); err != nil {
+			t.Fatalf("Restart #%d: unexpected error: %v", i, err)
+		}
+	}
+	if err := b.Restart(ctx); !errors.Is(err, ErrTooManyRestarts) {
+		t.Fatalf("Restart #%d: err = %v, want ErrTooManyRestarts", restartMax+1, err)
+	}
+}
+
+// TestMarkHealthy_ResetsRestartCount verifies the soft-restart budget
+// resets when the connection recovers (OnReady / OnReconnected / outbound
+// success), so a deployment with intermittent WS issues that recovers
+// between events is not eventually killed.
+func TestMarkHealthy_ResetsRestartCount(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b := &Bot{logger: log.Nop()}
+	b.newChannelFn = func() sdktypes.Channel { return newRecordingChannel() }
+
+	for i := range restartMax - 1 {
+		if err := b.Restart(ctx); err != nil {
+			t.Fatalf("Restart #%d before reset: %v", i+1, err)
+		}
+	}
+	b.markHealthy()
+
+	for i := range restartMax {
+		if err := b.Restart(ctx); err != nil {
+			t.Fatalf("Restart #%d after reset: %v", i+1, err)
+		}
+	}
+}
+
 // TestNewBotWithLogger_UsesNewChannel verifies the constructor stores a
 // channel, wires larkClient/imService, and that registerHandlersOn mounts
 // every lifecycle callback. Uses withChannelFactory so OnXXX counts are

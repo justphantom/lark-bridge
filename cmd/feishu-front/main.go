@@ -209,7 +209,12 @@ func run(cfgPath, addr string) error {
 						"last_healthy", bot.LastHealthy(),
 						"fatal_after", wsFatalAfter)
 					if err := bot.Restart(ctx); err != nil {
-						logger.Error("soft restart failed, fall back to exit", log.FieldError, err)
+						if errors.Is(err, feishu.ErrTooManyRestarts) {
+							logger.Error("soft restart budget exhausted, exit for supervisor recovery",
+								log.FieldError, err)
+						} else {
+							logger.Error("soft restart failed, fall back to exit", log.FieldError, err)
+						}
 						os.Exit(1)
 					}
 					startedAt = time.Now() // 重置宽限窗口,给新连接同样 5min
