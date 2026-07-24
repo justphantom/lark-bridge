@@ -140,6 +140,10 @@ func run(cfgPath, addr string) error {
 	// Periodic TTL sweep for the three dedup sets: Add is O(1) on the hot
 	// path, so this ticker is what keeps the TTL-only sets bounded.
 	dispatcher.StartDedupPrune(ctx)
+	// Periodic TTL sweep for the routing table: a chat that neither sends a
+	// message nor switches backend for 14d is treated as abandoned and pruned
+	// (persisted), so long-running deployments do not accumulate dead groups.
+	router.StartPrune(ctx, 14*24*time.Hour)
 
 	ipc.SetOnOffline(dispatcher.OnBackendOffline)
 	ipc.SetOnOnline(dispatcher.OnBackendOnline)

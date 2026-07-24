@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestLayer1Router_UnboundReturnsError(t *testing.T) {
@@ -105,5 +106,99 @@ func TestLayer1Router_ConcurrentSetDoesNotCorruptFile(t *testing.T) {
 	}
 	if _, ok := f.Routes["set-0"]; !ok {
 		t.Errorf("Set binding lost after concurrent writes; routes=%v", f.Routes)
+	}
+}
+
+// TestLayer1Router_PruneRemovesStale verifies Prune drops only entries whose
+// lastAccess is older than the TTL. "fresh" was just Set (lastAccess=now);
+// "stale" is hand-seeded with a 30d-old lastAccess.
+func TestLayer1Router_PruneRemovesStale(t *testing.T) {
+	r, _ := NewLayer1Router("")
+	_ = r.Set("fresh", "b1")
+	r.mu.Lock()
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	r.routes["stale"] = routeEntry{BackendID: "b1", UpdatedAt: old.Unix(), lastAccess: old}
+	r.mu.Unlock()
+
+	if removed := r.Prune(14 * 24 * time.Hour); removed != 1 {
+		t.Fatalf("Prune removed %d, want 1", removed)
+	}
+	if _, err := r.Resolve("stale"); err == nil {
+		t.Error("stale entry should have been pruned")
+	}
+	if _, err := r.Resolve("fresh"); err != nil {
+		t.Error("fresh entry should remain")
+	}
+}
+
+// TestLayer1Router_ResolveRefreshesLastAccess verifies a Resolve hit bumps
+// lastAccess so an otherwise-old entry is not pruned while still active.
+func TestLayer1Router_ResolveRefreshesLastAccess(t *testing.T) {
+	r, _ := NewLayer1Router("")
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	r.mu.Lock()
+	r.routes["c1"] = routeEntry{BackendID: "b1", UpdatedAt: old.Unix(), lastAccess: old}
+	r.mu.Unlock()
+
+	if _, err := r.Resolve("c1"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if removed := r.Prune(14 * 24 * time.Hour); removed != 0 {
+		t.Errorf("Prune removed %d after Resolve, want 0 (Resolve refreshes lastAccess)", removed)
+	}
+}
+
+// TestLayer1Router_LoadSeedsLastAccessFromUpdatedAt verifies that after a
+// restart the in-memory lastAccess is seeded from the persisted UpdatedAt,
+// so a chat bound long ago (and not yet Resolved) is prunable.
+func TestLayer1Router_LoadSeedsLastAccessFromUpdatedAt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.json")
+	stale := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	raw := `{"routes":{"c1":{"backendID":"b1","updatedAt":` + strconv.FormatInt(stale, 10) + `}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	r, err := NewLayer1Router(path)
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	if removed := r.Prune(14 * 24 * time.Hour); removed != 1 {
+		t.Errorf("Prune removed %d, want 1 (stale UpdatedAt should seed an old lastAccess)", removed)
+	}
+}
+
+// TestLayer1Router_PrunePersists verifies a Prune that removes entries Save()s
+// the pruned state, so a reload does not resurrect deleted bindings.
+func TestLayer1Router_PrunePersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.json")
+	r, _ := NewLayer1Router(path)
+	_ = r.Set("keep", "b1")
+	r.mu.Lock()
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	r.routes["gone"] = routeEntry{BackendID: "b1", UpdatedAt: old.Unix(), lastAccess: old}
+	r.mu.Unlock()
+
+	if removed := r.Prune(14 * 24 * time.Hour); removed != 1 {
+		t.Fatalf("Prune removed %d, want 1", removed)
+	}
+	r2, _ := NewLayer1Router(path)
+	if _, err := r2.Resolve("gone"); err == nil {
+		t.Error("pruned entry survived reload")
+	}
+	if _, err := r2.Resolve("keep"); err != nil {
+		t.Error("kept entry lost after reload")
+	}
+}
+
+// TestLayer1Router_PruneZeroTTLNoop verifies a non-positive TTL disables
+// pruning (defensive guard, not a sweep of everything).
+func TestLayer1Router_PruneZeroTTLNoop(t *testing.T) {
+	r, _ := NewLayer1Router("")
+	_ = r.Set("c1", "b1")
+	if removed := r.Prune(0); removed != 0 {
+		t.Errorf("Prune(0) removed %d, want 0", removed)
+	}
+	if _, err := r.Resolve("c1"); err != nil {
+		t.Error("entry should remain after Prune(0)")
 	}
 }
