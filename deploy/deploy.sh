@@ -49,6 +49,12 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
+# ERR trap：set -e 触发的失败（非 || true 容忍的）打出失败行 + 命令，定位根因。
+# -E 让 trap 在函数内也生效。fail() 自己 exit 1（非失败命令），不触发 ERR，
+# 故 fail 的退出消息独占一行。${RED}/${NC} 在 trap 触发时（运行时）求值，已定义。
+set -E
+trap 'echo -e "${RED}[FAIL]${NC} 错误行 $LINENO: $BASH_COMMAND" >&2' ERR
+
 # 从 repo 根 .env 读 KEY=VALUE 的 VALUE（与 probe_opencode_serve 同源）；文件
 # 不存在或键缺失返回空。首次部署（.env 还未生成）时返回空，由调用方默认值兜底。
 # || true 兜底：pipefail 下 grep 无匹配会返回 1，使命令替换在 set -e 下误退出。
@@ -366,6 +372,20 @@ escape_sed_replace() {
     printf '%s' "$s"
 }
 
+# 体检：RUN_USER 是否具备免密 sudo。remote /deploy（经 deploy-monitor 触发本
+# 脚本）无 tty，sudo 没配 NOPASSWD 会挂起到 deploy-monitor 超时——前置到步骤0
+# 前，让运维第一时间看到修复建议，而不是部署完才发现下次远程会挂。
+deploy_sudo_check() {
+    if sudo -u "$RUN_USER" sudo -n systemctl is-active "$(svc_unit feishu)" >/dev/null 2>&1; then
+        info "$RUN_USER 具备免密 sudo"
+    else
+        warn "$RUN_USER 无免密 sudo，remote /deploy 将挂起至超时失败"
+        warn "  修复：配 /etc/sudoers.d/lark-bridge，例如："
+        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/chmod, /usr/bin/chown, /usr/bin/sed, /usr/bin/tee, /usr/bin/rm, /usr/bin/mv"
+        warn "  （仅授予本脚本用到的命令，遵循最小权限）"
+    fi
+}
+
 # SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
 # SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
 SELECTED=()
@@ -390,7 +410,8 @@ if [[ -z "$BINARIES_SRC" ]]; then
     command -v make >/dev/null || fail "未安装 make"
 fi
 
-# ── 步骤 0：部署前会话检查（先于构建，避免浪费编译时间）──
+# ── 步骤 0：部署前会话检查 + sudo 体检（先于构建，避免浪费编译时间）──
+deploy_sudo_check
 if $FORCE; then
     warn "--force：跳过运行中会话检查，强制部署（可能打断正在进行的对话）"
 else
@@ -455,10 +476,11 @@ if $INIT; then
             fail "找不到 env.example 模板（repo deploy/ 或 tarball）"
         fi
     fi
-    # 生成 IPC_SECRET（仅匹配未改过的占位符）
+    # 生成 IPC_SECRET（仅匹配未改过的占位符）。用 _init_secret 前缀避免与下方
+    # 函数内的 local secret 同名混淆（顶层赋值在 bash 中是全局污染）。
     if grep -q '^IPC_SECRET=change-me' "$PROJECT_ROOT/.env" 2>/dev/null; then
-        secret="$(openssl rand -hex 32)"
-        sed -i "s|^IPC_SECRET=.*|IPC_SECRET=$secret|" "$PROJECT_ROOT/.env"
+        _init_secret="$(openssl rand -hex 32)"
+        sed -i "s|^IPC_SECRET=.*|IPC_SECRET=$_init_secret|" "$PROJECT_ROOT/.env"
         info "已自动生成 IPC_SECRET"
     fi
     warn ".env 中的飞书凭证等仍需手动填写"
@@ -755,21 +777,6 @@ for s in "${SELECTED[@]}"; do
     backends+=("$(svc_unit "$s")")
 done
 [[ ${#backends[@]} -eq 0 ]] || sudo systemctl start "${backends[@]}"
-
-# ⚠ 运行前提：$RUN_USER 必须对 systemctl/cp/mkdir/chmod 等具备 NOPASSWD sudo，
-# 否则远程 /deploy（经 deploy-monitor 触发本脚本）会在 sudo 处挂起至超时。
-# 这里主动探测一次免密 sudo，失败则告警。
-deploy_sudo_check() {
-    if sudo -u "$RUN_USER" sudo -n systemctl is-active lark-feishu-front >/dev/null 2>&1; then
-        info "$RUN_USER 具备免密 sudo"
-    else
-        warn "$RUN_USER 无免密 sudo，remote /deploy 将挂起至超时失败"
-        warn "  修复：配 /etc/sudoers.d/lark-bridge，例如："
-        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/chmod, /usr/bin/chown, /usr/bin/sed, /usr/bin/tee, /usr/bin/rm, /usr/bin/mv"
-        warn "  （仅授予本脚本用到的命令，遵循最小权限）"
-    fi
-}
-deploy_sudo_check
 
 # ── 步骤 6：验证（轮询 is-active，替代固定 sleep）─────
 info "验证..."
