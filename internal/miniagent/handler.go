@@ -225,3 +225,17 @@ func (h *Handler) notifyWithPromptID(chatID, promptID, level, title, message str
 		Notice:   &protocol.NoticePayload{Level: level, Title: title, Message: message},
 	})
 }
+
+// notifyWithCardUpdate patches an existing card (identified by messageID) via
+// the frontend's UpdateCard path, instead of binding to PromptID. Used by
+// pickers to turn the picker card into a green/red result frame after the
+// user answered — the card the user clicked is the one that should change,
+// not the (now-finalised) progress card. Empty messageID falls back to a
+// standalone notice, matching notify semantics.
+func (h *Handler) notifyWithCardUpdate(chatID, messageID, level, title, message string) {
+	h.sendCtrl(&protocol.Control{
+		Type:   protocol.TypeNotice,
+		ChatID: chatID,
+		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: message, UpdateMessageID: messageID},
+	})
+}
