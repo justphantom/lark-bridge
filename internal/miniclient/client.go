@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -104,9 +104,11 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	// (passing one fails startup with "flag provided but not defined"). Inherit
 	// the parent env so PATH/HOME/etc. survive, then set/override the key.
 	cmd.Env = append(os.Environ(), "MINIAGENT_API_KEY="+c.apiKey)
-	// Own process group so cancellation SIGKILLs the whole tree (the CLI
-	// spawns tool subprocesses: bash, git…).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Tree-wide SIGKILL on ctx cancel: the CLI spawns tool subprocesses
+	// (bash, git …) that inherit the stdout pipe write end. Without a
+	// process group + WaitDelay, those grandchildren keep the scanner
+	// blocked after the main process dies.
+	cmdutil.ApplyGroupCancel(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -197,16 +199,6 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 	go func() {
 		_, _ = io.Copy(io.Discard, stdout)
 	}()
-
-	// Group-kill on ctx cancellation: exec.CommandContext only SIGKILLs the
-	// main process (miniagent), not its children. With Setpgid=true the
-	// whole tree shares a process group id = cmd.Process.Pid. Sending
-	// syscall.Kill(-pgid, SIGKILL) reaches sh → git → node etc. so abort
-	// does not leave orphaned tool subprocesses holding locks or ports.
-	if ctx.Err() != nil && cmd.Process != nil {
-		pgid := cmd.Process.Pid
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	}
 
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
 		// Non-zero exit without ctx cancel: if we already emitted a terminal

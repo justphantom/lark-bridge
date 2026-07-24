@@ -121,6 +121,10 @@ func TestRun_CrashNoTerminal(t *testing.T) {
 // TestRun_AbortClosesChannel verifies ctx cancellation unblocks the event
 // channel consumer within a bounded time (the group-kill + cmd.Wait path).
 // Regression guard for the "abort hangs forever" class of bug.
+//
+// Note: this script uses bash's last-command exec optimisation (sleep
+// replaces bash), so there is no real grandchild here. The stronger
+// regression test is TestRun_AbortKillsGrandchildren.
 func TestRun_AbortClosesChannel(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
@@ -145,6 +149,41 @@ func TestRun_AbortClosesChannel(t *testing.T) {
 		_ = ok
 	case <-time.After(5 * time.Second):
 		t.Fatal("channel did not close within 5s of cancel")
+	}
+}
+
+// TestRun_AbortKillsGrandchildren is the regression test for the
+// scanner-blocks-on-grandchild bug: when miniagent forks a tool subprocess
+// (bash→git, make→docker) that inherits the stdout pipe write end, the
+// default exec.CommandContext cancel SIGKILLs only the miniagent process.
+// The grandchild survives as an orphan holding the pipe open, so the
+// scanner never sees EOF and the event channel never closes.
+//
+// Reproduction: `sleep 30 &` forces a fork (defeats bash's last-command
+// exec optimisation), `wait` keeps the parent alive so it is the one
+// SIGKILL'd. Without ApplyGroupCancel, Wait blocks for ~30s; with it,
+// the group is reaped within GroupKillTimeout.
+func TestRun_AbortKillsGrandchildren(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "grandchild.sh")
+	if err := os.WriteFile(p, []byte("#!/bin/bash\nsleep 30 &\nwait\n"), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	c := New(Config{CLIPath: p}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := c.Run(ctx, RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	cancel()
+	select {
+	case _, ok := <-ch:
+		_ = ok
+	case <-time.After(5 * time.Second):
+		t.Fatal("channel did not close within 5s; grandchild kept pipe open")
 	}
 }
 
