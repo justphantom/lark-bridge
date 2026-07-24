@@ -26,7 +26,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 	if err != nil {
 		return err
 	}
-	requestID := ""
+	var requestID string
 	if ctrl.Type == protocol.TypePermission {
 		requestID = ctrl.Permission.RequestID
 	} else {

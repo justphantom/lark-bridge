@@ -166,6 +166,7 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 // embeds the no-op method set; only Run is overridden).
 type scriptStreamOpencode struct {
 	closedStreamOpencode
+
 	events []oc.HighEvent
 }
 
