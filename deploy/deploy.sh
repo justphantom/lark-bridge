@@ -31,6 +31,17 @@ DEPLOY_DIR="/opt/lark-bridge/bin"
 CONFIG_DIR="/etc/lark-bridge"
 STATE_DIR="${STATE_DIR:-/var/lib/lark-bridge}"
 
+# ── 超时/轮询常量（集中调参，避免 magic number 散落）─────────
+# HTTP_TIMEOUT       curl 探测 IPC / opencode serve 的上限（本地/局域网）
+# WAIT_RETRIES       systemctl 冷启动轮询次数（每次 sleep 1s，约 15s 上限）
+# STOP_TIMEOUT       systemctl stop 限时；超过用 SIGKILL 兜底（默认 TimeoutStopSec=90s 太长）
+# CLI_PROBE_TIMEOUT  外部 CLI --version 探测上限，与 backend readyTimeout 同源
+#                    （internal/opencode/client.go:27）
+HTTP_TIMEOUT=3
+WAIT_RETRIES=15
+STOP_TIMEOUT=15
+CLI_PROBE_TIMEOUT=30
+
 # ── 运行用户（脚本内嵌 sudo；禁止整体以 root 运行）────
 # 直接 sudo 调用会让 whoami 返回 root，导致服务以 root 运行。
 # 此处从 SUDO_USER 还原真实调用者；无则报错退出（fail 尚未定义，内联等价实现）。
@@ -75,10 +86,10 @@ IPC_ADDR="${IPC_ADDR:-localhost:6060}"
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
-# 故用 timeout 15 限定等待。超时后 systemd 仍在异步停止，下面用 SIGKILL 兜底。
+# 故用 timeout $STOP_TIMEOUT 限定等待。超时后 systemd 仍在异步停止，下面用 SIGKILL 兜底。
 stop_services() {
-    info "停止旧服务（systemctl stop，限时 15s）..."
-    timeout 15 sudo systemctl stop "${SERVICES[@]}" 2>/dev/null || true
+    info "停止旧服务（systemctl stop，限时 ${STOP_TIMEOUT}s）..."
+    timeout "$STOP_TIMEOUT" sudo systemctl stop "${SERVICES[@]}" 2>/dev/null || true
     sleep 1
 
     # 仍存活的进程：SIGKILL 连同 cgroup 内子进程一并清理。systemd 的
@@ -122,7 +133,7 @@ preflight_inflight_check() {
     # 单次 curl 用 -w $'\n%{http_code}' 把状态码追加到 body 末尾，再 tail/sed 拆分。
     # 比原先 body 与 code 各请求一次少一轮 IPC 往返；失败时 resp 空 → code 兜底 000。
     local resp body code
-    resp="$(curl -s -m 3 -w $'\n%{http_code}' -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || true)"
+    resp="$(curl -s -m "$HTTP_TIMEOUT" -w $'\n%{http_code}' -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || true)"
     code="$(tail -1 <<<"$resp")"
     [[ "$code" =~ ^[0-9]+$ ]] || code=000
     body="$(sed '$d' <<<"$resp")"
@@ -169,7 +180,7 @@ probe_opencode_serve() {
     # 1 次：opencode serve 在远端，瞬时网络抖动不应让 backend 被错误剔除。
     local resp code body
     for _ in 1 2; do
-        resp="$(curl -s -m 3 -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
+        resp="$(curl -s -m "$HTTP_TIMEOUT" -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
         code="$(tail -1 <<<"$resp")"
         [[ "$code" =~ ^[0-9]+$ ]] || code=000
         [[ "$code" != "000" ]] && break
@@ -203,8 +214,8 @@ probe_cli() {
         warn "$cli 二进制未就绪：command -v 找不到（请装到 PATH）"
         return 1
     fi
-    if ! timeout 30 "$cli" --version >/dev/null 2>&1; then
-        warn "$cli 二进制未就绪：$cli --version 退出非 0 或超时（30s）"
+    if ! timeout "$CLI_PROBE_TIMEOUT" "$cli" --version >/dev/null 2>&1; then
+        warn "$cli 二进制未就绪：$cli --version 退出非 0 或超时（${CLI_PROBE_TIMEOUT}s）"
         return 1
     fi
     info "$cli 二进制就绪（$(command -v "$cli")）"
@@ -213,8 +224,8 @@ probe_cli() {
 
 # 轮询等待服务 active，最多 ~15s；避免冷启动时固定 sleep 导致的误判
 wait_active() {
-    local svc="$1"
-    for _ in {1..15}; do
+    local svc="$1" i
+    for ((i=0; i<WAIT_RETRIES; i++)); do
         systemctl is-active --quiet "$svc" && return 0
         sleep 1
     done
@@ -226,16 +237,16 @@ wait_active() {
 # deploy.sh 在崩溃窗口抓 MainPID 会得到 0 → 误报。故先起前端、等端口通，
 # 再起后端，从根因消除崩溃-重启。
 # 带 .env 的 IPC_SECRET 请求 /v1/status（非流式 GET；/v1/events 是 SSE，鉴权
-# 通过后服务会持续推流让 curl hang）。-m 3 兜底防任何流式端点误阻塞轮询。
+# 通过后服务会持续推流让 curl hang）。-m $HTTP_TIMEOUT 兜底防任何流式端点误阻塞轮询。
 # 000=端口未通仍重试；任何非 000 响应都算 listen（401=端口 listen 但 secret
 # 不匹配，可能是部署间隙旧 secret；不阻塞起后端）。
 wait_listen() {
-    local secret auth=()
+    local secret auth=() i
     secret="$(env_get IPC_SECRET)"
     [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer $secret")
-    for _ in {1..15}; do
+    for ((i=0; i<WAIT_RETRIES; i++)); do
         local code
-        code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "${auth[@]}" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
+        code="$(curl -s -o /dev/null -m "$HTTP_TIMEOUT" -w '%{http_code}' "${auth[@]}" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
         [[ "$code" != "000" ]] && return 0
         sleep 1
     done
@@ -798,7 +809,7 @@ ipc_secret="$(env_get IPC_SECRET)"
 if [[ -z "$ipc_secret" ]]; then
     echo -e "  ${YELLOW}!${NC} repo 根 .env 无 IPC_SECRET，跳过 IPC 鉴权检查"
 else
-    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
+    code="$(curl -s -o /dev/null -m "$HTTP_TIMEOUT" -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
     if [[ "$code" == "200" ]]; then
         echo -e "  ${GREEN}✓${NC} IPC ($IPC_ADDR) 带鉴权返回 200（就绪）"
     elif [[ "$code" == "401" ]]; then
