@@ -40,9 +40,6 @@ else
     RUN_USER="$(whoami)"
 fi
 
-# ── IPC 地址 ─────────────────────────────────────────
-IPC_ADDR="${IPC_ADDR:-localhost:6060}"
-
 # ── 颜色 ──────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,6 +48,20 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
+
+# 从 repo 根 .env 读 KEY=VALUE 的 VALUE（与 probe_opencode_serve 同源）；文件
+# 不存在或键缺失返回空。首次部署（.env 还未生成）时返回空，由调用方默认值兜底。
+# || true 兜底：pipefail 下 grep 无匹配会返回 1，使命令替换在 set -e 下误退出。
+env_get() {
+    local key="$1"
+    grep -E "^${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- || true
+}
+
+# ── IPC 地址 ─────────────────────────────────────────
+# 优先级：环境变量 > repo 根 .env > 默认值（localhost:6060）。让"改 .env 不
+# 带环境变量启动"也生效（与运行时配置同源）；环境变量优先用于一次性覆盖。
+IPC_ADDR="${IPC_ADDR:-$(env_get IPC_ADDR)}"
+IPC_ADDR="${IPC_ADDR:-localhost:6060}"
 
 # ── 服务列表 ──────────────────────────────────────────
 # SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 5 个业务服务（含 opencode-serve）。
@@ -86,7 +97,7 @@ stop_services() {
 }
 
 # 部署前检查：若 feishu-front 正在运行且报告有 in-flight 会话，中止部署，
-# 避免中途重启打断用户正在进行的对话。读 /etc/lark-bridge/.env 取 IPC_SECRET
+# 避免中途重启打断用户正在进行的对话。读 repo 根 .env 取 IPC_SECRET
 # 以访问 GET /v1/status；服务未运行或端点不可达时放行（首次部署/已停止场景）。
 preflight_inflight_check() {
     # 服务未运行 → 无 in-flight 风险，直接放行。
@@ -94,13 +105,10 @@ preflight_inflight_check() {
         return 0
     fi
 
-    local env_file="$CONFIG_DIR/.env"
-    local secret=""
-    if [[ -f "$env_file" ]]; then
-        secret="$(grep -E '^IPC_SECRET=' "$env_file" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    fi
+    local secret
+    secret="$(env_get IPC_SECRET)"
     if [[ -z "$secret" ]]; then
-        warn "未从 $env_file 读取到 IPC_SECRET，跳过 in-flight 检查"
+        warn "未从 $PROJECT_ROOT/.env 读取到 IPC_SECRET，跳过 in-flight 检查"
         return 0
     fi
 
@@ -113,7 +121,7 @@ preflight_inflight_check() {
         return 0
     fi
     if [[ "$code" == "401" ]]; then
-        fail "IPC 返回 401（$env_file 的 IPC_SECRET 与运行中的服务不一致）；请核对后重试"
+        fail "IPC 返回 401（repo 根 .env 的 IPC_SECRET 与运行中的服务不一致）；请核对后重试"
     fi
     if [[ "$code" != "200" ]]; then
         warn "IPC /v1/status 返回非预期状态码 $code，跳过 in-flight 检查"
@@ -180,11 +188,15 @@ wait_active() {
 # 后端启动即连 6060，若 feishu-front 未 listen 会崩溃-重启（RestartSec=5），
 # deploy.sh 在崩溃窗口抓 MainPID 会得到 0 → 误报。故先起前端、等端口通，
 # 再起后端，从根因消除崩溃-重启。
-# 任何 HTTP 响应都算 listen（401=鉴权正常，000=端口未通仍重试）。
+# 带 .env 的 IPC_SECRET 请求：000=端口未通仍重试；任何非 000 响应都算 listen
+# （401=端口 listen 但 secret 不匹配，可能是部署间隙旧 secret；不阻塞起后端）。
 wait_listen() {
+    local secret auth=()
+    secret="$(env_get IPC_SECRET)"
+    [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer $secret")
     for _ in {1..15}; do
         local code
-        code="$(curl -s -o /dev/null -w '%{http_code}' "http://$IPC_ADDR/v1/events" 2>/dev/null || echo 000)"
+        code="$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "http://$IPC_ADDR/v1/events" 2>/dev/null || echo 000)"
         [[ "$code" != "000" ]] && return 0
         sleep 1
     done
@@ -666,12 +678,21 @@ for svc in "${SERVICES[@]}"; do
     fi
 done
 
-# IPC 鉴权检查
-code="$(curl -s -o /dev/null -w '%{http_code}' "http://$IPC_ADDR/v1/events" 2>/dev/null || echo 000)"
-if [[ "$code" == "401" ]]; then
-    echo -e "  ${GREEN}✓${NC} IPC ($IPC_ADDR) 返回 401（鉴权正常）"
+# IPC 就绪+鉴权检查：带 .env 的 IPC_SECRET 请求 /v1/status，期望 200。
+# 旧版裸请求期望 401 只能证明"鉴权机制存在"，不能证明"密钥与 .env 一致 →
+# 服务真正可用"；带正确 Bearer 得 200 才算鉴权链路通。
+ipc_secret="$(env_get IPC_SECRET)"
+if [[ -z "$ipc_secret" ]]; then
+    echo -e "  ${YELLOW}!${NC} repo 根 .env 无 IPC_SECRET，跳过 IPC 鉴权检查"
 else
-    echo -e "  ${YELLOW}!${NC} IPC ($IPC_ADDR) 返回 $code（期望 401）"
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
+    if [[ "$code" == "200" ]]; then
+        echo -e "  ${GREEN}✓${NC} IPC ($IPC_ADDR) 带鉴权返回 200（就绪）"
+    elif [[ "$code" == "401" ]]; then
+        echo -e "  ${YELLOW}!${NC} IPC ($IPC_ADDR) 返回 401（.env 的 IPC_SECRET 与运行中服务不一致）"
+    else
+        echo -e "  ${YELLOW}!${NC} IPC ($IPC_ADDR) 返回 $code（期望 200）"
+    fi
 fi
 
 $all_ok && info "部署完成" || fail "部分服务启动失败，请检查 journalctl -u {service}"
