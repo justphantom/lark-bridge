@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -40,7 +41,8 @@ type Handler struct {
 	workspaceRoot   string             // global default for the /cd picker scope
 	cfgModel        string             // global default model (from config)
 	client          *miniclient.Client // non-nil → CLI subprocess mode
-	pickerPromptIDs sync.Map           // chatID → promptID, for async picker goroutines
+	git             *bridgebase.GitRunner
+	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
 	cancelBy  map[string]*promptCancel // chatID → in-flight turn
@@ -67,6 +69,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
 		client:        client,
+		git:           bridgebase.NewGitRunner(bridgebase.ExecCommander{}, logger, 0),
 		cancelBy:      make(map[string]*promptCancel),
 	}
 }

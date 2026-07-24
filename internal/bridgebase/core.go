@@ -122,6 +122,11 @@ type Core struct {
 	// unit tests).
 	Usage *usage.Store
 
+	// Git runs /pull /push in a chat's bound directory with per-chat
+	// single-flight. Wired in NewCore; tests can swap it for a fake by
+	// reassigning the field (it is exported for that purpose).
+	Git *GitRunner
+
 	closeOnce sync.Once
 }
 
@@ -144,6 +149,7 @@ func NewCore(r *router.Router, rpc *backendrpc.Client, cfg CoreConfig, logger *l
 		CancelByChat:      make(map[string]*PromptCancel),
 		Answers:           NewAnswerBroker(),
 		emitSem:           make(chan struct{}, emitConcurrency),
+		Git:               NewGitRunner(ExecCommander{}, logger, 0),
 	}
 	c.AppCtx, c.AppCancel = context.WithCancel(context.Background())
 	c.logDebugRedact.Store(cfg.DebugRedact)

@@ -21,6 +21,8 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/cd             切换工作目录（弹出选择卡）\n")
 	sb.WriteString("/cd <path>     直接指定目录\n")
 	sb.WriteString("/cd clear       恢复默认目录\n")
+	sb.WriteString("/pull           在当前工作目录执行 git pull --ff-only\n")
+	sb.WriteString("/push           在当前工作目录执行 git push\n")
 	sb.WriteString("/session-abort  中止当前任务\n")
 	sb.WriteString("/running        显示运行中的会话\n")
 	sb.WriteString("/help           显示本帮助\n")

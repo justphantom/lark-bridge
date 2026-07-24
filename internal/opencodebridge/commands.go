@@ -36,6 +36,10 @@ func init() {
 			Args: "[agent|clear]", Title: "已切换 agent", Level: "success"}, Handler: (*Handler).cmdAgent},
 		{Spec: cmdutil.Spec{Name: "/cd", Summary: "切换工作目录（重置会话）；不带参数弹出选择；传 clear 清除",
 			Args: "[dir|clear]", Title: "已切换目录", Level: "success"}, Handler: (*Handler).cmdDirectory},
+		{Spec: cmdutil.Spec{Name: "/pull", Summary: "在当前工作目录执行 git pull --ff-only",
+			Level: "info"}, Handler: (*Handler).cmdPull},
+		{Spec: cmdutil.Spec{Name: "/push", Summary: "在当前工作目录执行 git push",
+			Level: "info"}, Handler: (*Handler).cmdPush},
 		{Spec: cmdutil.Spec{Name: "/help", Summary: "显示本帮助",
 			Level: "info"}, Handler: (*Handler).cmdHelp},
 	})
