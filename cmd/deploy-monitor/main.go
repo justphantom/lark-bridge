@@ -16,11 +16,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/deploymonitor"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -102,13 +102,15 @@ func run(cfgPath string) error {
 }
 
 // execCommander is the production commander: runs `name args...` inside dir,
-// capturing combined stdout+stderr.
+// capturing combined stdout+stderr. Tree-wide SIGKILL on ctx cancel so
+// `make deploy`'s recursive subprocesses (make, docker, npm …) cannot
+// pin the single-flight slot after the parent is killed; output is capped
+// at cmdutil.MaxCombinedOutput so a pathological deploy log (100MB+)
+// cannot exhaust memory.
 type execCommander struct{}
 
 func (execCommander) Run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	return cmd.CombinedOutput()
+	return cmdutil.RunCombinedBounded(ctx, dir, name, args...)
 }
 
 func buildLogger(cfg *config.Config) (*log.Logger, error) {
