@@ -32,13 +32,13 @@ func (c *captureSender) Controls() []*protocol.Control {
 	return out
 }
 
-// newTestHandler builds a Handler with no CLI client — sufficient for testing
-// HandleEvent dispatch (empty prompt, non-prompt ignore, busy-then-drop,
-// abort). Turn execution is not exercised here; handler_cli_test covers it.
+// newTestHandler builds a Handler with no router and no CLI client —
+// sufficient for testing HandleEvent dispatch (empty prompt, non-prompt
+// ignore, busy-then-drop, abort). Turn execution is not exercised here;
+// handler_cli_test covers it.
 func newTestHandler() (*Handler, *captureSender) {
 	sender := &captureSender{}
-	// stateDir="" intentionally — no fork attempts during these dispatch tests.
-	h := New(sender, log.Nop(), nil, "", "", nil, "test-model", "default")
+	h := New(sender, log.Nop(), nil, "", "test-model", nil)
 	return h, sender
 }
 
@@ -109,7 +109,7 @@ func TestAbort_IdleReply(t *testing.T) {
 // TestRunning_NoTurn verifies /running on an idle chat reports empty.
 func TestRunning_NoTurn(t *testing.T) {
 	h, rpc := newTestHandler()
-	// /running path needs a chat to filter by; it does not require cli.
+	// /running path needs a chat to filter by; it does not require router.
 	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/running"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)

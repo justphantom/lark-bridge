@@ -30,7 +30,7 @@
 - claude-back：`/running` `/session-list` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/help`。
 - opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/agent` `/cd` `/help`。
 - opencode-serve-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-clean` `/session-list` `/session-use` `/current` `/model` `/agent` `/cd` `/help`（连 opencode serve HTTP server，而非 fork CLI）。
-- miniagent-back：`/session-new` `/session-list` `/session-use` `/session-del` `/current` `/model` `/models` `/cd` `/perm` `/memory-list` `/memory-del` `/memory-search` `/help`。
+- miniagent-back：`/current` `/model` `/models` `/cd` `/running` `/session-abort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/pull` `/push` `/running`。
 
 ## 构建

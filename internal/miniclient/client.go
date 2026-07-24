@@ -3,7 +3,6 @@ package miniclient
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +15,7 @@ import (
 )
 
 // maxLineLen caps the per-line scanner buffer for miniagent stdout.
-// A single tool_result (e.g. a large file read) can be several MB.
+// A single tool_use input (e.g. a large file write) can be several MB.
 const maxLineLen = 8 << 20 // 8 MB
 
 // runEventChanBuf is the buffer size of the per-Run Event output channel.
@@ -27,30 +26,24 @@ const defaultMaxConcurrent = 4
 
 // Config carries the scalar settings the Client reads from config.MiniAgent.
 type Config struct {
-	CLIPath              string
-	APIKey               string
-	BaseURL              string
-	SystemPrompt         string
-	MaxTokens            int
-	Permission           string // global default permission mode
-	ShellBlockedPatterns []string
-	MaxConcurrent        int
-	Stream               bool // miniagent -stream flag; false → no text deltas
+	CLIPath       string
+	APIKey        string
+	BaseURL       string
+	SystemPrompt  string
+	MaxTokens     int
+	MaxConcurrent int
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
-	cliPath     string
-	apiKey      string
-	baseURL     string
-	system      string
-	maxTokens   int
-	permission  string // global default
-	blockedPats []string
-	stream      bool
-	logger      *log.Logger
-	sem         chan struct{}
+	cliPath   string
+	apiKey    string
+	baseURL   string
+	system    string
+	maxTokens int
+	logger    *log.Logger
+	sem       chan struct{}
 }
 
 // New builds a Client. logger may be nil (→ nop).
@@ -63,28 +56,31 @@ func New(cfg Config, logger *log.Logger) *Client {
 		n = defaultMaxConcurrent
 	}
 	return &Client{
-		cliPath:     cfg.CLIPath,
-		apiKey:      cfg.APIKey,
-		baseURL:     cfg.BaseURL,
-		system:      cfg.SystemPrompt,
-		maxTokens:   cfg.MaxTokens,
-		permission:  cfg.Permission,
-		blockedPats: cfg.ShellBlockedPatterns,
-		stream:      cfg.Stream,
-		logger:      logger,
-		sem:         make(chan struct{}, n),
+		cliPath:   cfg.CLIPath,
+		apiKey:    cfg.APIKey,
+		baseURL:   cfg.BaseURL,
+		system:    cfg.SystemPrompt,
+		maxTokens: cfg.MaxTokens,
+		logger:    logger,
+		sem:       make(chan struct{}, n),
 	}
 }
 
 // RunOptions describes one miniagent turn.
 type RunOptions struct {
-	Prompt     string
-	Model      string
-	Workdir    string
-	ChatID     string
-	StateDir   string
-	Permission string // per-chat override; "" → use Client's global default
+	Prompt  string
+	Model   string
+	Workdir string
 }
+
+// BaseURL returns the configured OpenAI-compatible root. Exposed so the
+// miniagent handler can issue its own GET /v1/models (the CLI no longer
+// has -list-models after the stateless refactor) using the same endpoint
+// the subprocess uses for /v1/chat/completions.
+func (c *Client) BaseURL() string { return c.baseURL }
+
+// APIKey returns the configured Bearer key. See BaseURL for the rationale.
+func (c *Client) APIKey() string { return c.apiKey }
 
 // Run starts one miniagent subprocess for opts and returns the event
 // stream. The caller MUST drain the channel until close. A terminal Event
@@ -138,7 +134,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 }
 
 // buildArgs assembles the CLI flags from Client-level config (system prompt,
-// security) + per-turn options (model, workdir, chat-id). The API key is
+// max-tokens) + per-turn options (model, workdir). The API key is
 // intentionally NOT passed as a flag: miniagent's CLI has no -api-key
 // (unknown flags fail startup), it reads $MINIAGENT_API_KEY. Run sets that
 // env var explicitly on the subprocess so a backend running without the
@@ -147,16 +143,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 // Flag form is single-dash to match the miniagent README (Go's flag package
 // accepts both -x and --x).
 func (c *Client) buildArgs(opts RunOptions) []string {
-	a := []string{
-		"-model", opts.Model,
-		"-verbose", // bridge always wants tool events
-		// Stream is driven by config (miniagent's -stream defaults to true on
-		// the CLI side). The bridge renders the final answer from result.text
-		// and emitCLIEvent has no case for "text" events, so when stream is on
-		// every delta is parsed and silently dropped — default false keeps
-		// stdout to just tool_use/tool_result + the terminal result.
-		"-stream=" + strconv.FormatBool(c.stream),
-	}
+	a := []string{"-model", opts.Model}
 	if c.baseURL != "" {
 		a = append(a, "-base-url", c.baseURL)
 	}
@@ -166,39 +153,10 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if c.maxTokens > 0 {
 		a = append(a, "-max-tokens", strconv.Itoa(c.maxTokens))
 	}
-	if c.permission != "" {
-		a = append(a, "-permission", c.permission)
-	}
-	if opts.Permission != "" {
-		// Per-chat override replaces the global default.
-		a = replaceArg(a, "-permission", opts.Permission)
-	}
-	if len(c.blockedPats) > 0 {
-		b, _ := json.Marshal(c.blockedPats)
-		a = append(a, "-blocked-patterns", string(b))
-	}
 	if opts.Workdir != "" {
 		a = append(a, "-workdir", opts.Workdir)
 	}
-	if opts.ChatID != "" {
-		a = append(a, "-chat-id", opts.ChatID)
-	}
-	if opts.StateDir != "" {
-		a = append(a, "-state-dir", opts.StateDir)
-	}
 	return a
-}
-
-// replaceArg finds -flag <old> in args and replaces <old> with newval.
-// If -flag is not present, appends -flag newval.
-func replaceArg(args []string, flag, newval string) []string {
-	for i := range len(args) - 1 {
-		if args[i] == flag {
-			args[i+1] = newval
-			return args
-		}
-	}
-	return append(args, flag, newval)
 }
 
 // pump reads stdout lines, parses them into Events, and forwards to out.
@@ -256,7 +214,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		// an error-path result. If we did NOT (process crashed before writing
 		// one), synthesize one so the consumer's drain-loop terminates.
 		if !gotTerminal {
-			out <- Event{Kind: KindError, Message: fmt.Sprintf("miniagent exited: %v", err), IsError: true, IsTerminal: true}
+			out <- Event{Kind: KindError, Message: fmt.Sprintf("miniagent exited: %v", err), IsTerminal: true}
 		}
 	}
 }

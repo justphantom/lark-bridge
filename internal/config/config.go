@@ -160,10 +160,11 @@ type DeployMonitor struct {
 
 // MiniAgent holds settings for the miniagent backend. Each turn forks the
 // miniagent CLI binary (github.com/justphantom/miniagent): the CLI owns the
-// ReAct loop, tools, LLM call, and memory; the bridge does IPC + slash-command
-// dispatch + per-chat state via the CLI's -show-current / -set-* / -memory-*
-// flags. This mirrors how the claude/opencode backends shell out to their
-// own CLIs — the bridge carries no HTTP/LLM code of its own.
+// ReAct loop, tools, and the LLM call; the bridge does IPC + slash-command
+// dispatch + per-chat Directory/ModelSpec binding via the router. This
+// mirrors how the claude/opencode backends shell out to their own CLIs —
+// the bridge carries no LLM code of its own beyond GET /v1/models for the
+// /model picker.
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
 	// pull from the environment (config.Load expands it); writing the key
@@ -174,45 +175,21 @@ type MiniAgent struct {
 	// "https://api.deepseek.com". Required: use ${MINIAGENT_BASE_URL} in
 	// the config (config.Load rejects an unset/empty ${VAR}).
 	BaseURL string `json:"base_url,omitempty"`
-	// Model is the model id passed as the request "model" field (e.g.
+	// Model is the model id passed as the -model flag (e.g.
 	// "gpt-4o", "deepseek-chat"). Required: use ${MINIAGENT_DEFAULT_MODEL}
-	// in the config (config.Load rejects an unset/empty ${VAR}).
+	// in the config (config.Load rejects an unset/empty ${VAR}); an empty
+	// value makes the miniagent CLI refuse to start.
 	Model string `json:"model,omitempty"`
 	// SystemPrompt is prepended to every turn as the system message. Empty
 	// → a concise default assistant persona in config_defaults.
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
-	// Stream toggles miniagent's SSE streaming of text deltas (its -stream
-	// flag, which defaults to true on the CLI side). The bridge renders the
-	// final answer from result.text and has no "text" event case, so deltas
-	// would be silently dropped. Default false (zero value) keeps stdout to
-	// just tool_use/tool_result + the terminal result; set true only if a
-	// future frontend consumes the incremental text.
-	Stream bool `json:"stream,omitempty"`
 	// WorkspaceRoot bounds read_file to paths under this directory (after
 	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
-	// call it). Recommended: ${WORKSPACE_ROOT} so it shares the same env
-	// var as claude-back / opencode-back.
+	// call it) and the /cd picker is disabled. Recommended: ${WORKSPACE_ROOT}
+	// so it shares the same env var as claude-back / opencode-back.
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
-	// MemoryEnabled toggles per-chat conversation history (jsonl under
-	// {state_dir}/miniagent/history/). nil/unset → enabled. Set false to
-	// run stateless (each prompt independent, like P1).
-	MemoryEnabled *bool `json:"memory_enabled,omitempty"`
-	// Permission controls the tool execution policy (aligned with claude's
-	// permission_mode):
-	//   "plan"   — read-only (read_file + webfetch only; no write/shell)
-	//   "default"— full tools with workspace bounds + shell blocklist
-	//   "free"   — full tools without path/cwd/blocklist limits
-	// Env key isolation and output truncation are ALWAYS enforced.
-	// Empty → "default". Backward compat: if unset, falls back to
-	// SecurityLevel ("default"/"free" map directly).
-	Permission    string `json:"permission,omitempty"`
-	SecurityLevel string `json:"security_level,omitempty"` // deprecated, use Permission
-	// ShellBlockedPatterns overrides the default shell blocklist. When empty,
-	// the built-in defaults (rm -rf, mkfs, dd if=, shutdown, etc.) are used.
-	// Set to an empty array [] to disable all blocking (not recommended).
-	ShellBlockedPatterns []string `json:"shell_blocked_patterns,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

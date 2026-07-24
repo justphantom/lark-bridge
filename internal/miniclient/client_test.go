@@ -17,13 +17,6 @@ func TestParseEvent_ToolUse(t *testing.T) {
 	}
 }
 
-func TestParseEvent_ToolResult(t *testing.T) {
-	ev, _ := parseEvent([]byte(`{"type":"tool_result","name":"shell","output":"ok","is_error":false}`))
-	if ev.Kind != KindToolResult || ev.Output != "ok" || ev.IsError {
-		t.Errorf("got %+v", ev)
-	}
-}
-
 func TestParseEvent_Result(t *testing.T) {
 	ev, _ := parseEvent([]byte(`{"type":"result","text":"hello","model":"kimi","input_tokens":10,"output_tokens":5,"steps":1}`))
 	if ev.Kind != KindResult || ev.Text != "hello" {
@@ -35,29 +28,6 @@ func TestParseEvent_Result(t *testing.T) {
 	if ev.InputTokens != 10 || ev.OutputTokens != 5 || ev.Steps != 1 {
 		t.Errorf("usage = in=%d out=%d steps=%d", ev.InputTokens, ev.OutputTokens, ev.Steps)
 	}
-	if ev.Incomplete {
-		t.Error("absent incomplete must decode as false")
-	}
-}
-
-// TestParseEvent_Incomplete locks the contract that a result event with
-// incomplete=true (miniagent hit its iteration cap) is decoded faithfully.
-// Without this the bridge silently turns "ran out of steps" into "empty
-// reply" — the user sees a blank card with no explanation.
-func TestParseEvent_Incomplete(t *testing.T) {
-	ev, _ := parseEvent([]byte(`{"type":"result","model":"kimi","input_tokens":8200,"output_tokens":1500,"steps":20,"incomplete":true}`))
-	if ev.Kind != KindResult {
-		t.Fatalf("kind = %q, want result", ev.Kind)
-	}
-	if !ev.Incomplete {
-		t.Error("incomplete must be true when the field is present and true")
-	}
-	if ev.Text != "" {
-		t.Errorf("text = %q, want empty (truncated turns emit no text)", ev.Text)
-	}
-	if ev.Steps != 20 {
-		t.Errorf("steps = %d, want 20", ev.Steps)
-	}
 }
 
 func TestParseEvent_Error(t *testing.T) {
@@ -65,8 +35,8 @@ func TestParseEvent_Error(t *testing.T) {
 	if ev.Kind != KindError || ev.Message != "boom" {
 		t.Errorf("got %+v", ev)
 	}
-	if !ev.IsTerminal || !ev.IsError {
-		t.Error("error must be terminal + isError")
+	if !ev.IsTerminal {
+		t.Error("error must be terminal")
 	}
 }
 
@@ -94,22 +64,17 @@ func TestBuildArgs_Full(t *testing.T) {
 		BaseURL:      "http://localhost:8080",
 		SystemPrompt: "be brief",
 		MaxTokens:    2048,
-		Permission:   "free",
 	}, nil)
 	args := c.buildArgs(RunOptions{
-		Prompt:   "hi",
-		Model:    "kimi",
-		Workdir:  "/proj",
-		ChatID:   "c1",
-		StateDir: "/tmp/ma",
+		Prompt:  "hi",
+		Model:   "kimi",
+		Workdir: "/proj",
 	})
-	// Check key flags are present. -api-key is intentionally absent: the
-	// CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
+	// Check the 5 surviving flags are present. -api-key is intentionally
+	// absent: the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
 	want := map[string]bool{
 		"-model": false, "-base-url": false,
-		"-system": false, "-max-tokens": false, "-permission": false,
-		"-verbose": false, "-workdir": false, "-chat-id": false,
-		"-state-dir": false,
+		"-system": false, "-max-tokens": false, "-workdir": false,
 	}
 	for _, a := range args {
 		if _, ok := want[a]; ok {
@@ -121,33 +86,13 @@ func TestBuildArgs_Full(t *testing.T) {
 			t.Errorf("missing flag %s in buildArgs output: %v", flag, args)
 		}
 	}
-	// Stream defaults to false (config zero value): the bridge renders the
-	// final answer from result.text and has no "text" event case, so it
-	// pins -stream=false to suppress dropped deltas.
-	if !contains(args, "-stream=false") {
-		t.Errorf("expected -stream=false by default: %v", args)
-	}
-}
-
-// TestBuildArgs_StreamOn verifies that Stream=true flips the flag value. The
-// flag is always emitted (never omitted) so the CLI's own default (true) is
-// never relied upon.
-func TestBuildArgs_StreamOn(t *testing.T) {
-	c := New(Config{CLIPath: "/bin/ma", APIKey: "k", Stream: true}, nil)
-	args := c.buildArgs(RunOptions{Model: "m"})
-	if !contains(args, "-stream=true") {
-		t.Errorf("expected -stream=true when Stream set: %v", args)
-	}
-	if contains(args, "-stream=false") {
-		t.Errorf("stream=false must not appear when Stream=true: %v", args)
-	}
 }
 
 func TestBuildArgs_Minimal(t *testing.T) {
 	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
-	// Only model + verbose are guaranteed when others are empty. -api-key
-	// must NOT appear (the CLI has no such flag; the key goes via env).
+	// Only -model is guaranteed when others are empty. -api-key must NOT
+	// appear (the CLI has no such flag; the key goes via env).
 	hasFlag := func(f string) bool {
 		for i, a := range args {
 			if a == f && i+1 < len(args) {
@@ -164,11 +109,30 @@ func TestBuildArgs_Minimal(t *testing.T) {
 			t.Errorf("-api-key must NOT be in args (CLI has no such flag): %v", args)
 		}
 	}
-	if !contains(args, "-verbose") {
-		t.Errorf("verbose should always be present: %v", args)
-	}
 	if hasFlag("-workdir") {
 		t.Errorf("workdir should be absent when empty: %v", args)
+	}
+}
+
+// TestBuildArgs_NoRemovedFlags is a regression guard for the stateless
+// migration: the 6 flags miniagent fe85c16 deleted (-verbose / -stream /
+// -permission / -blocked-patterns / -chat-id / -state-dir) MUST NOT appear
+// in buildArgs output. Any of them would make Go's flag package os.Exit(2)
+// at startup.
+func TestBuildArgs_NoRemovedFlags(t *testing.T) {
+	c := New(Config{
+		CLIPath:      "/bin/ma",
+		APIKey:       "k",
+		BaseURL:      "http://x",
+		SystemPrompt: "s",
+		MaxTokens:    100,
+	}, nil)
+	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
+	banned := []string{"-verbose", "-stream", "-permission", "-blocked-patterns", "-chat-id", "-state-dir"}
+	for _, b := range banned {
+		if contains(args, b) {
+			t.Errorf("removed flag %q present in args: %v", b, args)
+		}
 	}
 }
 

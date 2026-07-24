@@ -3,8 +3,11 @@
 // miniagent binary at github.com/justphantom/miniagent): each turn forks
 // one subprocess that owns the ReAct loop, tool execution, and the LLM
 // call. The bridge itself does IPC + slash-command dispatch + event
-// forwarding, and reads/writes per-chat state (sessions, model/dir/perm
-// pins, memory) via the CLI's -show-current / -set-* / -memory-* flags.
+// forwarding.
+//
+// miniagent is stateless (post fe85c16): no sessions, no memory, no
+// per-chat jsonl. The only persistent per-chat state is the router binding
+// (Directory + ModelSpec), stored under {state_dir}/miniagent-router.json.
 //
 // Configuration is read from -config. The miniagent.api_key field should
 // use ${MINIAGENT_API_KEY} so the key is pulled from the environment, not
@@ -26,6 +29,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/miniagent"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/router"
 )
 
 var version = "dev"
@@ -64,6 +68,24 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.APIKey == "" {
 		return fmt.Errorf("miniagent.api_key is required (use ${MINIAGENT_API_KEY} in the config)")
 	}
+	// fail-fast: an empty model makes the miniagent CLI refuse to start
+	// (its main.go requires -model non-empty) and exit code 1 surfaces as
+	// a confusing "启动 miniagent 失败" on the first prompt.
+	if cfg.MiniAgent.Model == "" {
+		return fmt.Errorf("miniagent.model is required (use ${MINIAGENT_DEFAULT_MODEL} in the config)")
+	}
+	// fail-fast: without a router path the binding file is not persisted and
+	// every redeploy silently resets all per-chat model/directory pins.
+	// Parity with claude-back's main.go check.
+	if cfg.RouterPath == "" {
+		return fmt.Errorf("router_path is required (set router_path or state_dir in the config)")
+	}
+
+	r, err := router.New(cfg.RouterPath, logger)
+	if err != nil {
+		return fmt.Errorf("router: %w", err)
+	}
+	defer r.Close()
 
 	rpc, err := backendrpc.Connect(cfg.BackendID, "miniagent", cfg.FrontendURL, cfg.IPCSecret)
 	if err != nil {
@@ -81,36 +103,25 @@ func run(cfgPath string) error {
 		cliPath = "/usr/local/bin/miniagent"
 	}
 	client := miniclient.New(miniclient.Config{
-		CLIPath:              cliPath,
-		APIKey:               cfg.MiniAgent.APIKey,
-		BaseURL:              cfg.MiniAgent.BaseURL,
-		SystemPrompt:         cfg.MiniAgent.SystemPrompt,
-		MaxTokens:            cfg.MiniAgent.MaxTokens,
-		Permission:           cfg.MiniAgent.Permission,
-		ShellBlockedPatterns: cfg.MiniAgent.ShellBlockedPatterns,
-		Stream:               cfg.MiniAgent.Stream,
+		CLIPath:      cliPath,
+		APIKey:       cfg.MiniAgent.APIKey,
+		BaseURL:      cfg.MiniAgent.BaseURL,
+		SystemPrompt: cfg.MiniAgent.SystemPrompt,
+		MaxTokens:    cfg.MiniAgent.MaxTokens,
 	}, logger)
 
-	// CLIState: every state read/write (sessions, pins, memory, list-models)
-	// forks the miniagent binary. nil when state-dir is empty (stateless mode).
-	var cli *miniagent.CLIState
-	memoryEnabled := cfg.MiniAgent.MemoryEnabled == nil || *cfg.MiniAgent.MemoryEnabled
-	if memoryEnabled && cfg.StateDir != "" {
-		cli = miniagent.NewCLIState(cliPath, cfg.StateDir, cfg.MiniAgent.APIKey, cfg.MiniAgent.BaseURL)
-	}
-	h := miniagent.New(rpc, logger, cli, cfg.MiniAgent.WorkspaceRoot, cfg.StateDir, client, cfg.MiniAgent.Model, cfg.MiniAgent.Permission)
+	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	defer h.Close()
 
-	logger.Info("miniagent ready (CLI mode)",
+	logger.Info("miniagent ready (CLI mode, stateless)",
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
 		"cli_path", cliPath,
-		"memory_enabled", memoryEnabled,
-		"workspace_root", cfg.MiniAgent.WorkspaceRoot,
-		"permission", cfg.MiniAgent.Permission)
+		"router_path", cfg.RouterPath,
+		"workspace_root", cfg.MiniAgent.WorkspaceRoot)
 
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)

@@ -10,58 +10,6 @@ import (
 	"time"
 )
 
-// TestReplaceArg_Existing replaces -flag <old> with <new> in place and
-// leaves the surrounding args intact. Per-chat permission override relies
-// on this mutation, not a duplicate append.
-func TestReplaceArg_Existing(t *testing.T) {
-	args := []string{"-model", "m", "-permission", "default", "-workdir", "/x"}
-	got := replaceArg(args, "-permission", "free")
-	want := []string{"-model", "m", "-permission", "free", "-workdir", "/x"}
-	if len(got) != len(want) {
-		t.Fatalf("len got=%d want=%d", len(got), len(want))
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("idx %d: got=%q want=%q", i, got[i], want[i])
-		}
-	}
-}
-
-// TestReplaceArg_Missing appends -flag newval when -flag is absent (the
-// global default was "" so buildArgs never added it; per-chat override must
-// introduce it).
-func TestReplaceArg_Missing(t *testing.T) {
-	args := []string{"-model", "m"}
-	got := replaceArg(args, "-permission", "plan")
-	want := []string{"-model", "m", "-permission", "plan"}
-	if len(got) != len(want) {
-		t.Fatalf("len got=%d want=%d", len(got), len(want))
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("idx %d: got=%q want=%q", i, got[i], want[i])
-		}
-	}
-}
-
-// TestReplaceArg_FlagAtTailNoValue does not panic when -flag is the last
-// token (no value to replace). The walk stops at len-1 so it appends a
-// fresh pair rather than mutating out of range.
-func TestReplaceArg_FlagAtTailNoValue(t *testing.T) {
-	args := []string{"-model", "m", "-permission"}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("panicked: %v", r)
-		}
-	}()
-	got := replaceArg(args, "-permission", "free")
-	// Existing -permission has no value following it, so the loop misses it
-	// and a new pair is appended.
-	if !contains(got, "-permission") || !contains(got, "free") {
-		t.Errorf("expected -permission free appended, got %v", got)
-	}
-}
-
 // writeHelperScript writes a tiny bash script that emits the given stdout
 // lines (one echo per line) then exits with code. Used to drive pump without
 // the real miniagent binary.
@@ -116,7 +64,6 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 	script := writeHelperScript(t, []string{
 		`{"type":"tool_use","name":"read_file","input":"{}"}`,
-		`{"type":"tool_result","name":"read_file","output":"hi"}`,
 		`{"type":"result","text":"done","model":"m","steps":1}`,
 	}, 0)
 	c := New(Config{CLIPath: script}, nil)
@@ -128,7 +75,7 @@ func TestRun_HappyPath(t *testing.T) {
 	for ev := range ch {
 		kinds = append(kinds, ev.Kind)
 	}
-	want := []string{KindToolUse, KindToolResult, KindResult}
+	want := []string{KindToolUse, KindResult}
 	if len(kinds) != len(want) {
 		t.Fatalf("events=%v want=%v", kinds, want)
 	}

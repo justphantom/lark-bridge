@@ -42,13 +42,9 @@
     "api_key":         "${MINIAGENT_API_KEY}",
     "base_url":        "${MINIAGENT_BASE_URL}",
     "model":           "${MINIAGENT_DEFAULT_MODEL}",
-    "system_prompt":   "飞书群里有长期记忆的工程助手。工具：memory_set/get/list/delete，记忆分 chat/project/global。\n\n【首轮强制】memory_list prefix=meta.（拉项目沉淀的工作规范）+ memory_list scope=project，然后才回答。\n【主动沉淀，不等用户说记住】多步任务→set task.current=目标+步骤，每阶段更新；关键决策/根因→set decision.* 或 finding.* 写清为什么；项目稳定事实（架构/技术栈/构建测试命令/目录约定）→scope=project；用户偏好/身份/语言→scope=global。\n【scope 默认 project】仅本对话有意义用 chat；跨项目用 global。\n【key】小写英文点号：task.* decision.* finding.* project.* user.* env.*。value 一句话，禁中文 key。\n\n回答简洁重点先行；不确定先查（memory_get 或读文件）别猜；副作用操作前说明；遇错说原因和修复，别盲目重试。",
+    "system_prompt":   "你是一个简洁的工程助手，回答通常不超过 500 字。重点先行；不确定先查别猜；副作用操作前说明；遇错说原因和修复，别盲目重试。",
     "max_tokens":      4096,
-    "stream":          false,
-    "workspace_root":  "${WORKSPACE_ROOT}",
-    "memory_enabled":  true,
-    "permission":      "free",
-    "shell_blocked_patterns": []
+    "workspace_root":  "${WORKSPACE_ROOT}"
   },
 
   "deploy_monitor": {
