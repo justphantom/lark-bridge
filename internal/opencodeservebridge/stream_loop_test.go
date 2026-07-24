@@ -8,6 +8,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -142,5 +143,70 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan([]oc.HighEvent{stopStep}), "")
 	if res.costUSD != 0.02 {
 		t.Errorf("costUSD = %v, want 0.02", res.costUSD)
+	}
+}
+
+// scriptStreamOpencode yields a fixed slice of events then closes, so a test
+// can drive streamRun through a specific event sequence (closedStreamOpencode
+// embeds the no-op method set; only Run is overridden).
+type scriptStreamOpencode struct {
+	closedStreamOpencode
+	events []oc.HighEvent
+}
+
+func (s scriptStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc.HighEvent, error) {
+	ch := make(chan oc.HighEvent, len(s.events))
+	for _, e := range s.events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
+// TestStreamRun_TodoUpdatedEmitsTypeTodoControl verifies the SDK todo_updated
+// event is field-copied into a TypeTodo Control: the protocol package never
+// imports the SDK (the copy happens here), and content/status/priority survive
+// the translation intact.
+func TestStreamRun_TodoUpdatedEmitsTypeTodoControl(t *testing.T) {
+	todoEv := oc.NewHighEvent(oc.HighEventTodoUpdated, "s1", "m1",
+		oc.WithTodoUpdated(&oc.TodoUpdatedData{Todos: []oc.Todo{
+			{Content: "任务一", Status: "completed", Priority: "high"},
+			{Content: "任务二", Status: "in_progress"},
+		}}))
+	termEv := oc.NewHighEvent(oc.HighEventResult, "s1", "m1", oc.WithResult("done"))
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, scriptStreamOpencode{events: []oc.HighEvent{todoEv, termEv}}, client, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c-todo", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-todo",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-todo", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var todo *protocol.Control
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			todo = c
+			break
+		}
+	}
+	if todo == nil {
+		t.Fatalf("no TypeTodo control emitted; got %v", controlTypes(controls))
+	}
+	if todo.Todo == nil || len(todo.Todo.Todos) != 2 {
+		t.Fatalf("todo payload = %+v, want 2 items", todo.Todo)
+	}
+	if todo.Todo.Todos[0] != (protocol.TodoItem{Content: "任务一", Status: "completed", Priority: "high"}) {
+		t.Errorf("todos[0] = %+v", todo.Todo.Todos[0])
+	}
+	if todo.Todo.Todos[1].Content != "任务二" || todo.Todo.Todos[1].Status != "in_progress" {
+		t.Errorf("todos[1] = %+v", todo.Todo.Todos[1])
 	}
 }

@@ -17,6 +17,7 @@ type Control struct {
 	Result      *ResultPayload      `json:"result,omitempty"`
 	Error       *ErrorPayload       `json:"error,omitempty"`
 	Progress    *ProgressPayload    `json:"progress,omitempty"`
+	Todo        *TodoPayload        `json:"todo,omitempty"`
 	Question    *QuestionPayload    `json:"question,omitempty"`
 	Notice      *NoticePayload      `json:"notice,omitempty"`
 }
@@ -31,6 +32,7 @@ const (
 	TypeResult      = "result"
 	TypeError       = "error"
 	TypeProgress    = "progress"
+	TypeTodo        = "todo"
 	TypeQuestion    = "question"
 	TypeNotice      = "notice"
 )
@@ -116,6 +118,22 @@ type ErrorPayload struct {
 // ProgressPayload carries a free-form progress description.
 type ProgressPayload struct {
 	Description string `json:"description,omitempty"`
+}
+
+// TodoPayload carries the session's full todo list. The backend sends the
+// complete list on every update (no incremental merge), so the renderer
+// overwrites its prior state with each arrival.
+type TodoPayload struct {
+	Todos []TodoItem `json:"todos"`
+}
+
+// TodoItem is one entry of a todo list (content / status / priority), aligned
+// with the SDK's Todo. All fields are value types, so a single copy is a deep
+// copy.
+type TodoItem struct {
+	Content  string `json:"content"`
+	Status   string `json:"status"`             // pending|in_progress|completed|cancelled
+	Priority string `json:"priority,omitempty"` // high|medium|low
 }
 
 // QuestionPayload asks the frontend to render a question card.

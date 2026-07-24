@@ -134,6 +134,20 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					h.handleQuestionAsked(ctx, chatID, promptID, q)
 				})
 			}
+		case oc.HighEventTodoUpdated:
+			// Field-copy SDK Todo → protocol.TodoItem here so the protocol package
+			// stays free of any SDK import (no compile cycle). The SDK sends the
+			// full list each time; the renderer overwrites, so no merge is needed.
+			if tu := ev.TodoUpdated(); tu != nil {
+				items := make([]protocol.TodoItem, len(tu.Todos))
+				for i, td := range tu.Todos {
+					items[i] = protocol.TodoItem{Content: td.Content, Status: td.Status, Priority: td.Priority}
+				}
+				h.emitAsync(promptID, &protocol.Control{
+					Type: protocol.TypeTodo,
+					Todo: &protocol.TodoPayload{Todos: items},
+				})
+			}
 		case oc.HighEventResult:
 			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,
 				accInput, accOutput, accCacheRead, accCacheWrite, accCost)

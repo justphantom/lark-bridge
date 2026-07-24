@@ -399,6 +399,33 @@ func TestParseQuestionFormValue(t *testing.T) {
 	}
 }
 
+// TestDispatchControl_TypeTodoRoutesToUpdateProgress verifies a TypeTodo
+// control routes through updateProgress (the progress-card path), re-rendering
+// the card via UpdateCard rather than hitting the unknown-type default. The
+// overwrite semantic itself is locked at the renderer layer
+// (TestAddTodo_Overwrites); here we assert the dispatcher wiring.
+func TestDispatchControl_TypeTodoRoutesToUpdateProgress(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	const promptID = "om_todo"
+	d.turns.Start(promptID, "oc_chat", "om_card", "claude-1")
+
+	err := d.DispatchControl(context.Background(), RoutedControl{
+		BackendID: "claude-1",
+		Control: &protocol.Control{
+			Type:     protocol.TypeTodo,
+			PromptID: promptID,
+			Todo:     &protocol.TodoPayload{Todos: []protocol.TodoItem{{Content: "a", Status: "pending"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchControl TypeTodo: %v", err)
+	}
+	if len(sink.updates) != 1 || sink.updates[0].messageID != "om_card" {
+		t.Errorf("expected one UpdateCard of om_card (routed to updateProgress), got %+v", sink.updates)
+	}
+}
+
 // TestSendNoticeReplacesProgressCard verifies that a TypeNotice for a prompt
 // that already has a progress card (e.g. a slash-command reply) Updates that
 // card in place rather than SendCard-ing a new one — the cause of the

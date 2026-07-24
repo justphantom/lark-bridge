@@ -22,7 +22,7 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 			d.turns.SetSession(ctrl.PromptID, si.SessionID, si.Model)
 		}
 		return d.updateProgress(ctx, ctrl, backendType)
-	case protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress:
+	case protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress, protocol.TypeTodo:
 		return d.updateProgress(ctx, ctrl, backendType)
 	case protocol.TypeText:
 		// 文本预览不再展示,忽略(完整回复由终态结果卡承载)
@@ -86,6 +86,8 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 		state.AddToolResult(ctrl.ToolResult.Name, ctrl.ToolResult.Input, ctrl.ToolResult.Output, ctrl.ToolResult.IsError, ctrl.ToolResult.IsSubagent, ctrl.ToolResult.TaskID)
 	case protocol.TypeProgress:
 		state.AddProgress()
+	case protocol.TypeTodo:
+		state.AddTodo(toRendererTodos(ctrl.Todo.Todos))
 	}
 	// Clone under the lock so the expensive Render+Marshal runs outside
 	// progressMu — otherwise concurrent turns serialise on each render.
@@ -99,6 +101,18 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 		return err
 	}
 	return d.updateCard(ctx, turn.MessageID, card)
+}
+
+// toRendererTodos converts protocol.TodoItem → renderer.TodoItem at the package
+// boundary so the renderer never imports protocol. Field-for-field copy; the
+// slices are disjoint so the renderer's overwrite cannot leak back into the
+// protocol control.
+func toRendererTodos(items []protocol.TodoItem) []renderer.TodoItem {
+	out := make([]renderer.TodoItem, len(items))
+	for i, it := range items {
+		out[i] = renderer.TodoItem{Content: it.Content, Status: it.Status, Priority: it.Priority}
+	}
+	return out
 }
 
 // sendTerminalCard ships a terminal card (result or notice) and unconditionally

@@ -568,6 +568,22 @@ func TestRender_NoAbortButton(t *testing.T) {
 	}
 }
 
+// TestAddTodo_Overwrites pins the full-replace semantics: the backend sends
+// the complete list on every todo_updated, so a second AddTodo must leave only
+// the second batch (not append). Without overwrite the card would accumulate
+// stale entries across updates.
+func TestAddTodo_Overwrites(t *testing.T) {
+	s := NewProgressState()
+	s.AddTodo([]TodoItem{{Content: "旧", Status: "pending"}})
+	s.AddTodo([]TodoItem{{Content: "新1", Status: "completed"}, {Content: "新2", Status: "in_progress"}})
+	if len(s.todos) != 2 {
+		t.Fatalf("todos len = %d, want 2 (second batch only)", len(s.todos))
+	}
+	if s.todos[0].Content != "新1" || s.todos[1].Content != "新2" {
+		t.Errorf("todos = %+v, want second batch only", s.todos)
+	}
+}
+
 // TestRender_TitleCountsCompletedOnly locks the title tool count: it tracks
 // settled actions (completed + errored), not the volatile running set which
 // has its own zone.

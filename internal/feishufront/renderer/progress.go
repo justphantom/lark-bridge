@@ -40,7 +40,17 @@ type toolRow struct {
 // progress update renders the whole card.
 type ProgressState struct {
 	tools     []toolRow
+	todos     []TodoItem
 	stepCount int
+}
+
+// TodoItem is the renderer's own todo entry (mirrors protocol.TodoItem but
+// keeps this package free of a protocol import — the dispatcher converts at
+// the boundary). All-string fields make a one-level copy a deep copy.
+type TodoItem struct {
+	Content  string
+	Status   string // pending|in_progress|completed|cancelled
+	Priority string
 }
 
 // NewProgressState builds an empty state.
@@ -135,6 +145,12 @@ func (s *ProgressState) AddToolResult(name, desc, output string, isError, isSuba
 // AddProgress counts a step.
 func (s *ProgressState) AddProgress() {
 	s.stepCount++
+}
+
+// AddTodo replaces the whole todo list. The backend sends the complete list on
+// every todo_updated, so each call overwrites (not appends to) the prior state.
+func (s *ProgressState) AddTodo(items []TodoItem) {
+	s.todos = append(s.todos[:0], items...)
 }
 
 // Render produces the progress card JSON.
