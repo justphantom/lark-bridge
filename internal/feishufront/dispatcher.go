@@ -184,6 +184,18 @@ func (d *Dispatcher) InitDebouncer(ctx context.Context, interval time.Duration) 
 	d.debouncer = newCardDebouncer(ctx, d.bot, interval)
 }
 
+// StartDedupPrune launches the periodic TTL sweep for all three dedup sets.
+// Add no longer scans for expired entries on the hot path (it was O(n) per
+// call); this ticker is what bounds the TTL-only sets (actionIDs/terminals)
+// in the steady state. eventIDs also benefits but already has maxEntries as
+// a backstop. Call once at startup after NewDispatcher; idempotent in effect
+// but a second call would spawn a second ticker per set harmlessly.
+func (d *Dispatcher) StartDedupPrune(ctx context.Context) {
+	d.eventIDs.StartPrune(ctx)
+	d.actionIDs.StartPrune(ctx)
+	d.terminals.StartPrune(ctx)
+}
+
 // updateCard sends (or enqueues) an UpdateCard. When a debouncer is wired,
 // progress updates go through it; terminal updates (result/notice) go direct.
 // A messageID marked finalized (its terminal card already sent) rejects the

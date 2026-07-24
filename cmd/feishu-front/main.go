@@ -137,6 +137,9 @@ func run(cfgPath, addr string) error {
 
 	// Card debouncer: coalesce UpdateCard calls to avoid API rate limits.
 	dispatcher.InitDebouncer(ctx, cardDebounceInterval)
+	// Periodic TTL sweep for the three dedup sets: Add is O(1) on the hot
+	// path, so this ticker is what keeps the TTL-only sets bounded.
+	dispatcher.StartDedupPrune(ctx)
 
 	ipc.SetOnOffline(dispatcher.OnBackendOffline)
 	ipc.SetOnOnline(dispatcher.OnBackendOnline)

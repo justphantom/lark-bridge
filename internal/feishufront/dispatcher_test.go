@@ -209,6 +209,49 @@ func TestDedupSetMaxEntriesZero(t *testing.T) {
 	}
 }
 
+// TestDedupSetAddDoesNotPruneTTL verifies Add is no longer O(n): an expired
+// entry stays in the map until Prune is called explicitly. This is the
+// invariant StartPrune relies on — Add must NOT sweep so the hot path stays
+// O(1), and the periodic ticker is the sole pruner.
+func TestDedupSetAddDoesNotPruneTTL(t *testing.T) {
+	s := newDedupSet(50*time.Millisecond, 0)
+	if !s.Add("expiring") {
+		t.Fatal("first Add should be true")
+	}
+	// Wait past ttl so "expiring" is now stale.
+	time.Sleep(80 * time.Millisecond)
+	// Add of a different id must NOT clean up the stale one (the old Add did).
+	if !s.Add("other") {
+		t.Fatal("Add other should be true")
+	}
+	// Without an explicit Prune, the stale entry is still present: a second
+	// Add of the same id returns false (still remembered).
+	if s.Add("expiring") {
+		t.Error("Add of stale id returned true — Add should not have pruned it; Prune is the sole sweeper")
+	}
+	// Prune sweeps the stale entry; now Add of it succeeds again.
+	if n := s.Prune(); n != 1 {
+		t.Errorf("Prune removed %d entries, want 1", n)
+	}
+	if !s.Add("expiring") {
+		t.Error("Add after Prune should be true (entry was swept)")
+	}
+}
+
+// TestDedupSetPruneKeepsFresh verifies Prune does not evict entries within
+// the TTL window — only the periodic sweep, not Add, decides what is stale.
+func TestDedupSetPruneKeepsFresh(t *testing.T) {
+	s := newDedupSet(time.Hour, 0)
+	s.Add("a")
+	s.Add("b")
+	if n := s.Prune(); n != 0 {
+		t.Errorf("Prune removed %d fresh entries, want 0", n)
+	}
+	if s.Add("a") {
+		t.Error("fresh entry 'a' was pruned unexpectedly")
+	}
+}
+
 // TestDispatcherIsStale pins the stale-check policy: only a create_time past
 // the window counts; missing/zero and future timestamps pass through.
 func TestDispatcherIsStale(t *testing.T) {
