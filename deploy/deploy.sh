@@ -510,6 +510,7 @@ check_env_placeholder() {
 check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
 check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
 check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
+check_env_placeholder IPC_SECRET 'change-me' 'IPC 共享密钥（用 --init 自动生成或 openssl rand -hex 32）'
 
 # 服务部署条件：基于 repo 根 .env 的占位值判定（占位 = 不具备条件）。
 # feishu 依赖飞书凭证非占位；miniagent 依赖 MINIAGENT_API_KEY 非占位；
@@ -797,7 +798,7 @@ ipc_secret="$(env_get IPC_SECRET)"
 if [[ -z "$ipc_secret" ]]; then
     echo -e "  ${YELLOW}!${NC} repo 根 .env 无 IPC_SECRET，跳过 IPC 鉴权检查"
 else
-    code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
+    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
     if [[ "$code" == "200" ]]; then
         echo -e "  ${GREEN}✓${NC} IPC ($IPC_ADDR) 带鉴权返回 200（就绪）"
     elif [[ "$code" == "401" ]]; then
