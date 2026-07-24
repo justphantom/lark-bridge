@@ -38,7 +38,7 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 			return d.sendResult(ctx, ctrl, backendType)
 		}
 		return d.sendNoticeControl(ctx, ctrl, backendType)
-	case protocol.TypeQuestion:
+	case protocol.TypeQuestion, protocol.TypePermission:
 		return d.sendInteractive(ctx, ctrl, backendType)
 	default:
 		return fmt.Errorf("dispatcher: unknown control type %q", ctrl.Type)

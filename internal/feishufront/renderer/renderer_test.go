@@ -169,6 +169,51 @@ func TestQuestionRender(t *testing.T) {
 	}
 }
 
+func TestPermissionRender(t *testing.T) {
+	ctrl := &protocol.Control{Permission: &protocol.PermissionPayload{
+		RequestID: "p1",
+		Message:   "请求执行 bash",
+		Options: []protocol.PermissionOption{
+			{Label: "允许", Value: "allow"},
+			{Label: "拒绝", Value: "deny"},
+		},
+	}}
+	b, err := RenderPermission(ctrl, hdr(), ftr())
+	card := parse(t, b, err)
+	actions := actionButtons(t, card)
+	if len(actions) != 2 {
+		t.Fatalf("actions = %d, want 2 buttons", len(actions))
+	}
+	all := string(mustMarshal(t, actions))
+	if strings.Contains(all, "select_static") {
+		t.Errorf("permission card must not use a dropdown: %s", all)
+	}
+	if !strings.Contains(all, `"kind":"permission"`) {
+		t.Errorf("button kind=permission missing: %s", all)
+	}
+	if !strings.Contains(all, `"choice":"allow"`) || !strings.Contains(all, `"choice":"deny"`) {
+		t.Errorf("choice values missing: %s", all)
+	}
+	if !strings.Contains(string(b), "请求执行 bash") {
+		t.Errorf("message body missing: %s", b)
+	}
+}
+
+// TestRenderInteractive_DispatchesPermission verifies RenderInteractive routes
+// a TypePermission control to the button renderer (not the question dropdown).
+func TestRenderInteractive_DispatchesPermission(t *testing.T) {
+	ctrl := &protocol.Control{Type: protocol.TypePermission, Permission: &protocol.PermissionPayload{
+		RequestID: "p1", Options: []protocol.PermissionOption{{Label: "a", Value: "a"}},
+	}}
+	b, err := RenderInteractive(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"kind":"permission"`) {
+		t.Errorf("TypePermission should render buttons: %s", b)
+	}
+}
+
 func TestInteractiveSubmitted(t *testing.T) {
 	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
 	orig, err := RenderQuestion(ctrl, hdr(), ftr())

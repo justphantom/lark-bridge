@@ -22,11 +22,16 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 	_, _, chatID, footer := d.resolveFooter(ctrl, backendType)
 	footer.Status = "待确认"
 	header := cardkit.HeaderInfo{BackendType: backendType}
-	card, err := renderer.RenderQuestion(ctrl, header, footer)
+	card, err := renderer.RenderInteractive(ctrl, header, footer)
 	if err != nil {
 		return err
 	}
-	requestID := ctrl.Question.RequestID
+	requestID := ""
+	if ctrl.Type == protocol.TypePermission {
+		requestID = ctrl.Permission.RequestID
+	} else {
+		requestID = ctrl.Question.RequestID
+	}
 	messageID, err := d.sendInteractiveCard(ctx, ctrl, chatID, card)
 	if err != nil {
 		return err
@@ -64,8 +69,17 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 // permission/question cards (flag unset) ship standalone so the streaming
 // progress card stays untouched. Falls back to a fresh card when no turn is
 // open or the in-place update fails.
+// interactiveTakeOver reports whether an interactive control (question or
+// permission) wants to morph the progress card instead of shipping standalone.
+func interactiveTakeOver(ctrl *protocol.Control) bool {
+	if ctrl.Type == protocol.TypePermission {
+		return ctrl.Permission != nil && ctrl.Permission.TakeOverProgress
+	}
+	return ctrl.Question != nil && ctrl.Question.TakeOverProgress
+}
+
 func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Control, chatID string, card []byte) (string, error) {
-	if ctrl.Question.TakeOverProgress && ctrl.PromptID != "" {
+	if interactiveTakeOver(ctrl) && ctrl.PromptID != "" {
 		if turn, ok := d.turns.Get(ctrl.PromptID); ok {
 			// Flush pending debounced progress frames first so they cannot
 			// land after the picker card and overwrite it.
@@ -223,6 +237,7 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		answer.Choices, answer.Custom = parseQuestionFormValue(action.FormValue)
 	} else if c, ok := action.Value["choice"].(string); ok {
 		answer.Choice = c
+		answer.Choices = []string{c}
 	}
 	d.logger.Load().Debug("card action: sending answer to backend",
 		"chat_id", action.ChatID,

@@ -78,6 +78,7 @@ func TestControlRoundTrip(t *testing.T) {
 		{"error", &Control{Type: TypeError, Error: &ErrorPayload{Message: "boom", Recoverable: true}}},
 		{"progress", &Control{Type: TypeProgress, Progress: &ProgressPayload{Description: "working"}}},
 		{"question", &Control{Type: TypeQuestion, ChatID: "c1", Question: &QuestionPayload{RequestID: "r1", PromptID: "p", Questions: []QuestionItem{{Label: "q", Options: []string{"a"}}}}}},
+		{"permission", &Control{Type: TypePermission, ChatID: "c1", Permission: &PermissionPayload{RequestID: "r1", PromptID: "p", Options: []PermissionOption{{Label: "允许", Value: "allow"}}}}},
 		{"notice", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "info", Title: "t", Message: "m"}}},
 	}
 	for _, tc := range cases {
@@ -131,6 +132,9 @@ func TestControlValidate(t *testing.T) {
 		{"text missing payload", &Control{Type: TypeText}, true},
 		{"text ok", &Control{Type: TypeText, Text: &TextPayload{Delta: "x"}}, false},
 		{"question missing chatID", &Control{Type: TypeQuestion, Question: &QuestionPayload{RequestID: "r", PromptID: "p", Questions: []QuestionItem{{Label: "q", Options: []string{"a"}}}}}, true},
+		{"permission missing payload", &Control{Type: TypePermission, ChatID: "c1"}, true},
+		{"permission missing chatID", &Control{Type: TypePermission, Permission: &PermissionPayload{RequestID: "r", Options: []PermissionOption{{Label: "a", Value: "a"}}}}, true},
+		{"permission ok", &Control{Type: TypePermission, ChatID: "c1", Permission: &PermissionPayload{RequestID: "r", Options: []PermissionOption{{Label: "a", Value: "a"}}}}, false},
 		{"notice missing chatID", &Control{Type: TypeNotice, Notice: &NoticePayload{Level: "info", Title: "t"}}, true},
 		{"notice ok", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "info", Title: "t"}}, false},
 		{"unknown type", &Control{Type: "unknown"}, true},

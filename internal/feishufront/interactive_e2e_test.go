@@ -208,6 +208,73 @@ func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 	}
 }
 
+// TestPermissionCardAction_ButtonClick verifies a TypePermission card renders
+// buttons (not a dropdown) and a click routes through DispatchCardAction
+// carrying the option's Value as both Choice and Choices[0], so consumers
+// using PickAnswerValue read it without a form submit.
+func TestPermissionCardAction_ButtonClick(t *testing.T) {
+	const backendID = "opencode-perm"
+	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_perm"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+
+	permCtrl := &protocol.Control{
+		Type:   protocol.TypePermission,
+		ChatID: chatID,
+		Permission: &protocol.PermissionPayload{
+			RequestID: "req-perm",
+			PromptID:  "msg-perm",
+			Message:   "请求执行 bash",
+			Options: []protocol.PermissionOption{
+				{Label: "允许", Value: "allow"},
+				{Label: "拒绝", Value: "deny"},
+			},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+	if sent := string(sink.lastSendCard()); !strings.Contains(sent, `"kind":"permission"`) || strings.Contains(sent, "select_static") {
+		t.Fatalf("permission card should render buttons, not a dropdown: %s", sent)
+	}
+
+	action := &feishu.CardAction{
+		ChatID:    chatID,
+		MessageID: "msg-perm",
+		Value:     map[string]any{"requestID": "req-perm", "kind": "permission", "choice": "allow"},
+	}
+	if err := disp.DispatchCardAction(context.Background(), action); err != nil {
+		t.Fatalf("DispatchCardAction: %v", err)
+	}
+
+	ev, err := client.RecvEvent()
+	if err != nil {
+		t.Fatalf("RecvEvent: %v", err)
+	}
+	if ev.Type != protocol.TypeAnswer || ev.Answer.RequestID != "req-perm" {
+		t.Fatalf("unexpected answer event: %+v", ev)
+	}
+	if ev.Answer.Choice != "allow" {
+		t.Fatalf("Choice = %q, want allow", ev.Answer.Choice)
+	}
+	if len(ev.Answer.Choices) != 1 || ev.Answer.Choices[0] != "allow" {
+		t.Fatalf("Choices = %v, want [allow]", ev.Answer.Choices)
+	}
+	sink.mu.Lock()
+	last := ""
+	if n := len(sink.updates); n > 0 {
+		last = string(sink.updates[n-1].card)
+	}
+	sink.mu.Unlock()
+	if !strings.Contains(last, "你选择了") {
+		t.Errorf("expected submitted summary on card, got: %s", last)
+	}
+}
+
 // TestInteractiveTimeout verifies the expiry path: a permission card that no
 // one responds to within the TTL is flipped to its expired form and its
 // binding/timer are released. The TTL timer itself is driven by calling

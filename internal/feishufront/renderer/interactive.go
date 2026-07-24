@@ -58,6 +58,41 @@ func RenderQuestion(ctrl *protocol.Control, header cardkit.HeaderInfo, footer ca
 	return cardkit.Card(header, footer, []cardkit.Element{form}, nil)
 }
 
+// RenderPermission builds a permission card: the message as markdown, then one
+// button per option placed in the card's actions (not a form), so a click
+// submits immediately without a separate "提交" step. Each button carries
+// kind="permission" + the option's Value as "choice" so DispatchCardAction
+// routes the click and the consumer reads Choices[0].
+func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
+	header.Template = "orange"
+	if header.Title == "" {
+		header.Title = "权限请求"
+	}
+	p := ctrl.Permission
+	var elements []cardkit.Element
+	if msg := truncateRunes(p.Message, maxInteractiveBodyRunes); msg != "" {
+		elements = append(elements, cardkit.MarkdownElement(msg))
+	}
+	elements = append(elements, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
+	actions := make([]cardkit.Action, 0, len(p.Options))
+	for _, opt := range p.Options {
+		actions = append(actions, cardkit.ButtonAction(
+			truncateRunes(opt.Label, maxInteractiveBodyRunes), "permission",
+			map[string]any{"requestID": p.RequestID, "choice": opt.Value}, false, false))
+	}
+	return cardkit.Card(header, footer, elements, actions)
+}
+
+// RenderInteractive dispatches to the per-type interactive renderer: a
+// permission card renders as buttons, every other interactive control renders
+// as the question dropdown form.
+func RenderInteractive(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
+	if ctrl.Type == protocol.TypePermission {
+		return RenderPermission(ctrl, header, footer)
+	}
+	return RenderQuestion(ctrl, header, footer)
+}
+
 // RenderInteractiveSubmitted takes an already-rendered interactive card and
 // flips every button to disabled, the primary one labelled "已提交" and the
 // rest "处理中" (R4). summary is the user's choice (e.g. "✓ 你选择了「允许」")

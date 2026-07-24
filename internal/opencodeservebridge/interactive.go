@@ -43,30 +43,14 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 	if len(p.Patterns) > 0 {
 		label += "\n" + strings.Join(p.Patterns, "\n")
 	}
-	opts := make([]string, 0, len(permissionOptions))
-	for _, o := range permissionOptions {
-		opts = append(opts, o.label)
+	opts := make([]protocol.PermissionOption, len(permissionOptions))
+	for i, o := range permissionOptions {
+		opts[i] = protocol.PermissionOption{Label: o.label, Value: o.label}
 	}
-	ans := h.askAndWait(ctx, chatID, promptID, &protocol.QuestionPayload{
-		RequestID: p.ID,
-		PromptID:  promptID,
-		Questions: []protocol.QuestionItem{{Label: label, Options: opts}},
-	})
-	h.Logger.Debug("permission answer received",
-		log.FieldChatID, chatID,
-		"request_id", p.ID,
-		"has_answer", ans != nil)
-	if ans != nil {
-		h.Logger.Debug("permission answer details",
-			log.FieldChatID, chatID,
-			"request_id", p.ID,
-			"choice", ans.Choice,
-			"choices", ans.Choices,
-			"custom", ans.Custom)
-	}
+	choice, _, err := bridgebase.AskPermission(ctx, h.Answers, h.Emit, chatID, promptID, p.ID, "权限", label, opts, false)
 	reply := oc.PermissionReplyReject
-	if ans != nil {
-		reply = permissionReplyOf(bridgebase.PickAnswerValue(ans))
+	if err == nil {
+		reply = permissionReplyOf(choice)
 	}
 	directory := h.directoryOf(chatID)
 	rctx, cancel := context.WithTimeout(context.Background(), interactiveOpTimeout)
@@ -86,14 +70,12 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 		"reply", reply)
 	// Echo the answer onto the progress card so the user can see what was
 	// answered without scrolling back to the standalone permission card.
-	if ans != nil {
-		if summary := bridgebase.PickAnswerValue(ans); summary != "" {
-			h.emitAsync(promptID, &protocol.Control{
-				Type:   protocol.TypeText,
-				ChatID: chatID,
-				Text:   &protocol.TextPayload{Delta: "✓ 已应答权限请求: " + summary + "\n"},
-			})
-		}
+	if err == nil && choice != "" {
+		h.emitAsync(promptID, &protocol.Control{
+			Type:   protocol.TypeText,
+			ChatID: chatID,
+			Text:   &protocol.TextPayload{Delta: "✓ 已应答权限请求: " + choice + "\n"},
+		})
 	}
 }
 

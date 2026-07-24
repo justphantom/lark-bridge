@@ -11,6 +11,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // settablePermissionModes is the subset of CLI --permission-mode values
@@ -69,7 +70,11 @@ func (h *Handler) cmdPermission(ctx context.Context, chatID string, args []strin
 // runPermPicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
 func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, replyToID, "权限模式", "选择权限模式", bridgebase.StaticOptions(h.permissionOptions), false)
+	opts := make([]protocol.PermissionOption, len(h.permissionOptions))
+	for i, o := range h.permissionOptions {
+		opts[i] = protocol.PermissionOption{Label: o, Value: o}
+	}
+	choice, messageID, err := h.AskPermission(chatID, replyToID, "", "权限模式", "选择权限模式", opts, true)
 	if err != nil {
 		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}

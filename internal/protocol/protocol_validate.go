@@ -22,6 +22,7 @@ var allowedControlTypes = map[string]struct{}{
 	TypeProgress:    {},
 	TypeTodo:        {},
 	TypeQuestion:    {},
+	TypePermission:  {},
 	TypeNotice:      {},
 }
 
@@ -102,6 +103,7 @@ var controlRules = map[string]controlRule{
 	TypeProgress:    {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress"},
 	TypeTodo:        {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo"},
 	TypeQuestion:    {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
+	TypePermission:  {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},
 	TypeNotice:      {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true},
 }
 

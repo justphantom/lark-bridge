@@ -19,6 +19,7 @@ type Control struct {
 	Progress    *ProgressPayload    `json:"progress,omitempty"`
 	Todo        *TodoPayload        `json:"todo,omitempty"`
 	Question    *QuestionPayload    `json:"question,omitempty"`
+	Permission  *PermissionPayload  `json:"permission,omitempty"`
 	Notice      *NoticePayload      `json:"notice,omitempty"`
 }
 
@@ -34,6 +35,7 @@ const (
 	TypeProgress    = "progress"
 	TypeTodo        = "todo"
 	TypeQuestion    = "question"
+	TypePermission  = "permission"
 	TypeNotice      = "notice"
 )
 
@@ -155,6 +157,27 @@ type QuestionItem struct {
 	Options  []string `json:"options"`
 	Multiple bool     `json:"multiple,omitempty"`
 	Custom   bool     `json:"custom,omitempty"`
+}
+
+// PermissionPayload asks the frontend to render a permission card as a row of
+// buttons (one per option). Unlike QuestionPayload's dropdown+submit flow, a
+// permission card has a small fixed option set, so each option is a direct
+// button whose click submits immediately. Value is the machine value returned
+// in the answer's Choices[0]; Label is what the user sees on the button.
+type PermissionPayload struct {
+	RequestID string             `json:"requestID"`
+	PromptID  string             `json:"promptID"`
+	Message   string             `json:"message,omitempty"`
+	Options   []PermissionOption `json:"options"`
+	// TakeOverProgress mirrors QuestionPayload: a slash-command picker morphs
+	// the progress card; a mid-turn permission gate ships standalone.
+	TakeOverProgress bool `json:"takeOverProgress,omitempty"`
+}
+
+// PermissionOption is one button of a permission card.
+type PermissionOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // NoticePayload carries a notice control (info/success/warning/error share a template).

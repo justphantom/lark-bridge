@@ -150,6 +150,75 @@ func AskAndWait(
 	}
 }
 
+// AskPermission emits a button permission card and blocks for the user's pick,
+// mirroring AskAndWait's lifecycle but for a fixed option set rendered as
+// immediate-click buttons (no dropdown, no custom input). takeOver controls
+// whether the card morphs the progress card (a slash-command picker) or ships
+// standalone (a mid-turn permission gate); promptID is still emitted so a
+// finalised turn can flip the card either way. kind flavours the error text.
+func AskPermission(
+	appCtx context.Context,
+	answers *AnswerBroker,
+	emit EmitFunc,
+	chatID, promptID, requestID, kind, message string,
+	options []protocol.PermissionOption,
+	takeOver bool,
+) (string, string, error) {
+	if len(options) == 0 {
+		return "", "", fmt.Errorf("没有可用的%s", kind)
+	}
+	if requestID == "" {
+		var err error
+		requestID, err = newRequestID()
+		if err != nil {
+			return "", "", fmt.Errorf("生成请求 ID 失败：%w", err)
+		}
+	}
+	ch, ok := answers.Register(requestID)
+	if !ok {
+		return "", "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
+	}
+	ctrl := &protocol.Control{
+		Type:   protocol.TypePermission,
+		ChatID: chatID,
+		Permission: &protocol.PermissionPayload{
+			RequestID:        requestID,
+			Message:          message,
+			Options:          options,
+			TakeOverProgress: takeOver,
+		},
+	}
+	emitCtx, emitCancel := context.WithTimeout(appCtx, emitNoticeTimeout)
+	defer emitCancel()
+	if err := emit(emitCtx, promptID, ctrl); err != nil {
+		answers.Cancel(requestID)
+		return "", "", fmt.Errorf("发送权限卡片失败：%w", err)
+	}
+	waitCtx, waitCancel := context.WithTimeout(appCtx, AskWaitTimeout)
+	defer waitCancel()
+	select {
+	case ans, ok := <-ch:
+		if !ok {
+			return "", "", errors.New("服务正在关闭，请稍后重试")
+		}
+		choice := PickAnswerValue(ans)
+		if choice == "" {
+			return "", "", fmt.Errorf("未选择任何%s", kind)
+		}
+		messageID := ""
+		if ans != nil {
+			messageID = ans.MessageID
+		}
+		return choice, messageID, nil
+	case <-waitCtx.Done():
+		answers.Cancel(requestID)
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return "", "", fmt.Errorf("选择超时（>%s），请重新发起", AskWaitTimeout)
+		}
+		return "", "", errors.New("等待选择被中断")
+	}
+}
+
 // PickAnswerValue extracts the user's selection from an AnswerPayload. A
 // custom-typed value wins over a listed pick (the user explicitly overrode
 // the list); the Choices slice carries a single-select's value at index 0.
@@ -226,4 +295,8 @@ func (c *Core) AskAndWait(
 	allowCustom bool,
 ) (string, string, error) {
 	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
+}
+
+func (c *Core) AskPermission(chatID, promptID, requestID, kind, message string, options []protocol.PermissionOption, takeOver bool) (string, string, error) {
+	return AskPermission(c.AppCtx, c.Answers, c.Emit, chatID, promptID, requestID, kind, message, options, takeOver)
 }
