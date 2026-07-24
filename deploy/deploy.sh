@@ -362,16 +362,6 @@ fail_after_stop() {
     fail "$msg"
 }
 
-# 转义 sed replacement 文本里的元字符（& \ 和分隔符 |），避免 update_env_key
-# 写入 PROJECT_ROOT 等含特殊字符路径时被解释为反向引用或截断。
-escape_sed_replace() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//&/\\&}"
-    s="${s//|/\\|}"
-    printf '%s' "$s"
-}
-
 # 体检：RUN_USER 是否具备免密 sudo。remote /deploy（经 deploy-monitor 触发本
 # 脚本）无 tty，sudo 没配 NOPASSWD 会挂起到 deploy-monitor 超时——前置到步骤0
 # 前，让运维第一时间看到修复建议，而不是部署完才发现下次远程会挂。
@@ -398,8 +388,7 @@ if [[ -n "$SERVICES_ARG" ]]; then
 else
     SELECTED=(feishu claude opencode opencode-serve miniagent)
 fi
-SERVICES=()
-for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
+rebuild_services
 
 # ── 前置检查 ──────────────────────────────────────────
 # 仅源码构建模式（无 --binaries）才要求本机有 Makefile/go/make；
@@ -594,9 +583,11 @@ grep -Fq '"log_level":            "${LOG_LEVEL}"' "$STAGE/claude-config.json" \
 # 默认 router.v5.json 会互相覆盖会话绑定，故注入后必须显式校验存在。
 inject_router_path() {
     local file="$1" path="$2" backend_id="${3:-}"
-    sed -i '/"router_path"/d' "$file"
+    # delete 旧 router_path + 在 backend_id 行后 append 新值，合并为 1 次 sed -i
+    # （1 次 fsync）；backend_id 改写条件执行（claude/feishu 派生时为空，跳过）。
+    sed -i -e '/"router_path"/d' \
+           -e '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     [[ -n "$backend_id" ]] && sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "'"$backend_id"'",|' "$file"
-    sed -i '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     grep -q '"router_path"' "$file" \
         || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），backend 将共用默认 router 文件互相覆盖"
 }
@@ -701,12 +692,13 @@ sudo chmod 600 "$CONFIG_DIR"/*.json
 # 了 .env 的任何键（凭证、模型、工作区等）重新部署即生效；不再保留
 # CONFIG_DIR 上的旧 .env。
 # update_env_key 幂等更新一个键：存在用 sed 改整行，不存在追加。
-# val 经 escape_sed_replace 转义后传入 sed，防止 PROJECT_ROOT 等路径含 & / |
-# 时被解释为反向引用或截断分隔符。
 update_env_key() {
     local key="$1" val="$2" file="$3"
-    local esc_val
-    esc_val="$(escape_sed_replace "$val")"
+    # 内联 sed replacement 转义（& \ 和分隔符 |），避免 PROJECT_ROOT 等路径
+    # 含元字符时被解释为反向引用或截断分隔符。仅此一处使用，不抽 helper。
+    local esc_val="${val//\\/\\\\}"
+    esc_val="${esc_val//&/\\&}"
+    esc_val="${esc_val//|/\\|}"
     if sudo grep -q "^${key}=" "$file"; then
         sudo sed -i "s|^${key}=.*|${key}=${esc_val}|" "$file"
     else
