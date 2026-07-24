@@ -174,6 +174,25 @@ probe_opencode_serve() {
     return 1
 }
 
+# 探测外部 CLI（claude/opencode/miniagent）二进制是否就绪：command -v 命中 +
+# `<cli> --version` 退出 0。30s 超时与 backend IsReady 的 readyTimeout 一致
+# （internal/opencode/client.go:27），防止 hang 阻塞部署。作为对应 backend
+# 部署的硬性条件：CLI 不在 PATH → backend 启动必崩，systemd Restart=on-failure
+# 每 5s 重试。提前探测并停禁剔除，等运维装好 CLI 重新部署。
+probe_cli() {
+    local cli="$1"
+    if ! command -v "$cli" >/dev/null 2>&1; then
+        warn "$cli 二进制未就绪：command -v 找不到（请装到 PATH）"
+        return 1
+    fi
+    if ! timeout 30 "$cli" --version >/dev/null 2>&1; then
+        warn "$cli 二进制未就绪：$cli --version 退出非 0 或超时（30s）"
+        return 1
+    fi
+    info "$cli 二进制就绪（$(command -v "$cli")）"
+    return 0
+}
+
 # 轮询等待服务 active，最多 ~15s；避免冷启动时固定 sleep 导致的误判
 wait_active() {
     local svc="$1"
@@ -295,6 +314,8 @@ svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude
 # backend 依赖前端 listen 且需提权（透传外部 CLI）；feishu-front 两者皆无。
 svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
+# CLI 二进制名（probe_cli 用）；feishu 无 CLI，opencode-serve 走 HTTP 探测（probe_opencode_serve）。
+svc_cli(){ case "$1" in claude) echo "claude";; opencode) echo "opencode";; miniagent) echo "miniagent";; *) echo "";; esac; }
 
 # SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
 # SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
@@ -545,6 +566,33 @@ if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
         SERVICES=("${_keep[@]}")
     fi
 fi
+
+# claude/opencode/miniagent 三 backend 的 CLI 二进制就绪是对应 backend 部署的硬性
+# 条件：CLI 不在 PATH → backend 启动必崩（IsReady 跑 `<cli> --version`），
+# systemd 每 5s 重试。提前探测并停禁剔除，避免反复崩溃噪音。放在 stop_services
+# 前：停禁先于本次服务重启。opencode-serve 不在此列——它的就绪条件是外部
+# `opencode serve` HTTP 服务（已由上面的 probe_opencode_serve 探测）。
+# 迭代中改 SELECTED/SERVICES 不影响本次 for-in（bash 先把数组展开为位置参数）。
+for s in "${SELECTED[@]}"; do
+    cli="$(svc_cli "$s")"
+    [[ -z "$cli" ]] && continue
+    if probe_cli "$cli"; then
+        info "$s-back 纳入部署（$cli 就绪）"
+        continue
+    fi
+    u="$(svc_unit "$s")"
+    warn "$s-back 不具备部署条件（$cli CLI 未就绪），停止并禁用 $u（本次不部署）"
+    case "$s" in
+        claude)    warn "  安装 Claude Code CLI 后重新部署即可纳入：https://github.com/anthropics/claude-code" ;;
+        opencode)  warn "  安装 opencode CLI 后重新部署即可纳入：https://github.com/sst/opencode" ;;
+        miniagent) warn "  安装 miniagent CLI 后重新部署即可纳入：https://github.com/justphantom/miniagent" ;;
+    esac
+    sudo systemctl disable --now "$u" 2>/dev/null || true
+    _keep=(); for x in "${SELECTED[@]}"; do [[ "$x" != "$s" ]] && _keep+=("$x"); done
+    SELECTED=("${_keep[@]}")
+    _keep=(); for x in "${SERVICES[@]}"; do [[ "$x" != "$u" ]] && _keep+=("$x"); done
+    SERVICES=("${_keep[@]}")
+done
 
 # ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
 # STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
