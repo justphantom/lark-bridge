@@ -2,11 +2,11 @@ package bridgebase
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -28,12 +28,12 @@ type GitCommander interface {
 }
 
 // ExecCommander is the production GitCommander: CombinedOutput under dir.
+// Tree-wide SIGKILL on ctx cancel so git's remote helpers (git-remote-https,
+// gpg) cannot survive a /pull or /push abort.
 type ExecCommander struct{}
 
 func (ExecCommander) Run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	return cmd.CombinedOutput()
+	return cmdutil.RunCombinedBounded(ctx, dir, name, args...)
 }
 
 // GitNotice emits one notice for the chat that triggered the job. Binding
