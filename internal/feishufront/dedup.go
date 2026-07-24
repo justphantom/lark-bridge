@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
 
 // dedupPruneInterval is how often StartPrune sweeps expired entries. With
@@ -94,10 +92,16 @@ func (s *dedupSet) Prune() int {
 
 // StartPrune launches a goroutine that calls Prune every
 // dedupPruneInterval until ctx is cancelled. The goroutine is panic-safe
-// (bridgebase.GoSafe) so a stray panic cannot crash the frontend. Call once
-// per set at startup; calling twice would double the sweep rate harmlessly.
+// (a stray panic is recovered and terminates only the sweeper, not the
+// frontend process) so a Prune bug cannot crash the bot. Call once per set
+// at startup; calling twice would double the sweep rate harmlessly.
+//
+// Inlined here rather than reusing bridgebase.GoSafe to avoid an import
+// cycle (backendrpc's tests use feishufront as a fixture, so feishufront
+// must not import bridgebase, which imports backendrpc).
 func (s *dedupSet) StartPrune(ctx context.Context) {
-	bridgebase.GoSafe(nil, "dedup-prune", func() {
+	go func() {
+		defer func() { _ = recover() }()
 		ticker := time.NewTicker(dedupPruneInterval)
 		defer ticker.Stop()
 		for {
@@ -108,7 +112,7 @@ func (s *dedupSet) StartPrune(ctx context.Context) {
 				s.Prune()
 			}
 		}
-	})
+	}()
 }
 
 // Configure updates the TTL and entry cap at runtime. Called by
