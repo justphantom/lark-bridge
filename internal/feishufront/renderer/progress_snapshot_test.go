@@ -25,3 +25,24 @@ func TestProgressStateCloneIsDeepCopy(t *testing.T) {
 		t.Errorf("original tools = %+v, want read(count 2) + write", s.tools)
 	}
 }
+
+// TestProgressStateClone_TodosDeepCopy guards the lock-free render path against
+// a todos data race: after Clone, mutating the original's todos (the backend
+// resends the whole list each update, so AddTodo reuses the backing array via
+// append-to-zero) must not change the clone's snapshot.
+func TestProgressStateClone_TodosDeepCopy(t *testing.T) {
+	s := NewProgressState()
+	s.AddTodo([]TodoItem{{Content: "a", Status: "pending"}})
+
+	cp := s.Clone()
+
+	// Overwrite the original's todos in place (AddTodo reuses s.todos[:0]).
+	s.AddTodo([]TodoItem{{Content: "b", Status: "completed"}, {Content: "c", Status: "cancelled"}})
+
+	if len(cp.todos) != 1 || cp.todos[0].Content != "a" {
+		t.Errorf("clone todos = %+v, want [a] (deep copy, untouched by later overwrite)", cp.todos)
+	}
+	if len(s.todos) != 2 || s.todos[0].Content != "b" {
+		t.Errorf("original todos = %+v, want [b,c] after overwrite", s.todos)
+	}
+}

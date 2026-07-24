@@ -606,3 +606,70 @@ func TestRender_TitleCountsCompletedOnly(t *testing.T) {
 		t.Errorf("legacy '个工具' wording should be gone: %s", title)
 	}
 }
+
+// TestRenderTodoZone_ShortListExpanded pins the expanded shape: with at most
+// maxExpandedTodos items, each renders as its own status-prefixed line and the
+// zone does NOT collapse to a summary.
+func TestRenderTodoZone_ShortListExpanded(t *testing.T) {
+	todos := []TodoItem{
+		{Content: "读代码", Status: "completed"},
+		{Content: "写测试", Status: "in_progress"},
+		{Content: "重构", Status: "pending"},
+	}
+	got := renderTodoZone(todos)
+	for _, want := range []string{"✅ 读代码", "⏳ 写测试", "⬜ 重构"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing line %q in: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "清单") {
+		t.Errorf("short list should not collapse to summary: %s", got)
+	}
+}
+
+// TestRenderTodoZone_LongListCollapsed pins the fold: beyond maxExpandedTodos
+// the zone becomes one "清单 N/M · ✅a ⏳b ⬜c ✘d" line (M=total, N=settled =
+// completed+cancelled) and no per-item content leaks through.
+func TestRenderTodoZone_LongListCollapsed(t *testing.T) {
+	// 11 items (> maxExpandedTodos=10): 4 completed, 3 in_progress, 2 pending,
+	// 2 cancelled. M=11, N=6 settled (4 completed + 2 cancelled).
+	todos := []TodoItem{
+		{Content: "c1", Status: "completed"},
+		{Content: "c2", Status: "completed"},
+		{Content: "c3", Status: "completed"},
+		{Content: "c4", Status: "completed"},
+		{Content: "i1", Status: "in_progress"},
+		{Content: "i2", Status: "in_progress"},
+		{Content: "i3", Status: "in_progress"},
+		{Content: "p1", Status: "pending"},
+		{Content: "p2", Status: "pending"},
+		{Content: "x1", Status: "cancelled"},
+		{Content: "x2", Status: "cancelled"},
+	}
+	got := renderTodoZone(todos)
+	if want := "清单 6/11 · ✅4 ⏳3 ⬜2 ✘2"; !strings.Contains(got, want) {
+		t.Errorf("collapse summary = %q, want to contain %q", got, want)
+	}
+	for _, leaked := range []string{"c1", "i1", "p1", "x1"} {
+		if strings.Contains(got, leaked) {
+			t.Errorf("collapsed zone should not list item %q: %s", leaked, got)
+		}
+	}
+}
+
+// TestRenderTodoZone_CancelledDimmed pins the grey-out: a cancelled item's
+// whole line (icon included) is wrapped in <font color="grey">…</font> while a
+// non-cancelled item in the same zone is not.
+func TestRenderTodoZone_CancelledDimmed(t *testing.T) {
+	todos := []TodoItem{
+		{Content: "活跃", Status: "in_progress"},
+		{Content: "废弃", Status: "cancelled"},
+	}
+	got := renderTodoZone(todos)
+	if !strings.Contains(got, `<font color="grey">✘ 废弃</font>`) {
+		t.Errorf("cancelled item should be wrapped whole in grey font: %s", got)
+	}
+	if strings.Contains(got, `<font color="grey">⏳ 活跃</font>`) {
+		t.Errorf("non-cancelled item must not be greyed: %s", got)
+	}
+}

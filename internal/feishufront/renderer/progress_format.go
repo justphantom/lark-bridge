@@ -71,3 +71,52 @@ func truncateRunes(s string, maxRunes int) string {
 	}
 	return string(runes[:maxRunes]) + "…"
 }
+
+// maxExpandedTodos bounds how many todo items render as detail rows; beyond it
+// the zone folds to a summary, since todo lists routinely hit 20+ items and a
+// Feishu card caps at ~50 elements.
+const maxExpandedTodos = 10
+
+// renderTodoZone renders the todo list as markdown. Up to maxExpandedTodos
+// items each get a status-prefixed line; beyond that it collapses to
+// "清单 N/M · ✅a ⏳b ⬜c ✘d" (M=total, N=settled=completed+cancelled).
+// cancelled items are kept but greyed — they carry audit value.
+func renderTodoZone(todos []TodoItem) string {
+	if len(todos) > maxExpandedTodos {
+		var done, inProg, pending, cancelled int
+		for _, td := range todos {
+			switch td.Status {
+			case "completed":
+				done++
+			case "in_progress":
+				inProg++
+			case "cancelled":
+				cancelled++
+			default:
+				pending++
+			}
+		}
+		settled := done + cancelled
+		return "清单 " + strconv.Itoa(settled) + "/" + strconv.Itoa(len(todos)) +
+			" · ✅" + strconv.Itoa(done) + " ⏳" + strconv.Itoa(inProg) +
+			" ⬜" + strconv.Itoa(pending) + " ✘" + strconv.Itoa(cancelled)
+	}
+	lines := make([]string, 0, len(todos))
+	for _, td := range todos {
+		icon := "⬜"
+		switch td.Status {
+		case "completed":
+			icon = "✅"
+		case "in_progress":
+			icon = "⏳"
+		case "cancelled":
+			icon = "✘"
+		}
+		line := icon + " " + td.Content
+		if td.Status == "cancelled" {
+			line = "<font color=\"grey\">" + line + "</font>"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}

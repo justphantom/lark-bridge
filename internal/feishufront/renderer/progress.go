@@ -232,6 +232,13 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 		zones = append(zones, cardkit.MarkdownElement(strings.Join(doneLines, "\n")))
 	}
 
+	// Zone 3.5: todo list. Sits between completed (settled successes) and
+	// errors (terminal failures) because todo is in-progress state. Kept as
+	// its own zone so it never feeds categoryTotals (which counts tool rows).
+	if len(s.todos) > 0 {
+		zones = append(zones, cardkit.MarkdownElement(renderTodoZone(s.todos)))
+	}
+
 	// Zone 4: errors. Each failure is listed verbatim with its excerpt; no
 	// collapsing — failures are rare and each one's reason matters.
 	if len(errored) > 0 {
