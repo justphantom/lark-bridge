@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	oc "github.com/justphantom/opencode-go-sdk-lite"
+
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -189,5 +191,153 @@ func TestCmdDirectory_Picker_OneCardFlow(t *testing.T) {
 	}, 2*time.Second)
 	if res.Notice.UpdateMessageID != "om_progress" {
 		t.Errorf("result UpdateMessageID = %q, want om_progress", res.Notice.UpdateMessageID)
+	}
+}
+
+// TestCmdSessionUse_Picker_OneCardFlow pins the single-card contract for
+// /session-use: the loading delta and the picker card both address the
+// command message's promptID (so the frontend morphs its progress card), no
+// standalone placeholder notice is emitted, and the result patches the
+// answered card via UpdateMessageID.
+func TestCmdSessionUse_Picker_OneCardFlow(t *testing.T) {
+	agent := &idleFakeAgent{
+		sessionsByDir: map[string][]oc.SessionInfo{
+			"/a": {{ID: "s1", Title: "会话一"}, {ID: "s2", Title: "会话二"}},
+		},
+		statuses: map[string]oc.SessionStatus{
+			"s1": {Type: "idle"},
+			"s2": {Type: "idle"},
+		},
+	}
+	h, r, captured := newWireHandler(t, agent)
+	r.Bind("chat-1", "", "/a", "", "", "")
+
+	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/session-use", "ou_cmd")
+
+	q := captured.waitFor(t, isQuestion, 2*time.Second)
+	if q.PromptID != "ou_cmd" {
+		t.Errorf("question promptID = %q, want ou_cmd", q.PromptID)
+	}
+	if !q.Question.TakeOverProgress {
+		t.Error("question should request progress-card takeover")
+	}
+	if delta := captured.find(func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeText && c.PromptID == "ou_cmd"
+	}); delta == nil {
+		t.Error("loading delta on the command's promptID not emitted")
+	}
+	if placeholder := captured.find(func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "正在加载会话列表"
+	}); placeholder != nil {
+		t.Error("standalone placeholder notice should be gone")
+	}
+
+	// Reuse the exact label the picker generated (time-stamped) so the
+	// choice maps back to a real session regardless of formatTime output.
+	firstLabel := q.Question.Questions[0].Options[0]
+	h.Answers.Deliver(q.Question.RequestID, &protocol.AnswerPayload{
+		RequestID: q.Question.RequestID, ChatID: "chat-1", MessageID: "ou_progress",
+		Choices: []string{firstLabel},
+	})
+	res := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "已切换会话"
+	}, 2*time.Second)
+	if res.Notice.UpdateMessageID != "ou_progress" {
+		t.Errorf("result UpdateMessageID = %q, want ou_progress", res.Notice.UpdateMessageID)
+	}
+}
+
+// TestCmdSessionUse_Picker_NoSessions_BindToProgress verifies the
+// no-sessions terminal binds back to the command's progress card instead of
+// popping a standalone card, and never emits a picker question.
+func TestCmdSessionUse_Picker_NoSessions_BindToProgress(t *testing.T) {
+	agent := &idleFakeAgent{
+		sessionsByDir: map[string][]oc.SessionInfo{"/a": nil},
+	}
+	h, r, captured := newWireHandler(t, agent)
+	r.Bind("chat-1", "", "/a", "", "", "")
+
+	commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/session-use", "ou_cmd")
+
+	n := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "无会话"
+	}, 2*time.Second)
+	if n.PromptID != "ou_cmd" {
+		t.Errorf("no-sessions notice promptID = %q, want ou_cmd", n.PromptID)
+	}
+	if captured.find(isQuestion) != nil {
+		t.Error("no-sessions terminal should not pop a question card")
+	}
+}
+
+// TestCmdSessionClean_Picker_OneCardFlow pins the single-card contract for
+// /session-clean: the confirmation card addresses the command message's
+// promptID (TakeOverProgress, no standalone placeholder), and the result
+// patches the answered card via UpdateMessageID.
+func TestCmdSessionClean_Picker_OneCardFlow(t *testing.T) {
+	agent := &idleFakeAgent{
+		sessionsByDir: map[string][]oc.SessionInfo{
+			"/a": {{ID: "idle1"}, {ID: "bound"}},
+		},
+		statuses: map[string]oc.SessionStatus{
+			"idle1": {Type: "idle"},
+			"bound": {Type: "idle"},
+		},
+	}
+	h, r, captured := newWireHandler(t, agent)
+	r.Bind("chat-1", "bound", "/a", "", "", "") // "bound" is bound → not a candidate
+
+	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/session-clean", "oc_cmd")
+
+	q := captured.waitFor(t, isQuestion, 2*time.Second)
+	if q.PromptID != "oc_cmd" {
+		t.Errorf("question promptID = %q, want oc_cmd", q.PromptID)
+	}
+	if !q.Question.TakeOverProgress {
+		t.Error("question should request progress-card takeover")
+	}
+	if placeholder := captured.find(func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "等待确认清理"
+	}); placeholder != nil {
+		t.Error("standalone placeholder notice should be gone")
+	}
+
+	h.Answers.Deliver(q.Question.RequestID, &protocol.AnswerPayload{
+		RequestID: q.Question.RequestID, ChatID: "chat-1", MessageID: "oc_progress",
+		Choices: []string{"确认清理"},
+	})
+	res := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "已清理空闲会话"
+	}, 2*time.Second)
+	if res.Notice.UpdateMessageID != "oc_progress" {
+		t.Errorf("result UpdateMessageID = %q, want oc_progress", res.Notice.UpdateMessageID)
+	}
+}
+
+// TestCmdSessionClean_Cancel_BindToProgress verifies the cancel terminal
+// patches the answered picker card in place and deletes nothing.
+func TestCmdSessionClean_Cancel_BindToProgress(t *testing.T) {
+	agent := &idleFakeAgent{
+		sessionsByDir: map[string][]oc.SessionInfo{"/a": {{ID: "idle1"}}},
+		statuses:      map[string]oc.SessionStatus{"idle1": {Type: "idle"}},
+	}
+	h, r, captured := newWireHandler(t, agent)
+	r.Bind("chat-1", "", "/a", "", "", "")
+
+	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/session-clean", "oc_cmd")
+
+	q := captured.waitFor(t, isQuestion, 2*time.Second)
+	h.Answers.Deliver(q.Question.RequestID, &protocol.AnswerPayload{
+		RequestID: q.Question.RequestID, ChatID: "chat-1", MessageID: "oc_progress",
+		Choices: []string{"取消"},
+	})
+	res := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "已取消清理"
+	}, 2*time.Second)
+	if res.Notice.UpdateMessageID != "oc_progress" {
+		t.Errorf("cancel UpdateMessageID = %q, want oc_progress", res.Notice.UpdateMessageID)
+	}
+	if got := agent.deletedSnapshot(); len(got) != 0 {
+		t.Errorf("deleted = %v, want none after 取消", got)
 	}
 }

@@ -24,7 +24,7 @@ func (h *Handler) cmdDeleteIdleSessions(ctx context.Context, chatID string, _ []
 	if len(candidates) == 0 {
 		return commandResult{Body: "没有可清理的未绑定空闲会话。"}, nil
 	}
-	return h.runCleanConfirm(chatID, candidates, skippedBusy), nil
+	return h.runCleanConfirm(ctx, chatID, candidates, skippedBusy), nil
 }
 
 // collectIdleSessions gathers the deletion candidates: unbound, idle
@@ -85,17 +85,20 @@ func (h *Handler) collectIdleSessions(ctx context.Context) ([]oc.SessionInfo, []
 }
 
 // runCleanConfirm pops the confirmation card and runs the deletion in the
-// background: AskAndWait blocks up to AskWaitTimeout for a human answer, far
-// beyond the dispatcher's command timeout, so (like runModelPicker) it emits
-// a placeholder Notice, returns Handled immediately, and emits the result as
-// a card update itself.
-func (h *Handler) runCleanConfirm(chatID string, candidates []oc.SessionInfo, skippedBusy []string) commandResult {
-	h.emitNoticeLogged(chatID, "info", "等待确认清理", "正在等待确认，请在卡片中选择…")
+// background. AskAndWait blocks up to AskWaitTimeout for a human answer, far
+// beyond the dispatcher's command timeout, so (like runModelPicker) it
+// returns Handled immediately; the picker Question (TakeOverProgress) morphs
+// the command's progress card, and the result patches that same card via
+// UpdateMessageID. replyToID keeps the whole flow on one card; a wait error
+// binds back to the progress card via emitPromptNotice so no standalone card
+// is left dangling.
+func (h *Handler) runCleanConfirm(ctx context.Context, chatID string, candidates []oc.SessionInfo, skippedBusy []string) commandResult {
+	replyToID := bridgebase.ReplyToID(ctx)
 	bridgebase.GoSafe(h.Logger, "session-clean:"+chatID, func() {
-		choice, messageID, err := h.AskAndWait(chatID, "", "清理", cleanConfirmLabel(candidates),
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "清理", cleanConfirmLabel(candidates),
 			bridgebase.StaticOptions([]string{"确认清理", "取消"}), false)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "info", "清理未执行", err.Error())
+			h.emitPromptNotice(chatID, replyToID, "info", "清理未执行", err.Error())
 			return
 		}
 		if choice != "确认清理" {

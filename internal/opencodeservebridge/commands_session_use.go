@@ -9,6 +9,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // cmdSessionUse switches the chat's binding to another session of the same
@@ -26,7 +27,7 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 	}
 
 	if len(args) == 0 {
-		return h.runSessionPicker(chatID), nil
+		return h.runSessionPicker(ctx, chatID), nil
 	}
 
 	n, err := strconv.Atoi(args[0])
@@ -50,33 +51,41 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 }
 
 // runSessionPicker drives the interactive session selection in a background
-// goroutine, mirroring runModelPicker/runCleanConfirm: AskAndWait blocks far
-// beyond the dispatcher's command timeout, so the command returns
-// immediately with a placeholder Notice (Handled=true) and the goroutine
-// emits the selection card and the result card update itself. The binding is
-// re-read inside the goroutine so a /cd issued after the placeholder does
+// goroutine, mirroring runModelPicker: AskAndWait blocks far beyond the
+// dispatcher's command timeout, so the command returns immediately with
+// Handled=true and a loading delta on the command's progress card; the
+// goroutine then emits the picker Question (TakeOverProgress) and patches the
+// answered card via UpdateMessageID. replyToID keeps the whole flow on the
+// command's progress card; errors and no-candidate terminals bind back to it
+// via emitPromptNotice so no standalone card is left dangling. The binding is
+// re-read inside the goroutine so a /cd issued after the loading delta does
 // not switch into a stale directory's session.
-func (h *Handler) runSessionPicker(chatID string) commandResult {
-	h.emitNoticeLogged(chatID, "info", "正在加载会话列表", "正在获取当前目录的会话，请稍候…")
+func (h *Handler) runSessionPicker(ctx context.Context, chatID string) commandResult {
+	replyToID := bridgebase.ReplyToID(ctx)
+	h.emitAsync(replyToID, &protocol.Control{
+		Type:   protocol.TypeText,
+		ChatID: chatID,
+		Text:   &protocol.TextPayload{Delta: "🔍 正在获取当前目录的会话，请稍候…\n"},
+	})
 	bridgebase.GoSafe(h.Logger, "session-use:"+chatID, func() {
 		b, ok := h.Router.Lookup(chatID)
 		if !ok || b.Directory == "" {
-			h.emitNoticeLogged(chatID, "error", "切换失败", "尚未设置工作目录。")
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "尚未设置工作目录。")
 			return
 		}
 		sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "切换失败", fmt.Sprintf("获取会话列表失败：%v", err))
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", fmt.Sprintf("获取会话列表失败：%v", err))
 			return
 		}
 		sorted := sortedSessions(sessions)
 		if len(sorted) == 0 {
-			h.emitNoticeLogged(chatID, "info", "无会话", "当前目录下没有任何会话。")
+			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
 			return
 		}
 		statuses, err := h.agent.SessionStatuses(h.AppCtx)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "切换失败", fmt.Sprintf("获取会话状态失败：%v", err))
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", fmt.Sprintf("获取会话状态失败：%v", err))
 			return
 		}
 
@@ -100,7 +109,7 @@ func (h *Handler) runSessionPicker(chatID string) commandResult {
 			candidates[label] = sess
 		}
 		if len(options) == 0 {
-			h.emitNoticeLogged(chatID, "info", "无会话可切换", fmt.Sprintf("%d 个会话正在执行，不可切换。", busy))
+			h.emitPromptNotice(chatID, replyToID, "info", "无会话可切换", fmt.Sprintf("%d 个会话正在执行，不可切换。", busy))
 			return
 		}
 
@@ -108,20 +117,20 @@ func (h *Handler) runSessionPicker(chatID string) commandResult {
 		if busy > 0 {
 			label = fmt.Sprintf("%s（%d 个会话正在执行，不可切换）", label, busy)
 		}
-		choice, messageID, err := h.AskAndWait(chatID, "", "会话", label, bridgebase.StaticOptions(options), false)
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "会话", label, bridgebase.StaticOptions(options), false)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "选择失败", err.Error())
+			h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 			return
 		}
 		sess, ok := candidates[choice]
 		if !ok {
-			h.emitNoticeLogged(chatID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
 			return
 		}
 
 		body, switched, err := h.switchSession(h.AppCtx, chatID, sess)
 		if err != nil {
-			h.emitNoticeLogged(chatID, "error", "切换失败", err.Error())
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", err.Error())
 			return
 		}
 		level, title := "info", "会话未切换"
