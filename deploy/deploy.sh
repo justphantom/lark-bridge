@@ -101,7 +101,7 @@ stop_services() {
 # 以访问 GET /v1/status；服务未运行或端点不可达时放行（首次部署/已停止场景）。
 preflight_inflight_check() {
     # 服务未运行 → 无 in-flight 风险，直接放行。
-    if ! systemctl is-active --quiet lark-feishu-front 2>/dev/null; then
+    if ! systemctl is-active --quiet "$(svc_unit feishu)" 2>/dev/null; then
         return 0
     fi
 
@@ -145,10 +145,9 @@ preflight_inflight_check() {
 # 就绪返回 0，否则 1 并 warn 原因。作为 opencode-serve-back 部署的硬性条件：
 # 不就绪时由调用方停止、禁用现有单元并从本次部署集合剔除，避免 backend 反复崩溃-重启。
 probe_opencode_serve() {
-    local envf="$PROJECT_ROOT/.env"
     local base_url password
-    base_url="$(grep -E '^OPENCODE_SERVER_URL=' "$envf" 2>/dev/null | head -1 | cut -d= -f2-)"
-    password="$(grep -E '^OPENCODE_SERVER_PASSWORD=' "$envf" 2>/dev/null | head -1 | cut -d= -f2-)"
+    base_url="$(env_get OPENCODE_SERVER_URL)"
+    password="$(env_get OPENCODE_SERVER_PASSWORD)"
     if [[ -z "$base_url" ]]; then
         warn ".env 缺 OPENCODE_SERVER_URL（opencode serve 地址），无法探测就绪"
         return 1
@@ -207,28 +206,31 @@ wait_active() {
 # 后端启动即连 6060，若 feishu-front 未 listen 会崩溃-重启（RestartSec=5），
 # deploy.sh 在崩溃窗口抓 MainPID 会得到 0 → 误报。故先起前端、等端口通，
 # 再起后端，从根因消除崩溃-重启。
-# 带 .env 的 IPC_SECRET 请求：000=端口未通仍重试；任何非 000 响应都算 listen
-# （401=端口 listen 但 secret 不匹配，可能是部署间隙旧 secret；不阻塞起后端）。
+# 带 .env 的 IPC_SECRET 请求 /v1/status（非流式 GET；/v1/events 是 SSE，鉴权
+# 通过后服务会持续推流让 curl hang）。-m 3 兜底防任何流式端点误阻塞轮询。
+# 000=端口未通仍重试；任何非 000 响应都算 listen（401=端口 listen 但 secret
+# 不匹配，可能是部署间隙旧 secret；不阻塞起后端）。
 wait_listen() {
     local secret auth=()
     secret="$(env_get IPC_SECRET)"
     [[ -n "$secret" ]] && auth=(-H "Authorization: Bearer $secret")
     for _ in {1..15}; do
         local code
-        code="$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "http://$IPC_ADDR/v1/events" 2>/dev/null || echo 000)"
+        code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "${auth[@]}" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
         [[ "$code" != "000" ]] && return 0
         sleep 1
     done
     return 1
 }
 
-# 生成单个 systemd unit
-#   $1=unit 名  $2=描述  $3=二进制名  $4=配置文件名  $5=依赖 unit（可空，仅 feishu-front 留空）
-#   $6=额外的 Environment= 行（可空，多行用 $'\n' 分隔）
+# 生成单个 systemd unit。$unit 同时作为 Description 后缀和二进制名
+# （unit=lark-xxx-back，二进制同路径同名，Description=lark-bridge $unit）。
+#   $1=unit 名  $2=配置文件名  $3=依赖 unit（可空，仅 feishu-front 留空）
+#   $4=额外的 Environment= 行（可空，多行用 $'\n' 分隔）  $5=privileged（默认 false）
 # 用 Wants= 而非 Requires=：前端崩溃时后端不被连带停止，in-flight Claude 对话
 # 继续运行，backendrpc.Run 的重连机制在前端恢复后重新接上 SSE。
 write_unit() {
-    local unit="$1" desc="$2" binary="$3" config="$4" requires="${5:-}" extra_env="${6:-}" privileged="${7:-false}"
+    local unit="$1" config="$2" requires="${3:-}" extra_env="${4:-}" privileged="${5:-false}"
     local deps="After=network.target"
     [[ -n "$requires" ]] && deps="After=$requires.service"$'\n'"Wants=$requires.service"
     # extra_env 非空时尾部补一个换行，使 heredoc 里 ExecStart 独立成行；空则留空。
@@ -266,12 +268,12 @@ CapabilityBoundingSet='
     fi
     sudo tee "/etc/systemd/system/$unit.service" > /dev/null <<EOF
 [Unit]
-Description=lark-bridge $desc
+Description=lark-bridge $unit
 $deps
 
 [Service]
 EnvironmentFile=$CONFIG_DIR/.env
-${env_block}ExecStart=$DEPLOY_DIR/$binary -config $CONFIG_DIR/$config
+${env_block}ExecStart=$DEPLOY_DIR/$unit -config $CONFIG_DIR/$config
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
@@ -376,10 +378,10 @@ ensure_binaries
 [[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
 [[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
-# NOTE: miniagent binary (github.com/justphantom/miniagent) must be
-# deployed separately via its own Makefile. It lives at /usr/local/bin/miniagent.
-# NOTE: lark-deploy-monitor 在本 tarball 内但不归 deploy.sh 管（由 upgrade-monitor.sh
-# 独立部署）；解包后留在 BIN_DIR 无害，下方 cp 会一并落到 DEPLOY_DIR 供其覆盖。
+# NOTE: miniagent 二进制（github.com/justphantom/miniagent）独立项目，需通过其
+# 自带 Makefile 单独部署到 /usr/local/bin/miniagent，不归本 deploy.sh 管。
+# lark-deploy-monitor 同理：本 tarball 内但由 upgrade-monitor.sh 独立部署；
+# 解包后留在 BIN_DIR 无害，下方 cp 会一并落到 DEPLOY_DIR 供其覆盖。
 
 # ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
 # 四个进程各用独立 config：claude/opencode/miniagent/feishu-config.json。
@@ -494,7 +496,11 @@ fi
 # 机制（进程启动时 config.Load 从 EnvironmentFile 展开，见下方注释）。运维改
 # repo 根 .env 的 LOG_LEVEL 重新部署即全服务生效，无需碰 JSON。改的是 STAGE
 # 副本，repo 里的基底原样保留；注入后显式校验，防基底缺字段时 sed 静默失败。
+# 单引号禁止 shell 展开 ${LOG_LEVEL}（留给 Go config.Load 展开），shellcheck SC2016
+# 是预期告警，行内 disable 声明意图。
+# shellcheck disable=SC2016
 sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/claude-config.json"
+# shellcheck disable=SC2016
 grep -Fq '"log_level":            "${LOG_LEVEL}"' "$STAGE/claude-config.json" \
     || fail "log_level 占位符注入失败：$STAGE/claude-config.json 缺少 log_level 字段（注入锚点缺失）"
 
@@ -529,7 +535,7 @@ inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.jso
 
 # opencode-serve-back：派生自 opencode-config（保留 opencode_serve 字段即用）。
 # 默认部署（与其他 backend 同级）。外部 opencode serve 进程是否就绪由
-# check_opencode_serve_ready 在 stop_services 前探测并告警；不就绪时 backend
+# probe_opencode_serve 在 stop_services 前探测并告警；不就绪时 backend
 # 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重试直到 serve 上线。
 if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
     cp "$STAGE/opencode-config.json" "$STAGE/opencode-serve-config.json"
@@ -674,7 +680,7 @@ info "生成 systemd unit 文件（User=$RUN_USER）..."
 
 for s in "${SELECTED[@]}"; do
     u="$(svc_unit "$s")"
-    write_unit "$u" "$u" "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "" "$(svc_privileged "$s")"
+    write_unit "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "" "$(svc_privileged "$s")"
 done
 
 # ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
@@ -686,8 +692,9 @@ sudo systemctl enable "${SERVICES[@]}" 2>/dev/null || true
 # 先起前端（若本次部署含前端），等 IPC 端口 listen，避免后端连不上而崩溃-重启。
 # 仅部署 backend 时前端已在运行，跳过等待直接起 backend。
 if [[ " ${SELECTED[*]} " == *" feishu "* ]]; then
-    sudo systemctl start lark-feishu-front
-    wait_active lark-feishu-front || fail "lark-feishu-front 启动失败"
+    front_unit="$(svc_unit feishu)"
+    sudo systemctl start "$front_unit"
+    wait_active "$front_unit" || fail "$front_unit 启动失败"
     wait_listen || fail "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
 fi
 
@@ -743,4 +750,8 @@ else
     fi
 fi
 
-$all_ok && info "部署完成" || fail "部分服务启动失败，请检查 journalctl -u {service}"
+if $all_ok; then
+    info "部署完成"
+else
+    fail "部分服务启动失败，请检查 journalctl -u {service}"
+fi
