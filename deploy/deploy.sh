@@ -16,8 +16,9 @@
 #                                # 用不同子集：前端机 --services feishu，后端机 --services claude,...
 #
 # 可选环境变量：
-#   IPC_ADDR   IPC 监听地址（默认 localhost:6060）
-#   STATE_DIR  持久化目录（默认 /var/lib/lark-bridge）
+#   IPC_ADDR   IPC 监听地址。优先级：环境变量 > repo 根 .env > localhost:6060
+#              （改 .env 即生效；环境变量优先用于一次性覆盖）
+#   STATE_DIR  持久化目录（默认 /var/lib/lark-bridge，环境变量覆盖）
 #
 set -euo pipefail
 
@@ -309,6 +310,7 @@ BINARIES_SRC=""
 SERVICES_ARG=""
 INIT=false
 FORCE=false
+DEBUG=false
 prev=""
 for arg in "$@"; do
     if [[ -n "$prev" ]]; then
@@ -321,11 +323,17 @@ for arg in "$@"; do
     case "$arg" in
         --init)        INIT=true ;;
         --force)       FORCE=true ;;
+        --debug)       DEBUG=true ;;
+        --help|-h)     awk 'NR==1{next} /^#!/{next} /^[^#]/{exit} {sub(/^#[[:space:]]?/,""); print}' "$0" | sed 's/^$//'; exit 0 ;;
         --binaries|--services) prev="$arg" ;;
-        *)             fail "未知参数：$arg（可用：--init --force --binaries <path> --services <list>）" ;;
+        *)             fail "未知参数：$arg（可用：--init --force --debug --help --binaries <path> --services <list>）" ;;
     esac
 done
 [[ -z "$prev" ]] || fail "${prev} 需要一个参数"
+
+# --debug：开启 set -x 跟踪每条命令（含变量展开），用于排查部署链路。
+# 放参数解析后，避免解析过程本身被 trace 淹没。
+$DEBUG && set -x
 
 # 服务短名 ↔ unit/配置/依赖/提权 映射。新增 backend 仅在此登记四处即可被
 # --services 识别，无需改部署流程的各操作点。
