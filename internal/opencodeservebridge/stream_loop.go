@@ -106,8 +106,25 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			accCacheRead += ev.CacheRead()
 			accCacheWrite += ev.CacheWrite()
 			accCost += ev.Cost()
-		case oc.HighEventText:
-			text.WriteString(ev.Text())
+	case oc.HighEventText:
+		text.WriteString(ev.Text())
+	case oc.HighEventThinking:
+		// Streaming reasoning delta: forward as an append (Replace=false).
+		// The renderer accumulates and shows it live under the progress
+		// card's thinking zone, debounced with the rest of the frame.
+		h.emitAsync(promptID, &protocol.Control{
+			Type:     protocol.TypeThinking,
+			Thinking: &protocol.ThinkingPayload{Delta: ev.Text()},
+		})
+	case oc.HighEventThinkingDone:
+		// Part-end authoritative frame: the server reconciled the full
+		// reasoning text for this part. Replace=true tells the renderer to
+		// reset its buffer to this snapshot, so a dropped/out-of-order delta
+		// earlier in the part self-heals instead of accumulating garbage.
+		h.emitAsync(promptID, &protocol.Control{
+			Type:     protocol.TypeThinking,
+			Thinking: &protocol.ThinkingPayload{Delta: ev.Text(), Replace: true},
+		})
 		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,

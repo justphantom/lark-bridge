@@ -226,3 +226,60 @@ func TestStreamRun_TodoUpdatedEmitsTypeTodoControl(t *testing.T) {
 		t.Errorf("todos[1] = %+v", todo.Todo.Todos[1])
 	}
 }
+
+// TestStreamRun_ThinkingEventsEmitTypeThinking verifies the serve bridge
+// forwards reasoning deltas (HighEventThinking, append) and the part-end
+// authoritative frame (HighEventThinkingDone, replace) as TypeThinking
+// controls carrying the right Delta + Replace flag.
+func TestStreamRun_ThinkingEventsEmitTypeThinking(t *testing.T) {
+	deltaA := oc.NewHighEvent(oc.HighEventThinking, "s1", "m1", oc.WithText("foo "))
+	deltaB := oc.NewHighEvent(oc.HighEventThinking, "s1", "m1", oc.WithText("bar"))
+	done := oc.NewHighEvent(oc.HighEventThinkingDone, "s1", "m1", oc.WithText("foo bar"))
+	termEv := oc.NewHighEvent(oc.HighEventResult, "s1", "m1", oc.WithResult("done"))
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, scriptStreamOpencode{events: []oc.HighEvent{deltaA, deltaB, done, termEv}}, client, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c-think", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-think",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-think", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var deltas []string
+	var doneFrame *protocol.ThinkingPayload
+	for _, c := range controls {
+		if c.Type != protocol.TypeThinking || c.Thinking == nil {
+			continue
+		}
+		if c.Thinking.Replace {
+			doneFrame = c.Thinking
+		} else {
+			deltas = append(deltas, c.Thinking.Delta)
+		}
+	}
+	// Deltas ride emitAsync (unordered, like all mid-stream controls); assert
+	// they survive as a set, not an order. The done frame is authoritative.
+	if len(deltas) != 2 {
+		t.Fatalf("want 2 delta frames, got %d: %v", len(deltas), deltas)
+	}
+	seen := map[string]bool{}
+	for _, d := range deltas {
+		seen[d] = true
+	}
+	if !seen["foo "] || !seen["bar"] {
+		t.Errorf("delta set = %v, want {foo , bar}", deltas)
+	}
+	if doneFrame == nil {
+		t.Fatal("missing the HighEventThinkingDone → TypeThinking{Replace:true} frame")
+	}
+	if doneFrame.Delta != "foo bar" {
+		t.Errorf("done Delta = %q, want %q (authoritative full text)", doneFrame.Delta, "foo bar")
+	}
+}
