@@ -461,3 +461,102 @@ func TestHandleEvent_JobsShareSingleFlightSlot(t *testing.T) {
 	}
 	close(release)
 }
+
+// findPermission returns the first TypePermission control captured, or nil.
+func findPermission(ctrls []*protocol.Control) *protocol.Control {
+	for _, c := range ctrls {
+		if c.Type == protocol.TypePermission && c.Permission != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// answerEvent simulates the frontend forwarding a card click as a TypeAnswer.
+func answerEvent(chatID, requestID, choice string) *protocol.Event {
+	return &protocol.Event{
+		Type: protocol.TypeAnswer,
+		Answer: &protocol.AnswerPayload{
+			ChatID:    chatID,
+			RequestID: requestID,
+			Choice:    choice,
+		},
+	}
+}
+
+// TestHandleEvent_DeployForce_ConfirmRuns waits for the confirm card, delivers
+// a "confirm" click, and asserts make deploy ARGS=--force actually runs.
+func TestHandleEvent_DeployForce_ConfirmRuns(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cf", "/deploy-force")); err != nil {
+		t.Fatalf("HandleEvent /deploy-force: %v", err)
+	}
+	// The deploy must NOT start before the user confirms.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("deploy ran before confirm: calls=%d", cmd.callCount())
+		}
+		time.Sleep(5 * time.Millisecond)
+		if findPermission(rpc.snapshot()) != nil {
+			break
+		}
+	}
+	perm := findPermission(rpc.snapshot())
+	if perm == nil {
+		t.Fatalf("expected a TypePermission confirm card, got %+v", rpc.snapshot())
+	}
+	if perm.Permission.RequestID != "msg-cf" || perm.PromptID != "msg-cf" {
+		t.Errorf("confirm card requestID/promptID = %q/%q, want msg-cf/msg-cf",
+			perm.Permission.RequestID, perm.PromptID)
+	}
+
+	// Deliver the confirm click; the deploy should run with ARGS=--force.
+	if err := h.HandleEvent(context.Background(), answerEvent("cf", "msg-cf", "confirm")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy ARGS=--force" {
+		t.Errorf("confirm should run `make deploy ARGS=--force`, got %q", got)
+	}
+}
+
+// TestHandleEvent_DeployForce_CancelDoesNotRun verifies a "cancel" click
+// releases the wait WITHOUT running make, and emits an "已取消" notice.
+func TestHandleEvent_DeployForce_CancelDoesNotRun(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cx", "/deploy-force")); err != nil {
+		t.Fatalf("HandleEvent /deploy-force: %v", err)
+	}
+	// Wait for the confirm card so the await goroutine has registered.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := h.HandleEvent(context.Background(), answerEvent("cx", "msg-cx", "cancel")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	// Give the await goroutine a moment to emit the cancel notice.
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("cancel must NOT run make, got calls=%d", cmd.callCount())
+		}
+		if strings.Contains(lastNoticeMessage(rpc.snapshot()), "已取消") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected 已取消 notice and zero make calls; calls=%d notices=%+v",
+		cmd.callCount(), rpc.snapshot())
+}

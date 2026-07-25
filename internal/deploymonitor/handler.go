@@ -16,9 +16,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
+
+// confirmTimeout bounds how long a /deploy-force confirm card waits for the
+// user's click. It is shorter than the frontend's cardkit.InteractiveTimeout
+// (10m) so the goroutine releases before the card auto-expires; a human will
+// not take 5 minutes to click a confirm button.
+const confirmTimeout = 5 * time.Minute
 
 // controlSender is the subset of *backendrpc.Client the handler needs. It
 // exists so tests can substitute a fake that captures Controls instead of
@@ -51,7 +58,8 @@ type Config struct {
 }
 
 // Handler owns the single-flight deploy state and emits Notices back to the
-// frontend via the backendrpc client.
+// frontend via the backendrpc client. answers routes /deploy-force confirm
+// card clicks back to the goroutine waiting on the confirmation.
 type Handler struct {
 	cfg     Config
 	rpc     controlSender
@@ -59,6 +67,7 @@ type Handler struct {
 	cmd     Commander
 	logger  *log.Logger
 	timeout time.Duration
+	answers *bridgebase.AnswerBroker
 
 	mu      sync.Mutex
 	running bool
@@ -74,7 +83,7 @@ func New(cfg Config, rpc controlSender, status statusQuerier, cmd Commander, log
 	if deployTimeout <= 0 {
 		deployTimeout = 10 * time.Minute
 	}
-	return &Handler{cfg: cfg, rpc: rpc, status: status, cmd: cmd, logger: logger, timeout: deployTimeout}
+	return &Handler{cfg: cfg, rpc: rpc, status: status, cmd: cmd, logger: logger, timeout: deployTimeout, answers: bridgebase.NewAnswerBroker()}
 }
 
 // HandleEvent dispatches Prompt events. /deploy, /deploy-force, /pull and /push
@@ -86,6 +95,13 @@ func New(cfg Config, rpc controlSender, status statusQuerier, cmd Commander, log
 // instead of orphaning a "处理中" card (an orphaned turn inflates
 // /v1/status InFlight, which can block deploy.sh).
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
+	// A /deploy-force confirm card click arrives as a TypeAnswer; route it to
+	// the goroutine blocked in awaitForceConfirm. Unknown/late answers (the
+	// goroutine already timed out) are dropped by Deliver.
+	if ev.Type == protocol.TypeAnswer && ev.Answer != nil {
+		h.answers.Deliver(ev.Answer.RequestID, ev.Answer)
+		return nil
+	}
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
 		return nil
 	}
@@ -94,8 +110,13 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	prompt := strings.TrimSpace(ev.Prompt.Text)
 
 	switch prompt {
-	case "/deploy", "/deploy-force":
-		return h.acquireAndRun(ctx, chatID, promptID, "make", h.deployArgs(prompt == "/deploy-force"), "部署")
+	case "/deploy":
+		return h.acquireAndRun(ctx, chatID, promptID, "make", h.deployArgs(false), "部署")
+	case "/deploy-force":
+		// /deploy-force passes ARGS=--force to deploy.sh, skipping safety
+		// checks — a one-click destructive deploy is too easy to fire by
+		// mistake, so gate it behind a confirm card.
+		return h.confirmAndDeployForce(ctx, chatID, promptID)
 	case "/pull":
 		// --ff-only: refuse to create a merge on divergence instead of
 		// leaving a conflicted working tree that would block later deploys.
@@ -108,7 +129,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return h.handleRunning(ctx, chatID, promptID)
 	default:
 		return h.notify(ctx, chatID, promptID, "warning", "未知指令",
-			"本后端接受 /deploy、/deploy-force、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
+			"本后端接受 /deploy、/deploy-force（需确认）、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
 	}
 }
 
@@ -121,6 +142,9 @@ func (h *Handler) deployArgs(force bool) []string {
 	}
 	return args
 }
+
+// /deploy-force's confirmation gate (confirmAndDeployForce / awaitForceConfirm)
+// lives in confirm.go.
 
 // acquireAndRun takes the single-flight slot and launches the job on its own
 // goroutine. On accept it emits a non-terminal progress banner bound to
@@ -180,10 +204,7 @@ func (h *Handler) runJob(chatID, promptID, name string, args []string, label str
 	h.notifyWithRetry(chatID, promptID, "success", label+"完成", tailOutput(out, 500))
 }
 
-// jobLabel renders the command line ("name args...") for logs and notices.
-func jobLabel(name string, args []string) string {
-	return strings.Join(append([]string{name}, args...), " ")
-}
+// jobLabel lives in render.go alongside the other formatting helpers.
 
 // notifyWithRetry sends a notice to the chat, retrying when the frontend
 // returns 503 "backend not registered" — which happens after a redeploy:
@@ -252,61 +273,4 @@ func (h *Handler) handleRunning(ctx context.Context, chatID, promptID string) er
 		return h.notify(ctx, chatID, promptID, "error", "查询失败", "读取运行中会话失败："+err.Error())
 	}
 	return h.notify(ctx, chatID, promptID, "info", "运行中会话", renderTurns(snap))
-}
-
-// renderTurns formats the in-flight snapshot as a scannable notice body. The
-// trailing abort hint reinforces the policy: turns are never ended automatically.
-func renderTurns(snap *protocol.StatusSnapshot) string {
-	if len(snap.Turns) == 0 {
-		return "当前没有运行中的会话。"
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "运行中会话（%d）：\n", len(snap.Turns))
-	for _, t := range snap.Turns {
-		fmt.Fprintf(&sb, "- %s · %s · %s\n", t.BackendID, shortID(t.ChatID), formatElapsed(t.ElapsedS))
-	}
-	sb.WriteString("\n会话不会自动结束，如需结束请发送 /session-abort。")
-	return sb.String()
-}
-
-// shortID shortens a Feishu ID (oc_ + 32 hex) to its last 8 chars so the turn
-// list stays scannable while remaining identifiable.
-func shortID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return "…" + id[len(id)-8:]
-}
-
-// formatElapsed turns seconds into a compact duration label.
-func formatElapsed(s int64) string {
-	switch {
-	case s < 60:
-		return fmt.Sprintf("%ds", s)
-	case s < 3600:
-		return fmt.Sprintf("%dm%ds", s/60, s%60)
-	default:
-		return fmt.Sprintf("%dh%dm", s/3600, (s%3600)/60)
-	}
-}
-
-// tailOutput returns the last ~maxRunes runes of out, advanced to the next
-// line boundary. The deploy script emits substantial progress text; only the
-// tail is useful in a chat notice. The budget is in RUNES, not bytes, so a
-// multi-byte log (Chinese progress lines, 3 bytes/char) is not split mid-rune;
-// advancing to the next newline avoids opening on a half-line fragment.
-func tailOutput(out []byte, maxRunes int) string {
-	s := strings.TrimSpace(string(out))
-	if maxRunes <= 0 {
-		return s
-	}
-	r := []rune(s)
-	if len(r) <= maxRunes {
-		return s
-	}
-	cut := string(r[len(r)-maxRunes:])
-	if i := strings.IndexByte(cut, '\n'); i >= 0 {
-		cut = cut[i+1:]
-	}
-	return "…" + cut
 }
