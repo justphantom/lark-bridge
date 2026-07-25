@@ -455,6 +455,42 @@ func TestInteractiveSubmitted_FlipsFooterStatus(t *testing.T) {
 	}
 }
 
+// TestInteractiveFinalized_FlipsFooterFromSubmitted pins the new transition:
+// a card whose footer already reads "处理中" (the submitted state) must still
+// advance to "已完成" when finalized. Previously rewriteFooterStatus only
+// handled 待确认→X, so a submitted-then-finalized card kept showing 处理中.
+func TestInteractiveFinalized_FlipsFooterFromSubmitted(t *testing.T) {
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}}}
+	footer := cardkit.FooterInfo{BackendType: "opencode", Status: "待确认", SessionID: "abcdef123456"}
+	orig, err := RenderQuestion(ctrl, hdr(), footer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := RenderInteractiveSubmitted(orig, "✓ 已回答: a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin, err := RenderInteractiveFinalized(submitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fin), "已完成 · opencode") {
+		t.Errorf("footer should advance 处理中 → 已完成: %s", fin)
+	}
+	if strings.Contains(string(fin), "处理中") {
+		t.Errorf("footer must not still show 处理中 after finalize: %s", fin)
+	}
+	// Terminal status is sticky: re-running finalize on an already-已完成 card
+	// must not regress it (e.g. back to a stray 处理中).
+	fin2, err := RenderInteractiveFinalized(fin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fin2), "已完成 · opencode") {
+		t.Errorf("footer must stay 已完成 (terminal is sticky): %s", fin2)
+	}
+}
+
 // TestPermissionRender_TruncatesLongBody verifies that a permission message
 // longer than the body budget is truncated so the card stays under Feishu's
 // TestQuestionRender_TruncatesLongOptions verifies that a question whose

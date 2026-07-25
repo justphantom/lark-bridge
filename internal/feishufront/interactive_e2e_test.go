@@ -675,3 +675,102 @@ func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 		t.Error("progress card must not receive UpdateCard from interactive cards")
 	}
 }
+
+// lastUpdateFor returns the bytes of the most recent UpdateCard for messageID,
+// or nil if none was recorded. Used by the submit→finalize lifecycle test to
+// inspect the latest frame a specific card was flipped to.
+func lastUpdateFor(updates []updatedCard, messageID string) []byte {
+	for i := len(updates) - 1; i >= 0; i-- {
+		if updates[i].messageID == messageID {
+			return updates[i].card
+		}
+	}
+	return nil
+}
+
+// TestInteractiveSubmittedThenFinalized pins the full mid-turn gate lifecycle:
+// emit → submit (✓ echo + 处理中) → turn result → the SAME card advances to
+// finalized (✓ echo PRESERVED + 已完成). Prior to the fix, submit deleted the
+// cache + binding, so finalizeLinkedInteractive was a no-op and the card stuck
+// on amber "处理中" forever — never reaching a terminal green state.
+func TestInteractiveSubmittedThenFinalized(t *testing.T) {
+	const backendID = "opencode-fin"
+	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+	// Drain the answer the submit forwards so it does not back up.
+	go func() { _, _ = client.RecvEvent() }()
+
+	chatID := "oc_chat_fin"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress-fin"
+	disp.turns.Start("msg-fin", chatID, progressMID, backendID)
+
+	// Mid-turn permission gate: standalone card (no TakeOverProgress).
+	permCtrl := &protocol.Control{
+		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fin",
+		Permission: &protocol.PermissionPayload{
+			RequestID: "req-fin", PromptID: "msg-fin",
+			Message: "执行 make test？",
+			Options: []protocol.PermissionOption{
+				{Label: "允许", Value: "allow"},
+				{Label: "拒绝", Value: "deny"},
+			},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("permission emit: %v", err)
+	}
+	mid, _ := disp.turns.InteractiveMessageID("req-fin")
+	if mid == "" {
+		t.Fatal("interactive card not bound after emit")
+	}
+
+	// User clicks 允许 → submitted flip on the SAME card.
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: mid,
+		Value: map[string]any{"requestID": "req-fin", "kind": "permission", "choice": "allow"},
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	sink.mu.Lock()
+	submittedCard := lastUpdateFor(sink.updates, mid)
+	sink.mu.Unlock()
+	if submittedCard == nil || !strings.Contains(string(submittedCard), "你选择了") {
+		t.Errorf("submitted card should carry the '你选择了' echo; got %s", submittedCard)
+	}
+	if submittedCard == nil || !strings.Contains(string(submittedCard), "处理中") {
+		t.Errorf("submitted card footer should read 处理中; got %s", submittedCard)
+	}
+	// Binding MUST still be present after submit (the fix keeps it so finalize
+	// can advance the card).
+	if _, ok := disp.turns.InteractiveMessageID("req-fin"); !ok {
+		t.Error("binding must survive submit so finalize can advance the card")
+	}
+
+	// Turn completes → finalize must advance the SAME card to 已完成.
+	resCtrl := &protocol.Control{
+		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-fin",
+		Result: &protocol.ResultPayload{Text: "done"},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
+		t.Fatalf("result emit: %v", err)
+	}
+	sink.mu.Lock()
+	finalCard := lastUpdateFor(sink.updates, mid)
+	sink.mu.Unlock()
+	if finalCard == nil || !strings.Contains(string(finalCard), "已完成") {
+		t.Errorf("finalized card footer should read 已完成; got %s", finalCard)
+	}
+	if finalCard == nil || !strings.Contains(string(finalCard), "你选择了") {
+		t.Errorf("finalized card must PRESERVE the '你选择了' echo (C5); got %s", finalCard)
+	}
+	if finalCard != nil && strings.Contains(string(finalCard), "本轮已完成") {
+		t.Errorf("finalized card must NOT prepend '本轮已完成' when a ✓ echo exists; got %s", finalCard)
+	}
+	// Binding released after finalize.
+	if _, ok := disp.turns.InteractiveMessageID("req-fin"); ok {
+		t.Error("binding should be released after finalize")
+	}
+}

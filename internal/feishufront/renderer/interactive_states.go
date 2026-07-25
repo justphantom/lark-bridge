@@ -120,9 +120,12 @@ func prependMarkdown(card map[string]any, text string) {
 
 // rewriteFooterStatus replaces the leading status word in the card's footer
 // line. The footer is the last body element (a div whose text content is
-// "<status> · backendType · …"). Only a footer still showing "待确认" (the
-// pending state every interactive card ships in) is rewritten, so a footer
-// without a status prefix — or one already advanced — is left untouched.
+// "<status> · backendType · …"). Only a footer still showing a NON-TERMINAL
+// status (待确认 = pending, 处理中 = submitted/processing) is rewritten, so a
+// footer already advanced to a terminal status (已完成/已失效/…) cannot be
+// regressed by a later flip. Both non-terminals must be covered now that a
+// submitted card's footer reads "处理中 · …" and finalize advances it to
+// "已完成".
 func rewriteFooterStatus(card map[string]any, newStatus string) {
 	body, _ := card["body"].(map[string]any)
 	if body == nil {
@@ -141,10 +144,12 @@ func rewriteFooterStatus(card map[string]any, newStatus string) {
 		return
 	}
 	content, _ := text["content"].(string)
-	if !strings.HasPrefix(content, "待确认 · ") {
-		return
+	for _, from := range []string{"待确认", "处理中"} {
+		if strings.HasPrefix(content, from+" · ") {
+			text["content"] = newStatus + content[len(from):]
+			return
+		}
 	}
-	text["content"] = newStatus + content[len("待确认"):]
 }
 
 // disableButtons recursively walks node["elements"] (and the card root →

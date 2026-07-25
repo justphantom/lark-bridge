@@ -223,27 +223,33 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	}
 	if requestID != "" {
 		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
-			// Pull orig AND delete in one critical section so a concurrent
-			// expireInteractive timer firing between two locks cannot
-			// observe a still-present entry, render Expired, and race our
-			// Submitted — yielding an unpredictable card order. With the
-			// delete folded in, whoever Locks first wins; the latecomer
-			// sees orig == nil and no-ops. Equivalent to a per-card
-			// sync.Once but cheaper (no extra alloc per interactive).
+			// Stop the TTL timer under the lock so expireInteractive cannot
+			// race this flip. The cache and binding are KEPT (not deleted):
+			// the cached bytes are rewritten to the submitted form below so
+			// finalizeLinkedInteractive can later advance the SAME card to
+			// "finalized" once the turn's result lands. Deleting here (the
+			// prior behaviour) stranded submitted cards on "处理中" amber
+			// forever — finalize is a no-op once the binding is gone.
 			d.cardMu.Lock()
 			orig := d.cards[requestID]
 			if t := d.interactiveTimers[requestID]; t != nil {
 				t.Stop()
 				delete(d.interactiveTimers, requestID)
 			}
-			delete(d.cards, requestID)
 			d.cardMu.Unlock()
 			if orig != nil {
 				if sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action)); err == nil {
 					_ = d.bot.UpdateCard(ctx, messageID, sub)
+					// Cache the SUBMITTED bytes (replacing the original) so a
+					// later finalize renders finalized-from-submitted and
+					// preserves the "✓ 已回答" echo (C5).
+					d.cardMu.Lock()
+					d.cards[requestID] = sub
+					d.cardMu.Unlock()
 				}
 			}
-			d.turns.UnbindInteractive(requestID)
+			// Deliberately NOT unbinding: keep requestID→messageID so the
+			// turn-completing result can finalize this card in place.
 		}
 	}
 	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}
