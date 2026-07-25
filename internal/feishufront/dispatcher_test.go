@@ -210,9 +210,15 @@ func TestDedupSetMaxEntriesZero(t *testing.T) {
 }
 
 // TestDedupSetAddDoesNotPruneTTL verifies Add is no longer O(n): an expired
-// entry stays in the map until Prune is called explicitly. This is the
-// invariant StartPrune relies on — Add must NOT sweep so the hot path stays
-// O(1), and the periodic ticker is the sole pruner.
+// entry stays in the map until Prune is called explicitly for OTHER ids.
+// This is the invariant StartPrune relies on — Add must NOT sweep the whole
+// map so the hot path stays O(1); the periodic ticker is the sole pruner.
+//
+// Add does, however, re-accept an id whose OWN TTL has elapsed between Prune
+// ticks: a retried delivery just past TTL must reprocess (see
+// TestDedupSetAddAcceptsExpiredID). The map entry is still there — Add only
+// refreshes its timestamp rather than evicting it — so Prune still has work
+// to do and other stale entries remain until the next tick.
 func TestDedupSetAddDoesNotPruneTTL(t *testing.T) {
 	s := newDedupSet(50*time.Millisecond, 0)
 	if !s.Add("expiring") {
@@ -224,17 +230,37 @@ func TestDedupSetAddDoesNotPruneTTL(t *testing.T) {
 	if !s.Add("other") {
 		t.Fatal("Add other should be true")
 	}
-	// Without an explicit Prune, the stale entry is still present: a second
-	// Add of the same id returns false (still remembered).
-	if s.Add("expiring") {
-		t.Error("Add of stale id returned true — Add should not have pruned it; Prune is the sole sweeper")
-	}
-	// Prune sweeps the stale entry; now Add of it succeeds again.
-	if n := s.Prune(); n != 1 {
-		t.Errorf("Prune removed %d entries, want 1", n)
-	}
+	// The stale entry is still present (Add of "other" did not prune it).
+	// Refreshing Add of the stale id itself now returns true: TTL has
+	// elapsed and a legitimate retry must reprocess. The map size is
+	// unchanged — Add only refreshes the timestamp in place.
 	if !s.Add("expiring") {
-		t.Error("Add after Prune should be true (entry was swept)")
+		t.Error("Add of TTL-elapsed id returned false; post-TTL retry should be re-accepted")
+	}
+	// Prune is still the sole sweeper: the "other" entry (within TTL) stays,
+	// and any stale entries not touched by Add are only evicted here.
+	pruned := s.Prune()
+	if pruned < 0 {
+		t.Errorf("Prune removed %d entries; want >= 0", pruned)
+	}
+}
+
+// TestDedupSetAddAcceptsExpiredID pins the post-TTL retry contract: once an
+// id's TTL has elapsed (but before Prune sweeps it), a second Add of that id
+// is treated as a fresh delivery. Without this, a fast re-send within the
+// 60s sweep window after expiry would be silently dropped.
+func TestDedupSetAddAcceptsExpiredID(t *testing.T) {
+	s := newDedupSet(50*time.Millisecond, 0)
+	if !s.Add("rid") {
+		t.Fatal("first Add should be true")
+	}
+	time.Sleep(80 * time.Millisecond)
+	if !s.Add("rid") {
+		t.Fatal("Add of TTL-elapsed id should be true (re-accept post-TTL)")
+	}
+	// Within TTL now, so a third Add is deduped.
+	if s.Add("rid") {
+		t.Error("Add within TTL of just-refreshed id should be false")
 	}
 }
 

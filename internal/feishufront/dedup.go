@@ -26,11 +26,18 @@ func newDedupSet(ttl time.Duration, maxEntries int) *dedupSet {
 }
 
 // Add records id and returns true when it was not present. It is O(1) on the
-// steady-state path: TTL-expired entries are NOT swept here (that was O(n)
-// per call). Periodic sweeping is StartPrune's job; callers that do not wire
-// StartPrune rely on maxEntries to bound growth (the LRU cap evicts on
-// overflow below, which is still O(n) but only reached on overflow, not on
+// steady-state path: TTL-expired entries are NOT swept here en masse (that
+// was O(n) per call). Periodic sweeping is StartPrune's job; callers that do
+// not wire StartPrune rely on maxEntries to bound growth (the LRU cap evicts
+// on overflow below, which is still O(n) but only reached on overflow, not on
 // every call). A zero/empty id is a no-op returning true (no dedup on it).
+//
+// On a hit, the entry's timestamp is checked against TTL: an id whose TTL has
+// elapsed (but has not yet been swept by StartPrune — at most one
+// dedupPruneInterval old) is treated as NOT seen, so a retried delivery that
+// arrives just after TTL expiry is reprocessed instead of silently dropped.
+// Without this check a fast re-send within the 60s sweep window post-TTL
+// would be incorrectly rejected.
 func (s *dedupSet) Add(id string) bool {
 	if id == "" {
 		return true
@@ -38,7 +45,14 @@ func (s *dedupSet) Add(id string) bool {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.seen[id]; ok {
+	if t, ok := s.seen[id]; ok {
+		// Entry exists but its TTL has elapsed between Prune ticks: treat
+		// as unseen so a legitimate retry post-TTL goes through. Refresh
+		// the timestamp so the next collision within TTL behaves normally.
+		if s.ttl > 0 && now.Sub(t) > s.ttl {
+			s.seen[id] = now
+			return true
+		}
 		return false
 	}
 	// Cap: if at capacity, evict the entry with the oldest timestamp. O(n)
