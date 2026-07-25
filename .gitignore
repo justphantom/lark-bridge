@@ -9,3 +9,11 @@ opencode.log
 /miniagent-back
 /deploy-monitor
 /docs/
+
+# AI tool working artifacts (agent definitions shipped via .claude/agents;
+# the rest are local skill caches/lock files that vary per tool run).
+/.agents/
+/.claude/skills/
+/.goose/
+/.pi/
+skills-lock.json

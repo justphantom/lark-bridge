@@ -31,8 +31,28 @@
 
 ### 测试
 
-测试代码占比 50.1%（18,331 / 36,554 行），621 个测试函数，`go test -race ./...`
-全绿，`go vet` 干净。
+测试代码占比 50.4%（18,975 / 37,686 行），644 个测试函数，`go test -race ./...`
+全绿，`go vet` 干净。`cmd/*/main_test.go` 覆盖各二进制入口的错误路径，
+`internal/protocol`/`internal/config`/`internal/feishufront` 表驱动覆盖每条
+validate 与 enum 校验路径。
+
+### 1.0.0 发布前审计修复
+
+发布前对照 [`docs/release-1.0-audit.md`](docs/release-1.0-audit.md) 完成全部 P0
+与 P1 阻断/严重项，以及 P2 大部分打磨项，主要落地：
+
+- **稳定性**：abort 后子进程组 SIGKILL（`cmdutil.ApplyGroupCancel`/`RunCombinedBounded`）、
+  关键路径 panic recover（control pump + 3 个 SDK 入口）、picker RPC 30s 超时、
+  `bot.Restart` 串行化、卡片 element 50 上限防御、`PromptPayload` 覆写字段协议级拒绝。
+- **协议**：`todo.status`/`priority`/`notice.level` enum 硬校验。
+- **资源**：`wasOffline` 上限触发全量重置、`opencode-serve` Close 与 LRU 并发守门、
+  `accText` 峰值减半、`MaxStreams` 从 `AgentConfig` 注入、`DispatchCardAction`
+  单 Lock 段防双 finalize。
+- **配置/部署**：`OpencodeServe.MaxConcurrent` defaults+validate 对齐、
+  `deploy/*.json` 与 `.env` 经 `${VAR}` 联动、deploy.sh 二进制存在性全检 +
+  `log_level` 占位符 regex 容错、upgrade-monitor.sh SC2015 修正。
+- **文档**：Makefile/README/deploy 二进制与服务数真源统一（6 个二进制 / 5 个业务
+  systemd 服务）、deploy/README 双重真源警示、补 LICENSE（MIT）与 CHANGELOG。
 
 ### 已知限制
 
