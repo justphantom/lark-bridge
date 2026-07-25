@@ -309,34 +309,26 @@ func TestStreamRun_ThinkingEventsEmitTypeThinking(t *testing.T) {
 	}
 
 	controls := drainUntilTerminal(t, reg)
-	var deltas []string
-	var doneFrame *protocol.ThinkingPayload
+	var thinks []protocol.ThinkingPayload
 	for _, c := range controls {
-		if c.Type != protocol.TypeThinking || c.Thinking == nil {
-			continue
-		}
-		if c.Thinking.Replace {
-			doneFrame = c.Thinking
-		} else {
-			deltas = append(deltas, c.Thinking.Delta)
+		if c.Type == protocol.TypeThinking && c.Thinking != nil {
+			thinks = append(thinks, *c.Thinking)
 		}
 	}
-	// Deltas ride emitAsync (unordered, like all mid-stream controls); assert
-	// they survive as a set, not an order. The done frame is authoritative.
-	if len(deltas) != 2 {
-		t.Fatalf("want 2 delta frames, got %d: %v", len(deltas), deltas)
+	if len(thinks) == 0 {
+		t.Fatalf("expected at least one TypeThinking snapshot, got none; controls=%v", controlTypes(controls))
 	}
-	seen := map[string]bool{}
-	for _, d := range deltas {
-		seen[d] = true
+	// Every snapshot is Replace=true (the bridge overwrites the renderer's
+	// buffer, never appends) so out-of-order delivery cannot corrupt it.
+	for i, tk := range thinks {
+		if !tk.Replace {
+			t.Errorf("thinking[%d] = %+v, want Replace=true (snapshots only, no append)", i, tk)
+		}
 	}
-	if !seen["foo "] || !seen["bar"] {
-		t.Errorf("delta set = %v, want {foo , bar}", deltas)
-	}
-	if doneFrame == nil {
-		t.Fatal("missing the HighEventThinkingDone → TypeThinking{Replace:true} frame")
-	}
-	if doneFrame.Delta != "foo bar" {
-		t.Errorf("done Delta = %q, want %q (authoritative full text)", doneFrame.Delta, "foo bar")
+	// The done frame emits an authoritative snapshot regardless of throttle,
+	// so the LAST snapshot (sync emit preserves order) carries the full text.
+	last := thinks[len(thinks)-1]
+	if last.Delta != "foo bar" {
+		t.Errorf("last thinking snapshot Delta = %q, want %q (authoritative done frame)", last.Delta, "foo bar")
 	}
 }

@@ -31,6 +31,14 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// intermediate steps' tokens and cost.
 		accInput, accOutput, accCacheRead, accCacheWrite int
 		accCost                                          float64
+
+		// accThinking accumulates the model's reasoning text per part (reset on
+		// each thinking_done). The bridge emits a Replace=true SNAPSHOT on a
+		// 500ms throttle and on every done frame, via synchronous emit so the
+		// snapshots arrive in order — eliminating the prior race where an
+		// out-of-order done frame corrupted the renderer's append buffer.
+		accThinking   strings.Builder
+		lastThinkEmit time.Time
 	)
 
 	for ev := range events {
@@ -109,22 +117,24 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case oc.HighEventText:
 			text.WriteString(ev.Text())
 		case oc.HighEventThinking:
-			// Streaming reasoning delta: forward as an append (Replace=false).
-			// The renderer accumulates and shows it live under the progress
-			// card's thinking zone, debounced with the rest of the frame.
-			h.emitAsync(promptID, &protocol.Control{
-				Type:     protocol.TypeThinking,
-				Thinking: &protocol.ThinkingPayload{Delta: ev.Text()},
-			})
+			// Accumulate the reasoning delta; emit a Replace=true snapshot on a
+			// 500ms throttle (aligned with the frontend's progress debouncer, so
+			// faster emits would only be coalesced anyway). The snapshot is the
+			// FULL accumulated text, so the renderer overwrites (never appends) —
+			// out-of-order delivery cannot corrupt the buffer.
+			accThinking.WriteString(ev.Text())
+			if time.Since(lastThinkEmit) >= thinkEmitInterval {
+				lastThinkEmit = time.Now()
+				h.emitThinkingSnapshot(ctx, promptID, accThinking.String())
+			}
 		case oc.HighEventThinkingDone:
-			// Part-end authoritative frame: the server reconciled the full
-			// reasoning text for this part. Replace=true tells the renderer to
-			// reset its buffer to this snapshot, so a dropped/out-of-order delta
-			// earlier in the part self-heals instead of accumulating garbage.
-			h.emitAsync(promptID, &protocol.Control{
-				Type:     protocol.TypeThinking,
-				Thinking: &protocol.ThinkingPayload{Delta: ev.Text(), Replace: true},
-			})
+			// Part-end authoritative frame: reset to the server-reconciled full
+			// text (drops any garbled/incomplete deltas within this part), then
+			// emit immediately regardless of throttle so the correction lands.
+			accThinking.Reset()
+			accThinking.WriteString(ev.Text())
+			lastThinkEmit = time.Now()
+			h.emitThinkingSnapshot(ctx, promptID, accThinking.String())
 		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
@@ -300,6 +310,25 @@ func (h *Handler) finalizeResult(ev oc.HighEvent, accText, sessionID, modelSpec,
 
 // maxDebugTextLen caps the preview length used in debug logs.
 const maxDebugTextLen = 200
+
+// thinkEmitInterval throttles thinking-snapshot emits. Aligned with the
+// frontend's 500ms progress-card debouncer — emitting faster is wasted (the
+// renders would coalesce), and a slower cadence would visibly stutter the
+// "what is it thinking now" hint.
+const thinkEmitInterval = 500 * time.Millisecond
+
+// emitThinkingSnapshot sends a Replace=true TypeThinking snapshot via
+// SYNCHRONOUS emit (not emitAsync). Each snapshot is the full accumulated
+// reasoning text, so the renderer overwrites its buffer; synchronous delivery
+// preserves order, so an older snapshot can never overwrite a newer one. This
+// replaces the prior per-delta emitAsync flood (1557 emits/turn, 32 dropped,
+// and an unordered done frame that corrupted the renderer's append buffer).
+func (h *Handler) emitThinkingSnapshot(ctx context.Context, promptID, text string) {
+	_ = h.emit(ctx, promptID, &protocol.Control{
+		Type:     protocol.TypeThinking,
+		Thinking: &protocol.ThinkingPayload{Delta: text, Replace: true},
+	})
+}
 
 func nonEmpty(s, fallback string) string {
 	if strings.TrimSpace(s) == "" {
