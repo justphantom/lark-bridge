@@ -53,7 +53,7 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// and the SSE-exit path diverge, and a crash-restart leaves chats
 		// with an "offline" notice but no matching "recovered" notice.
 		if s.registry.UnregisterIfMatch(id, conn) {
-			s.wasOffline.Store(id, struct{}{})
+			s.markOffline(id)
 			s.fireCallback(s.onOffline.Load(), id, typ, "offline")
 		}
 	}()

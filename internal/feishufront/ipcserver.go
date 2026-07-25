@@ -46,10 +46,12 @@ type IPCServer struct {
 	// wasOffline tracks backend IDs that were evicted by the health checker,
 	// so handleSSE can distinguish a reconnect from a first-time connect.
 	//
-	// Growth here is bounded by the number of distinct backend IDs ever seen
-	// (typically 2-3 in practice). Each entry is consumed (LoadAndDelete) when
-	// its backend reconnects, so only permanently-dead backends accumulate —
-	// an acceptable, small leak that does not warrant a TTL sweep.
+	// Growth here is bounded by maxWasOffline: when the dead-ID set hits the
+	// cap, markOffline resets the map wholesale rather than letting a
+	// dynamic-backend-id deployment leak forever. The loss is cosmetic
+	// (the next reconnect after a reset looks first-time, so onOnline fires
+	// as "online" instead of a "recovered" framing) — NOT a correctness
+	// invariant. typical steady-state count is 2-3, far below the cap.
 	wasOffline sync.Map // map[string]struct{}
 
 	// logger is stored atomically because SetLogger (main goroutine) and the
@@ -193,4 +195,35 @@ func (s *IPCServer) SetInFlightTurns(fn func() int) {
 // list (back-compat for callers/tests that only need the count).
 func (s *IPCServer) SetInFlightDetail(fn func() []Turn) {
 	s.inFlightDetail.Store(&fn)
+}
+
+// maxWasOffline bounds the dead-backend-ID set. Steady state is 2-3
+// (typical fixed backend_id deployment); the cap exists purely to keep a
+// dynamic-backend_id deployment from leaking. Hitting it is a deployment
+// smell, not a normal mode — but the cap guarantees memory stays bounded
+// even in that smell.
+const maxWasOffline = 64
+
+// markOffline records id as evicted, with a hard cap on map size. When the
+// cap is reached the map is reset wholesale before the new entry is stored;
+// the cost is cosmetic (the next reconnect after a reset fires onOnline as
+// "online" rather than a "recovered" framing) — never correctness, since
+// wasOffline only decides which user-facing notice wording applies.
+//
+// Range is used for both the count and the reset because sync.Map has no
+// Len: each Range is O(n) but n stays small in healthy deployments, and the
+// reset path runs at most once per maxWasOffline offline events.
+func (s *IPCServer) markOffline(id string) {
+	count := 0
+	s.wasOffline.Range(func(_, _ any) bool {
+		count++
+		return count < maxWasOffline // early-exit once we know we are at cap
+	})
+	if count >= maxWasOffline {
+		s.wasOffline.Range(func(k, _ any) bool {
+			s.wasOffline.Delete(k)
+			return true
+		})
+	}
+	s.wasOffline.Store(id, struct{}{})
 }

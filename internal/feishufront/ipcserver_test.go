@@ -497,3 +497,33 @@ func TestIPCReadTimeoutDropsSlowBody(t *testing.T) {
 	}
 	// err != nil is the expected path: connection torn down by ReadTimeout.
 }
+
+// TestMarkOffline_ResetsAtCap pins P2-10: filling wasOffline past
+// maxWasOffline triggers a wholesale reset so a dynamic-backend-id
+// deployment cannot leak memory. After reset the next entry keeps the
+// total under the cap; the cosmetic cost (next reconnect looks
+// first-time) is acceptable per markOffline's doc.
+func TestMarkOffline_ResetsAtCap(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "")
+
+	// Fill past the cap; each markOffline past the cap should trigger a reset.
+	for i := 0; i < maxWasOffline+5; i++ {
+		srv.markOffline(fmt.Sprintf("backend-%d", i))
+	}
+
+	count := 0
+	srv.wasOffline.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count > maxWasOffline {
+		t.Errorf("wasOffline size = %d, want <= %d (cap should bind growth)", count, maxWasOffline)
+	}
+
+	// The most recent id must still be tracked (post-reset stores land in
+	// the fresh map); an older id from before the reset is gone.
+	if _, ok := srv.wasOffline.Load(fmt.Sprintf("backend-%d", maxWasOffline+4)); !ok {
+		t.Error("most recent offline id missing after reset")
+	}
+}

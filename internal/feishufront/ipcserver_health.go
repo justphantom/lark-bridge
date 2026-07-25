@@ -92,7 +92,7 @@ func (s *IPCServer) healthTick(ctx context.Context, timeout time.Duration) {
 		// Unregister returns false when the SSE handler already removed it;
 		// only fire onOffline when we actually evicted, to avoid duplicates.
 		if s.registry.Unregister(id) {
-			s.wasOffline.Store(id, struct{}{})
+			s.markOffline(id)
 			s.fireCallback(s.onOffline.Load(), id, typ, "offline")
 		}
 	}
