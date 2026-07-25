@@ -102,6 +102,10 @@ func TestRenderResult_CumulativeCost(t *testing.T) {
 	}{
 		{"no cumulative shows bare cost", 0.0123, 0, "💰 $0.0123"},
 		{"cumulative equals current shows bare", 0.0123, 0.0123, "💰 $0.0123"},
+		// ULP-level jitter (server vs client accumulation on turn 1) must NOT
+		// trip the cumulative form — guarded by costDisplayEpsilon.
+		{"ULP-level diff shows bare (float safety)", 0.0123, 0.0123000001, "💰 $0.0123"},
+		{"sub-epsilon diff shows bare", 0.0123, 0.01235, "💰 $0.0123"},
 		{"cumulative exceeds current shows both", 0.0123, 0.5000, "💰 $0.0123 / $0.5000"},
 	}
 	for _, c := range cases {

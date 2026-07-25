@@ -15,6 +15,13 @@ import (
 // (≈28 KiB card content limit). The stats line is appended after capping.
 const maxResultRunes = 8000
 
+// costDisplayEpsilon is the tolerance for the "本次 / 累计" cost comparison.
+// Cost stats render at $.4f (0.0001 precision); half that precision hides
+// float jitter between the server's GetSession session-cost and the bridge's
+// step_finish accumulation that would otherwise show a redundant "$x / $x"
+// on turn 1. Any real multi-turn cumulative exceeds it comfortably.
+const costDisplayEpsilon = 0.0001
+
 // formatDuration renders a duration in a human-friendly way.
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
@@ -77,10 +84,16 @@ func RenderResult(ctrl *protocol.Control, header cardkit.HeaderInfo, footer card
 	}
 	if ctrl.Result.Cost > 0 {
 		// Mirror tokens' "本次 / 累计" form when a cumulative session cost is
-		// available and exceeds this turn's. TotalCost==0 (first turn, or the
-		// SDK's GetSession fallback failed and the usage store was empty) hides
-		// the cumulative portion.
-		if ctrl.Result.TotalCost > ctrl.Result.Cost {
+		// available and exceeds this turn's. The comparison uses a
+		// display-precision epsilon: TotalCost and Cost are floats from
+		// different sources (server GetSession vs step_finish accumulation)
+		// that can differ by a ULP on turn 1, which a strict > would
+		// mis-read as "has cumulative" and render a redundant "$x / $x".
+		// Half the $.4f display precision (0.0001) hides that jitter while
+		// still triggering for any real multi-turn cumulative. TotalCost==0
+		// (first turn, or the SDK's GetSession fallback failed and the usage
+		// store was empty) hides the cumulative portion.
+		if ctrl.Result.TotalCost > ctrl.Result.Cost+costDisplayEpsilon {
 			stats = append(stats, fmt.Sprintf("💰 $%.4f / $%.4f", ctrl.Result.Cost, ctrl.Result.TotalCost))
 		} else {
 			stats = append(stats, fmt.Sprintf("💰 $%.4f", ctrl.Result.Cost))
