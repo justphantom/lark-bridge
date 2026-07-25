@@ -3,6 +3,47 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-07-25
+
+交互卡片与 git/deploy 命令的呈现与生命周期重构。所有改动向后兼容（新增协议字段均
+omitempty；旧前端遇 null 自动回退）。
+
+### Added
+
+- **进度卡交互门横幅**：mid-turn permission/question 阻塞态、picker 加载态现以
+  `TypeProgress` banner 呈现在流式进度卡顶部（`ProgressPayload.Gate`/`Description`），
+  不再走被 dispatcher 丢弃的 `TypeText`。banner 四态：⏸ waiting / ✓ answered / ✗
+  denied / • loading。
+- **权限卡结构化正文**：`PermissionPayload` 增 `Type/Title/Detail`，渲染为徽标 + 标题
+  + 代码块详情；`Title` 空时自动回退 `Message`。
+- **question 自适应渲染**：单问、单选、≤4 项、无自定义输入 → 即时按钮卡（免下拉+提
+  交两步）；其余仍走表单。
+- **/deploy-force 二次确认门**：destructive 部署现需 TypePermission 卡片确认（复用
+  `bridgebase.AnswerBroker` + TypeAnswer 路由）；普通 /deploy 不加门。
+- SSE 静默时 `OnIdle` 兜底取回最终回复。
+
+### Fixed
+
+- **turn 泄漏修复**：`/pull` `/push` `/deploy` `/deploy-force` 终态现绑定 replyToID，
+  进度卡不再卡死"处理中"、`/v1/status InFlight` 不再虚高（原会阻塞 `deploy.sh`）。
+  命令改为单卡生命周期（非终态 banner → 终态 in-place patch）。
+- **已应答卡推进到"已完成"**：submit 不再删缓存+摘绑，`finalizeLinkedInteractive` 能
+  把同一张卡从 submitted 推进到 finalized，保留"✓ 已回答"echo（C5）；`rewriteFooterStatus`
+  推广为 `待确认|处理中 → X`，终态粘住不可回退。
+- **死回显清理**：删除桥层发出的、被 dispatcher 丢弃的 `TypeText` 应答回显；picker 加载
+  文案迁到 `TypeProgress.Description`（opencode-back / opencode-serve-back / miniagent）。
+- **tail 输出按 rune+行边界截断**：修中文日志（3 字节/字）被字节截断产生的乱码与半行。
+- **"始终允许"标注全局作用域**：`PermissionReplyAlways` 的全局持久授权在按钮上显式标
+  注「（全局）」。
+
+### Changed
+
+- `bridgebase.AskPermission` 签名收 `protocol.PermissionMessage`（结构化正文载体）。
+- `bridgebase.WithReplyToID` 导出（`ReplyToID` 的逆，供测试/直驱命令 handler 用）。
+- `bridgebase.GitRunner.AcquireAndRun` 改返回 `bool`，不再自发"已触发"（caller 发 banner）。
+- deploymonitor 拆 `confirm.go`（force 确认门）/`render.go`（格式化）以守住 300 行上限。
+- `opencode-go-sdk-lite` → v0.2.0；ListModels/ListAgents 缓存移至 `lists.go`。
+
 ## [1.0.0] - 2026-07-25
 
 首次正式发布。
