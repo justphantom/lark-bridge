@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -104,6 +105,12 @@ type Bot struct {
 	// ErrTooManyRestarts,调用方应让进程退出交由 supervisor 重启。健康恢复时
 	// (markHealthy)清零,仅持续故障才触顶。
 	restartCount atomic.Int32
+
+	// restartMu 串行化 Restart:Swap+Start 之间无锁的话两个并发 Restart
+	// 会丢失对中间 channel 的引用(旧 channel 永远 Stop 不掉)。当前唯一
+	// 调用方是 main.go 的 watchdog(30s tick),并发概率低;锁是为未来第二
+	// 调用方(如运维 HTTP 端点)收口。
+	restartMu sync.Mutex
 }
 
 // BotOption configures a Bot at construction time.
@@ -244,9 +251,12 @@ var ErrTooManyRestarts = errors.New("feishu: too many soft restarts; exit for su
 // restartMax 后返回 ErrTooManyRestarts,调用方 os.Exit 让 supervisor 拉起干净
 // 副本。markHealthy 清零计数。详见 docs/feishu-ws-soft-restart.md §8「已知限制」。
 //
-// P0 未做串行化:并发 Restart 会丢失对中间 channel 的引用,watchdog tick 间隔
-// 30s 远大于 Restart 耗时,P1 加 sync.Mutex 收口。
+// P1 已加 restartMu 串行化:并发 Restart 不再丢失中间 channel 引用。watchdog
+// tick 间隔 30s 远大于 Restart 耗时,锁是防御性收口。
 func (b *Bot) Restart(ctx context.Context) error {
+	b.restartMu.Lock()
+	defer b.restartMu.Unlock()
+
 	if b.restartCount.Add(1) > restartMax {
 		return ErrTooManyRestarts
 	}
