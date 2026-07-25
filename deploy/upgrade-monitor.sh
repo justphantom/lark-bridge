@@ -83,9 +83,14 @@ init_monitor() {
     sudo systemctl enable "$UNIT_NAME"
     sudo systemctl start "$UNIT_NAME"
     sleep 1
-    systemctl is-active --quiet "$UNIT_NAME" \
-        && info "✓ $UNIT_NAME 已安装并运行" \
-        || fail "$UNIT_NAME 启动失败，检查 journalctl -u $UNIT_NAME"
+    # Avoid SC2015 (P && A || B): if `info` ever returned non-zero the fail
+    # branch would fire spuriously. Explicit if/else keeps exit-status flow
+    # honest.
+    if systemctl is-active --quiet "$UNIT_NAME"; then
+        info "✓ $UNIT_NAME 已安装并运行"
+    else
+        fail "$UNIT_NAME 启动失败，检查 journalctl -u $UNIT_NAME"
+    fi
 }
 
 # write_monitor_unit 写一个无沙箱的 systemd unit（monitor 需要 sudo 提权）。
@@ -128,9 +133,11 @@ upgrade_monitor() {
     info "重启 $UNIT_NAME（短暂离线 ~2s）..."
     sudo systemctl restart "$UNIT_NAME"
     sleep 1
-    systemctl is-active --quiet "$UNIT_NAME" \
-        && info "✓ $UNIT_NAME 已升级并运行" \
-        || fail "$UNIT_NAME 重启失败，检查 journalctl -u $UNIT_NAME"
+    if systemctl is-active --quiet "$UNIT_NAME"; then
+        info "✓ $UNIT_NAME 已升级并运行"
+    else
+        fail "$UNIT_NAME 重启失败，检查 journalctl -u $UNIT_NAME"
+    fi
 }
 
 # ── main ──────────────────────────────────────────────
