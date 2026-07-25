@@ -105,10 +105,20 @@ type ResultPayload struct {
 	Cost      float64       `json:"cost,omitempty"`
 	Steps     int           `json:"steps,omitempty"`
 	// TotalTokens is the cumulative input+output across every turn of this
-	// session so far (including this one), sourced from the backend's usage
-	// store. 0 when no history exists (first turn) or usage tracking is off;
-	// the renderer hides the cumulative portion in that case.
+	// session so far (including this one). Sourced authoritatively from the
+	// SDK's SessionTokens (GetSession-backed); falls back to the backend's
+	// usage store when the SDK returned 0 (GetSession failed). 0 when no
+	// history exists (first turn); the renderer hides the cumulative portion
+	// in that case.
 	TotalTokens int `json:"totalTokens,omitempty"`
+	// TotalCost is the cumulative cost across every turn of this session so
+	// far (including this one), sourced authoritatively from the SDK's
+	// SessionCost; falls back to the usage store on 0. The renderer shows
+	// "本次 / 累计" mirroring TotalTokens when TotalCost exceeds Cost.
+	TotalCost float64 `json:"totalCost,omitempty"`
+	// ReasoningTokens is this turn's reasoning-token usage (thinking models
+	// only). 0 for non-reasoning turns; the renderer hides the line then.
+	ReasoningTokens int `json:"reasoningTokens,omitempty"`
 	// Incomplete is true when the backend hit its iteration cap without
 	// producing a final answer (miniagent: maxIterations=20). Text is empty
 	// in that case; without this flag the frontend cannot distinguish a
