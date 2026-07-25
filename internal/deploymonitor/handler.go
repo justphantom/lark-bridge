@@ -290,12 +290,23 @@ func formatElapsed(s int64) string {
 	}
 }
 
-// tailOutput returns the last maxBytes of out as a string. The deploy script
-// emits substantial progress text; only the tail is useful in a chat notice.
-func tailOutput(out []byte, maxBytes int) string {
+// tailOutput returns the last ~maxRunes runes of out, advanced to the next
+// line boundary. The deploy script emits substantial progress text; only the
+// tail is useful in a chat notice. The budget is in RUNES, not bytes, so a
+// multi-byte log (Chinese progress lines, 3 bytes/char) is not split mid-rune;
+// advancing to the next newline avoids opening on a half-line fragment.
+func tailOutput(out []byte, maxRunes int) string {
 	s := strings.TrimSpace(string(out))
-	if maxBytes <= 0 || len(s) <= maxBytes {
+	if maxRunes <= 0 {
 		return s
 	}
-	return "…" + s[len(s)-maxBytes:]
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	cut := string(r[len(r)-maxRunes:])
+	if i := strings.IndexByte(cut, '\n'); i >= 0 {
+		cut = cut[i+1:]
+	}
+	return "…" + cut
 }

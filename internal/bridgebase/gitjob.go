@@ -14,9 +14,11 @@ const (
 	// defaultGitTimeout bounds one git job. git push/pull is normally
 	// sub-minute; 5m is the safety net for slow networks or large repos.
 	defaultGitTimeout = 5 * time.Minute
-	// gitTailBytes caps the output embedded in the terminal notice: a full
-	// git push log would flood the chat card.
-	gitTailBytes = 500
+	// gitTailRunes caps the output embedded in the terminal notice (in RUNES,
+	// not bytes): a full git push log would flood the chat card. A rune budget
+	// keeps multi-byte logs (Chinese commit messages, 3 bytes/char) legible
+	// where a byte budget would split a character.
+	gitTailRunes = 500
 )
 
 // GitCommander runs a command (name with args) inside dir. The production
@@ -123,10 +125,30 @@ func gitLabel(args []string) string {
 	return strings.Join(append([]string{"git"}, args...), " ")
 }
 
+// tailGitOutput returns the last ~gitTailRunes runes of out, advanced to the
+// next line boundary. A byte-based tail garbles UTF-8 (Chinese deploy/commit
+// logs are 3 bytes/char) and can open mid-line; the rune+line form keeps the
+// excerpt readable.
 func tailGitOutput(out []byte) string {
-	s := strings.TrimSpace(string(out))
-	if len(s) <= gitTailBytes {
+	return tailRunes(string(out), gitTailRunes)
+}
+
+// tailRunes returns the last ~maxRunes runes of s (TrimSpace'd), advanced to
+// the next line boundary so the excerpt never opens on a half-line fragment.
+// maxRunes<=0 disables truncation. Shared shape with deploymonitor.tailOutput;
+// duplicated rather than shared so neither package imports the other.
+func tailRunes(s string, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if maxRunes <= 0 {
 		return s
 	}
-	return "…" + s[len(s)-gitTailBytes:]
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	cut := string(r[len(r)-maxRunes:])
+	if i := strings.IndexByte(cut, '\n'); i >= 0 {
+		cut = cut[i+1:]
+	}
+	return "…" + cut
 }

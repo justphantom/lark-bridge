@@ -3,6 +3,7 @@ package deploymonitor
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -356,13 +357,35 @@ func TestTailOutput(t *testing.T) {
 		t.Errorf("short input want 'hello', got %q", got)
 	}
 	if got := tailOutput([]byte("hello"), 0); got != "hello" {
-		t.Errorf("maxBytes=0 want full output, got %q", got)
+		t.Errorf("maxRunes=0 want full output, got %q", got)
 	}
 	long := strings.Repeat("x", 200)
 	got := tailOutput([]byte(long), 50)
 	// "…" is 3 UTF-8 bytes + 50-byte tail = 53.
 	if len(got) != 53 || !strings.HasPrefix(got, "…") {
 		t.Errorf("want 53-byte '…'+tail, got len=%d prefix=%q", len(got), got[:1])
+	}
+}
+
+// TestTailOutput_RuneAndLineAware pins the multi-byte + line-boundary
+// contract: a Chinese log sized by rune does not split a 3-byte char, and the
+// excerpt opens at a line boundary (no half-line fragment).
+func TestTailOutput_RuneAndLineAware(t *testing.T) {
+	// 6 runes per line ("行NNN\n"); 200 lines = 1200 runes; cap at 30.
+	var sb strings.Builder
+	for i := range 200 {
+		sb.WriteString("行" + strconv.Itoa(i) + "\n")
+	}
+	got := tailOutput([]byte(sb.String()), 30)
+	if !strings.HasPrefix(got, "…") {
+		t.Errorf("truncated tail should start with …; got %q", got[:4])
+	}
+	after := strings.TrimPrefix(got, "…")
+	if !strings.HasPrefix(after, "行") {
+		t.Errorf("tail must open at a line boundary (行…); got %q", after[:4])
+	}
+	if strings.Contains(after, "�") {
+		t.Errorf("tail split a multi-byte rune: %q", after[:4])
 	}
 }
 

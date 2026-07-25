@@ -3,6 +3,7 @@ package bridgebase
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -211,7 +212,7 @@ func TestAcquireAndRun_PerChatSingleFlight(t *testing.T) {
 // TestAcquireAndRun_TailOutputTruncation ensures a verbose git output is
 // capped so the notice card stays scannable.
 func TestAcquireAndRun_TailOutputTruncation(t *testing.T) {
-	big := strings.Repeat("x", gitTailBytes*3)
+	big := strings.Repeat("x", gitTailRunes*3)
 	cmd := &recordingCommander{out: []byte(big)}
 	r := NewGitRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
@@ -221,7 +222,8 @@ func TestAcquireAndRun_TailOutputTruncation(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if n, ok := notices.findNotice("拉取完成"); ok {
-			wantMax := gitTailBytes + len("…")
+			// ASCII: 1 rune == 1 byte, so the rune budget bounds byte length too.
+			wantMax := gitTailRunes + len("…")
 			if len(n.body) > wantMax {
 				t.Errorf("body len = %d, want <= %d", len(n.body), wantMax)
 			}
@@ -233,6 +235,37 @@ func TestAcquireAndRun_TailOutputTruncation(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("missing terminal notice; got %+v", notices.snapshot())
+}
+
+// TestTailGitOutput_RuneAndLineAware pins the truncation contract: a
+// multi-byte (Chinese) log is sized in runes so no character is split, and the
+// excerpt opens at a line boundary so it never starts on a half-line fragment.
+func TestTailGitOutput_RuneAndLineAware(t *testing.T) {
+	// Each line "行NNN\n" is 4+ runes; build 200 lines and cap at 100 runes.
+	// The pure byte form would split the 3-byte "行".
+	var sb strings.Builder
+	for i := range 200 {
+		sb.WriteString("行" + strconv.Itoa(i) + "\n")
+	}
+	got := tailGitOutput([]byte(sb.String()))
+	if !strings.HasPrefix(got, "…") {
+		t.Errorf("truncated tail should start with …; got %q", got[:8])
+	}
+	if strings.Contains(got[:4], "�") {
+		t.Errorf("tail split a multi-byte rune: %q", got[:8])
+	}
+	// Must start at a line boundary (first char after "…" is a whole "行").
+	if after := strings.TrimPrefix(got, "…"); !strings.HasPrefix(after, "行") {
+		t.Errorf("tail should open on a line boundary starting with 行; got %q", after[:4])
+	}
+	if r := len([]rune(got)); r > gitTailRunes+1 {
+		t.Errorf("tail rune count = %d, want <= %d+1", r, gitTailRunes)
+	}
+
+	// Short input is returned verbatim (TrimSpace only).
+	if got := tailGitOutput([]byte("Already up to date.\n")); got != "Already up to date." {
+		t.Errorf("short input should pass through; got %q", got)
+	}
 }
 
 // TestAcquireAndRun_SlotReleasedAfterJob verifies the per-chat slot frees
