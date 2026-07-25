@@ -110,7 +110,10 @@ func (h *Handler) runCleanConfirm(ctx context.Context, chatID string, candidates
 		// session that started working after the listing is still spared.
 		var deleted []string
 		for _, sess := range candidates {
-			if err := h.agent.DeleteSessionIfIdle(h.AppCtx, sess.ID); err != nil {
+			dctx, dcancel := context.WithTimeout(h.AppCtx, pickerRPCTimeout)
+			err := h.agent.DeleteSessionIfIdle(dctx, sess.ID)
+			dcancel()
+			if err != nil {
 				h.Logger.Warn("failed to delete idle session",
 					log.FieldSessionID, sess.ID,
 					log.FieldError, err)

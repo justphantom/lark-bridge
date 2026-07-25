@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
 
@@ -11,6 +12,16 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
+
+// pickerRPCTimeout bounds the non-streaming serve RPCs issued from background
+// picker goroutines (ListSessions / SessionStatuses / DeleteSessionIfIdle /
+// switchSession). The SDK uses http.DefaultClient with no整体 Timeout, so
+// without a per-call deadline a stalled serve would block the picker
+// goroutine forever — repeating the command leaks another goroutine each
+// time. 30s is well above a healthy RPC but small enough to surface a
+// stuck serve as a user-visible error instead of an invisible hang.
+// Shared with commands_idle.go.
+const pickerRPCTimeout = 30 * time.Second
 
 // cmdSessionUse switches the chat's binding to another session of the same
 // working directory. Forms:
@@ -73,7 +84,9 @@ func (h *Handler) runSessionPicker(ctx context.Context, chatID string) commandRe
 			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "尚未设置工作目录。")
 			return
 		}
-		sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
+		lctx, lcancel := context.WithTimeout(h.AppCtx, pickerRPCTimeout)
+		sessions, err := h.agent.ListSessions(lctx, b.Directory)
+		lcancel()
 		if err != nil {
 			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", fmt.Sprintf("获取会话列表失败：%v", err))
 			return
@@ -83,7 +96,9 @@ func (h *Handler) runSessionPicker(ctx context.Context, chatID string) commandRe
 			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
 			return
 		}
-		statuses, err := h.agent.SessionStatuses(h.AppCtx)
+		sctx, scancel := context.WithTimeout(h.AppCtx, pickerRPCTimeout)
+		statuses, err := h.agent.SessionStatuses(sctx)
+		scancel()
 		if err != nil {
 			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", fmt.Sprintf("获取会话状态失败：%v", err))
 			return
@@ -128,7 +143,9 @@ func (h *Handler) runSessionPicker(ctx context.Context, chatID string) commandRe
 			return
 		}
 
-		body, switched, err := h.switchSession(h.AppCtx, chatID, sess)
+		swctx, swcancel := context.WithTimeout(h.AppCtx, pickerRPCTimeout)
+		body, switched, err := h.switchSession(swctx, chatID, sess)
+		swcancel()
 		if err != nil {
 			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", err.Error())
 			return
