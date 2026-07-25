@@ -173,9 +173,20 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 			Error:  &protocol.ErrorPayload{Message: result.err.Error()},
 		})
 	default:
-		var totalTokens int
-		if e, ok := h.Usage.Get(result.sessionID); ok {
-			totalTokens = e.Input + e.Output
+		// Cumulative tokens/cost: prefer the SDK's authoritative
+		// session-cumulative values (GetSession-backed); fall back to the
+		// usage store when the SDK returned 0 (GetSession failed mid-turn).
+		totalTokens := result.sessionTokens
+		totalCost := result.sessionCost
+		if totalTokens == 0 || totalCost == 0 {
+			if e, ok := h.Usage.Get(result.sessionID); ok {
+				if totalTokens == 0 {
+					totalTokens = e.Input + e.Output
+				}
+				if totalCost == 0 {
+					totalCost = e.Cost
+				}
+			}
 		}
 		h.Logger.Debug("emit result control",
 			log.FieldChatID, chatID,
@@ -185,14 +196,16 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 			Type:   protocol.TypeResult,
 			ChatID: chatID,
 			Result: &protocol.ResultPayload{
-				Text:        result.reply,
-				Model:       result.model,
-				Tokens:      result.contextTokens,
-				Duration:    time.Duration(result.durationMs) * time.Millisecond,
-				SessionID:   result.sessionID,
-				Cost:        result.costUSD,
-				Steps:       result.steps,
-				TotalTokens: totalTokens,
+				Text:            result.reply,
+				Model:           result.model,
+				Tokens:          result.contextTokens,
+				Duration:        time.Duration(result.durationMs) * time.Millisecond,
+				SessionID:       result.sessionID,
+				Cost:            result.costUSD,
+				Steps:           result.steps,
+				TotalTokens:     totalTokens,
+				TotalCost:       totalCost,
+				ReasoningTokens: result.reasoningTokens,
 			},
 		})
 	}

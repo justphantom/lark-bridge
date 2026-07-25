@@ -244,18 +244,28 @@ func (h *Handler) finalizeResult(ev oc.HighEvent, accText, sessionID, modelSpec,
 	totalCacheRead := accCacheRead + ev.CacheRead()
 	totalCacheWrite := accCacheWrite + ev.CacheWrite()
 
+	// SDK v0.3.0 authoritative session-cumulative usage + actual model.
+	// sessionTokens/sessionCost are zero if the SDK's GetSession fallback
+	// failed (emitTerminal then falls back to the usage store). ModelID is
+	// the model serve actually ran (message-level); empty when neither the
+	// SSE message.updated frame nor GetMessage surfaced it — fall back to
+	// the user-pinned modelSpec so the card always shows something.
+	st := ev.SessionTokens()
 	result := promptResult{
-		model:      resolveModel("", modelSpec),
-		sessionID:  sessionID,
-		durationMs: durationMs,
+		model:           nonEmpty(ev.ModelID(), resolveModel("", modelSpec)),
+		sessionID:       sessionID,
+		durationMs:      durationMs,
 		// contextTokens stays terminal-step input+output (non-cache) so the
 		// result card's token count remains claude-comparable and does not
 		// jump when usage accounting started summing every step. The full
 		// per-turn breakdown lives in inputTokens/outputTokens/cacheRead/
 		// cacheWrite below for the usage store.
-		contextTokens: ev.InputTokens() + ev.OutputTokens(),
-		costUSD:       accCost + ev.Cost(),
-		steps:         stepCount,
+		contextTokens:   ev.InputTokens() + ev.OutputTokens(),
+		costUSD:         accCost + ev.Cost(),
+		steps:           stepCount,
+		sessionTokens:   int(st.Input + st.Output),
+		sessionCost:     ev.SessionCost(),
+		reasoningTokens: ev.ReasoningTokens(),
 
 		inputTokens:  totalInput,
 		outputTokens: totalOutput,

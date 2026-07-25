@@ -14,6 +14,12 @@ type promptResult struct {
 	costUSD       float64 // from step_finish's cost field
 	steps         int     // number of step_start events (= agent rounds)
 	isCancelled   bool    // true if the turn was cancelled via /session-abort
+	// SDK-authoritative session-cumulative usage (v0.3.0 HighEventResult).
+	// Zero when the SDK's GetSession fallback failed; emitTerminal then
+	// falls back to the usage store. reasoningTokens is this turn's only.
+	sessionTokens   int
+	sessionCost     float64
+	reasoningTokens int
 	// rescued is true when the OnIdle watchdog already emitted TypeResult
 	// via the rescue path. emitTerminal then skips its default branch so
 	// the frontend never sees a duplicate result for one turn.

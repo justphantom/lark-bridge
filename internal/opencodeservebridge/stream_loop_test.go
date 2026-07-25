@@ -2,7 +2,9 @@ package opencodeservebridge
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
+	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
 func TestSummarizeToolInput(t *testing.T) {
@@ -179,9 +182,62 @@ func (s scriptStreamOpencode) Run(_ context.Context, _ oc.RunOptions) (<-chan oc
 	return ch, nil
 }
 
-// TestStreamRun_TodoUpdatedEmitsTypeTodoControl verifies the SDK todo_updated
-// event is field-copied into a TypeTodo Control: the protocol package never
-// imports the SDK (the copy happens here), and content/status/priority survive
+// TestStreamRun_ResultCardPopulatesCumulativeFields pins the v0.3.0 result-card
+// field wiring: the emitted TypeResult carries TotalTokens/TotalCost. In this
+// test the SDK's SessionTokens/SessionCost accessors return zero (the test
+// HighEvent can't set the unexported v0.3.0 fields), so emitTerminal must fall
+// back to the usage store — proving the fallback path AND that the new fields
+// are populated on the control.
+func TestStreamRun_ResultCardPopulatesCumulativeFields(t *testing.T) {
+	stopStep := oc.NewHighEvent(oc.HighEventResult, "s1", "m1",
+		oc.WithTokens(1000, 500, 300, 50), oc.WithCost(0.02), oc.WithResult("done"))
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, scriptStreamOpencode{events: []oc.HighEvent{stopStep}}, client, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	// Wire a usage store so emitTerminal's fallback (SDK cumulative == 0) has
+	// somewhere to read the session cumulative from.
+	store, err := usage.New(filepath.Join(t.TempDir(), "u.json"), log.Nop(), time.Hour)
+	if err != nil {
+		t.Fatalf("usage new: %v", err)
+	}
+	h.SetUsage(store)
+	r.Bind("c-cum", "s1", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-cum",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-cum", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var res *protocol.Control
+	for _, c := range controls {
+		if c.Type == protocol.TypeResult {
+			res = c
+			break
+		}
+	}
+	if res == nil {
+		t.Fatalf("no TypeResult control; got %v", controlTypes(controls))
+	}
+	// recordUsage ran before emitTerminal, so the store holds this turn's
+	// tokens; the fallback reads them into TotalTokens (input+output=1500)
+	// and TotalCost (0.02). If the wiring regressed, both stay 0.
+	if res.Result.TotalTokens != 1500 {
+		t.Errorf("TotalTokens = %d, want 1500 (usage-store fallback)", res.Result.TotalTokens)
+	}
+	if res.Result.TotalCost != 0.02 {
+		t.Errorf("TotalCost = %v, want 0.02 (usage-store fallback)", res.Result.TotalCost)
+	}
+	// SDK's ReasoningTokens is zero in the test HighEvent → stays 0 (hidden).
+	if res.Result.ReasoningTokens != 0 {
+		t.Errorf("ReasoningTokens = %d, want 0 (not set on test HighEvent)", res.Result.ReasoningTokens)
+	}
+}
 // the translation intact.
 func TestStreamRun_TodoUpdatedEmitsTypeTodoControl(t *testing.T) {
 	todoEv := oc.NewHighEvent(oc.HighEventTodoUpdated, "s1", "m1",
