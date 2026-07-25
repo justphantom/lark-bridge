@@ -366,15 +366,31 @@ func TestValidateBadPermissionMode(t *testing.T) {
 }
 
 // TestLoad_ValidationFailures table-drives the shared validate rules.
+// Each row pins one return-error branch in config_validate.go so future
+// refactors of validate cannot silently drop a guard. Cases that already
+// had a dedicated test (TestValidateBadPermissionMode) are not duplicated.
 func TestLoad_ValidationFailures(t *testing.T) {
+	stateDirMissing := filepath.Join(t.TempDir(), "does", "not", "exist")
 	tests := []struct {
 		name string
 		body string
 		want string
 	}{
 		{"bad log level", `{"log_level":"trace"}`, "log_level"},
+		{"bad log output", `{"log_output":"file"}`, "log_output"},
+		{"bad log format", `{"log_format":"yaml"}`, "log_format"},
+		{"bad feishu log level", `{"feishu_log_level":"trace"}`, "feishu_log_level"},
+		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
+		{"claude negative concurrency", `{"claude":{"max_concurrent":-1}}`, "claude.max_concurrent"},
 		{"opencode negative concurrency", `{"opencode":{"max_concurrent":-1}}`, "opencode.max_concurrent"},
 		{"opencode_serve negative concurrency", `{"opencode_serve":{"max_concurrent":-1}}`, "opencode_serve.max_concurrent"},
+		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
+		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
+		{"prompt_timeout too short", `{"timeouts":{"prompt_timeout":"100ms"}}`, "timeouts.prompt_timeout"},
+		{"usage_session_ttl under 1h", `{"timeouts":{"usage_session_ttl":"30m"}}`, "timeouts.usage_session_ttl"},
+		{"dedup stale_window too short", `{"dedup":{"stale_window":"100ms"}}`, "dedup.stale_window"},
+		{"dedup event_ttl too short", `{"dedup":{"event_ttl":"100ms"}}`, "dedup.event_ttl"},
+		{"dedup event_max_entries negative", `{"dedup":{"event_max_entries":-1}}`, "dedup.event_max_entries"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
