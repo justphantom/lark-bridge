@@ -3,8 +3,8 @@
 # lark-bridge 一键部署脚本（systemd）
 #
 # 用法：
-#   ./deploy/deploy.sh            # 使用 repo 根目录已有的 claude-config.json 和 .env
-#   ./deploy/deploy.sh --init     # 首次部署，自动从 example 生成 claude-config.json 和 .env
+#   ./deploy/deploy.sh            # 使用 repo 根目录的 .env；config 从 config.example.json 派生
+#   ./deploy/deploy.sh --init     # 首次部署，自动从 example 生成 .env
 #   ./deploy/deploy.sh --force    # 强制部署，跳过运行中会话检查
 #   ./deploy/deploy.sh --binaries <tar|dir>
 #                                # 跳过 make build，从已编译产物部署（目标机免 Go/免 repo）。
@@ -561,16 +561,16 @@ done
 SELECTED=("${READY[@]}")
 rebuild_services
 
-# 基础 config 真源优先级：repo 自定义 > repo example > tarball 解包的 example（--binaries
-# 部署目标机可能无 repo 源码，仅 tarball + deploy.sh）。
-if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
-    cp "$PROJECT_ROOT/claude-config.json" "$STAGE/claude-config.json"
-elif [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
+# 基础 config 真源：repo example > tarball 解包的 example（--binaries 部署目标机
+# 可能无 repo 源码，仅 tarball + deploy.sh）。不再用 repo root 的 claude-config.json
+# ——它不在 git 里（git ls-files 为空），schema 可能滞后，曾让业务 backend 因
+# DisallowUnknownFields 启动失败（memory_enabled 字段已被上游删除但本地残留）。
+if [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
     cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
 elif [[ -f "$BIN_DIR/config.example.json" ]]; then
     cp "$BIN_DIR/config.example.json" "$STAGE/claude-config.json"
 else
-    fail "找不到 config 基底（claude-config.json / config.example.json）"
+    fail "找不到 config 基底（config.example.json）"
 fi
 
 # log_level 改写为 ${LOG_LEVEL} 占位符：与 ${STATE_DIR} / ${IPC_ADDR} 同一展开
@@ -633,7 +633,10 @@ fi
 cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
 inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
-# feishu-front：从 claude-config 派生（feishu 只读飞书凭证+ipc 字段，多余字段无害）
+# feishu-front：派生自 claude-config（同一份 base）。注意：6 个 backend 共用
+# internal/config.Config struct + DisallowUnknownFields，没有"多余字段无害"——
+# struct 必须识别 config 的所有 key，否则 parse fail。当前安全只因 struct 是
+# example 字段的超集；schema 漂移时会一起失败。
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
 info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"

@@ -54,14 +54,22 @@ init_monitor() {
     stage="$(mktemp -d)"
     trap 'rm -rf "$stage"' EXIT
 
-    if [[ -f "$PROJECT_ROOT/claude-config.json" ]]; then
-        cp "$PROJECT_ROOT/claude-config.json" "$stage/base.json"
-    else
-        cp "$PROJECT_ROOT/config.example.json" "$stage/base.json"
-    fi
-    cp "$stage/base.json" "$stage/$CONFIG_NAME"
+    # base 固定为 config.example.json（与 repo 同步演进）。不用 repo root 的
+    # claude-config.json——它不在 git 里，schema 可能滞后（曾导致 memory_enabled
+    # 字段触发 DisallowUnknownFields，monitor 反复重启 19 次）。
+    [[ -f "$PROJECT_ROOT/config.example.json" ]] \
+        || fail "找不到 base：$PROJECT_ROOT/config.example.json"
+    cp "$PROJECT_ROOT/config.example.json" "$stage/$CONFIG_NAME"
     sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "deploy-monitor-1",|' "$stage/$CONFIG_NAME"
     sed -i '/"router_path"/d' "$stage/$CONFIG_NAME"
+    # 删 monitor 不消费的业务子块，免疫上游 schema 变动。要求 base 2 空格缩进、
+    # 块闭合行 ^  }, 独占——config.example.json 满足。删后显式校验，防 base
+    # 格式漂移时 sed 静默失败。
+    for block in claude opencode opencode_serve miniagent; do
+        sed -i '/^  "'"$block"'":/,/^  },/d' "$stage/$CONFIG_NAME"
+        grep -q "\"$block\":" "$stage/$CONFIG_NAME" \
+            && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"
+    done
     # 先删既有 deploy_monitor 块（防重复键 → Go json 取最后一个 → 占位覆盖注入值）
     sed -i '/"deploy_monitor"[[:space:]]*:/,/^[[:space:]]*}/d' "$stage/$CONFIG_NAME"
     sed -i '/"backend_id"/a\  "deploy_monitor": {"project_root": "'"$PROJECT_ROOT"'", "deploy_target": "deploy"},' "$stage/$CONFIG_NAME"
