@@ -159,14 +159,23 @@ func TestCmdPull_SingleCardFlow(t *testing.T) {
 		t.Fatalf("cmdPull: %v", err)
 	}
 
-	// Banner: a TypeProgress bound to the promptID, emitted on accept.
+	// Drain controls collecting banner + terminal. EmitAsync (banner) and the
+	// runner goroutine's terminal emit are unordered, so drain the full window
+	// for both rather than consuming one while searching for the other.
 	deadline := time.Now().Add(2 * time.Second)
-	var banner *protocol.Control
-	for time.Now().Before(deadline) && banner == nil {
+	var banner, terminal *protocol.Control
+	for time.Now().Before(deadline) && (banner == nil || terminal == nil) {
 		select {
 		case rc := <-reg.Controls():
-			if rc.Control.Type == protocol.TypeProgress && rc.Control.PromptID == "msg-pull-1" {
-				banner = rc.Control
+			c := rc.Control
+			if c.PromptID != "msg-pull-1" {
+				continue
+			}
+			if c.Type == protocol.TypeProgress && banner == nil {
+				banner = c
+			}
+			if c.Type == protocol.TypeNotice && terminal == nil {
+				terminal = c
 			}
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -176,21 +185,6 @@ func TestCmdPull_SingleCardFlow(t *testing.T) {
 	}
 	if banner.Progress == nil || !strings.Contains(banner.Progress.Description, "拉取") {
 		t.Errorf("banner description = %+v, want contains '拉取'", banner.Progress)
-	}
-
-	// Terminal notice bound to the SAME promptID so the card is patched in
-	// place and the turn finalises (not a standalone orphan).
-	waitForCalled(t, cmd)
-	deadline = time.Now().Add(2 * time.Second)
-	var terminal *protocol.Control
-	for time.Now().Before(deadline) && terminal == nil {
-		select {
-		case rc := <-reg.Controls():
-			if rc.Control.Type == protocol.TypeNotice && rc.Control.PromptID == "msg-pull-1" {
-				terminal = rc.Control
-			}
-		case <-time.After(50 * time.Millisecond):
-		}
 	}
 	if terminal == nil {
 		t.Fatal("expected a terminal TypeNotice bound to the promptID")
