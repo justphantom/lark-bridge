@@ -210,8 +210,8 @@ func TestStreamForEvictsLRUOnCapacity(t *testing.T) {
 	// After re-touching /repo/a, the LRU is /repo/b.
 	newStream := a.streamFor(&oc.LocationRef{Directory: "/repo/z"})
 	_ = newStream // presence in the pool is asserted below; pointer unused
-	if len(a.streams) != maxConcurrentStreams {
-		t.Errorf("after eviction: streams = %d, want %d (cap held)", len(a.streams), maxConcurrentStreams)
+	if len(a.streams) != defaultMaxStreams {
+		t.Errorf("after eviction: streams = %d, want %d (cap held)", len(a.streams), defaultMaxStreams)
 	}
 	// /repo/b should be gone (it was the LRU).
 	if _, exists := a.streams["/repo/b"]; exists {

@@ -54,17 +54,20 @@ type AgentConfig struct {
 	// serialises requests per session, so this only guards against runaway
 	// per-chat fan-out. <=0 → default (4).
 	MaxConcurrent int
+	// MaxStreams caps how many directory-scoped GlobalEventStreams live
+	// concurrently. Each stream holds one long-lived HTTP SSE connection +
+	// pump goroutine, so without a cap a user /cd-ing through many project
+	// directories would accumulate streams for the whole process lifetime.
+	// At capacity a new directory evicts the least-recently-used stream and
+	// closes it. <=0 → default (8), which comfortably covers the number of
+	// directories a single user actively switches between; raise for
+	// multi-tenant deployments.
+	MaxStreams int
 }
 
-// maxConcurrentStreams caps how many distinct directory-scoped event
-// streams live concurrently. Each GlobalEventStream holds one long-lived
-// HTTP SSE connection plus its pump goroutine, so without a cap a user
-// /cd-ing through many project directories would accumulate streams and
-// connections for the whole process lifetime. At capacity a new directory
-// evicts the least-recently-used stream and closes it. 8 comfortably covers
-// the number of directories a single user actively switches between; raising
-// it is a one-line change if a multi-user deployment ever needs more.
-const maxConcurrentStreams = 8
+// defaultMaxStreams is the fallback when AgentConfig.MaxStreams <= 0. Kept
+// as a named const (not inline) so tests can reference it for assertions.
+const defaultMaxStreams = 8
 
 // Agent wraps the opencode-go-sdk-lite Client as the production opencodeAPI
 // implementation. The v1 event bus is isolated by directory, so SSE streams
@@ -80,6 +83,7 @@ type Agent struct {
 
 	streamsMu sync.Mutex
 	streams   map[string]*streamEntry
+	maxStreams int
 
 	listMu      sync.Mutex
 	modelsCache *listCache
@@ -122,13 +126,18 @@ func NewAgent(appCtx context.Context, cfg AgentConfig, logger *log.Logger) (*Age
 	if n <= 0 {
 		n = 4
 	}
+	maxStreams := cfg.MaxStreams
+	if maxStreams <= 0 {
+		maxStreams = defaultMaxStreams
+	}
 	return &Agent{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		client:  client,
-		logger:  logger,
-		appCtx:  appCtx,
-		sem:     make(chan struct{}, n),
-		streams: make(map[string]*streamEntry),
+		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
+		client:    client,
+		logger:    logger,
+		appCtx:    appCtx,
+		sem:       make(chan struct{}, n),
+		streams:   make(map[string]*streamEntry),
+		maxStreams: maxStreams,
 	}, nil
 }
 

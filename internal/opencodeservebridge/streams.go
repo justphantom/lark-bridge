@@ -31,9 +31,9 @@ func (a *Agent) streamFor(loc *oc.LocationRef) *oc.GlobalEventStream {
 		return e.s
 	}
 	// Pool at capacity: evict the least-recently-used entry. The map is
-	// small (maxConcurrentStreams=8) so a linear scan is cheaper than a
+	// small (a.maxStreams, default 8) so a linear scan is cheaper than a
 	// heap and avoids the bookkeeping of an intrusive LRU list.
-	if len(a.streams) >= maxConcurrentStreams {
+	if len(a.streams) >= a.maxStreams {
 		var oldestKey string
 		var oldest time.Time
 		first := true
