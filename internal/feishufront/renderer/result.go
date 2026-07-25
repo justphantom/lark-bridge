@@ -76,7 +76,18 @@ func RenderResult(ctrl *protocol.Control, header cardkit.HeaderInfo, footer card
 		stats = append(stats, fmt.Sprintf("🔄 %d 轮", ctrl.Result.Steps))
 	}
 	if ctrl.Result.Cost > 0 {
-		stats = append(stats, fmt.Sprintf("💰 $%.4f", ctrl.Result.Cost))
+		// Mirror tokens' "本次 / 累计" form when a cumulative session cost is
+		// available and exceeds this turn's. TotalCost==0 (first turn, or the
+		// SDK's GetSession fallback failed and the usage store was empty) hides
+		// the cumulative portion.
+		if ctrl.Result.TotalCost > ctrl.Result.Cost {
+			stats = append(stats, fmt.Sprintf("💰 $%.4f / $%.4f", ctrl.Result.Cost, ctrl.Result.TotalCost))
+		} else {
+			stats = append(stats, fmt.Sprintf("💰 $%.4f", ctrl.Result.Cost))
+		}
+	}
+	if ctrl.Result.ReasoningTokens > 0 {
+		stats = append(stats, fmt.Sprintf("🧠 %s reasoning", formatTokens(ctrl.Result.ReasoningTokens)))
 	}
 	if len(stats) > 0 {
 		sections = append(sections, strings.Join(stats, " · "))

@@ -238,6 +238,7 @@ func TestStreamRun_ResultCardPopulatesCumulativeFields(t *testing.T) {
 		t.Errorf("ReasoningTokens = %d, want 0 (not set on test HighEvent)", res.Result.ReasoningTokens)
 	}
 }
+
 // the translation intact.
 func TestStreamRun_TodoUpdatedEmitsTypeTodoControl(t *testing.T) {
 	todoEv := oc.NewHighEvent(oc.HighEventTodoUpdated, "s1", "m1",

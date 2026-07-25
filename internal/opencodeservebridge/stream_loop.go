@@ -252,9 +252,9 @@ func (h *Handler) finalizeResult(ev oc.HighEvent, accText, sessionID, modelSpec,
 	// the user-pinned modelSpec so the card always shows something.
 	st := ev.SessionTokens()
 	result := promptResult{
-		model:           nonEmpty(ev.ModelID(), resolveModel("", modelSpec)),
-		sessionID:       sessionID,
-		durationMs:      durationMs,
+		model:      nonEmpty(ev.ModelID(), resolveModel("", modelSpec)),
+		sessionID:  sessionID,
+		durationMs: durationMs,
 		// contextTokens stays terminal-step input+output (non-cache) so the
 		// result card's token count remains claude-comparable and does not
 		// jump when usage accounting started summing every step. The full
