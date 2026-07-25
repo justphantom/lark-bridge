@@ -54,9 +54,15 @@ type TextPayload struct {
 	Delta string `json:"delta"`
 }
 
-// ThinkingPayload carries a streaming thinking delta.
+// ThinkingPayload carries a streaming thinking delta. Replace=true marks an
+// authoritative snapshot (the SDK's HighEventThinkingDone / part-end frame):
+// the renderer RESETS its thinking buffer to Delta instead of appending, so a
+// dropped/out-of-order delta earlier in the part self-heals. Replace=false
+// (default, including the legacy zero value) appends. Empty Delta + Replace
+// clears the buffer.
 type ThinkingPayload struct {
-	Delta string `json:"delta"`
+	Delta   string `json:"delta"`
+	Replace bool   `json:"replace,omitempty"`
 }
 
 // ToolUsePayload carries a tool invocation. Input may be a streamed delta or

@@ -131,6 +131,8 @@ func TestControlValidate(t *testing.T) {
 	}{
 		{"text missing payload", &Control{Type: TypeText}, true},
 		{"text ok", &Control{Type: TypeText, Text: &TextPayload{Delta: "x"}}, false},
+		{"thinking delta ok", &Control{Type: TypeThinking, Thinking: &ThinkingPayload{Delta: "hmm"}}, false},
+		{"thinking replace ok", &Control{Type: TypeThinking, Thinking: &ThinkingPayload{Delta: "full", Replace: true}}, false},
 		{"question missing chatID", &Control{Type: TypeQuestion, Question: &QuestionPayload{RequestID: "r", PromptID: "p", Questions: []QuestionItem{{Label: "q", Options: []string{"a"}}}}}, true},
 		{"permission missing payload", &Control{Type: TypePermission, ChatID: "c1"}, true},
 		{"permission missing chatID", &Control{Type: TypePermission, Permission: &PermissionPayload{RequestID: "r", Options: []PermissionOption{{Label: "a", Value: "a"}}}}, true},
