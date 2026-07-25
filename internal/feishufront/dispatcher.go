@@ -41,10 +41,14 @@ const defaultStaleWindow = 300 * time.Second
 const maxPromptBytes = 64 << 10 // 64 KiB
 
 // CardSink is the subset of the Feishu bot the dispatcher needs: send a new
-// card (returns message_id) or update an existing card.
+// card (returns message_id), update an existing card, or send plain text.
+// SendText is the fallback path for when SendCard rejects a result card's
+// content (e.g. a reply with too many markdown tables hits Feishu's element
+// limit): the reply text is delivered as plain text instead of being lost.
 type CardSink interface {
 	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (string, error)
 	UpdateCard(ctx context.Context, messageID string, card []byte) error
+	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }
 
 // ChatRouter maps a Feishu chatID to its bound backendID.

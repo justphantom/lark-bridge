@@ -52,25 +52,41 @@ func TestUpdateCardNilIMService(t *testing.T) {
 	}
 }
 
-// TestIsContentTooLarge verifies the 230025 (content too large) detection.
-// The SDK classifies 230025 as an unknown code, so detection is by substring.
-func TestIsContentTooLarge(t *testing.T) {
+// TestIsCardContentRejected verifies detection of Feishu CONTENT rejections:
+// 230025 (body too large), 11310 (element/table over limit), and the generic
+// "over limit" phrase — all of which should trigger a fallback, while
+// unrelated errors must not.
+func TestIsCardContentRejected(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want bool
 	}{
 		{"nil", nil, false},
-		{"230025 in message", errors.New("FeishuChannelError(code=unknown): ...code:230025..."), true},
+		{"230025 body too large", errors.New("FeishuChannelError(code=unknown): ...code:230025..."), true},
+		{"11310 table over limit", errors.New("Create message API error: Code=230099, ext=ErrCode: 11310; ErrMsg: card table number over limit"), true},
+		{"over limit phrase only", errors.New("ErrMsg: column number over limit"), true},
 		{"other code", errors.New("feishu: send card: code:230002"), false},
 		{"plain error", errors.New("network timeout"), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := isContentTooLarge(c.err); got != c.want {
-				t.Errorf("isContentTooLarge(%v) = %v, want %v", c.err, got, c.want)
+			if got := isCardContentRejected(c.err); got != c.want {
+				t.Errorf("isCardContentRejected(%v) = %v, want %v", c.err, got, c.want)
 			}
 		})
+	}
+}
+
+// TestSendCard_ContentRejectedReturnsSentinel pins that SendCard surfaces the
+// detectable ErrCardContentRejected (so a caller with the original text can
+// fall back) instead of silently swallowing or auto-sending a stub.
+func TestSendCard_ContentRejectedReturnsSentinel(t *testing.T) {
+	b := &Bot{logger: log.Nop()}
+	setCh(b, &fakeChannel{sendErr: errors.New("Create message API error: Code=230099, ext=ErrCode: 11310; ErrMsg: card table number over limit")})
+	_, err := b.SendCard(context.Background(), "oc_chat", []byte("{}"), "")
+	if !errors.Is(err, ErrCardContentRejected) {
+		t.Fatalf("SendCard err = %v, want errors.Is ErrCardContentRejected", err)
 	}
 }
 

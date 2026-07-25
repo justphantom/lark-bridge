@@ -686,6 +686,10 @@ func (blockingSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) 
 	return "", ctx.Err()
 }
 func (blockingSink) UpdateCard(context.Context, string, []byte) error { return nil }
+func (blockingSink) SendText(ctx context.Context, _ string, _ string, _ string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
 
 // TestSendOfflineNotices_BoundedByTimeout verifies a stalled Feishu send
 // cannot wedge the notify path: SendCard honors the context deadline and
@@ -860,6 +864,12 @@ func (c *ctxSensitiveSink) UpdateCard(ctx context.Context, _ string, _ []byte) e
 	c.updates++
 	c.mu.Unlock()
 	return nil
+}
+func (c *ctxSensitiveSink) SendText(ctx context.Context, _ string, _ string, _ string) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	return "om_text", nil
 }
 func (c *ctxSensitiveSink) count() int {
 	c.mu.Lock()

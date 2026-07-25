@@ -2,6 +2,7 @@ package feishufront
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -16,15 +17,22 @@ import (
 // fakeSink is a CardSink that records every SendCard/UpdateCard call and
 // returns synthetic message ids so the dispatcher can track turns.
 type fakeSink struct {
-	mu      sync.Mutex
-	sends   []sentCard
-	updates []updatedCard
-	nextID  int
+	mu        sync.Mutex
+	sends     []sentCard
+	textSends []sentText
+	updates   []updatedCard
+	nextID    int
+	cardErr   error // if set, SendCard returns it (simulates a Feishu rejection)
 }
 
 type sentCard struct {
 	chatID    string
 	card      []byte
+	replyToID string
+}
+type sentText struct {
+	chatID    string
+	text      string
 	replyToID string
 }
 type updatedCard struct {
@@ -35,6 +43,9 @@ type updatedCard struct {
 func (f *fakeSink) SendCard(_ context.Context, chatID string, card []byte, replyToID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.cardErr != nil {
+		return "", f.cardErr
+	}
 	f.nextID++
 	f.sends = append(f.sends, sentCard{chatID: chatID, card: card, replyToID: replyToID})
 	return "om_" + itoa(f.nextID), nil
@@ -45,6 +56,16 @@ func (f *fakeSink) UpdateCard(_ context.Context, messageID string, card []byte) 
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, updatedCard{messageID: messageID, card: card})
 	return nil
+}
+
+// SendText records a plain-text fallback send so tests can assert the
+// result-card-rejected fallback delivered the reply as text.
+func (f *fakeSink) SendText(_ context.Context, chatID, text, replyToID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	f.textSends = append(f.textSends, sentText{chatID: chatID, text: text, replyToID: replyToID})
+	return "om_" + itoa(f.nextID), nil
 }
 
 func (f *fakeSink) lastSendCard() []byte {
@@ -772,5 +793,55 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	// Binding released after finalize.
 	if _, ok := disp.turns.InteractiveMessageID("req-fin"); ok {
 		t.Error("binding should be released after finalize")
+	}
+}
+
+// TestSendResult_CardRejectedFallsBackToText pins the production fix for the
+// silent "card not sent" bug: when Feishu rejects the result CARD's content
+// (ErrCode 11310 — too many tables, surfaced as feishu.ErrCardContentRejected),
+// sendResult retries the reply as a plain-text message so it is not lost.
+func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
+	const backendID = "opencode-fb"
+	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+
+	chatID := "oc_chat_fb"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress-fb"
+	disp.turns.Start("msg-fb", chatID, progressMID, backendID)
+
+	// Simulate Feishu rejecting the result card (e.g. reply had too many tables).
+	sink.mu.Lock()
+	sink.cardErr = fmt.Errorf("%w: Code=230099, ext=ErrCode: 11310; ErrMsg: card table number over limit", feishu.ErrCardContentRejected)
+	sink.mu.Unlock()
+
+	replyText := "| col |\n|----|\n| a |\n| b |\n\n这是最终回复正文。"
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
+		Type:     protocol.TypeResult,
+		PromptID: "msg-fb",
+		ChatID:   chatID,
+		Result:   &protocol.ResultPayload{Text: replyText},
+	}}); err != nil {
+		t.Fatalf("DispatchControl result: %v", err)
+	}
+
+	// The card send failed; the reply must have been delivered as plain text.
+	sink.mu.Lock()
+	texts := append([]sentText(nil), sink.textSends...)
+	cardSends := len(sink.sends)
+	sink.mu.Unlock()
+	if cardSends != 0 {
+		t.Errorf("expected the card send to be rejected (0 successful sends), got %d", cardSends)
+	}
+	if len(texts) != 1 {
+		t.Fatalf("expected exactly one SendText fallback, got %d: %+v", len(texts), texts)
+	}
+	if texts[0].chatID != chatID {
+		t.Errorf("text fallback chatID = %q, want %q", texts[0].chatID, chatID)
+	}
+	if !strings.Contains(texts[0].text, "这是最终回复正文") {
+		t.Errorf("text fallback should carry the reply text; got %q", texts[0].text)
 	}
 }

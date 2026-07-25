@@ -16,11 +16,16 @@ import (
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
-// maxContentSize is the maximum byte length of raw markdown text sent
-// in a single message. The Feishu API caps request bodies at 30 KB for
-// post/card types; this value leaves headroom for JSON envelope
-// overhead and escape expansion.
-const maxContentSize = 25000
+// MaxTextBodyBytes is the maximum byte length of raw text sent in a single
+// plain-text message. The Feishu API caps request bodies at 30 KB for
+// post/card types; this value leaves headroom for JSON envelope overhead
+// and escape expansion. Exported so the dispatcher can pre-truncate a text
+// fallback (e.g. when a result card is rejected for too many tables).
+const MaxTextBodyBytes = 25000
+
+// maxContentSize aliases MaxTextBodyBytes for the in-package call sites
+// (bot.go's text-chunk limit) that pre-date the export.
+const maxContentSize = MaxTextBodyBytes
 
 // cardRetry is the max number of extra UpdateCard attempts after a transient
 // failure. UpdateCard is idempotent for a given messageID, so a retry never
@@ -34,11 +39,25 @@ const cardRetry = 3
 const cardRetryBase = 300 * time.Millisecond
 
 // feishuCodeContentTooLarge is the Feishu API error code for "message
-// content reaches its limit". Used for direct resp.Code comparison on
-// Patch responses; channel errors embed it as the substring
+// content reaches its limit" (body byte size). Used for direct resp.Code
+// comparison on Patch responses; channel errors embed it as the substring
 // "code:"+strconv.Itoa(feishuCodeContentTooLarge) (the SDK classifies
 // 230025 as an unknown code, so detection is by that substring).
 const feishuCodeContentTooLarge = 230025
+
+// feishuCodeCardElementOverLimit is the Feishu error for a card exceeding an
+// element-count cap (tables/columns/images/…). Observed as
+// "card table number over limit" wrapping code 11310 inside the generic
+// 230099 "Failed to create card content"; the body itself is under the byte
+// limit, so this is distinct from feishuCodeContentTooLarge.
+const feishuCodeCardElementOverLimit = 11310
+
+// ErrCardContentRejected is returned by SendCard when Feishu rejects the card
+// CONTENT — body too large (230025), too many tables/elements (11310), or any
+// sibling "over limit" rejection. The card itself was syntactically valid; a
+// caller that has the underlying text (e.g. the result-card reply) can
+// errors.Is this and fall back to SendText so the reply is not lost.
+var ErrCardContentRejected = errors.New("feishu: card content rejected by server")
 
 func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (string, error) {
 	if len(card) == 0 {
@@ -54,11 +73,15 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 		ReplyMessageID: replyToID,
 	})
 	if err != nil {
-		if isContentTooLarge(err) {
-			b.logger.Info("card content too large, falling back to text",
+		if isCardContentRejected(err) {
+			// Surface a detectable error so a caller with the original text
+			// (sendResult) can fall back to plain text. We no longer auto-send
+			// a fixed stub here: that lost the reply for table/element
+			// rejections where the text itself fits fine.
+			b.logger.Info("card content rejected by server",
 				log.FieldChatID, chatID,
 				"card_size_bytes", len(card))
-			return b.sendFallbackText(ctx, chatID, replyToID)
+			return "", fmt.Errorf("%w: %w", ErrCardContentRejected, err)
 		}
 		return "", fmt.Errorf("feishu: send card: %w", err)
 	}
@@ -72,21 +95,26 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 	return res.MessageID, nil
 }
 
-// sendFallbackText sends a tiny plain-text message after a card was rejected
-// for being too large (230025). The text is fixed so it can never itself trip
-// the size limit.
-func (b *Bot) sendFallbackText(ctx context.Context, chatID, replyToID string) (string, error) {
+// SendText sends a plain-text (msgType=text) message. Used as the fallback
+// when SendCard rejects a result card's content (e.g. a reply with too many
+// markdown tables) — the reply text is delivered as plain text instead of
+// being lost entirely. text is expected to be pre-truncated by the caller to
+// fit the text-message size limit.
+func (b *Bot) SendText(ctx context.Context, chatID, text, replyToID string) (string, error) {
+	if text == "" {
+		return "", errors.New("feishu: empty text body")
+	}
 	res, err := (*b.ch.Load()).Send(ctx, &sdktypes.SendInput{
 		ChatID:         chatID,
-		Text:           fallbackText,
+		Text:           text,
 		ReplyMessageID: replyToID,
 	})
 	if err != nil {
-		return "", fmt.Errorf("feishu: send fallback text: %w", err)
+		return "", fmt.Errorf("feishu: send text: %w", err)
 	}
 	b.markHealthy()
 	if res == nil {
-		return "", errors.New("feishu: send fallback text returned no result")
+		return "", errors.New("feishu: send text returned no result")
 	}
 	return res.MessageID, nil
 }
@@ -130,10 +158,10 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 		if err == nil {
 			break
 		}
-		if isContentTooLarge(err) {
+		if isCardContentRejected(err) {
 			// Same fallback as the resp.Code path below: a minimal card beats
 			// an erroring one. Not retried (retrying cannot shrink the content).
-			b.logger.Info("card content too large, falling back to minimal card",
+			b.logger.Info("card content rejected, falling back to minimal card",
 				log.FieldMessageID, messageID,
 				"card_size_bytes", len(card))
 			return b.updateFallbackCard(ctx, messageID)
@@ -157,10 +185,12 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 			code = resp.Code
 			msg = resp.Msg
 		}
-		// 230025 = content too large. Re-patch with a minimal card so the
-		// existing message shows a readable placeholder instead of erroring.
-		if code == feishuCodeContentTooLarge {
-			b.logger.Info("card content too large, falling back to minimal card",
+		// Content-limit rejection (230025 body too large, or an "over limit"
+		// element-count code surfaced only in msg for Patch responses). Re-patch
+		// with a minimal card so the existing message shows a readable
+		// placeholder instead of erroring.
+		if code == feishuCodeContentTooLarge || strings.Contains(msg, "over limit") {
+			b.logger.Info("card content rejected, falling back to minimal card",
 				log.FieldMessageID, messageID,
 				"card_size_bytes", len(card))
 			return b.updateFallbackCard(ctx, messageID)
@@ -202,12 +232,20 @@ func (b *Bot) updateFallbackCard(ctx context.Context, messageID string) error {
 	return nil
 }
 
-// isContentTooLarge reports whether err represents Feishu API code 230025
-// ("message content reaches its limit"). The SDK classifies 230025 as an
-// unknown error code, so identification is by the code substring rather than
-// a typed constant.
-func isContentTooLarge(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "code:"+strconv.Itoa(feishuCodeContentTooLarge))
+// isCardContentRejected reports whether err represents a Feishu CONTENT
+// rejection: body too large (230025), too many tables/elements (11310), or
+// any sibling "over limit" rejection. The SDK classifies these as unknown
+// codes, so identification is by substring (the inner code + the English
+// "over limit" phrase Feishu uses for element-count caps) rather than a typed
+// constant.
+func isCardContentRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "code:"+strconv.Itoa(feishuCodeContentTooLarge)) ||
+		strings.Contains(s, "code:"+strconv.Itoa(feishuCodeCardElementOverLimit)) ||
+		strings.Contains(s, "over limit")
 }
 
 // fallbackText is the plain-text body sent when a card is rejected for being

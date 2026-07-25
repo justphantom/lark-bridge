@@ -2,12 +2,16 @@ package feishufront
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/feishufront/renderer"
+	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // DispatchControl routes a backend Control to the right card update path.
@@ -210,12 +214,43 @@ func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, bac
 	_, err = d.bot.SendCard(ctx, chatID, card, "")
 	if err == nil {
 		d.finalizeLinkedInteractive(ctx, ctrl.PromptID)
+	} else if errors.Is(err, feishu.ErrCardContentRejected) && ctrl.Result.Text != "" {
+		// Feishu rejected the card's CONTENT (too many tables/elements, body
+		// too large, …) — not a transient failure. Deliver the reply as plain
+		// text so it is not lost. The reply is capped to the text-message
+		// budget; markdown tables render as raw "| … |" text (ugly but
+		// readable, and crucially delivered). err is replaced: success clears
+		// the rejection; a SendText failure is the new error to surface.
+		err = d.sendResultTextFallback(ctx, chatID, ctrl.Result.Text)
+		if err == nil {
+			d.finalizeLinkedInteractive(ctx, ctrl.PromptID)
+		}
 	}
 	// Release turn/progress slots whether the send succeeded or not, so a
 	// transient Feishu error does not leak the promptID across the maps.
 	d.turns.Finish(ctrl.PromptID)
 	d.cleanupProgress(ctrl.PromptID, messageID)
 	return err
+}
+
+// sendResultTextFallback delivers reply as a plain-text message after the
+// result CARD was rejected (e.g. ErrCode 11310 — too many tables). text is
+// byte-capped (rune-boundary-safe) to fit a Feishu text message, with a
+// trailing truncation marker when cut. Returns the SendText error so the
+// caller can decide whether to surface it.
+func (d *Dispatcher) sendResultTextFallback(ctx context.Context, chatID, reply string) error {
+	body := strutil.Truncate(reply, feishu.MaxTextBodyBytes-40)
+	if len(body) < len(reply) {
+		body += "\n\n…（内容过长，已截断）"
+	}
+	d.logger.Load().Info("result card rejected; falling back to plain text",
+		log.FieldChatID, chatID,
+		"reply_len", len(reply),
+		"text_body_len", len(body))
+	if _, err := d.bot.SendText(ctx, chatID, body, ""); err != nil {
+		return fmt.Errorf("feishu: result text fallback: %w", err)
+	}
+	return nil
 }
 
 func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Control, backendType string) error {
