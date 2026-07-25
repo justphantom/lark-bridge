@@ -148,9 +148,21 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					Todo: &protocol.TodoPayload{Todos: items},
 				})
 			}
-		case oc.HighEventResult:
-			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,
-				accInput, accOutput, accCacheRead, accCacheWrite, accCost)
+	case oc.HighEventResult:
+		// ev.Result() carries the final reply verbatim; only fall back to
+		// the accumulated text when it is empty (StripThinking then mines
+		// accText for a > -prefixed thinking block). Skipping text.String()
+		// when Result is non-empty avoids cloning the full turn's worth of
+		// streamed text into a fresh string right before the function
+		// returns — without this, peak memory at the result boundary is
+		// 2× the reply size (Builder buffer + cloned accText), which a
+		// long multi-step turn can push into multiple MiB.
+		var accText string
+		if ev.Result() == "" {
+			accText = text.String()
+		}
+		return h.finalizeResult(ev, accText, sessionID, modelSpec, chatID, stepCount, startTime,
+			accInput, accOutput, accCacheRead, accCacheWrite, accCost)
 		case oc.HighEventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
