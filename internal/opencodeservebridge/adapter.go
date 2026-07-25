@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
@@ -84,6 +85,13 @@ type Agent struct {
 	streamsMu sync.Mutex
 	streams   map[string]*streamEntry
 	maxStreams int
+
+	// closed gates stream creation after Close: without it, a streamFor
+	// call racing Close's swap (Close drains the old map, a concurrent
+	// streamFor already past the closed check installs a fresh entry in
+	// the new empty map) would leak a connection the Close loop never saw.
+	// Closed once a process lifetime; streamFor re-checks under the lock.
+	closed atomic.Bool
 
 	listMu      sync.Mutex
 	modelsCache *listCache
@@ -177,6 +185,7 @@ func (a *Agent) RejectQuestion(ctx context.Context, requestID, directory string)
 
 // Close stops all pooled SDK GlobalEventStreams. Idempotent.
 func (a *Agent) Close() error {
+	a.closed.Store(true)
 	a.streamsMu.Lock()
 	streams := a.streams
 	a.streams = make(map[string]*streamEntry)
@@ -194,6 +203,9 @@ func (a *Agent) Close() error {
 // HighEvent channel until close; a terminal event (result/error) precedes
 // close. Blocks acquiring a concurrency slot until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context, opts oc.RunOptions) (<-chan oc.HighEvent, error) {
+	if a.closed.Load() {
+		return nil, errors.New("opencodeserve: agent closed")
+	}
 	select {
 	case a.sem <- struct{}{}:
 	case <-ctx.Done():

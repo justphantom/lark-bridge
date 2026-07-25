@@ -239,3 +239,24 @@ func TestStreamForEvictsLRUOnCapacity(t *testing.T) {
 		t.Error("touch of a pooled key returned a different stream (was replaced, not just refreshed)")
 	}
 }
+
+// TestAgent_CloseRefusesStreamAndRun pins the P2-16 fix: after Close,
+// streamFor returns nil and Run returns an explicit error. Without the
+// closed flag, a streamFor racing Close's map swap would install a fresh
+// stream in the new empty map and the close loop would never see it,
+// leaking the underlying HTTP connection.
+func TestAgent_CloseRefusesStreamAndRun(t *testing.T) {
+	a, err := NewAgent(context.Background(), AgentConfig{BaseURL: "http://127.0.0.1:1"}, nil)
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := a.streamFor(&oc.LocationRef{Directory: "/repo/a"}); got != nil {
+		t.Errorf("streamFor after Close = %v, want nil", got)
+	}
+	if _, err := a.Run(context.Background(), oc.RunOptions{}); err == nil {
+		t.Error("Run after Close should return an error, not silently accept")
+	}
+}

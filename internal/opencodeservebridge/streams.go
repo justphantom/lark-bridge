@@ -20,6 +20,13 @@ import (
 // creation hit) so the eviction order reflects actual use, not creation
 // order.
 func (a *Agent) streamFor(loc *oc.LocationRef) *oc.GlobalEventStream {
+	// Refuse to install a new stream after Close: the close loop only sees
+	// entries that existed when it swapped the map, so a fresh install here
+	// would leak (no second Close pass picks it up). Returning nil lets the
+	// SDK reject the Run, surfacing the failure instead of silently leaking.
+	if a.closed.Load() {
+		return nil
+	}
 	key := ""
 	if loc != nil {
 		key = filepath.Clean(loc.Directory)
