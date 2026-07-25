@@ -3,6 +3,7 @@ package renderer
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,56 @@ func TestRenderInteractive_DispatchesPermission(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"kind":"permission"`) {
 		t.Errorf("TypePermission should render buttons: %s", b)
+	}
+}
+
+// TestRenderQuestion_TrimsTooManyQuestions verifies a Question payload with
+// more than maxQuestions items is truncated to the cap and the omitted-count
+// is surfaced to the user, instead of producing a card Feishu would reject
+// server-side (230025) for exceeding the element hard limit.
+func TestRenderQuestion_TrimsTooManyQuestions(t *testing.T) {
+	items := make([]protocol.QuestionItem, maxQuestions+5)
+	for i := range items {
+		items[i] = protocol.QuestionItem{Label: "q" + strconv.Itoa(i), Options: []string{"a"}}
+	}
+	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r", Questions: items}}
+	b, err := RenderQuestion(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	all := string(b)
+	// The first kept label survives; the cap+1'th label is dropped.
+	if !strings.Contains(all, "q0") {
+		t.Errorf("first question should survive: %s", all)
+	}
+	if strings.Contains(all, "q"+strconv.Itoa(maxQuestions)) {
+		t.Errorf("question past cap should be dropped: %s", all)
+	}
+	if !strings.Contains(all, "已省略 5") {
+		t.Errorf("omitted count notice missing: %s", all)
+	}
+}
+
+// TestRenderPermission_TrimsTooManyOptions verifies a Permission payload with
+// more than maxPermissionOptions is truncated so the resulting card stays
+// under cardkit.MaxCardElements (no Card error, no server-side rejection).
+func TestRenderPermission_TrimsTooManyOptions(t *testing.T) {
+	opts := make([]protocol.PermissionOption, maxPermissionOptions+10)
+	for i := range opts {
+		opts[i] = protocol.PermissionOption{Label: "o" + strconv.Itoa(i), Value: "v" + strconv.Itoa(i)}
+	}
+	ctrl := &protocol.Control{Permission: &protocol.PermissionPayload{RequestID: "r", Options: opts}}
+	b, err := RenderPermission(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatalf("render %d options: %v", len(opts), err)
+	}
+	card := parse(t, b, nil)
+	actions := actionButtons(t, card)
+	// Permission has no separate submit button (each option submits
+	// immediately), so buttons == maxPermissionOptions == 47. Total card
+	// elements (msg + wait notice + footer + 47 buttons) == MaxCardElements.
+	if len(actions) != maxPermissionOptions {
+		t.Errorf("buttons = %d, want %d (capped options, no submit)", len(actions), maxPermissionOptions)
 	}
 }
 

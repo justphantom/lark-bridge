@@ -24,6 +24,13 @@ import (
 // ≈28 KiB card content limit.
 const MaxBodyRunes = 4000
 
+// MaxCardElements is Feishu's per-card element hard cap (~50). Card fails
+// rendering server-side (230025 or similar) above it, so Card() refuses to
+// build such a card up front rather than letting SendCard/UpdateCard surface
+// the rejection as an opaque error. This is the LAST line of defence;
+// renderers are expected to bound their own output well under it.
+const MaxCardElements = 50
+
 // InteractiveTimeout bounds how long an unresponded interactive card waits for
 // user action. Kept here so the renderer and the turn manager share one value.
 const InteractiveTimeout = 10 * time.Minute
@@ -85,6 +92,9 @@ func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Ac
 		all = append(all, Element(a))
 	}
 	all = append(all, Footer(footer))
+	if len(all) > MaxCardElements {
+		return nil, fmt.Errorf("cardkit: card has %d elements, exceeds Feishu hard limit %d", len(all), MaxCardElements)
+	}
 	card := map[string]any{
 		"schema": "2.0",
 		"header": Header(header),

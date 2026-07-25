@@ -23,6 +23,19 @@ const maxInteractiveBodyRunes = cardkit.MaxBodyRunes
 // under Feishu's card content ceiling.
 const maxQuestionOptionRunes = 15000
 
+// maxQuestions bounds questions per card. Each question yields 2-3 form
+// elements (label markdown + select + optional custom input / 省略提示),
+// plus the trailing wait-notice, submit button and footer. 15 questions
+// keeps the worst case (15×3 + 3 = 48) just under cardkit.MaxCardElements,
+// so a backend emitting 25+ questions no longer triggers a server-side
+// 230025 rejection that the user sees as "卡渲染失败".
+const maxQuestions = 15
+
+// maxPermissionOptions bounds options per permission card. Each option is
+// one button action; reserve 3 slots for the message body, wait notice,
+// and footer so the card stays under cardkit.MaxCardElements.
+const maxPermissionOptions = cardkit.MaxCardElements - 3
+
 // RenderQuestion builds a question card: one block per question (label +
 // options as a select/multi-select), an optional custom-input box, and a
 // single submit button. All controls live inside a form container so the
@@ -37,18 +50,26 @@ func RenderQuestion(ctrl *protocol.Control, header cardkit.HeaderInfo, footer ca
 	}
 	q := ctrl.Question
 	var formElems []cardkit.Element
-	for idx, item := range q.Questions {
+	shown := len(q.Questions)
+	if shown > maxQuestions {
+		shown = maxQuestions
+	}
+	for idx := 0; idx < shown; idx++ {
+		item := q.Questions[idx]
 		formElems = append(formElems, cardkit.MarkdownElement("**"+truncateRunes(item.Label, maxInteractiveBodyRunes)+"**"))
 		opts, omitted := capOptions(item.Options, maxQuestionOptionRunes)
 		formElems = append(formElems, cardkit.SelectStaticElement(
 			fmt.Sprintf("q_%d", idx), "请选择", opts, item.Multiple))
 		if omitted > 0 {
-			formElems = append(formElems, cardkit.MarkdownElement("…共 "+strconv.Itoa(omitted)+" 项已省略"))
+			formElems = append(formElems, cardkit.MarkdownElement("…共 " + strconv.Itoa(omitted) + " 项已省略"))
 		}
 		if item.Custom {
 			formElems = append(formElems, cardkit.InputElement(
 				fmt.Sprintf("custom_%d", idx), "自定义输入"))
 		}
+	}
+	if len(q.Questions) > maxQuestions {
+		formElems = append(formElems, cardkit.MarkdownElement(fmt.Sprintf("…共 %d 个问题，已省略 %d 项", len(q.Questions), len(q.Questions)-maxQuestions)))
 	}
 	formElems = append(formElems, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
 	submit := cardkit.SubmitButtonAction("提交",
@@ -74,8 +95,12 @@ func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer 
 		elements = append(elements, cardkit.MarkdownElement(msg))
 	}
 	elements = append(elements, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
-	actions := make([]cardkit.Action, 0, len(p.Options))
-	for _, opt := range p.Options {
+	opts := p.Options
+	if len(opts) > maxPermissionOptions {
+		opts = opts[:maxPermissionOptions]
+	}
+	actions := make([]cardkit.Action, 0, len(opts))
+	for _, opt := range opts {
 		actions = append(actions, cardkit.ButtonAction(
 			truncateRunes(opt.Label, maxInteractiveBodyRunes), "permission",
 			map[string]any{"requestID": p.RequestID, "choice": opt.Value}, false, false))

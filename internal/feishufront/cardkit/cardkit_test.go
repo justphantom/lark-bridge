@@ -226,3 +226,32 @@ func TestNoticeWithChangeTruncatesCombined(t *testing.T) {
 		t.Errorf("expected truncation marker … in combined content: %s", content)
 	}
 }
+
+// TestCardRejectsTooManyElements verifies Card enforces Feishu's element
+// hard cap so a pathological caller surfaces the failure as a Go error
+// instead of a server-side 230025 rejection on every SendCard/UpdateCard.
+func TestCardRejectsTooManyElements(t *testing.T) {
+	hdr := HeaderInfo{BackendType: "x"}
+	ftr := FooterInfo{BackendType: "x"}
+	// Fill elements so elements+actions+footer just exceeds MaxCardElements.
+	over := MaxCardElements - 1 // -1 for the footer
+	elements := make([]Element, over)
+	for i := range elements {
+		elements[i] = MarkdownElement("x")
+	}
+	// Adding one action tips elements+actions+footer to MaxCardElements+1.
+	acts := []Action{ButtonAction("ok", "permission", map[string]any{"requestID": "r"}, true, false)}
+	if _, err := Card(hdr, ftr, elements, acts); err == nil {
+		t.Fatalf("Card accepted %d elements (limit %d)", over+1+1, MaxCardElements)
+	}
+
+	// Sanity: just under the cap still builds.
+	under := MaxCardElements - 2 // -1 footer, -1 action
+	elems := make([]Element, under)
+	for i := range elems {
+		elems[i] = MarkdownElement("x")
+	}
+	if _, err := Card(hdr, ftr, elems, acts); err != nil {
+		t.Fatalf("Card rejected %d elements (limit %d): %v", under+1+1, MaxCardElements, err)
+	}
+}
