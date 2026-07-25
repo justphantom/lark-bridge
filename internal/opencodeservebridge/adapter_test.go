@@ -192,14 +192,14 @@ func TestStreamForEvictsLRUOnCapacity(t *testing.T) {
 	defer a.Close()
 
 	// Fill the pool exactly to capacity.
-	streams := make(map[string]*oc.GlobalEventStream, maxConcurrentStreams)
-	for i := range maxConcurrentStreams {
+	streams := make(map[string]*oc.GlobalEventStream, defaultMaxStreams)
+	for i := range defaultMaxStreams {
 		dir := "/repo/" + string(rune('a'+i))
 		s := a.streamFor(&oc.LocationRef{Directory: dir})
 		streams[dir] = s
 	}
-	if len(a.streams) != maxConcurrentStreams {
-		t.Fatalf("after fill: streams = %d, want %d", len(a.streams), maxConcurrentStreams)
+	if len(a.streams) != defaultMaxStreams {
+		t.Fatalf("after fill: streams = %d, want %d", len(a.streams), defaultMaxStreams)
 	}
 
 	// Access the first entry so the second entry becomes the LRU candidate.
