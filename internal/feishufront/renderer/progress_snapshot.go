@@ -16,6 +16,7 @@ func (s *ProgressState) Clone() *ProgressState {
 		todos:     make([]TodoItem, len(s.todos)),
 		loading:   s.loading,
 		gate:      s.gate,
+		thinking:  s.thinking,
 	}
 	copy(cp.tools, s.tools)
 	copy(cp.todos, s.todos)

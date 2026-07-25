@@ -50,6 +50,12 @@ type ProgressState struct {
 	// precedence over loading when both are set. Zero-value State="" means
 	// no gate.
 	gate GateInfo
+	// thinking is the model's live reasoning text. SetThinking appends a
+	// delta or, on Replace=true (the SDK's part-end thinking_done frame),
+	// overwrites with the authoritative snapshot. Stored as an immutable
+	// string so Clone copies it by value (race-free under the render lock).
+	// Capped at render time, not storage time — see renderThinkingZone.
+	thinking string
 }
 
 // GateInfo mirrors protocol.GateInfo at the renderer boundary (this package
@@ -79,6 +85,18 @@ func (s *ProgressState) SetLoading(text string) { s.loading = text }
 
 // SetGate sets the interactive-gate banner. A gate with empty State clears it.
 func (s *ProgressState) SetGate(g GateInfo) { s.gate = g }
+
+// SetThinking accumulates the model's reasoning text. replace=true (the SDK's
+// part-end thinking_done frame) overwrites the buffer with delta — the
+// server-reconciled full text — self-healing any dropped/out-of-order deltas;
+// replace=false appends delta to the running stream.
+func (s *ProgressState) SetThinking(delta string, replace bool) {
+	if replace {
+		s.thinking = delta
+		return
+	}
+	s.thinking += delta
+}
 
 // AddToolUse records a tool invocation start. A repeated call with the same
 // name+desc collapses into the existing row (incrementing count) rather than
@@ -212,6 +230,15 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 		zones = append(zones, cardkit.MarkdownElement(line))
 	}
 
+	// Zone 0.5: live reasoning. The model thinks before it acts, so the
+	// thinking zone sits between the banner and the tool zones — above the
+	// action it is reasoning about. Grey + dimmed to read as context, not
+	// output; capped to the trailing ~400 runes so a long reasoning block
+	// cannot crowd the action zones off the card.
+	if zone := renderThinkingZone(s.thinking); zone != nil {
+		zones = append(zones, zone)
+	}
+
 	// Tools split into three zones (running → completed → error). Error rows are separated out so the completed
 	// zone's grouped summary counts only successes ("不含出错动作") and the
 	// error zone can list failures verbatim with their excerpts.
@@ -291,4 +318,34 @@ func appendZones(zones []cardkit.Element) []cardkit.Element {
 		out = append(out, z)
 	}
 	return out
+}
+
+// maxThinkingRunes caps the reasoning shown on the progress card. Reasoning
+// blocks run to thousands of tokens; the progress card is a live dashboard,
+// not a reading surface, so only the trailing window is useful while the model
+// works. The full reasoning remains in the session for later review.
+const maxThinkingRunes = 400
+
+// renderThinkingZone returns the reasoning zone element, or nil when thinking
+// is empty. The body is grey-dimmed markdown under a "💭 思考中" header, capped
+// to the trailing maxThinkingRunes runes. Trailing (not leading) is kept
+// because the most recent reasoning is the most relevant to the model's next
+// action.
+func renderThinkingZone(thinking string) cardkit.Element {
+	thinking = strings.TrimSpace(thinking)
+	if thinking == "" {
+		return nil
+	}
+	return cardkit.MarkdownElement("<font color=\"grey\">💭 **思考中**\n" + truncateThinkingTail(thinking, maxThinkingRunes) + "</font>")
+}
+
+// truncateThinkingTail keeps the trailing maxRunes runes of s, prefixed with
+// "… （前略）" when something was dropped. Rune-based so multi-byte reasoning
+// (CJK) is never split mid-character.
+func truncateThinkingTail(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return "… （前略）\n" + string(r[len(r)-maxRunes:])
 }

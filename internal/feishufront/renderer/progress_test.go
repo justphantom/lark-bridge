@@ -724,3 +724,80 @@ func TestProgressState_ClonePreservesBanner(t *testing.T) {
 		t.Errorf("clone banner = %q, want gate to win", got)
 	}
 }
+
+// TestSetThinking_AppendAndReplace pins the two-frame contract: deltas
+// (replace=false) append; a thinking_done frame (replace=true) overwrites the
+// buffer with the server-reconciled full text, self-healing any garbled delta
+// accumulation.
+func TestSetThinking_AppendAndReplace(t *testing.T) {
+	s := NewProgressState()
+	s.SetThinking("foo ", false)
+	s.SetThinking("bar", false)
+	if s.thinking != "foo bar" {
+		t.Errorf("after append = %q, want %q", s.thinking, "foo bar")
+	}
+	// replace overwrites (does not append), even with a shorter string.
+	s.SetThinking("reset", true)
+	if s.thinking != "reset" {
+		t.Errorf("after replace = %q, want %q", s.thinking, "reset")
+	}
+	// Appending resumes from the replaced value.
+	s.SetThinking("!", false)
+	if s.thinking != "reset!" {
+		t.Errorf("after post-replace append = %q, want %q", s.thinking, "reset!")
+	}
+}
+
+// TestRenderThinkingZone_TruncatesTail pins the cap: a long reasoning block is
+// shown as its trailing ~maxThinkingRunes runes with a "（前略）" prefix, and a
+// multi-byte (CJK) tail is never split mid-character.
+func TestRenderThinkingZone_TruncatesTail(t *testing.T) {
+	long := strings.Repeat("行", maxThinkingRunes*3) // 3× cap, all CJK (3 bytes/rune)
+	zone := renderThinkingZone(long)
+	if zone == nil {
+		t.Fatal("non-empty thinking must render a zone")
+	}
+	md, _ := zone["content"].(string)
+	if !strings.HasPrefix(md, "<font color=\"grey\">💭 **思考中**") {
+		t.Errorf("missing grey header: %s", md[:40])
+	}
+	if !strings.Contains(md, "（前略）") {
+		t.Errorf("truncated tail should carry 前略 marker: %s", md[:60])
+	}
+	// No half-rune: the part after 前略 is whole "行" runes.
+	body := md[strings.Index(md, "（前略）"):]
+	if strings.Contains(body, "�") {
+		t.Errorf("tail split a multi-byte rune: %q", body[:12])
+	}
+}
+
+// TestRenderThinkingZone_OmitsWhenEmpty pins that no zone is inserted for an
+// empty/whitespace thinking buffer (Render must not add an empty section that
+// would still cost an hr divider via appendZones).
+func TestRenderThinkingZone_OmitsWhenEmpty(t *testing.T) {
+	if zone := renderThinkingZone(""); zone != nil {
+		t.Errorf("empty thinking must yield nil zone, got %v", zone)
+	}
+	if zone := renderThinkingZone("   \n  "); zone != nil {
+		t.Errorf("whitespace-only thinking must yield nil zone, got %v", zone)
+	}
+}
+
+// TestProgressState_ClonePreservesThinking locks the deep-copy: a Clone taken
+// after SetThinking carries the same reasoning into Render, and mutating the
+// original after Clone does not bleed into the snapshot.
+func TestProgressState_ClonePreservesThinking(t *testing.T) {
+	s := NewProgressState()
+	s.SetThinking("foo ", false)
+	s.SetThinking("bar", false)
+	cp := s.Clone()
+	s.SetThinking("MORE", false) // mutate original after clone
+
+	if cp.thinking != "foo bar" {
+		t.Errorf("clone thinking = %q, want %q", cp.thinking, "foo bar")
+	}
+	zone := renderThinkingZone(cp.thinking)
+	if zone == nil {
+		t.Fatal("clone should render a thinking zone")
+	}
+}
