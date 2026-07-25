@@ -49,16 +49,20 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 // goroutine. The opencode CLI takes 25–50s to list models, so the command
 // returns immediately (Handled=true, dispatcher skips its own Notice);
 // goSafe runs the slow list → Question → wait → confirm loop on h.AppCtx.
-// The whole flow lives on the command's progress card: a text delta marks the
-// loading phase, the Question control carries replyToID so the frontend
-// morphs that card into the picker (TakeOverProgress), and the result patches
-// the same card via UpdateMessageID. oldSpec is captured by value so
-// concurrent /model calls do not race on the binding snapshot.
+// The whole flow lives on the command's progress card: a TypeProgress
+// loading banner marks the list phase, the Question control carries
+// replyToID so the frontend morphs that card into the picker
+// (TakeOverProgress), and the result patches the same card via
+// UpdateMessageID. oldSpec is captured by value so concurrent /model calls
+// do not race on the binding snapshot.
 func (h *Handler) runModelPicker(chatID, oldSpec, replyToID string) commandResult {
+	// Loading banner on the progress card the dispatcher opened for this
+	// command. Rides TypeProgress (rendered as the banner slot) rather than
+	// TypeText, which the dispatcher drops — the previous emit never showed.
 	h.emitAsync(replyToID, &protocol.Control{
-		Type:   protocol.TypeText,
-		ChatID: chatID,
-		Text:   &protocol.TextPayload{Delta: "🔍 正在获取可用模型，请稍候（约半分钟）…\n"},
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取可用模型，请稍候（约半分钟）…"},
 	})
 	bridgebase.GoSafe(h.Logger, "model-picker:"+chatID, func() {
 		choice, messageID, err := h.AskAndWait(chatID, replyToID, "模型", "选择模型", h.agent.ListModels, true)
@@ -124,10 +128,11 @@ func (h *Handler) cmdAgent(ctx context.Context, chatID string, args []string) (c
 // for why it runs async, keeps the flow on the command's progress card, and
 // returns Handled.
 func (h *Handler) runAgentPicker(chatID, oldAgent, replyToID string) commandResult {
+	// Loading banner — see runModelPicker for why TypeProgress, not TypeText.
 	h.emitAsync(replyToID, &protocol.Control{
-		Type:   protocol.TypeText,
-		ChatID: chatID,
-		Text:   &protocol.TextPayload{Delta: "🔍 正在获取可用 agent，请稍候（约半分钟）…\n"},
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取可用 agent，请稍候（约半分钟）…"},
 	})
 	bridgebase.GoSafe(h.Logger, "agent-picker:"+chatID, func() {
 		choice, messageID, err := h.AskAndWait(chatID, replyToID, "agent", "选择 agent", h.agent.ListAgents, true)
