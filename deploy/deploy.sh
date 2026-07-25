@@ -450,10 +450,11 @@ ensure_binaries() {
     chmod 755 "$BIN_DIR"/lark-* 2>/dev/null || true
 }
 ensure_binaries
-[[ -x "$BIN_DIR/lark-feishu-front" ]]   || fail "构建产物缺失：lark-feishu-front"
-[[ -x "$BIN_DIR/lark-claude-back" ]]    || fail "构建产物缺失：lark-claude-back"
-[[ -x "$BIN_DIR/lark-opencode-back" ]]  || fail "构建产物缺失：lark-opencode-back"
-[[ -x "$BIN_DIR/lark-miniagent-back" ]] || fail "构建产物缺失：lark-miniagent-back"
+[[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "构建产物缺失：lark-feishu-front"
+[[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "构建产物缺失：lark-claude-back"
+[[ -x "$BIN_DIR/lark-opencode-back" ]]        || fail "构建产物缺失：lark-opencode-back"
+[[ -x "$BIN_DIR/lark-opencode-serve-back" ]]  || fail "构建产物缺失：lark-opencode-serve-back"
+[[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "构建产物缺失：lark-miniagent-back"
 # NOTE: miniagent 二进制（github.com/justphantom/miniagent）独立项目，需通过其
 # 自带 Makefile 单独部署到 /usr/local/bin/miniagent，不归本 deploy.sh 管。
 # lark-deploy-monitor 同理：本 tarball 内但由 upgrade-monitor.sh 独立部署；
