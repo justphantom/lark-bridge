@@ -86,7 +86,7 @@ func waitCall(t *testing.T, a *recordingAgent) replyCall {
 func TestPermissionReplyOf(t *testing.T) {
 	cases := []struct{ label, want string }{
 		{"允许一次", oc.PermissionReplyOnce},
-		{"始终允许", oc.PermissionReplyAlways},
+		{"始终允许（全局）", oc.PermissionReplyAlways},
 		{"拒绝", oc.PermissionReplyReject},
 		{"", oc.PermissionReplyReject},
 		{"未知的选项", oc.PermissionReplyReject},
@@ -287,11 +287,12 @@ func TestHandleQuestionAsked_IncompleteRejects(t *testing.T) {
 	}
 }
 
-// TestHandleQuestionAsked_EmitsAnswerFeedback verifies that after a successful
-// ReplyQuestion the backend emits a TypeText control echoing the answer onto
-// the progress card, so the user sees the answer in the ongoing turn without
-// scrolling back to the standalone question card.
-func TestHandleQuestionAsked_EmitsAnswerFeedback(t *testing.T) {
+// TestHandleQuestionAsked_EmitsAnswerBanner verifies that after a successful
+// ReplyQuestion the backend emits a TypeProgress gate banner (answered) on the
+// progress card, so the user sees the answer in the ongoing turn without
+// scrolling back to the standalone question card. The prior TypeText echo was
+// dead (the dispatcher drops TypeText); the gate banner replaces it.
+func TestHandleQuestionAsked_EmitsAnswerBanner(t *testing.T) {
 	agent := newRecordingAgent()
 	client, reg, rpcCleanup := connectTestRPC(t)
 	defer rpcCleanup()
@@ -319,31 +320,44 @@ func TestHandleQuestionAsked_EmitsAnswerFeedback(t *testing.T) {
 		t.Fatalf("call = %+v, want question q-fb", call)
 	}
 
-	// Drain emitted controls until a TypeText carrying "已回答" arrives.
-	deadline := time.Now().Add(2 * time.Second)
-	var feedback *protocol.Control
-	for time.Now().Before(deadline) && feedback == nil {
+	// Drain gate banners; expect waiting (pre-pick) then answered (post-pick).
+	// EmitAsync is unordered, so drain the full window for both rather than
+	// stopping at the first answered.
+	deadline := time.Now().Add(3 * time.Second)
+	var waiting, answered *protocol.GateInfo
+	for time.Now().Before(deadline) && (waiting == nil || answered == nil) {
 		select {
 		case rc := <-reg.Controls():
 			c := rc.Control
-			if c.Type == protocol.TypeText && strings.Contains(c.Text.Delta, "已回答") {
-				feedback = c
+			if c.Type == protocol.TypeProgress && c.Progress != nil && c.Progress.Gate != nil {
+				switch c.Progress.Gate.State {
+				case "waiting":
+					waiting = c.Progress.Gate
+				case "answered":
+					answered = c.Progress.Gate
+				}
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	if feedback == nil {
-		t.Fatal("expected a TypeText answer feedback control, got none")
+	if waiting == nil {
+		t.Error("expected a TypeProgress gate banner with state=waiting before answer, got none")
+	} else if !strings.Contains(waiting.Summary, "选模型") {
+		t.Errorf("waiting summary = %q, want contains '选模型'", waiting.Summary)
 	}
-	if !strings.Contains(feedback.Text.Delta, "gpt-4") {
-		t.Errorf("feedback delta = %q, want contains 'gpt-4'", feedback.Text.Delta)
+	if answered == nil {
+		t.Fatal("expected a TypeProgress gate banner with state=answered, got none")
+	}
+	if !strings.Contains(answered.Summary, "gpt-4") {
+		t.Errorf("answered summary = %q, want contains 'gpt-4'", answered.Summary)
 	}
 }
 
-// TestHandlePermissionAsked_EmitsAnswerFeedback mirrors the question-path
-// feedback test: after a successful ReplyPermission the backend emits a
-// TypeText control echoing the picked option onto the progress card.
-func TestHandlePermissionAsked_EmitsAnswerFeedback(t *testing.T) {
+// TestHandlePermissionAsked_EmitsAnswerBanner mirrors the question-path banner
+// test: after a successful ReplyPermission the backend emits a TypeProgress
+// gate banner (answered) onto the progress card, plus a waiting banner that
+// preceded the pick. The prior TypeText echo was dead (dispatcher drops it).
+func TestHandlePermissionAsked_EmitsAnswerBanner(t *testing.T) {
 	agent := newRecordingAgent()
 	client, reg, rpcCleanup := connectTestRPC(t)
 	defer rpcCleanup()
@@ -370,23 +384,34 @@ func TestHandlePermissionAsked_EmitsAnswerFeedback(t *testing.T) {
 		t.Fatalf("call = %+v, want permission perm-fb", call)
 	}
 
-	// Drain emitted controls until a TypeText carrying "已应答权限请求" arrives.
-	deadline := time.Now().Add(2 * time.Second)
-	var feedback *protocol.Control
-	for time.Now().Before(deadline) && feedback == nil {
+	// Drain gate banners; expect waiting (pre-pick) then answered (post-pick).
+	// EmitAsync is unordered, so drain the full window for both.
+	deadline := time.Now().Add(3 * time.Second)
+	var waiting, answered *protocol.GateInfo
+	for time.Now().Before(deadline) && (waiting == nil || answered == nil) {
 		select {
 		case rc := <-reg.Controls():
 			c := rc.Control
-			if c.Type == protocol.TypeText && strings.Contains(c.Text.Delta, "已应答权限请求") {
-				feedback = c
+			if c.Type == protocol.TypeProgress && c.Progress != nil && c.Progress.Gate != nil {
+				switch c.Progress.Gate.State {
+				case "waiting":
+					waiting = c.Progress.Gate
+				case "answered":
+					answered = c.Progress.Gate
+				}
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	if feedback == nil {
-		t.Fatal("expected a TypeText permission feedback control, got none")
+	if waiting == nil {
+		t.Error("expected a TypeProgress gate banner with state=waiting before answer, got none")
+	} else if !strings.Contains(waiting.Summary, "bash") {
+		t.Errorf("waiting summary = %q, want contains 'bash'", waiting.Summary)
 	}
-	if !strings.Contains(feedback.Text.Delta, "允许一次") {
-		t.Errorf("feedback delta = %q, want contains '允许一次'", feedback.Text.Delta)
+	if answered == nil {
+		t.Fatal("expected a TypeProgress gate banner with state=answered, got none")
+	}
+	if !strings.Contains(answered.Summary, "允许一次") {
+		t.Errorf("answered summary = %q, want contains '允许一次'", answered.Summary)
 	}
 }

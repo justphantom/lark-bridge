@@ -73,10 +73,12 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 // not switch into a stale directory's session.
 func (h *Handler) runSessionPicker(ctx context.Context, chatID string) commandResult {
 	replyToID := bridgebase.ReplyToID(ctx)
+	// Loading banner — TypeProgress, not TypeText (the dispatcher drops the
+	// latter). See runModelPicker for the full rationale.
 	h.emitAsync(replyToID, &protocol.Control{
-		Type:   protocol.TypeText,
-		ChatID: chatID,
-		Text:   &protocol.TextPayload{Delta: "🔍 正在获取当前目录的会话，请稍候…\n"},
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取当前目录的会话，请稍候…"},
 	})
 	bridgebase.GoSafe(h.Logger, "session-use:"+chatID, func() {
 		b, ok := h.Router.Lookup(chatID)

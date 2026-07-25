@@ -96,6 +96,15 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 		state.AddToolResult(ctrl.ToolResult.Name, ctrl.ToolResult.Input, ctrl.ToolResult.Output, ctrl.ToolResult.IsError, ctrl.ToolResult.IsSubagent, ctrl.ToolResult.TaskID)
 	case protocol.TypeProgress:
 		state.AddProgress()
+		// Description/Gate render through the same banner slot. A gate
+		// (blocking) wins over a loading notice; SetGate/SetLoading keep
+		// the precedence in the renderer. Conversion at the boundary keeps
+		// the renderer free of a protocol import (same convention as Todo).
+		if g := ctrl.Progress.Gate; g != nil {
+			state.SetGate(renderer.GateInfo{State: g.State, Kind: g.Kind, Summary: g.Summary})
+		} else if d := ctrl.Progress.Description; d != "" {
+			state.SetLoading(d)
+		}
 	case protocol.TypeTodo:
 		state.AddTodo(toRendererTodos(ctrl.Todo.Todos))
 	}

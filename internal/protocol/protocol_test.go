@@ -142,6 +142,9 @@ func TestControlValidate(t *testing.T) {
 		{"todo bad status", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "done"}}}}, true},
 		{"todo bad priority", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "pending", Priority: "urgent"}}}}, true},
 		{"todo empty priority ok", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "pending"}}}}, false},
+		{"progress ok", &Control{Type: TypeProgress, Progress: &ProgressPayload{Description: "loading"}}, false},
+		{"progress gate ok", &Control{Type: TypeProgress, Progress: &ProgressPayload{Gate: &GateInfo{State: "waiting", Kind: "permission", Summary: "Bash"}}}, false},
+		{"progress gate bad state", &Control{Type: TypeProgress, Progress: &ProgressPayload{Gate: &GateInfo{State: "paused"}}}, true},
 		{"unknown type", &Control{Type: "unknown"}, true},
 		// BackendID present but irrelevant to validation.
 		{"text with backendID ok", &Control{Type: TypeText, BackendID: "b", Text: &TextPayload{Delta: "x"}}, false},

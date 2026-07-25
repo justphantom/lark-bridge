@@ -118,11 +118,13 @@ func TestCmdModel_Picker_OneCardFlow(t *testing.T) {
 	if !q.Question.TakeOverProgress {
 		t.Error("question should request progress-card takeover")
 	}
-	delta := captured.find(func(c *protocol.Control) bool {
-		return c.Type == protocol.TypeText && c.PromptID == "om_cmd"
-	})
+	// Loading banner arrives via EmitAsync (unordered vs the Question emit), so
+	// wait for it rather than doing a one-shot find that can race the Question POST.
+	delta := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeProgress && c.PromptID == "om_cmd" && c.Progress != nil && c.Progress.Description != ""
+	}, 2*time.Second)
 	if delta == nil {
-		t.Error("loading delta on the command's promptID not emitted")
+		t.Error("loading banner (TypeProgress) on the command's promptID not emitted")
 	}
 	placeholder := captured.find(func(c *protocol.Control) bool {
 		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "正在加载模型列表"
@@ -221,10 +223,11 @@ func TestCmdSessionUse_Picker_OneCardFlow(t *testing.T) {
 	if !q.Question.TakeOverProgress {
 		t.Error("question should request progress-card takeover")
 	}
-	if delta := captured.find(func(c *protocol.Control) bool {
-		return c.Type == protocol.TypeText && c.PromptID == "ou_cmd"
-	}); delta == nil {
-		t.Error("loading delta on the command's promptID not emitted")
+	// Loading banner arrives via EmitAsync (unordered), so wait for it.
+	if delta := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeProgress && c.PromptID == "ou_cmd" && c.Progress != nil && c.Progress.Description != ""
+	}, 2*time.Second); delta == nil {
+		t.Error("loading banner (TypeProgress) on the command's promptID not emitted")
 	}
 	if placeholder := captured.find(func(c *protocol.Control) bool {
 		return c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "正在加载会话列表"

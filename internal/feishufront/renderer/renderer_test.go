@@ -29,6 +29,31 @@ func parse(t *testing.T, b []byte, err error) map[string]any {
 	return m
 }
 
+// firstMarkdownContent returns the content of the first markdown element in
+// body.elements, failing the test if none exists. Used by tests that assert on
+// real newline runes (JSON marshalling would otherwise escape them as "\n").
+func firstMarkdownContent(t *testing.T, card map[string]any) string {
+	t.Helper()
+	body, ok := card["body"].(map[string]any)
+	if !ok {
+		t.Fatal("missing body")
+	}
+	elements, _ := body["elements"].([]any)
+	for _, el := range elements {
+		em, ok := el.(map[string]any)
+		if !ok {
+			continue
+		}
+		if em["tag"] == "markdown" {
+			if s, ok := em["content"].(string); ok {
+				return s
+			}
+		}
+	}
+	t.Fatal("no markdown element in body")
+	return ""
+}
+
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -167,6 +192,125 @@ func TestQuestionRender(t *testing.T) {
 	actions := actionButtons(t, card)
 	if len(actions) != 1 {
 		t.Fatalf("actions = %d, want 1 submit", len(actions))
+	}
+}
+
+// TestRenderPermission_StructuredBody pins the typed form: when Title is set,
+// the renderer uses Type/Title/Detail (bold badge + headline + code-block
+// detail) and ignores the flat Message.
+func TestRenderPermission_StructuredBody(t *testing.T) {
+	ctrl := &protocol.Control{Permission: &protocol.PermissionPayload{
+		RequestID: "p1",
+		Message:   "请求执行 bash", // flat fallback, must be ignored when Title set
+		Type:      "Bash",
+		Title:     "make test",
+		Detail:    "make test\nnpm run build",
+		Options:   []protocol.PermissionOption{{Label: "允许", Value: "allow"}},
+	}}
+	b, err := RenderPermission(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pull the first markdown element's content so newline assertions work on
+	// real runes, not JSON's escaped "\n".
+	card := parse(t, b, nil)
+	content := firstMarkdownContent(t, card)
+	if !strings.Contains(content, "**Bash**") {
+		t.Errorf("type badge missing: %s", content)
+	}
+	if !strings.Contains(content, "make test") {
+		t.Errorf("title headline missing: %s", content)
+	}
+	if !strings.Contains(content, "```\nmake test\nnpm run build\n```") {
+		t.Errorf("detail code block missing: %s", content)
+	}
+	// Flat Message must NOT appear once the structured form is used.
+	if strings.Contains(content, "请求执行 bash") {
+		t.Errorf("flat message should be dropped when Title is set: %s", content)
+	}
+}
+
+// TestRenderPermission_StructuredDetailDroppedWhenEqualsTitle ensures the
+// detail block is omitted when Detail equals Title, so a single-pattern
+// permission (Title==Detail) does not echo the headline in a code block.
+func TestRenderPermission_StructuredDetailDroppedWhenEqualsTitle(t *testing.T) {
+	ctrl := &protocol.Control{Permission: &protocol.PermissionPayload{
+		RequestID: "p1",
+		Type:      "Read",
+		Title:     "/etc/hosts",
+		Detail:    "/etc/hosts",
+		Options:   []protocol.PermissionOption{{Label: "允许", Value: "allow"}},
+	}}
+	b, err := RenderPermission(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := parse(t, b, nil)
+	if strings.Contains(firstMarkdownContent(t, card), "```") {
+		t.Errorf("no code block expected when Detail==Title: %s", b)
+	}
+}
+
+// TestRenderInteractive_QuestionAsButtons verifies a small single-select
+// question (one question, ≤4 options, no custom) renders as immediate-click
+// buttons (kind=question) instead of a dropdown+submit form, so the user
+// answers with one click.
+func TestRenderInteractive_QuestionAsButtons(t *testing.T) {
+	ctrl := &protocol.Control{Type: protocol.TypeQuestion, Question: &protocol.QuestionPayload{
+		RequestID: "q1",
+		Questions: []protocol.QuestionItem{{
+			Label:   "选模型",
+			Options: []string{"a", "b", "c"},
+		}},
+	}}
+	b, err := RenderInteractive(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := parse(t, b, nil)
+	buttons := actionButtons(t, card)
+	if len(buttons) != 3 {
+		t.Fatalf("want 3 immediate-click buttons, got %d", len(buttons))
+	}
+	all := string(mustMarshal(t, buttons))
+	if strings.Contains(all, "select_static") || strings.Contains(all, "form_submit") {
+		t.Errorf("small question should not use dropdown/form: %s", all)
+	}
+	if !strings.Contains(all, `"kind":"question"`) {
+		t.Errorf("button kind=question missing: %s", all)
+	}
+	// Each option label round-trips as the choice value (label-as-value, same
+	// convention as the dropdown path).
+	for _, opt := range []string{"a", "b", "c"} {
+		if !strings.Contains(all, `"choice":"`+opt+`"`) {
+			t.Errorf("choice %q missing: %s", opt, all)
+		}
+	}
+}
+
+// TestRenderInteractive_QuestionStillFormWhenLarge verifies a question that
+// does NOT fit the button profile (many options, multi-select, custom, or
+// multi-question) still renders via the dropdown+submit form.
+func TestRenderInteractive_QuestionStillFormWhenLarge(t *testing.T) {
+	cases := []struct {
+		name string
+		q    *protocol.QuestionPayload
+	}{
+		{"many options", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Options: []string{"a", "b", "c", "d", "e"}}}}},
+		{"multi-select", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Multiple: true, Options: []string{"a", "b"}}}}},
+		{"custom input", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Custom: true, Options: []string{"a", "b"}}}}},
+		{"multi-question", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Options: []string{"a"}}, {Label: "y", Options: []string{"b"}}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := RenderInteractive(&protocol.Control{Type: protocol.TypeQuestion, Question: tc.q}, hdr(), ftr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(b), "select_static") {
+				t.Errorf("large/multi/custom question should use the dropdown form: %s", b)
+			}
+		})
 	}
 }
 
@@ -404,5 +548,57 @@ func TestInteractiveTimeoutHintFromConstant(t *testing.T) {
 	wantExpired := fmt.Sprintf("%d 分钟未响应", int(cardkit.InteractiveTimeout.Minutes()))
 	if !strings.Contains(string(exp), wantExpired) {
 		t.Errorf("expired notice missing %q: %s", wantExpired, exp)
+	}
+}
+
+// TestRenderInteractiveFinalized_KeepsConfirm pins C5: when a card already
+// shows a submit confirmation ("✓ …"), Finalized must NOT clobber it with the
+// generic "结果见上方" line — the user's choice echo is the more useful story.
+// Only the footer status flips to 已完成.
+func TestRenderInteractiveFinalized_KeepsConfirm(t *testing.T) {
+	ctrl := &protocol.Control{Type: protocol.TypePermission, Permission: &protocol.PermissionPayload{
+		RequestID: "p1", Options: []protocol.PermissionOption{{Label: "允许", Value: "allow"}},
+	}}
+	orig, err := RenderInteractive(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := RenderInteractiveSubmitted(orig, "✓ 你选择了「允许」")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin, err := RenderInteractiveFinalized(submitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := parse(t, fin, nil)
+	content := firstMarkdownContent(t, card)
+	if !strings.HasPrefix(content, "✓ 你选择了「允许」") {
+		t.Errorf("finalize clobbered the submit confirmation; first markdown = %q", content)
+	}
+	if strings.Contains(content, "结果见上方") {
+		t.Errorf("generic pointer should be suppressed when ✓ confirmation exists: %s", content)
+	}
+}
+
+// TestRenderInteractiveFinalized_AddsPointerWhenNoConfirm pins the other half:
+// a card the turn ended without the user acting on gets the generic pointer,
+// since there is no choice echo to keep.
+func TestRenderInteractiveFinalized_AddsPointerWhenNoConfirm(t *testing.T) {
+	ctrl := &protocol.Control{Type: protocol.TypePermission, Permission: &protocol.PermissionPayload{
+		RequestID: "p1", Message: "请求执行 bash", Options: []protocol.PermissionOption{{Label: "允许", Value: "allow"}},
+	}}
+	orig, err := RenderInteractive(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin, err := RenderInteractiveFinalized(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := parse(t, fin, nil)
+	content := firstMarkdownContent(t, card)
+	if !strings.HasPrefix(content, "✓ 本轮已完成，结果见上方卡片。") {
+		t.Errorf("generic pointer should be prepended when no ✓ confirmation: %q", content)
 	}
 }

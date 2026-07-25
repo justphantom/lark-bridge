@@ -100,6 +100,7 @@ var (
 	validTodoStatuses   = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
 	validTodoPriorities = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
 	validNoticeLevels   = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
+	validGateStates     = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
 )
 
 // validateTodo enumerates each Todo's Status and Priority against the enum
@@ -131,6 +132,19 @@ func validateNotice(c *Control) error {
 	return nil
 }
 
+// validateProgress pins Progress.Gate.State to the renderer's known set so a
+// typo or a future schema drift cannot land an unknown banner tone. A nil Gate
+// (plain step / loading description) is always valid.
+func validateProgress(c *Control) error {
+	if c.Progress.Gate == nil {
+		return nil
+	}
+	if _, ok := validGateStates[c.Progress.Gate.State]; !ok {
+		return fmt.Errorf("progress.gate.state %q must be one of waiting/answered/denied", c.Progress.Gate.State)
+	}
+	return nil
+}
+
 // controlRules maps every allowed control type to its validation rule.
 // Keeping the table next to the validator makes the requirements explicit
 // and avoids the long switch that was previously needed.
@@ -142,7 +156,7 @@ var controlRules = map[string]controlRule{
 	TypeToolResult:  {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
 	TypeResult:      {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
 	TypeError:       {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
-	TypeProgress:    {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress"},
+	TypeProgress:    {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress", extraCheck: validateProgress},
 	TypeTodo:        {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo", extraCheck: validateTodo},
 	TypeQuestion:    {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
 	TypePermission:  {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},

@@ -117,9 +117,27 @@ type ErrorPayload struct {
 	Recoverable bool   `json:"recoverable,omitempty"`
 }
 
-// ProgressPayload carries a free-form progress description.
+// ProgressPayload carries a free-form progress description and an optional gate
+// banner. Description is a transient grey status line (e.g. a picker's
+// "loading" notice). Gate surfaces a blocking interactive gate
+// (permission/question) on the streaming progress card itself so the user sees
+// the agent is waiting without scrolling to the standalone gate card. Both
+// render through the same banner slot; a non-empty Gate takes precedence.
 type ProgressPayload struct {
-	Description string `json:"description,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Gate        *GateInfo `json:"gate,omitempty"`
+}
+
+// GateInfo is a banner on the progress card marking an interactive gate that
+// is blocking the in-flight turn. State drives the icon/verb the renderer
+// applies to Summary (waiting=⏸, answered=✓, denied=✗); Kind labels the gate
+// type for the verb ("等待授权" vs "等待回答"). Summary is the bare content
+// (the action under permission, or the picked choice on answer), NOT a
+// pre-formatted line — the renderer owns presentation.
+type GateInfo struct {
+	State   string `json:"state"`             // waiting|answered|denied
+	Kind    string `json:"kind,omitempty"`    // permission|question
+	Summary string `json:"summary,omitempty"`
 }
 
 // TodoPayload carries the session's full todo list. The backend sends the
@@ -164,14 +182,41 @@ type QuestionItem struct {
 // permission card has a small fixed option set, so each option is a direct
 // button whose click submits immediately. Value is the machine value returned
 // in the answer's Choices[0]; Label is what the user sees on the button.
+//
+// Structured body: Type/Title/Detail give a typed rendering (badge + headline +
+// detail block). A renderer that understands them prefers Title over Message;
+// one that does not (older frontends) falls back to Message. Callers should
+// keep Message populated for that fallback.
 type PermissionPayload struct {
 	RequestID string             `json:"requestID"`
 	PromptID  string             `json:"promptID"`
 	Message   string             `json:"message,omitempty"`
-	Options   []PermissionOption `json:"options"`
+	// Type is the permission category (Bash/Write/Edit/...), rendered as a
+	// bold badge above the title.
+	Type string `json:"type,omitempty"`
+	// Title is the one-line headline (command or target file). When empty the
+	// renderer falls back to Message so a caller that only sets Message (e.g.
+	// a mode picker) renders exactly as before.
+	Title string `json:"title,omitempty"`
+	// Detail is the full text (patterns, full command) shown in a code block
+	// under the title. Optional; when equal to Title the renderer omits the
+	// duplicate block.
+	Detail string `json:"detail,omitempty"`
+	Options []PermissionOption `json:"options"`
 	// TakeOverProgress mirrors QuestionPayload: a slash-command picker morphs
 	// the progress card; a mid-turn permission gate ships standalone.
 	TakeOverProgress bool `json:"takeOverProgress,omitempty"`
+}
+
+// PermissionMessage is the structured body carrier AskPermission accepts, so a
+// permission card can carry Type/Title/Detail (structured render) without
+// forcing every caller to set them. A caller that only needs the legacy flat
+// body sets Message alone; the renderer falls back to it when Title is empty.
+type PermissionMessage struct {
+	Message string
+	Type    string
+	Title   string
+	Detail  string
 }
 
 // PermissionOption is one button of a permission card.

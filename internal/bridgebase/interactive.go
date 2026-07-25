@@ -156,11 +156,14 @@ func AskAndWait(
 // whether the card morphs the progress card (a slash-command picker) or ships
 // standalone (a mid-turn permission gate); promptID is still emitted so a
 // finalised turn can flip the card either way. kind flavours the error text.
+// msg carries the structured body (Type/Title/Detail for a typed render, plus
+// Message as the flat fallback for older frontends).
 func AskPermission(
 	appCtx context.Context,
 	answers *AnswerBroker,
 	emit EmitFunc,
-	chatID, promptID, requestID, kind, message string,
+	chatID, promptID, requestID, kind string,
+	msg protocol.PermissionMessage,
 	options []protocol.PermissionOption,
 	takeOver bool,
 ) (string, string, error) {
@@ -183,7 +186,10 @@ func AskPermission(
 		ChatID: chatID,
 		Permission: &protocol.PermissionPayload{
 			RequestID:        requestID,
-			Message:          message,
+			Message:          msg.Message,
+			Type:             msg.Type,
+			Title:            msg.Title,
+			Detail:           msg.Detail,
 			Options:          options,
 			TakeOverProgress: takeOver,
 		},
@@ -297,6 +303,6 @@ func (c *Core) AskAndWait(
 	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
 }
 
-func (c *Core) AskPermission(chatID, promptID, requestID, kind, message string, options []protocol.PermissionOption, takeOver bool) (string, string, error) {
-	return AskPermission(c.AppCtx, c.Answers, c.Emit, chatID, promptID, requestID, kind, message, options, takeOver)
+func (c *Core) AskPermission(chatID, promptID, requestID, kind string, msg protocol.PermissionMessage, options []protocol.PermissionOption, takeOver bool) (string, string, error) {
+	return AskPermission(c.AppCtx, c.Answers, c.Emit, chatID, promptID, requestID, kind, msg, options, takeOver)
 }

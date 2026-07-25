@@ -42,6 +42,23 @@ type ProgressState struct {
 	tools     []toolRow
 	todos     []TodoItem
 	stepCount int
+	// loading is a transient grey banner (a picker's "loading…" notice),
+	// sourced from ProgressPayload.Description.
+	loading string
+	// gate is a coloured banner marking a blocking interactive gate
+	// (permission/question) on this card. A non-empty State takes
+	// precedence over loading when both are set. Zero-value State="" means
+	// no gate.
+	gate GateInfo
+}
+
+// GateInfo mirrors protocol.GateInfo at the renderer boundary (this package
+// does not import protocol — the dispatcher converts at the boundary, same
+// convention as TodoItem). All-string fields make a one-level copy a deep copy.
+type GateInfo struct {
+	State   string // waiting|answered|denied
+	Kind    string // permission|question
+	Summary string
 }
 
 // TodoItem is the renderer's own todo entry (mirrors protocol.TodoItem but
@@ -55,6 +72,13 @@ type TodoItem struct {
 
 // NewProgressState builds an empty state.
 func NewProgressState() *ProgressState { return &ProgressState{} }
+
+// SetLoading sets or clears the transient grey loading banner (sourced from a
+// ProgressPayload.Description). text=="" clears it.
+func (s *ProgressState) SetLoading(text string) { s.loading = text }
+
+// SetGate sets the interactive-gate banner. A gate with empty State clears it.
+func (s *ProgressState) SetGate(g GateInfo) { s.gate = g }
 
 // AddToolUse records a tool invocation start. A repeated call with the same
 // name+desc collapses into the existing row (incrementing count) rather than
@@ -179,6 +203,14 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// inserts an hr between adjacent non-empty zones so tools / text don't
 	// run together when several are present.
 	var zones []cardkit.Element
+
+	// Zone 0: banner (loading notice or interactive-gate marker). A gate
+	// takes precedence over a loading notice: a blocking gate is the one
+	// thing the user must see, so it leads the card. Sits above the tool
+	// zones for the same reason.
+	if line := bannerLine(s.loading, s.gate); line != "" {
+		zones = append(zones, cardkit.MarkdownElement(line))
+	}
 
 	// Tools split into three zones (running → completed → error). Error rows are separated out so the completed
 	// zone's grouped summary counts only successes ("不含出错动作") and the

@@ -74,7 +74,7 @@ func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult
 	for i, o := range h.permissionOptions {
 		opts[i] = protocol.PermissionOption{Label: o, Value: o}
 	}
-	choice, messageID, err := h.AskPermission(chatID, replyToID, "", "权限模式", "选择权限模式", opts, true)
+	choice, messageID, err := h.AskPermission(chatID, replyToID, "", "权限模式", protocol.PermissionMessage{Message: "选择权限模式"}, opts, true)
 	if err != nil {
 		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}

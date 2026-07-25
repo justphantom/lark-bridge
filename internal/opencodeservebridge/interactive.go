@@ -2,7 +2,6 @@ package opencodeservebridge
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	oc "github.com/justphantom/opencode-go-sdk-lite"
@@ -19,35 +18,39 @@ import (
 const interactiveOpTimeout = 10 * time.Second
 
 // permissionOption maps a permission card's option label to the serve reply
-// value. Anything unmapped falls back to reject (safe default).
+// value. Anything unmapped falls back to reject (safe default). The "始终允许"
+// label carries a scope hint (全局) so the user understands before clicking
+// that PermissionReplyAlways is a persistent global grant, not a per-turn one.
 var permissionOptions = []struct {
 	label string
 	reply string
 }{
 	{"允许一次", oc.PermissionReplyOnce},
-	{"始终允许", oc.PermissionReplyAlways},
+	{"始终允许（全局）", oc.PermissionReplyAlways},
 	{"拒绝", oc.PermissionReplyReject},
 }
 
 // handlePermissionAsked runs the full interaction for one permission.asked
-// event: emit a question card, wait for the user, reply to the serve server.
-// Runs in its own goroutine spawned by streamRun; ctx is the prompt ctx so
-// an abort/timeout turns into a reject instead of a hung serve-side agent.
+// event: emit a gate banner on the progress card, emit the standalone
+// permission card, wait for the user, reply to the serve server, then flip
+// the banner to answered/denied. Runs in its own goroutine spawned by
+// streamRun; ctx is the prompt ctx so an abort/timeout turns into a reject
+// instead of a hung serve-side agent.
 func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID string, p *oc.PermissionAskedData) {
 	h.Logger.Debug("permission asked",
 		log.FieldChatID, chatID,
 		"prompt_id", promptID,
 		"request_id", p.ID,
 		"permission", p.Permission)
-	label := "opencode 请求权限：" + p.Permission
-	if len(p.Patterns) > 0 {
-		label += "\n" + strings.Join(p.Patterns, "\n")
-	}
+	// Banner on the streaming progress card: the agent is blocked until the
+	// user acts. The standalone permission card carries the buttons; this
+	// banner makes the blockage visible where the user is already watching.
+	h.emitAsync(promptID, gateControl(chatID, promptID, "permission", "waiting", gatePermissionSummary(p)))
 	opts := make([]protocol.PermissionOption, len(permissionOptions))
 	for i, o := range permissionOptions {
 		opts[i] = protocol.PermissionOption{Label: o.label, Value: o.label}
 	}
-	choice, _, err := bridgebase.AskPermission(ctx, h.Answers, h.Emit, chatID, promptID, p.ID, "权限", label, opts, false)
+	choice, _, err := bridgebase.AskPermission(ctx, h.Answers, h.Emit, chatID, promptID, p.ID, "权限", permissionMessage(p), opts, false)
 	reply := oc.PermissionReplyReject
 	if err == nil {
 		reply = permissionReplyOf(choice)
@@ -68,15 +71,17 @@ func (h *Handler) handlePermissionAsked(ctx context.Context, chatID, promptID st
 		"request_id", p.ID,
 		"directory", directory,
 		"reply", reply)
-	// Echo the answer onto the progress card so the user can see what was
-	// answered without scrolling back to the standalone permission card.
-	if err == nil && choice != "" {
-		h.emitAsync(promptID, &protocol.Control{
-			Type:   protocol.TypeText,
-			ChatID: chatID,
-			Text:   &protocol.TextPayload{Delta: "✓ 已应答权限请求: " + choice + "\n"},
-		})
+	// Flip the progress banner to the terminal state. The standalone card's
+	// own submit/finalize lifecycle is unaffected; this only updates the
+	// one-line banner on the streaming card. (The prior TypeText echo here
+	// was dead — the dispatcher drops TypeText — so it never reached the card.)
+	state := "answered"
+	summary := choice
+	if reply == oc.PermissionReplyReject {
+		state = "denied"
+		summary = ""
 	}
+	h.emitAsync(promptID, gateControl(chatID, promptID, "permission", state, summary))
 }
 
 // permissionReplyOf maps a card option label to a serve reply value.
@@ -93,13 +98,15 @@ func permissionReplyOf(label string) string {
 
 // handleQuestionAsked mirrors handlePermissionAsked for question.asked. An
 // incomplete answer (user cancelled, timed out, or skipped a question)
-// rejects the request so the serve-side agent is released.
+// rejects the request so the serve-side agent is released. The progress-card
+// banner tracks waiting→answered/denied just like the permission path.
 func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID string, q *oc.QuestionAskedData) {
 	h.Logger.Debug("question asked",
 		log.FieldChatID, chatID,
 		"prompt_id", promptID,
 		"request_id", q.ID,
 		"question_count", len(q.Questions))
+	h.emitAsync(promptID, gateControl(chatID, promptID, "question", "waiting", gateQuestionSummary(q)))
 	items := make([]protocol.QuestionItem, 0, len(q.Questions))
 	for _, qi := range q.Questions {
 		item := protocol.QuestionItem{Label: qi.Question, Multiple: qi.Multiple, Custom: qi.Custom}
@@ -153,6 +160,9 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 				log.FieldSessionID, q.ID,
 				log.FieldError, err)
 		}
+		// Banner reflects the reject so the progress card does not linger
+		// in the ⏸ waiting state after the standalone card already warned.
+		h.emitAsync(promptID, gateControl(chatID, promptID, "question", "denied", ""))
 		return
 	}
 	reply, ok := questionReplyFromAnswer(q, ans)
@@ -179,124 +189,13 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 			log.FieldError, err)
 		return
 	}
-	// Echo the answer onto the progress card so the user can see what was
-	// answered without scrolling back to the standalone question card.
-	if ok {
-		if summary := bridgebase.PickAnswerValue(ans); summary != "" {
-			h.emitAsync(promptID, &protocol.Control{
-				Type:   protocol.TypeText,
-				ChatID: chatID,
-				Text:   &protocol.TextPayload{Delta: "✓ 已回答: " + summary + "\n"},
-			})
-		}
-	}
-}
-
-// directoryOf resolves the working directory bound to chatID. opencode serve
-// isolates pending permission/question requests by directory, so the reply
-// must carry the same directory the Run used or serve returns 404. Returns
-// "" when no binding exists (the reply then hits serve's default workspace,
-// which is correct only for a default-directory session).
-func (h *Handler) directoryOf(chatID string) string {
-	if b, ok := h.Router.Lookup(chatID); ok {
-		return b.Directory
-	}
-	return ""
-}
-
-// questionReplyFromAnswer builds the serve reply from the card answer.
-// Multi-select values arrive comma-joined per question (frontend form
-// convention); custom input answers the first question (opencode's question
-// tool rarely batches, and per-question custom mapping is ambiguous).
-// ok=false means the answer is incomplete and the request should be rejected.
-//
-// Multi-question + Custom is intercepted by the caller (handleQuestionAsked)
-// before this function runs, so the len(answers)>1 && Custom!="" branch
-// below is exercised only on the single-question path it was designed for.
-func questionReplyFromAnswer(q *oc.QuestionAskedData, ans *protocol.AnswerPayload) (*oc.QuestionReply, bool) {
-	if ans == nil {
-		return nil, false
-	}
-	answers := make([][]string, len(q.Questions))
-	for i := range q.Questions {
-		if i < len(ans.Choices) && ans.Choices[i] != "" {
-			answers[i] = strings.Split(ans.Choices[i], ",")
-		}
-	}
-	if ans.Custom != "" && len(answers) > 0 && len(answers[0]) == 0 {
-		answers[0] = []string{ans.Custom}
-	}
-	for _, a := range answers {
-		if len(a) == 0 {
-			return nil, false
-		}
-	}
-	return &oc.QuestionReply{Answers: answers}, true
-}
-
-// askAndWait registers the request with the answer broker, emits the
-// question card, and blocks for the user's answer. nil means no answer
-// (prompt cancelled, wait timeout, duplicate request, or emit failure);
-// callers translate nil into a reject.
-func (h *Handler) askAndWait(ctx context.Context, chatID, promptID string, q *protocol.QuestionPayload) *protocol.AnswerPayload {
-	h.Logger.Debug("askAndWait: registering request",
-		log.FieldChatID, chatID,
-		"prompt_id", promptID,
-		"request_id", q.RequestID)
-	ch, ok := h.Answers.Register(q.RequestID)
+	// Flip the progress banner to the terminal state. (The prior TypeText
+	// echo was dead — the dispatcher drops TypeText — so it never rendered.)
+	state := "answered"
+	summary := bridgebase.PickAnswerValue(ans)
 	if !ok {
-		h.Logger.Warn("duplicate interactive request",
-			log.FieldChatID, chatID,
-			"request_id", q.RequestID)
-		return nil
+		state = "denied"
+		summary = ""
 	}
-	h.Logger.Debug("askAndWait: request registered, emitting card",
-		log.FieldChatID, chatID,
-		"prompt_id", promptID,
-		"request_id", q.RequestID)
-	ectx, ecancel := context.WithTimeout(h.AppCtx, interactiveOpTimeout)
-	err := h.emit(ectx, promptID, &protocol.Control{
-		Type:     protocol.TypeQuestion,
-		ChatID:   chatID,
-		Question: q,
-	})
-	ecancel()
-	if err != nil {
-		h.Answers.Cancel(q.RequestID)
-		h.Logger.Warn("emit question card failed",
-			log.FieldChatID, chatID,
-			"request_id", q.RequestID,
-			log.FieldError, err)
-		return nil
-	}
-	h.Logger.Debug("askAndWait: card emitted, waiting for answer",
-		log.FieldChatID, chatID,
-		"prompt_id", promptID,
-		"request_id", q.RequestID)
-	select {
-	case a, ok := <-ch:
-		if !ok {
-			// Broker drained on shutdown.
-			h.Logger.Debug("askAndWait: channel closed",
-				log.FieldChatID, chatID,
-				"request_id", q.RequestID)
-			return nil
-		}
-		h.Logger.Debug("askAndWait: answer received",
-			log.FieldChatID, chatID,
-			"request_id", q.RequestID)
-		return a
-	case <-ctx.Done():
-		h.Logger.Debug("askAndWait: context cancelled",
-			log.FieldChatID, chatID,
-			"request_id", q.RequestID)
-		h.Answers.Cancel(q.RequestID)
-		return nil
-	case <-time.After(bridgebase.AskWaitTimeout):
-		h.Logger.Debug("askAndWait: timeout",
-			log.FieldChatID, chatID,
-			"request_id", q.RequestID)
-		h.Answers.Cancel(q.RequestID)
-		return nil
-	}
+	h.emitAsync(promptID, gateControl(chatID, promptID, "question", state, summary))
 }

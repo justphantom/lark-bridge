@@ -1,7 +1,6 @@
 package renderer
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -84,6 +83,11 @@ func RenderQuestion(ctrl *protocol.Control, header cardkit.HeaderInfo, footer ca
 // submits immediately without a separate "提交" step. Each button carries
 // kind="permission" + the option's Value as "choice" so DispatchCardAction
 // routes the click and the consumer reads Choices[0].
+//
+// Structured body: when Title is set, the renderer uses Type/Title/Detail
+// (badge + headline + code-block detail) and ignores Message; otherwise it
+// falls back to Message so a caller that sets only Message (e.g. a mode
+// picker) renders exactly as before.
 func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
 	header.Template = "orange"
 	if header.Title == "" {
@@ -91,7 +95,9 @@ func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer 
 	}
 	p := ctrl.Permission
 	var elements []cardkit.Element
-	if msg := truncateRunes(p.Message, maxInteractiveBodyRunes); msg != "" {
+	if body := permissionStructuredBody(p); body != "" {
+		elements = append(elements, cardkit.MarkdownElement(body))
+	} else if msg := truncateRunes(p.Message, maxInteractiveBodyRunes); msg != "" {
 		elements = append(elements, cardkit.MarkdownElement(msg))
 	}
 	elements = append(elements, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
@@ -108,133 +114,79 @@ func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer 
 	return cardkit.Card(header, footer, elements, actions)
 }
 
+// permissionStructuredBody renders the typed permission body: a bold Type
+// badge, the Title headline, and Detail in a code block. Returns "" when Title
+// is empty, signalling the caller to fall back to the flat Message. cardkit
+// has no collapsible element, so Detail is a code block (always visible) rather
+// than a fold — a future cardkit fold element would change only this helper.
+// Detail equal to Title is dropped to avoid a duplicate block.
+func permissionStructuredBody(p *protocol.PermissionPayload) string {
+	if p.Title == "" {
+		return ""
+	}
+	var b strings.Builder
+	if ty := truncateRunes(p.Type, 32); ty != "" {
+		b.WriteString("**" + ty + "**\n\n")
+	}
+	b.WriteString(truncateRunes(p.Title, maxInteractiveBodyRunes))
+	if d := truncateRunes(p.Detail, maxInteractiveBodyRunes); d != "" && d != p.Title {
+		b.WriteString("\n```\n" + d + "\n```")
+	}
+	return b.String()
+}
+
 // RenderInteractive dispatches to the per-type interactive renderer: a
-// permission card renders as buttons, every other interactive control renders
-// as the question dropdown form.
+// permission card renders as buttons; a single-question, single-select
+// question with ≤4 options and no custom input also renders as immediate-click
+// buttons (no dropdown+submit ceremony); every other interactive control
+// renders as the question dropdown form.
 func RenderInteractive(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
 	if ctrl.Type == protocol.TypePermission {
 		return RenderPermission(ctrl, header, footer)
 	}
+	if canRenderQuestionAsButtons(ctrl.Question) {
+		return RenderQuestionButtons(ctrl, header, footer)
+	}
 	return RenderQuestion(ctrl, header, footer)
 }
 
-// RenderInteractiveSubmitted takes an already-rendered interactive card and
-// flips every button to disabled, the primary one labelled "已提交" and the
-// rest "处理中" (R4). summary is the user's choice (e.g. "✓ 你选择了「允许」")
-// prepended to the body so the card confirms what was picked instead of going
-// silently grey. The footer status word is flipped from "待确认" to "处理中"
-// so the card reads as advancing past the pending state. Buttons may sit
-// directly in body.elements (permission) or nested inside a form container
-// (question), so the walk recurses into every "elements" list.
-func RenderInteractiveSubmitted(originalCard []byte, summary string) ([]byte, error) {
-	var card map[string]any
-	if err := json.Unmarshal(originalCard, &card); err != nil {
-		return nil, err
+// canRenderQuestionAsButtons reports whether a question is small enough to
+// drop the dropdown+submit form in favour of immediate-click buttons: exactly
+// one question, single-select, 1-4 options, no custom input. Multi-question,
+// multi-select, custom-input, or many-option questions still need the form.
+func canRenderQuestionAsButtons(q *protocol.QuestionPayload) bool {
+	if q == nil || len(q.Questions) != 1 {
+		return false
 	}
-	if summary != "" {
-		prependMarkdown(card, summary)
-	}
-	rewriteFooterStatus(card, "处理中")
-	if body, _ := card["body"].(map[string]any); body != nil {
-		disableButtons(body)
-	}
-	return json.Marshal(card)
+	item := q.Questions[0]
+	return !item.Multiple && !item.Custom && len(item.Options) >= 1 && len(item.Options) <= 4
 }
 
-// RenderInteractiveExpired flips a pending interactive card to its expired
-// form: buttons disabled and a "已超过 InteractiveTimeout 未响应" line prepended
-// so a user returning to a stale card understands why the backend stopped waiting.
-func RenderInteractiveExpired(originalCard []byte) ([]byte, error) {
-	return finalizeInteractiveCard(originalCard, fmt.Sprintf("⊘ 此请求已超过 %d 分钟未响应，已自动失效。", int(cardkit.InteractiveTimeout.Minutes())), "已失效")
-}
-
-// RenderInteractiveFinalized flips a submitted interactive card to its
-// finished form once the turn's result card has been delivered, so the card
-// does not linger grey forever. The notice points the user at the result.
-func RenderInteractiveFinalized(originalCard []byte) ([]byte, error) {
-	return finalizeInteractiveCard(originalCard, "✓ 本轮已完成，结果见上方卡片。", "已完成")
-}
-
-// finalizeInteractiveCard is the shared tail for the expired/finalised forms:
-// prepend a one-line status notice, rewrite the footer status word, and
-// disable every button.
-func finalizeInteractiveCard(originalCard []byte, notice, footerStatus string) ([]byte, error) {
-	var card map[string]any
-	if err := json.Unmarshal(originalCard, &card); err != nil {
-		return nil, err
+// RenderQuestionButtons renders a single-question, single-select question with
+// ≤4 options and no custom input as immediate-click buttons, mirroring the
+// permission card. Each button carries kind="question" + the option label as
+// "choice"; DispatchCardAction sets Choices=[choice], which
+// questionReplyFromAnswer maps to answers[0] exactly as the dropdown path does
+// (SelectOption uses label-as-value too), so the bridge mapping is unchanged.
+func RenderQuestionButtons(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
+	header.Template = "orange"
+	if header.Title == "" {
+		header.Title = "提问"
 	}
-	prependMarkdown(card, notice)
-	rewriteFooterStatus(card, footerStatus)
-	if body, _ := card["body"].(map[string]any); body != nil {
-		disableButtons(body)
+	q := ctrl.Question
+	item := q.Questions[0]
+	var elements []cardkit.Element
+	if label := truncateRunes(item.Label, maxInteractiveBodyRunes); label != "" {
+		elements = append(elements, cardkit.MarkdownElement("**"+label+"**"))
 	}
-	return json.Marshal(card)
-}
-
-// prependMarkdown inserts a markdown element at the top of the card body so a
-// status line (choice echo / expiry notice) reads above the original content.
-func prependMarkdown(card map[string]any, text string) {
-	body, _ := card["body"].(map[string]any)
-	if body == nil {
-		return
+	elements = append(elements, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
+	actions := make([]cardkit.Action, 0, len(item.Options))
+	for _, opt := range item.Options {
+		actions = append(actions, cardkit.ButtonAction(
+			truncateRunes(opt, maxInteractiveBodyRunes), "question",
+			map[string]any{"requestID": q.RequestID, "choice": opt}, false, false))
 	}
-	elements, _ := body["elements"].([]any)
-	ahead := []any{map[string]any{"tag": "markdown", "content": text}}
-	body["elements"] = append(ahead, elements...)
-}
-
-// rewriteFooterStatus replaces the leading status word in the card's footer
-// line. The footer is the last body element (a div whose text content is
-// "<status> · backendType · …"). Only a footer still showing "待确认" (the
-// pending state every interactive card ships in) is rewritten, so a footer
-// without a status prefix — or one already advanced — is left untouched.
-func rewriteFooterStatus(card map[string]any, newStatus string) {
-	body, _ := card["body"].(map[string]any)
-	if body == nil {
-		return
-	}
-	elements, _ := body["elements"].([]any)
-	if len(elements) == 0 {
-		return
-	}
-	last, _ := elements[len(elements)-1].(map[string]any)
-	if last == nil || last["tag"] != "div" {
-		return
-	}
-	text, _ := last["text"].(map[string]any)
-	if text == nil {
-		return
-	}
-	content, _ := text["content"].(string)
-	if !strings.HasPrefix(content, "待确认 · ") {
-		return
-	}
-	text["content"] = newStatus + content[len("待确认"):]
-}
-
-// disableButtons recursively walks node["elements"] (and the card root →
-// body) disabling every button it finds.
-func disableButtons(node map[string]any) {
-	elements, _ := node["elements"].([]any)
-	for _, el := range elements {
-		elem, ok := el.(map[string]any)
-		if !ok {
-			continue
-		}
-		if tag, _ := elem["tag"].(string); tag == "button" {
-			elem["disabled"] = true
-			if text, _ := elem["text"].(map[string]any); text != nil {
-				if t, _ := elem["type"].(string); t == "primary" {
-					text["content"] = "已提交"
-				} else {
-					text["content"] = "处理中"
-				}
-			}
-			continue
-		}
-		// Recurse into containers (form/column/...) that hold their own elements.
-		disableButtons(elem)
-	}
+	return cardkit.Card(header, footer, elements, actions)
 }
 
 // capOptions builds the options list for a question, stopping once the

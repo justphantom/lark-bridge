@@ -673,3 +673,54 @@ func TestRenderTodoZone_CancelledDimmed(t *testing.T) {
 		t.Errorf("non-cancelled item must not be greyed: %s", got)
 	}
 }
+
+// TestBannerLine pins the banner contract: a gate takes precedence over a
+// loading notice, each gate State maps to its icon+verb, and an empty state
+// (no gate, no loading) yields no banner so Render inserts no empty zone.
+func TestBannerLine(t *testing.T) {
+	cases := []struct {
+		name    string
+		loading string
+		gate    GateInfo
+		want    string
+	}{
+		{"empty", "", GateInfo{}, ""},
+		{"loading only", "正在获取模型", GateInfo{}, "• 正在获取模型"},
+		{"gate waiting permission", "", GateInfo{State: "waiting", Kind: "permission", Summary: "Bash · make test"}, "⏸ 等待授权：Bash · make test"},
+		{"gate waiting question", "", GateInfo{State: "waiting", Kind: "question", Summary: "选模型"}, "⏸ 等待回答：选模型"},
+		{"gate answered", "", GateInfo{State: "answered", Summary: "允许一次"}, "✓ 已应答：允许一次"},
+		{"gate denied", "", GateInfo{State: "denied"}, "✗ 已拒绝/超时"},
+		{"gate beats loading", "loading", GateInfo{State: "waiting", Kind: "permission", Summary: "Write /a"}, "⏸ 等待授权：Write /a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bannerLine(tc.loading, tc.gate); got != tc.want {
+				t.Errorf("bannerLine = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProgressState_ClonePreservesBanner locks the deep-copy for the new
+// fields: a Clone taken after SetGate/SetLoading must carry both into Render,
+// and mutating the original after Clone must not bleed into the snapshot.
+func TestProgressState_ClonePreservesBanner(t *testing.T) {
+	s := NewProgressState()
+	s.SetLoading("loading-x")
+	s.SetGate(GateInfo{State: "waiting", Kind: "permission", Summary: "Bash"})
+	cp := s.Clone()
+	// Mutate original after clone; snapshot must be unaffected.
+	s.SetLoading("changed")
+	s.SetGate(GateInfo{State: "answered", Summary: "allowed"})
+
+	if cp.loading != "loading-x" {
+		t.Errorf("clone loading = %q, want %q", cp.loading, "loading-x")
+	}
+	if cp.gate.State != "waiting" || cp.gate.Summary != "Bash" {
+		t.Errorf("clone gate = %+v, want waiting/Bash", cp.gate)
+	}
+	// Gate on the clone takes precedence over its loading notice.
+	if got := bannerLine(cp.loading, cp.gate); !strings.Contains(got, "⏸ 等待授权：Bash") {
+		t.Errorf("clone banner = %q, want gate to win", got)
+	}
+}
