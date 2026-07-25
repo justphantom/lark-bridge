@@ -9,6 +9,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -131,5 +132,70 @@ func TestCmdPush_WithDirectory(t *testing.T) {
 	}
 	if dir != "/repo/other" {
 		t.Errorf("git dir = %q, want /repo/other", dir)
+	}
+}
+
+// TestCmdPull_SingleCardFlow pins the single-card contract: on accept /pull
+// emits a non-terminal TypeProgress banner bound to the triggering promptID,
+// and the runner's terminal notice ALSO binds that promptID so the frontend
+// patches the same card in place and finalises the turn (instead of orphaning
+// a "处理中" card + spawning a standalone "完成" card).
+func TestCmdPull_SingleCardFlow(t *testing.T) {
+	cmd := &gitFakeCommander{out: []byte("Already up to date.\n")}
+	client, reg, rpcCleanup := connectTestRPC(t)
+	defer rpcCleanup()
+
+	r, err := router.New("", log.Nop())
+	if err != nil {
+		t.Fatalf("router new: %v", err)
+	}
+	h := NewWithLogger(r, nil, client, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h.Git = bridgebase.NewGitRunner(cmd, nil, 0)
+	r.Bind("chat-1", "", "/repo/proj", "", "", "")
+
+	// Stamp a replyToID on the ctx the same way bridgebase.Dispatch does.
+	ctx := bridgebase.WithReplyToID(context.Background(), "msg-pull-1")
+	if _, err := h.cmdPull(ctx, "chat-1", nil); err != nil {
+		t.Fatalf("cmdPull: %v", err)
+	}
+
+	// Banner: a TypeProgress bound to the promptID, emitted on accept.
+	deadline := time.Now().Add(2 * time.Second)
+	var banner *protocol.Control
+	for time.Now().Before(deadline) && banner == nil {
+		select {
+		case rc := <-reg.Controls():
+			if rc.Control.Type == protocol.TypeProgress && rc.Control.PromptID == "msg-pull-1" {
+				banner = rc.Control
+			}
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if banner == nil {
+		t.Fatal("expected a TypeProgress banner bound to the promptID on accept")
+	}
+	if banner.Progress == nil || !strings.Contains(banner.Progress.Description, "拉取") {
+		t.Errorf("banner description = %+v, want contains '拉取'", banner.Progress)
+	}
+
+	// Terminal notice bound to the SAME promptID so the card is patched in
+	// place and the turn finalises (not a standalone orphan).
+	waitForCalled(t, cmd)
+	deadline = time.Now().Add(2 * time.Second)
+	var terminal *protocol.Control
+	for time.Now().Before(deadline) && terminal == nil {
+		select {
+		case rc := <-reg.Controls():
+			if rc.Control.Type == protocol.TypeNotice && rc.Control.PromptID == "msg-pull-1" {
+				terminal = rc.Control
+			}
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if terminal == nil {
+		t.Fatal("expected a terminal TypeNotice bound to the promptID")
+	}
+	if terminal.Notice == nil || !strings.Contains(terminal.Notice.Title, "完成") {
+		t.Errorf("terminal title = %+v, want contains '完成'", terminal.Notice)
 	}
 }

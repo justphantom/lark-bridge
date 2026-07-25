@@ -97,22 +97,24 @@ func waitForCount(t *testing.T, c *recordingCommander, want int) {
 	t.Fatalf("commander call count %d, want %d (timeout)", c.callCount(), want)
 }
 
-// TestAcquireAndRun_Success verifies the happy path: an immediate "已触发"
-// notice fires synchronously, git runs in the bound dir, and the terminal
-// "完成" notice carries git's output.
+// TestAcquireAndRun_Success verifies the happy path: AcquireAndRun returns
+// true on accept (the caller emits its own running banner), git runs in the
+// bound dir, and the terminal "完成" notice carries git's output.
 func TestAcquireAndRun_Success(t *testing.T) {
 	cmd := &recordingCommander{out: []byte("Already up to date.\n")}
 	r := NewGitRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	r.AcquireAndRun("chat-A", "/repo/proj", []string{"pull", "--ff-only"}, "拉取", notices.fn)
-
+	if accepted := r.AcquireAndRun("chat-A", "/repo/proj", []string{"pull", "--ff-only"}, "拉取", notices.fn); !accepted {
+		t.Fatalf("AcquireAndRun returned false on a free slot")
+	}
 	if got := cmd.callCount(); got != 0 {
 		t.Fatalf("Run should run async, got %d sync calls", got)
 	}
-	// The "triggered" notice is emitted synchronously before returning.
-	if _, ok := notices.findNotice("拉取已触发"); !ok {
-		t.Errorf("missing synchronous 已触发 notice; got %+v", notices.snapshot())
+	// The runner no longer emits a "triggered" notice — the caller owns the
+	// non-terminal running banner. Only terminal notices fire from here.
+	if _, ok := notices.findNotice("拉取已触发"); ok {
+		t.Errorf("runner must not emit triggered; caller owns the banner; got %+v", notices.snapshot())
 	}
 
 	// dir/args are handed to git as-is.
@@ -183,21 +185,23 @@ func TestAcquireAndRun_PerChatSingleFlight(t *testing.T) {
 	r.AcquireAndRun("chat-X", "/r", []string{"push"}, "推送", notices.fn)
 	waitForCount(t, cmd, 1) // first job is now blocked inside Run
 
-	// Second fire on the SAME chat must be rejected synchronously.
-	r.AcquireAndRun("chat-X", "/r", []string{"push"}, "推送", notices.fn)
+	// Second fire on the SAME chat must be rejected synchronously (returns
+	// false + a 进行中 notice, zero new goroutine).
+	if accepted := r.AcquireAndRun("chat-X", "/r", []string{"push"}, "推送", notices.fn); accepted {
+		t.Error("second AcquireAndRun on a busy chat should return false")
+	}
 	if n, ok := notices.findNotice("推送进行中"); !ok {
 		t.Fatalf("expected 进行中 rejection; got %+v", notices.snapshot())
 	} else if n.level != "warning" {
 		t.Errorf("rejection level = %q, want warning", n.level)
 	}
 
-	// A DIFFERENT chat is unaffected: it gets its own slot and starts.
+	// A DIFFERENT chat is unaffected: it gets its own slot and starts. The
+	// runner no longer emits "triggered"; the caller would emit the banner,
+	// so here we only assert the job actually starts.
 	noticesY := &noticeCapture{}
 	r.AcquireAndRun("chat-Y", "/r", []string{"push"}, "推送", noticesY.fn)
 	waitForCount(t, cmd, 2)
-	if _, ok := noticesY.findNotice("推送已触发"); !ok {
-		t.Errorf("chat-Y should trigger independently; got %+v", noticesY.snapshot())
-	}
 
 	// Release both jobs so goroutines exit and the test does not leak.
 	close(cmd.release)
@@ -252,12 +256,12 @@ func TestAcquireAndRun_SlotReleasedAfterJob(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	// Second fire must NOT be rejected: a new "triggered" notice appears.
+	// Second fire must NOT be rejected: returns true and starts a new job.
 	notices2 := &noticeCapture{}
-	r.AcquireAndRun("chat-R", "/r", []string{"pull"}, "拉取", notices2.fn)
-	if _, ok := notices2.findNotice("拉取已触发"); !ok {
-		t.Errorf("second fire after completion should trigger; got %+v", notices2.snapshot())
+	if accepted := r.AcquireAndRun("chat-R", "/r", []string{"pull"}, "拉取", notices2.fn); !accepted {
+		t.Errorf("second fire after completion should be accepted; got rejected")
 	}
+	waitForCount(t, cmd, 2)
 	if _, ok := notices2.findNotice("拉取进行中"); ok {
 		t.Errorf("slot should be free after job done; got busy rejection")
 	}

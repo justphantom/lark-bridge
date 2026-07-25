@@ -67,23 +67,26 @@ func NewGitRunner(cmd GitCommander, logger *log.Logger, timeout time.Duration) *
 }
 
 // AcquireAndRun runs `git args...` in dir for chatID. If a job is already
-// running for chatID it calls notice with a "进行中" warning and returns;
-// otherwise it launches the job on a background goroutine, calls notice
-// with a "已触发" info first, then a terminal success/error notice when
-// the job finishes. dir must be non-empty (the caller validates).
-func (r *GitRunner) AcquireAndRun(chatID, dir string, args []string, label string, notice GitNotice) {
+// running for chatID it calls notice with a "进行中" warning and returns
+// false; otherwise it launches the job on a background goroutine and returns
+// true. The caller owns the non-terminal "running" banner (emitted on true);
+// notice is called only for terminal states — busy (synchronous reject) and
+// success/error when git exits — so a caller can bind every terminal to the
+// triggering promptID and patch the progress card in place. dir must be
+// non-empty (the caller validates).
+func (r *GitRunner) AcquireAndRun(chatID, dir string, args []string, label string, notice GitNotice) bool {
 	mu := r.slot(chatID)
 	if !mu.TryLock() {
 		r.logger.Info("git job rejected: chat busy",
 			log.FieldChatID, chatID, "label", label)
 		notice("warning", label+"进行中", "本群已有一次 "+label+" 操作正在执行，请等待其完成后再试。")
-		return
+		return false
 	}
-	notice("info", label+"已触发", "开始执行 "+gitLabel(args)+"，完成后会在此通知。")
 	go func() {
 		defer mu.Unlock()
 		r.runJob(chatID, dir, args, label, notice)
 	}()
+	return true
 }
 
 // runJob is the goroutine body: bounded ctx, run git, emit terminal notice.

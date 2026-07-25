@@ -235,6 +235,19 @@ func (h *Handler) notifyWithPromptID(chatID, promptID, level, title, message str
 	})
 }
 
+// notifyProgressWithPromptID emits a non-terminal progress banner bound to
+// promptID so an async job (e.g. /pull /push) surfaces on the command's own
+// progress card without spawning a separate "triggered" card. Non-terminal:
+// a later notifyWithPromptID finalises the turn by patching the same card.
+func (h *Handler) notifyProgressWithPromptID(chatID, promptID, description string) {
+	h.sendCtrl(&protocol.Control{
+		Type:     protocol.TypeProgress,
+		PromptID: promptID,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: description},
+	})
+}
+
 // notifyWithCardUpdate patches an existing card (identified by messageID) via
 // the frontend's UpdateCard path, instead of binding to PromptID. Used by
 // pickers to turn the picker card into a green/red result frame after the
