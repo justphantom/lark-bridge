@@ -22,13 +22,10 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 			d.turns.SetSession(ctrl.PromptID, si.SessionID, si.Model)
 		}
 		return d.updateProgress(ctx, ctrl, backendType)
-	case protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress, protocol.TypeTodo:
+	case protocol.TypeToolUse, protocol.TypeToolResult, protocol.TypeProgress, protocol.TypeTodo, protocol.TypeThinking:
 		return d.updateProgress(ctx, ctrl, backendType)
 	case protocol.TypeText:
 		// 文本预览不再展示,忽略(完整回复由终态结果卡承载)
-		return nil
-	case protocol.TypeThinking:
-		// thinking 不再展示,忽略
 		return nil
 	case protocol.TypeResult, protocol.TypeError, protocol.TypeNotice:
 		// Terminals dedup keyed by PromptID: the FIRST terminal of any kind
@@ -107,6 +104,8 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 		}
 	case protocol.TypeTodo:
 		state.AddTodo(toRendererTodos(ctrl.Todo.Todos))
+	case protocol.TypeThinking:
+		state.SetThinking(ctrl.Thinking.Delta, ctrl.Thinking.Replace)
 	}
 	// Clone under the lock so the expensive Render+Marshal runs outside
 	// progressMu — otherwise concurrent turns serialise on each render.

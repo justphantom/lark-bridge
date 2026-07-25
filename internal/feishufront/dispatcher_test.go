@@ -128,17 +128,47 @@ func TestDispatcherUnknownControl(t *testing.T) {
 	}
 }
 
-// TestDispatcherThinkingIgnored pins that a thinking control is a no-op
-// (progress card no longer renders thinking): nil error, no bot call — the
-// nil bot would panic if the path touched it.
-func TestDispatcherThinkingIgnored(t *testing.T) {
+// TestDispatcherThinking_NoTurnIsNoOp pins that a thinking control with no
+// open turn is a no-op: updateProgress early-returns when turns.Get finds
+// nothing, so the nil bot is never touched. (Previously thinking was dropped
+// outright at dispatch; it now routes to updateProgress, where the no-turn
+// guard still makes it observationally a no-op without a turn.)
+func TestDispatcherThinking_NoTurnIsNoOp(t *testing.T) {
 	d := NewDispatcher(nil, NewBackendRegistry(), NewTurnManager(), nil)
 	err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{
 		Type:     protocol.TypeThinking,
 		Thinking: &protocol.ThinkingPayload{Delta: "hmm"},
 	}})
 	if err != nil {
-		t.Fatalf("thinking control should be ignored, got %v", err)
+		t.Fatalf("thinking control without a turn should be a no-op, got %v", err)
+	}
+}
+
+// TestDispatcherThinking_WithTurnRoutesToProgress pins the flip: with an open
+// turn, TypeThinking now reaches the progress state (SetThinking) and triggers
+// an UpdateCard carrying the reasoning text — it is no longer silently dropped.
+func TestDispatcherThinking_WithTurnRoutesToProgress(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	d.turns.Start("msg-t", "oc_t", "om-think", "b")
+
+	if err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{
+		Type:     protocol.TypeThinking,
+		PromptID: "msg-t",
+		Thinking: &protocol.ThinkingPayload{Delta: "正在推理"},
+	}}); err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+	sink.mu.Lock()
+	var hit bool
+	for _, u := range sink.updates {
+		if u.messageID == "om-think" && strings.Contains(string(u.card), "正在推理") {
+			hit = true
+		}
+	}
+	sink.mu.Unlock()
+	if !hit {
+		t.Error("expected the thinking delta to render on the progress card; TypeThinking is still being dropped")
 	}
 }
 
