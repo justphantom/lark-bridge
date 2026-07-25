@@ -31,6 +31,16 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		// thinking 不再展示,忽略
 		return nil
 	case protocol.TypeResult, protocol.TypeError, protocol.TypeNotice:
+		// Terminals dedup keyed by PromptID: the FIRST terminal of any kind
+		// (Result / Error / Notice) wins; subsequent ones for the same
+		// PromptID are dropped. This intentionally couples Notice and Result
+		// under one key — semantic invariant: a turn that has emitted any
+		// terminal frame (a result card OR a final error/notice) is
+		// considered finalized, so a late-arriving duplicate (e.g. an
+		// already-handled error followed by a redundant Result) does not
+		// stack a second card. If a future protocol change ever allows a
+		// Notice to precede a still-desired Result for the same prompt,
+		// switch the key to PromptID+Type (per-type bucketing).
 		if ctrl.PromptID != "" && !d.terminals.Add(ctrl.PromptID) {
 			return nil
 		}
