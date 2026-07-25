@@ -139,6 +139,12 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	if promptID == "" {
 		return fmt.Errorf("miniagent: prompt missing promptID (frontend must assign one per message)")
 	}
+	// Reject frontend-supplied override fields (see PromptPayload doc).
+	if field := ev.Prompt.HasFrontendOverride(); field != "" {
+		h.notifyWithPromptID(chatID, promptID, "error", "协议违规",
+			"前端不允许设置 "+field+" 字段；请通过 /cd /model 等命令调整。")
+		return nil
+	}
 	if prompt == "" {
 		h.logger.Info("miniagent empty prompt, noticing", log.FieldChatID, chatID)
 		h.notifyWithPromptID(chatID, promptID, "warning", "空消息", "请发送需要处理的内容。")

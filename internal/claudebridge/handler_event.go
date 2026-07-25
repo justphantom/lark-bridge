@@ -58,6 +58,22 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	chatID := p.ChatID
 	replyToID := ev.PromptID
 
+	// Reject frontend-supplied override fields (see PromptPayload doc):
+	// Directory/ModelSpec/Permission/Effort/SettingsFile MUST originate from
+	// a trusted source. Letting them through would expose
+	// validateSessionDirPath's IsAbs-only check as an attack surface.
+	if field := p.HasFrontendOverride(); field != "" {
+		return h.emit(ctx, replyToID, &protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: chatID,
+			Notice: &protocol.NoticePayload{
+				Level:   "error",
+				Title:   "协议违规",
+				Message: "前端不允许设置 " + field + " 字段；请通过 /cd /model /perm /effort /settings 等命令调整。",
+			},
+		})
+	}
+
 	// Frontend only intercepts /backend; every other slash command is
 	// forwarded verbatim as Text and parsed here, unless /skill was used to
 	// wrap a skill prompt that should reach the CLI as-is.
@@ -70,7 +86,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 		}
 	}
 
-	binding, err := h.ensureBinding(chatID, p.SessionID, p.Directory, p.ModelSpec, "")
+	binding, err := h.ensureBinding(chatID, p.SessionID, "", "", "")
 	if err != nil {
 		return h.emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
@@ -93,28 +109,6 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 				Message: "尚未设置工作目录。发送 `/cd` 选择一个项目目录后再开始对话。",
 			},
 		})
-	}
-
-	// Per-prompt claude overrides land on the binding; streamRun reads them
-	// back when constructing claude.RunOptions.
-	if p.Permission != "" {
-		h.Router.SetPermissionMode(chatID, p.Permission)
-		binding.PermissionMode = p.Permission
-	}
-	if p.Effort != "" {
-		h.Router.SetEffortLevel(chatID, p.Effort)
-		binding.EffortLevel = p.Effort
-	}
-	if p.SettingsFile != "" {
-		if err := validateSettingsPath(p.SettingsFile); err != nil {
-			return h.emit(ctx, replyToID, &protocol.Control{
-				Type:   protocol.TypeNotice,
-				ChatID: chatID,
-				Notice: &protocol.NoticePayload{Level: "error", Title: "settings 路径非法", Message: err.Error()},
-			})
-		}
-		h.Router.SetSettingsFile(chatID, p.SettingsFile)
-		binding.SettingsFile = p.SettingsFile
 	}
 
 	promptCtx, mine, ok := h.StartPrompt(ctx, chatID)

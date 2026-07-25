@@ -35,6 +35,16 @@ const (
 )
 
 // PromptPayload carries a user prompt. Text has already been @-stripped.
+//
+// Frontend (feishu-front) constructs this only from a chat message via
+// internal/feishufront/dispatcher.go and MUST set just ChatID / Text / Skill.
+// The override fields below — Directory / ModelSpec / Agent / Permission /
+// Effort / SettingsFile — are reserved for trusted sources only (config,
+// slash-command handlers, in-backend binding mutation). They MUST NOT be set
+// by the frontend pipeline: validateSessionDirPath only checks IsAbs, so
+// accepting a frontend-supplied Directory would expose an arbitrary CWD
+// (claude/opencode running tools in /etc). Backends enforce this with
+// HasFrontendOverride at their handlePromptEvent entry.
 type PromptPayload struct {
 	ChatID       string `json:"chatID"`
 	SessionID    string `json:"sessionID,omitempty"`
@@ -46,6 +56,31 @@ type PromptPayload struct {
 	Permission   string `json:"permission,omitempty"`
 	Effort       string `json:"effort,omitempty"`
 	SettingsFile string `json:"settingsFile,omitempty"`
+}
+
+// HasFrontendOverride returns the name of the first override field present
+// on this PromptPayload, or "" if none. It is the runtime guard backing the
+// "MUST NOT be set by frontend" contract above: a backend's handlePromptEvent
+// calls this at entry and rejects any non-empty result with a Notice, so a
+// future contributor wiring a quick-task path that short-circuits /cd by
+// filling Directory directly surfaces as an explicit protocol violation
+// rather than a silent attack surface.
+func (p *PromptPayload) HasFrontendOverride() string {
+	switch {
+	case p.Directory != "":
+		return "directory"
+	case p.ModelSpec != "":
+		return "modelSpec"
+	case p.Agent != "":
+		return "agent"
+	case p.Permission != "":
+		return "permission"
+	case p.Effort != "":
+		return "effort"
+	case p.SettingsFile != "":
+		return "settingsFile"
+	}
+	return ""
 }
 
 // AnswerPayload carries a user answer to a backend interaction request

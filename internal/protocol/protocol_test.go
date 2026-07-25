@@ -181,6 +181,60 @@ func TestOmitemptyNoEmptyPayloadFields(t *testing.T) {
 	}
 }
 
+// TestPromptPayloadHasFrontendOverride covers the runtime guard that backs
+// the "override fields MUST NOT be set by frontend" contract. A backend's
+// handlePromptEvent calls this at entry to reject any non-empty result, so
+// the table pins every field name + the empty case.
+func TestPromptPayloadHasFrontendOverride(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"directory", "directory", "/etc"},
+		{"modelSpec", "modelSpec", "sonnet"},
+		{"agent", "agent", "code"},
+		{"permission", "permission", "plan"},
+		{"effort", "effort", "high"},
+		{"settingsFile", "settingsFile", "/etc/foo.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &PromptPayload{ChatID: "c", Text: "hi"}
+			setOverrideField(t, p, tc.field, tc.value)
+			if got := p.HasFrontendOverride(); got != tc.field {
+				t.Errorf("HasFrontendOverride = %q, want %q", got, tc.field)
+			}
+		})
+	}
+	t.Run("none", func(t *testing.T) {
+		p := &PromptPayload{ChatID: "c", Text: "hi"}
+		if got := p.HasFrontendOverride(); got != "" {
+			t.Errorf("HasFrontendOverride = %q, want empty", got)
+		}
+	})
+}
+
+func setOverrideField(t *testing.T, p *PromptPayload, field, value string) {
+	t.Helper()
+	switch field {
+	case "directory":
+		p.Directory = value
+	case "modelSpec":
+		p.ModelSpec = value
+	case "agent":
+		p.Agent = value
+	case "permission":
+		p.Permission = value
+	case "effort":
+		p.Effort = value
+	case "settingsFile":
+		p.SettingsFile = value
+	default:
+		t.Fatalf("unknown override field %q", field)
+	}
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i+len(substr) <= len(s); i++ {
 		if s[i:i+len(substr)] == substr {

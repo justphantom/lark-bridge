@@ -3,6 +3,7 @@ package claudebridge
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,6 +200,40 @@ func TestHandleEvent_UnknownTypeReturnsError(t *testing.T) {
 
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown event type")
+	}
+}
+
+// TestHandleEvent_PromptRejectsFrontendOverride verifies a PromptPayload
+// carrying any override field (Directory / ModelSpec / Permission / Effort /
+// SettingsFile / Agent) is rejected at handlePromptEvent entry with a Notice,
+// not silently applied to the binding. Without this guard, a future
+// quick-task path that fills Directory directly would expose
+// validateSessionDirPath's IsAbs-only check as an attack surface.
+func TestHandleEvent_PromptRejectsFrontendOverride(t *testing.T) {
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	ev := &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-x",
+		Prompt:   &protocol.PromptPayload{ChatID: "c1", Text: "hi", Directory: "/etc"},
+	}
+	if err := h.HandleEvent(context.Background(), ev); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	ctrl := drainControl(t, reg)
+	if ctrl.Type != protocol.TypeNotice {
+		t.Fatalf("expected TypeNotice for override rejection, got %q", ctrl.Type)
+	}
+	if ctrl.Notice == nil || ctrl.Notice.Level != "error" || ctrl.Notice.Title != "协议违规" {
+		t.Fatalf("unexpected notice: %+v", ctrl.Notice)
+	}
+	if !strings.Contains(ctrl.Notice.Message, "directory") {
+		t.Errorf("notice message should name the violating field: %s", ctrl.Notice.Message)
 	}
 }
 
