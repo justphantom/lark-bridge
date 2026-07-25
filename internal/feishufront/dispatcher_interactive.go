@@ -204,6 +204,16 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		"request_id", requestIDFromValue(action.Value))
 	// Frontend-owned card (the /backend picker): consume the click directly —
 	// no requestID, no answer forwarding to a backend.
+	//
+	// The dedup check below is intentionally skipped here: backend-picker
+	// clicks carry no requestID, so a malicious or rapid double-click could
+	// bypass the actionIDs guard. UX-wise the picker buttons are disabled
+	// client-side the instant the first click lands, so a real user cannot
+	// fire two binding changes; only a constructed request bypassing the
+	// disabled state could. Acceptable: /backend use is idempotent for the
+	// same target (SetBackend is a store), and a malicious opener already
+	// has its own backend privileges. Revisit if picker ever triggers a
+	// non-idempotent side effect.
 	if kind == "backend" {
 		return d.handleBackendChoice(ctx, action)
 	}
