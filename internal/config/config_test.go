@@ -374,6 +374,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 	}{
 		{"bad log level", `{"log_level":"trace"}`, "log_level"},
 		{"opencode negative concurrency", `{"opencode":{"max_concurrent":-1}}`, "opencode.max_concurrent"},
+		{"opencode_serve negative concurrency", `{"opencode_serve":{"max_concurrent":-1}}`, "opencode_serve.max_concurrent"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

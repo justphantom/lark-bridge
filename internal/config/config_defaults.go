@@ -72,6 +72,14 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Opencode.ListCacheTTL == 0 {
 		cfg.Opencode.ListCacheTTL = 3600
 	}
+	// OpencodeServe defaults align with Claude/Opencode so a missing
+	// max_concurrent behaves identically across backends. Without this the
+	// adapter would silently fall back to 4 while the same field on the
+	// other backends is set in config_defaults + rejected when negative —
+	// inconsistent surface that bites operators mixing backends.
+	if cfg.OpencodeServe.MaxConcurrent == 0 {
+		cfg.OpencodeServe.MaxConcurrent = 4
+	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}
