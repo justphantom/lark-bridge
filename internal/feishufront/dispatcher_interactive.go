@@ -242,9 +242,18 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 					_ = d.bot.UpdateCard(ctx, messageID, sub)
 					// Cache the SUBMITTED bytes (replacing the original) so a
 					// later finalize renders finalized-from-submitted and
-					// preserves the "✓ 已回答" echo (C5).
+					// preserves the "✓ 已回答" echo (C5) — but ONLY if the
+					// binding still exists. If finalizeLinkedInteractive ran
+					// during the render+UpdateCard window above, it already
+					// deleted the cache and unbound; re-writing here would
+					// leak an orphan entry with no binding (SweepInteractive
+					// cleans by binding, so it would never reap it). Nesting
+					// turns.RLock under cardMu is safe: no code path acquires
+					// cardMu while holding turns's write lock.
 					d.cardMu.Lock()
-					d.cards[requestID] = sub
+					if _, ok := d.turns.InteractiveMessageID(requestID); ok {
+						d.cards[requestID] = sub
+					}
 					d.cardMu.Unlock()
 				}
 			}
