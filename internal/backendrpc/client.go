@@ -86,9 +86,16 @@ type Client struct {
 	frontendURL string
 	secret      string // shared bearer token; sent on SSE and POST
 	httpClient  *http.Client
-	eventCh     chan *protocol.Event
-	closeCh     chan struct{}
-	closed      int32
+	// ownsTransport reports whether this Client created httpClient itself
+	// (via newHTTPClient in Connect). Only an owned transport has its idle
+	// pool released on Close: a caller-supplied client (tests, embedders)
+	// may be reused across clients or share the default transport, so
+	// calling CloseIdleConnections on it would be an intrusive side effect
+	// (worst case: clearing http.DefaultClient's global pool).
+	ownsTransport bool
+	eventCh       chan *protocol.Event
+	closeCh       chan struct{}
+	closed        int32
 
 	// sseBody is the SSE response body; Close closes it so readSSE unblocks
 	// instead of hanging forever on scanner.Scan() when the client shuts
@@ -113,26 +120,38 @@ func (c *Client) SetLogger(l *log.Logger) {
 
 // Connect opens an SSE connection to the frontend. secret is the shared bearer
 // token the frontend validates; pass "" only for a loopback-only frontend
-// with no auth configured.
+// with no auth configured. The Client owns the HTTP transport it creates and
+// releases its idle pool on Close.
 func Connect(backendID, backendType, frontendURL, secret string) (*Client, error) {
-	return ConnectWithHTTPClient(backendID, backendType, frontendURL, secret, newHTTPClient())
+	return connect(backendID, backendType, frontendURL, secret, newHTTPClient(), true)
 }
 
 // ConnectWithHTTPClient opens an SSE connection using the given HTTP client
 // (lets tests inject a transport). The handshake must succeed (HTTP 200); on
 // success the client spawns a goroutine that reads SSE frames into RecvEvent.
+// The Client does NOT own the supplied transport: Close leaves its idle pool
+// untouched so the caller (test, embedder, http.DefaultClient user) keeps
+// reuse semantics intact.
 func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, httpClient *http.Client) (*Client, error) {
+	return connect(backendID, backendType, frontendURL, secret, httpClient, false)
+}
+
+// connect is the shared body of Connect / ConnectWithHTTPClient. The
+// ownsTransport flag is wired through so Close can decide whether to release
+// the transport's idle connections (only when the Client created it).
+func connect(backendID, backendType, frontendURL, secret string, httpClient *http.Client, ownsTransport bool) (*Client, error) {
 	if backendID == "" || backendType == "" || frontendURL == "" {
 		return nil, fmt.Errorf("backendID/backendType/frontendURL required")
 	}
 	c := &Client{
-		backendID:   backendID,
-		backendType: backendType,
-		frontendURL: strings.TrimSuffix(frontendURL, "/"),
-		secret:      secret,
-		httpClient:  httpClient,
-		eventCh:     make(chan *protocol.Event, sseEventChanBuf),
-		closeCh:     make(chan struct{}),
+		backendID:     backendID,
+		backendType:   backendType,
+		frontendURL:   strings.TrimSuffix(frontendURL, "/"),
+		secret:        secret,
+		httpClient:    httpClient,
+		ownsTransport: ownsTransport,
+		eventCh:       make(chan *protocol.Event, sseEventChanBuf),
+		closeCh:       make(chan struct{}),
 	}
 	c.logger.Store(log.Nop())
 	u, err := url.Parse(c.frontendURL)
@@ -312,16 +331,20 @@ func (c *Client) Status(ctx context.Context) (*protocol.StatusSnapshot, error) {
 }
 
 // Close shuts the client down. Idempotent. Closes the SSE body so the read
-// goroutine unblocks in addition to releasing RecvEvent callers.
+// goroutine unblocks in addition to releasing RecvEvent callers. Only an
+// owned transport has its idle pool released (see Client.ownsTransport):
+// closing idle connections on a caller-supplied client would be an
+// intrusive side effect — worst case, clearing http.DefaultClient's pool
+// shared with unrelated goroutines.
 func (c *Client) Close() error {
 	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
 		if c.sseBody != nil {
 			_ = c.sseBody.Close()
 		}
 		close(c.closeCh)
-		// Each client owns a cloned Transport (see newHTTPClient); its idle
-		// pool is not shared, so it must be released explicitly.
-		c.httpClient.CloseIdleConnections()
+		if c.ownsTransport {
+			c.httpClient.CloseIdleConnections()
+		}
 	}
 	return nil
 }

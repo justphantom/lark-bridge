@@ -130,6 +130,52 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
+// countingTransport wraps a real transport to count CloseIdleConnections
+// calls. Used by TestClose_ExternalClientDoesNotClearPool to pin P2-1: a
+// caller-supplied http.Client must NOT have its idle pool touched, since
+// the caller (or http.DefaultClient) may be sharing it across goroutines.
+type countingTransport struct {
+	base          http.RoundTripper
+	closeIdleHits int
+}
+
+func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.base.RoundTrip(req)
+}
+
+func (t *countingTransport) CloseIdleConnections() {
+	t.closeIdleHits++
+}
+
+// TestClose_ExternalClientDoesNotClearPool wires an external http.Client
+// through ConnectWithHTTPClient, closes the resulting *Client, and asserts
+// the transport's idle pool was not touched. Without the ownsTransport
+// gate, Close would call CloseIdleConnections unconditionally and an
+// embedder passing http.DefaultClient would see the global pool cleared.
+func TestClose_ExternalClientDoesNotClearPool(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	tr := &countingTransport{base: http.DefaultTransport}
+	hc := &http.Client{Transport: tr}
+
+	client, err := ConnectWithHTTPClient("b1", "claude", ts.URL, "", hc)
+	if err != nil {
+		t.Fatalf("ConnectWithHTTPClient: %v", err)
+	}
+	if client.ownsTransport {
+		t.Error("external-client path should mark ownsTransport=false")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if tr.closeIdleHits != 0 {
+		t.Errorf("external transport had CloseIdleConnections called %d times; want 0 (caller owns the pool)", tr.closeIdleHits)
+	}
+}
+
 // TestNewHTTPClient_ClonesDefaultTransport pins the race fix: every client
 // owns a cloned Transport with the handshake timeout applied, and the shared
 // DefaultTransport is never mutated.
