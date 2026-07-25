@@ -24,7 +24,7 @@ func TestNewSDKClientBasicAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	withAuth, err := newSDKClient(AgentConfig{BaseURL: srv.URL, Username: "opencode", Password: "pw"})
+	withAuth, err := newSDKClient(AgentConfig{BaseURL: srv.URL, Username: "opencode", Password: "pw"}, nil)
 	if err != nil {
 		t.Fatalf("newSDKClient with auth: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestNewSDKClientBasicAuth(t *testing.T) {
 	}
 
 	gotAuth = ""
-	noAuth, err := newSDKClient(AgentConfig{BaseURL: srv.URL})
+	noAuth, err := newSDKClient(AgentConfig{BaseURL: srv.URL}, nil)
 	if err != nil {
 		t.Fatalf("newSDKClient no auth: %v", err)
 	}

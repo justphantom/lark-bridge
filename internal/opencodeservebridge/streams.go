@@ -58,6 +58,13 @@ func (a *Agent) streamFor(loc *oc.LocationRef) *oc.GlobalEventStream {
 		}
 	}
 	s, _ := a.client.NewGlobalEventStream(a.appCtx, loc)
+	// OnIdle 是兜底救援入口：业务事件流静默超 businessIdleTimeout 时，SDK
+	// 按订阅 sessionID 触发此回调。挂在这里而非 Run 路径，是因为一个 stream
+	// 服务同 directory 下多个 turn（不同 sessionID），回调里靠 turns map
+	// 反查具体 turn 上下文。
+	if s != nil {
+		s.OnIdle = a.handleOnIdle
+	}
 	a.streams[key] = &streamEntry{s: s, lastUsed: time.Now()}
 	return s
 }

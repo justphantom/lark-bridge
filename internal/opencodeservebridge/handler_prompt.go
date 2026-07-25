@@ -87,6 +87,18 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 
 	result := h.runOpencode(ctx, chatID, replyToID, opts, modelSpec)
 
+	// OnIdle rescue dedup: if the watchdog fired during the turn and
+	// emitted TypeResult via the rescue path, mark result.rescued so
+	// emitTerminal skips its default branch (no duplicate result). Also
+	// release the turnContext slot — the lookup+unregister pair must run
+	// after streamRun returns, since streamRun is what registered it.
+	if rt, ok := h.agent.(turnRegistry); ok && result.sessionID != "" {
+		if t := rt.LookupTurn(result.sessionID); t != nil && t.rescued.Load() {
+			result.rescued = true
+		}
+		rt.UnregisterTurn(result.sessionID)
+	}
+
 	h.recordUsage(chatID, result)
 	h.emitTerminal(ctx, chatID, replyToID, result)
 }
@@ -135,6 +147,13 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 	defer cancel()
 
 	switch {
+	case result.rescued:
+		// OnIdle rescue already emitted TypeResult on the watchdog
+		// goroutine; sending a second result would duplicate the card.
+		// Logged at debug — the rescue path itself logs at info.
+		h.Logger.Debug("terminal skipped, turn already rescued",
+			log.FieldChatID, chatID,
+			log.FieldSessionID, result.sessionID)
 	case result.isCancelled:
 		title := "已取消"
 		msg := "本次请求已中止"
@@ -177,4 +196,38 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 			},
 		})
 	}
+}
+
+// handleRescue is the rescueSink the Handler injects into *Agent: when the
+// OnIdle watchdog recovers a final reply from the serve history, this emits
+// TypeResult on the watchdog goroutine. Mirrors emitTerminal's default
+// branch but is independent of promptResult — the turn's usage breakdown is
+// not available here (the rescue fires before streamRun's terminal step
+// arrives), so token/cost fields stay zero on the rescue card.
+//
+// The ctx carried in is the rescueTimeout-bounded context used for the
+// preceding ListMessages; by then most of the budget may be spent, so a
+// fresh cancelNoticeTimeout context is used for emit (matching emitTerminal
+// — the prompt ctx is typically already cancelled when rescue fires, that
+// is the scenario OnIdle exists for). reply is the raw FinalText;
+// StripThinking matches the normal result path so a leading "> ..." thinking
+// block does not surface on the card.
+func (h *Handler) handleRescue(_ context.Context, turn *turnContext, reply, modelSpec string) {
+	sendCtx, cancel := context.WithTimeout(context.Background(), cancelNoticeTimeout)
+	defer cancel()
+	text := bridgebase.StripThinking(reply, "> ")
+	h.Logger.Info("OnIdle rescue: emit recovered reply",
+		log.FieldChatID, turn.chatID,
+		log.FieldSessionID, turn.sessionID,
+		"reply_len", len(text),
+		"reply_preview", truncateForDebug(text, h.debugRedact()))
+	h.emitLogged(sendCtx, turn.replyToID, turn.chatID, &protocol.Control{
+		Type:   protocol.TypeResult,
+		ChatID: turn.chatID,
+		Result: &protocol.ResultPayload{
+			Text:      text,
+			Model:     resolveModel("", modelSpec),
+			SessionID: turn.sessionID,
+		},
+	})
 }

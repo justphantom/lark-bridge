@@ -9,6 +9,7 @@ import (
 	oc "github.com/justphantom/opencode-go-sdk-lite"
 
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -140,5 +141,51 @@ func TestRunPromptRecoversPanic(t *testing.T) {
 
 	if !strings.Contains(logBuf.String(), "panic in runPrompt") {
 		t.Errorf("expected panic logged, got:\n%s", logBuf.String())
+	}
+}
+
+// TestEmitTerminal_RescuedSkipsDefault pins the OnIdle-rescue dedup branch:
+// when promptResult.rescued is true (the watchdog goroutine already emitted
+// TypeResult via handleRescue), emitTerminal must NOT take its default
+// branch — otherwise the user sees a duplicate result card for one turn.
+// The reverse assertion (rescued=false with a reply does emit TypeResult)
+// guards against the branch silently atrophying into an unconditional skip.
+//
+// emitTerminal uses synchronous emitLogged (not EmitAsync), so by the time
+// it returns the IPC round-trip is complete and the captured control is
+// observable without a wait.
+func TestEmitTerminal_RescuedSkipsDefault(t *testing.T) {
+	h, _, captured := newWireHandler(t, closedStreamOpencode{})
+
+	// rescued=true: rescue path already produced the card; emitTerminal
+	// must skip its default branch and emit nothing.
+	h.emitTerminal(context.Background(), "chat-rescued", "msg-rescued", promptResult{
+		rescued:   true,
+		sessionID: "sess-rescued",
+	})
+	if ctrl := captured.find(func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeResult && c.ChatID == "chat-rescued"
+	}); ctrl != nil {
+		t.Errorf("emitTerminal emitted TypeResult despite rescued=true: %+v", ctrl)
+	}
+
+	// Reverse: rescued=false + reply → default branch fires TypeResult.
+	h.emitTerminal(context.Background(), "chat-normal", "msg-normal", promptResult{
+		rescued:   false,
+		reply:     "answer",
+		sessionID: "sess-normal",
+		model:     "p/m",
+	})
+	ctrl := captured.waitFor(t, func(c *protocol.Control) bool {
+		return c.Type == protocol.TypeResult && c.ChatID == "chat-normal"
+	}, 2*time.Second)
+	if ctrl == nil {
+		t.Fatal("default branch did not emit TypeResult for rescued=false")
+	}
+	if ctrl.Result == nil {
+		t.Fatal("Result payload nil")
+	}
+	if ctrl.Result.Text != "answer" {
+		t.Errorf("Result.Text = %q, want 'answer'", ctrl.Result.Text)
 	}
 }

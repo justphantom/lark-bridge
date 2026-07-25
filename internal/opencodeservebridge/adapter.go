@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,12 +22,18 @@ const readyTimeout = 10 * time.Second
 
 // newSDKClient builds the SDK client, attaching HTTP Basic auth when either
 // Username or Password is set (opencode serve only checks the password; the
-// username defaults to "opencode" server-side).
-func newSDKClient(cfg AgentConfig) (*oc.Client, error) {
-	if cfg.Username == "" && cfg.Password == "" {
-		return oc.New(cfg.BaseURL)
+// username defaults to "opencode" server-side). logger, when non-nil, is
+// injected via oc.WithLogger so the SDK's connect/dispatch/watchdog logs
+// flow into the bridge's component logger instead of the SDK's no-op default.
+func newSDKClient(cfg AgentConfig, logger *slog.Logger) (*oc.Client, error) {
+	opts := []oc.Option{}
+	if cfg.Username != "" || cfg.Password != "" {
+		opts = append(opts, oc.WithBasicAuth(cfg.Username, cfg.Password))
 	}
-	return oc.New(cfg.BaseURL, oc.WithBasicAuth(cfg.Username, cfg.Password))
+	if logger != nil {
+		opts = append(opts, oc.WithLogger(logger))
+	}
+	return oc.New(cfg.BaseURL, opts...)
 }
 
 // listCacheTTLDefault is used when Config.ListCacheTTL is non-positive. The
@@ -96,6 +103,11 @@ type Agent struct {
 	listMu      sync.Mutex
 	modelsCache *listCache
 	agentsCache *listCache
+
+	// turnState holds the OnIdle rescue registry; see turn_registry.go.
+	// Embedded so RegisterTurn/LookupTurn/SetRescueSink/handleOnIdle stay
+	// methods on *Agent via field promotion.
+	turnState
 }
 
 // streamEntry pairs a pooled SDK stream with the last time it was handed
@@ -126,7 +138,7 @@ func NewAgent(appCtx context.Context, cfg AgentConfig, logger *log.Logger) (*Age
 	if cfg.BaseURL == "" {
 		return nil, errors.New("opencodeserve: base_url is empty")
 	}
-	client, err := newSDKClient(cfg)
+	client, err := newSDKClient(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("opencodeserve: build sdk client: %w", err)
 	}
@@ -139,13 +151,16 @@ func NewAgent(appCtx context.Context, cfg AgentConfig, logger *log.Logger) (*Age
 		maxStreams = defaultMaxStreams
 	}
 	return &Agent{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		client:    client,
-		logger:    logger,
-		appCtx:    appCtx,
-		sem:       make(chan struct{}, n),
-		streams:   make(map[string]*streamEntry),
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		client:     client,
+		logger:     logger,
+		appCtx:     appCtx,
+		sem:        make(chan struct{}, n),
+		streams:    make(map[string]*streamEntry),
 		maxStreams: maxStreams,
+		turnState: turnState{
+			turns: make(map[string]*turnContext),
+		},
 	}, nil
 }
 

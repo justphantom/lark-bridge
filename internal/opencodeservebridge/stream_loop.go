@@ -58,6 +58,17 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			if _, ok := h.Router.Lookup(chatID); ok {
 				h.Router.SetSessionID(chatID, sessionID)
 			}
+			// 登记 turn 上下文：OnIdle 回调签名只带 sessionID，靠这张表反查
+			// (chatID, replyToID, modelSpec) 才能在 watchdog 线程上重组
+			// TypeResult。Agent 不实现 turnRegistry 时（测试 fake）跳过。
+			if rt, ok := h.agent.(turnRegistry); ok {
+				rt.RegisterTurn(sessionID, &turnContext{
+					chatID:    chatID,
+					replyToID: promptID,
+					modelSpec: modelSpec,
+					sessionID: sessionID,
+				})
+			}
 		}
 
 		switch ev.Kind() {

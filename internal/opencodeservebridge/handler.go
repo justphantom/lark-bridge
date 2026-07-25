@@ -48,8 +48,13 @@ type HandlerConfig struct {
 
 // NewWithLogger builds a Handler. rpc is the backend IPC client used to
 // emit Control messages; logger is the main component logger.
+//
+// If api implements rescuable (production *Agent does), the Handler's
+// rescue emit path is auto-wired so the OnIdle watchdog can fire a
+// recovered TypeResult. Test fakes that don't implement rescuable get a
+// no-op rescue path.
 func NewWithLogger(r *router.Router, api opencodeAPI, rpc *backendrpc.Client, cfg HandlerConfig, logger *log.Logger) *Handler {
-	return &Handler{
+	h := &Handler{
 		Core: bridgebase.NewCore(r, rpc, bridgebase.CoreConfig{
 			DefaultDirectory: cfg.DefaultDirectory,
 			StateDir:         cfg.StateDir,
@@ -59,6 +64,10 @@ func NewWithLogger(r *router.Router, api opencodeAPI, rpc *backendrpc.Client, cf
 		}, logger),
 		agent: api,
 	}
+	if r, ok := api.(rescuable); ok {
+		r.SetRescueSink(h.handleRescue)
+	}
+	return h
 }
 
 // The lowercase wrappers below preserve the bridge's historical method names
