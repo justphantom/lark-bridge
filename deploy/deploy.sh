@@ -582,7 +582,9 @@ fi
 # shellcheck disable=SC2016
 sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/claude-config.json"
 # shellcheck disable=SC2016
-grep -Fq '"log_level":            "${LOG_LEVEL}"' "$STAGE/claude-config.json" \
+# Verify the log_level placeholder took effect. Use a regex so the assertion
+# is robust to whitespace alignment changes in the sed substitution above.
+grep -Eq '"log_level"[[:space:]]*:[[:space:]]*"\$\{LOG_LEVEL\}"' "$STAGE/claude-config.json" \
     || fail "log_level 占位符注入失败：$STAGE/claude-config.json 缺少 log_level 字段（注入锚点缺失）"
 
 # state_dir / ipc_addr / frontend_url 已在 config 模板里写成 ${STATE_DIR} / ${IPC_ADDR}
