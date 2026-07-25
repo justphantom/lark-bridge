@@ -223,22 +223,26 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	}
 	if requestID != "" {
 		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
+			// Pull orig AND delete in one critical section so a concurrent
+			// expireInteractive timer firing between two locks cannot
+			// observe a still-present entry, render Expired, and race our
+			// Submitted — yielding an unpredictable card order. With the
+			// delete folded in, whoever Locks first wins; the latecomer
+			// sees orig == nil and no-ops. Equivalent to a per-card
+			// sync.Once but cheaper (no extra alloc per interactive).
 			d.cardMu.Lock()
 			orig := d.cards[requestID]
 			if t := d.interactiveTimers[requestID]; t != nil {
 				t.Stop()
 				delete(d.interactiveTimers, requestID)
 			}
+			delete(d.cards, requestID)
 			d.cardMu.Unlock()
 			if orig != nil {
 				if sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action)); err == nil {
 					_ = d.bot.UpdateCard(ctx, messageID, sub)
 				}
 			}
-			// The card has been submitted; the entry is no longer needed.
-			d.cardMu.Lock()
-			delete(d.cards, requestID)
-			d.cardMu.Unlock()
 			d.turns.UnbindInteractive(requestID)
 		}
 	}
