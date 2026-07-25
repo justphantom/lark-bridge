@@ -128,6 +128,33 @@ func (h *Handler) handleQuestionAsked(ctx context.Context, chatID, promptID stri
 	rctx, cancel := context.WithTimeout(context.Background(), interactiveOpTimeout)
 	defer cancel()
 	directory := h.directoryOf(chatID)
+	// Multi-question + custom-input rejection: opencode's question card lets
+	// the user type a free-form value alongside the option dropdowns, but a
+	// single Custom string cannot map to multiple questions unambiguously.
+	// Mapping to answers[0] silently drops the rest; rejecting with an
+	// explicit notice tells the user to pick options per question instead
+	// of re-submitting a custom value the bridge will keep refusing. The
+	// rare-batch path (opencode's question tool almost always asks one at a
+	// time) is preserved: single-question + Custom still works as before.
+	if ans != nil && ans.Custom != "" && len(q.Questions) > 1 {
+		h.emitAsync(promptID, &protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: chatID,
+			Notice: &protocol.NoticePayload{
+				Level:           "warning",
+				Title:           "不支持批量自定义",
+				Message:         "本次提问包含多个问题，自定义输入仅支持单个问题场景。请逐个选择 option 后重新提交。",
+				UpdateMessageID: ans.MessageID,
+			},
+		})
+		if err := h.agent.RejectQuestion(rctx, q.ID, directory); err != nil {
+			h.Logger.Warn("reject question (multi+custom) failed",
+				log.FieldChatID, chatID,
+				log.FieldSessionID, q.ID,
+				log.FieldError, err)
+		}
+		return
+	}
 	reply, ok := questionReplyFromAnswer(q, ans)
 	var err error
 	if !ok {
@@ -182,6 +209,10 @@ func (h *Handler) directoryOf(chatID string) string {
 // convention); custom input answers the first question (opencode's question
 // tool rarely batches, and per-question custom mapping is ambiguous).
 // ok=false means the answer is incomplete and the request should be rejected.
+//
+// Multi-question + Custom is intercepted by the caller (handleQuestionAsked)
+// before this function runs, so the len(answers)>1 && Custom!="" branch
+// below is exercised only on the single-question path it was designed for.
 func questionReplyFromAnswer(q *oc.QuestionAskedData, ans *protocol.AnswerPayload) (*oc.QuestionReply, bool) {
 	if ans == nil {
 		return nil, false

@@ -189,6 +189,40 @@ func TestHandleQuestionAsked_RepliesWithDirectory(t *testing.T) {
 	}
 }
 
+// TestHandleQuestionAsked_MultiQuestionCustomRejected pins P2-15: when the
+// user submits a Custom value alongside multiple questions, the bridge
+// rejects server-side and surfaces a notice instead of silently mapping
+// the custom text to answers[0] and dropping the rest. The notice wording
+// is asserted by the parallel capture test in commands_interactive_test.go;
+// here we only pin the reject path.
+func TestHandleQuestionAsked_MultiQuestionCustomRejected(t *testing.T) {
+	agent := newRecordingAgent()
+	h, _ := newPickerHandlerWithAgent(t, agent)
+	q := &oc.QuestionAskedData{
+		ID:        "q-multi",
+		SessionID: "s1",
+		Questions: []oc.QuestionInfo{
+			{Question: "选模型", Options: []oc.QuestionOption{{Label: "a"}}},
+			{Question: "选文件", Options: []oc.QuestionOption{{Label: "x"}}},
+		},
+	}
+
+	go h.handleQuestionAsked(context.Background(), "c1", "p1", q)
+	waitPending(t, h, 2*time.Second)
+	// User typed a custom value instead of picking options for both
+	// questions. Single-question + Custom still maps (separate test); the
+	// multi-question path must reject to avoid silent partial answers.
+	h.Answers.Deliver("q-multi", &protocol.AnswerPayload{Custom: "do the thing"})
+
+	call := waitCall(t, agent)
+	if call.kind != "reject" {
+		t.Errorf("call = %+v, want kind=reject for multi-question + custom", call)
+	}
+	if call.requestID != "q-multi" {
+		t.Errorf("requestID = %q, want q-multi", call.requestID)
+	}
+}
+
 // TestHandlePermissionAsked_RepliesWithDirectory is the permission analogue
 // of the question directory test above.
 func TestHandlePermissionAsked_RepliesWithDirectory(t *testing.T) {
