@@ -106,25 +106,25 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			accCacheRead += ev.CacheRead()
 			accCacheWrite += ev.CacheWrite()
 			accCost += ev.Cost()
-	case oc.HighEventText:
-		text.WriteString(ev.Text())
-	case oc.HighEventThinking:
-		// Streaming reasoning delta: forward as an append (Replace=false).
-		// The renderer accumulates and shows it live under the progress
-		// card's thinking zone, debounced with the rest of the frame.
-		h.emitAsync(promptID, &protocol.Control{
-			Type:     protocol.TypeThinking,
-			Thinking: &protocol.ThinkingPayload{Delta: ev.Text()},
-		})
-	case oc.HighEventThinkingDone:
-		// Part-end authoritative frame: the server reconciled the full
-		// reasoning text for this part. Replace=true tells the renderer to
-		// reset its buffer to this snapshot, so a dropped/out-of-order delta
-		// earlier in the part self-heals instead of accumulating garbage.
-		h.emitAsync(promptID, &protocol.Control{
-			Type:     protocol.TypeThinking,
-			Thinking: &protocol.ThinkingPayload{Delta: ev.Text(), Replace: true},
-		})
+		case oc.HighEventText:
+			text.WriteString(ev.Text())
+		case oc.HighEventThinking:
+			// Streaming reasoning delta: forward as an append (Replace=false).
+			// The renderer accumulates and shows it live under the progress
+			// card's thinking zone, debounced with the rest of the frame.
+			h.emitAsync(promptID, &protocol.Control{
+				Type:     protocol.TypeThinking,
+				Thinking: &protocol.ThinkingPayload{Delta: ev.Text()},
+			})
+		case oc.HighEventThinkingDone:
+			// Part-end authoritative frame: the server reconciled the full
+			// reasoning text for this part. Replace=true tells the renderer to
+			// reset its buffer to this snapshot, so a dropped/out-of-order delta
+			// earlier in the part self-heals instead of accumulating garbage.
+			h.emitAsync(promptID, &protocol.Control{
+				Type:     protocol.TypeThinking,
+				Thinking: &protocol.ThinkingPayload{Delta: ev.Text(), Replace: true},
+			})
 		case oc.HighEventToolUse:
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
@@ -176,21 +176,21 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					Todo: &protocol.TodoPayload{Todos: items},
 				})
 			}
-	case oc.HighEventResult:
-		// ev.Result() carries the final reply verbatim; only fall back to
-		// the accumulated text when it is empty (StripThinking then mines
-		// accText for a > -prefixed thinking block). Skipping text.String()
-		// when Result is non-empty avoids cloning the full turn's worth of
-		// streamed text into a fresh string right before the function
-		// returns — without this, peak memory at the result boundary is
-		// 2× the reply size (Builder buffer + cloned accText), which a
-		// long multi-step turn can push into multiple MiB.
-		var accText string
-		if ev.Result() == "" {
-			accText = text.String()
-		}
-		return h.finalizeResult(ev, accText, sessionID, modelSpec, chatID, stepCount, startTime,
-			accInput, accOutput, accCacheRead, accCacheWrite, accCost)
+		case oc.HighEventResult:
+			// ev.Result() carries the final reply verbatim; only fall back to
+			// the accumulated text when it is empty (StripThinking then mines
+			// accText for a > -prefixed thinking block). Skipping text.String()
+			// when Result is non-empty avoids cloning the full turn's worth of
+			// streamed text into a fresh string right before the function
+			// returns — without this, peak memory at the result boundary is
+			// 2× the reply size (Builder buffer + cloned accText), which a
+			// long multi-step turn can push into multiple MiB.
+			var accText string
+			if ev.Result() == "" {
+				accText = text.String()
+			}
+			return h.finalizeResult(ev, accText, sessionID, modelSpec, chatID, stepCount, startTime,
+				accInput, accOutput, accCacheRead, accCacheWrite, accCost)
 		case oc.HighEventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,

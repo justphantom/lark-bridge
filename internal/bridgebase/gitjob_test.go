@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,7 +310,6 @@ func TestNewGitRunner_Defaults(t *testing.T) {
 		t.Error("nil logger should be replaced with no-op")
 	}
 	// Sanity: logger.Info must not panic on the rejection path.
-	var blocked atomic.Bool
 	// First fire grabs the slot but blocks, second hits the busy path.
 	blockCmd := &recordingCommander{release: make(chan struct{})}
 	r.cmd = blockCmd
@@ -320,6 +318,4 @@ func TestNewGitRunner_Defaults(t *testing.T) {
 	waitForCount(t, blockCmd, 1)
 	r.AcquireAndRun("c", "/r", []string{"push"}, "推送", notices.fn) // logs "rejected"
 	close(blockCmd.release)
-	if !blocked.CompareAndSwap(false, false) { // touch to silence unused
-	}
 }

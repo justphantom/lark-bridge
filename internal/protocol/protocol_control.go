@@ -141,8 +141,8 @@ type ProgressPayload struct {
 // (the action under permission, or the picked choice on answer), NOT a
 // pre-formatted line — the renderer owns presentation.
 type GateInfo struct {
-	State   string `json:"state"`             // waiting|answered|denied
-	Kind    string `json:"kind,omitempty"`    // permission|question
+	State   string `json:"state"`          // waiting|answered|denied
+	Kind    string `json:"kind,omitempty"` // permission|question
 	Summary string `json:"summary,omitempty"`
 }
 
@@ -194,9 +194,9 @@ type QuestionItem struct {
 // one that does not (older frontends) falls back to Message. Callers should
 // keep Message populated for that fallback.
 type PermissionPayload struct {
-	RequestID string             `json:"requestID"`
-	PromptID  string             `json:"promptID"`
-	Message   string             `json:"message,omitempty"`
+	RequestID string `json:"requestID"`
+	PromptID  string `json:"promptID"`
+	Message   string `json:"message,omitempty"`
 	// Type is the permission category (Bash/Write/Edit/...), rendered as a
 	// bold badge above the title.
 	Type string `json:"type,omitempty"`
@@ -207,7 +207,7 @@ type PermissionPayload struct {
 	// Detail is the full text (patterns, full command) shown in a code block
 	// under the title. Optional; when equal to Title the renderer omits the
 	// duplicate block.
-	Detail string `json:"detail,omitempty"`
+	Detail  string             `json:"detail,omitempty"`
 	Options []PermissionOption `json:"options"`
 	// TakeOverProgress mirrors QuestionPayload: a slash-command picker morphs
 	// the progress card; a mid-turn permission gate ships standalone.

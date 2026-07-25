@@ -47,7 +47,7 @@ func (h *Handler) confirmAndDeployForce(ctx context.Context, chatID, promptID st
 		h.answers.Cancel(requestID)
 		return err
 	}
-	go h.awaitForceConfirm(chatID, promptID, ch)
+	go h.awaitForceConfirm(chatID, promptID, ch) //nolint:gosec // G118: the wait must outlive the triggering request's ctx
 	return nil
 }
 

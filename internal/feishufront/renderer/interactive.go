@@ -53,14 +53,14 @@ func RenderQuestion(ctrl *protocol.Control, header cardkit.HeaderInfo, footer ca
 	if shown > maxQuestions {
 		shown = maxQuestions
 	}
-	for idx := 0; idx < shown; idx++ {
+	for idx := range shown {
 		item := q.Questions[idx]
 		formElems = append(formElems, cardkit.MarkdownElement("**"+truncateRunes(item.Label, maxInteractiveBodyRunes)+"**"))
 		opts, omitted := capOptions(item.Options, maxQuestionOptionRunes)
 		formElems = append(formElems, cardkit.SelectStaticElement(
 			fmt.Sprintf("q_%d", idx), "请选择", opts, item.Multiple))
 		if omitted > 0 {
-			formElems = append(formElems, cardkit.MarkdownElement("…共 " + strconv.Itoa(omitted) + " 项已省略"))
+			formElems = append(formElems, cardkit.MarkdownElement("…共 "+strconv.Itoa(omitted)+" 项已省略"))
 		}
 		if item.Custom {
 			formElems = append(formElems, cardkit.InputElement(

@@ -118,7 +118,8 @@ func (r *GitRunner) runJob(chatID, dir string, args []string, label string, noti
 // concurrent first-use; the occasional wasted &sync.Mutex{} is GC'd.
 func (r *GitRunner) slot(chatID string) *sync.Mutex {
 	v, _ := r.slots.LoadOrStore(chatID, &sync.Mutex{})
-	return v.(*sync.Mutex)
+	mu, _ := v.(*sync.Mutex)
+	return mu
 }
 
 func gitLabel(args []string) string {

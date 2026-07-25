@@ -73,8 +73,8 @@ type limitedWriter struct {
 	max int
 }
 
-func newLimitedWriter(max int) *limitedWriter {
-	return &limitedWriter{max: max}
+func newLimitedWriter(limit int) *limitedWriter {
+	return &limitedWriter{max: limit}
 }
 
 func (w *limitedWriter) Write(p []byte) (int, error) {

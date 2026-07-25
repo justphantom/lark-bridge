@@ -69,14 +69,20 @@ const defaultMaxStreams = 8
 // each Run is one SDK Run (CreateSession or resume + Prompt + pump) on its
 // directory's stream. Safe for concurrent use.
 type Agent struct {
+	// turnState holds the OnIdle rescue registry; see turn_registry.go.
+	// Embedded so RegisterTurn/LookupTurn/SetRescueSink/handleOnIdle stay
+	// methods on *Agent via field promotion. Listed first per the embedded
+	// field ordering convention.
+	turnState
+
 	baseURL string
 	client  *oc.Client
 	logger  *log.Logger
 	appCtx  context.Context
 	sem     chan struct{}
 
-	streamsMu sync.Mutex
-	streams   map[string]*streamEntry
+	streamsMu  sync.Mutex
+	streams    map[string]*streamEntry
 	maxStreams int
 
 	// closed gates stream creation after Close: without it, a streamFor
@@ -89,11 +95,6 @@ type Agent struct {
 	listMu      sync.Mutex
 	modelsCache *listCache
 	agentsCache *listCache
-
-	// turnState holds the OnIdle rescue registry; see turn_registry.go.
-	// Embedded so RegisterTurn/LookupTurn/SetRescueSink/handleOnIdle stay
-	// methods on *Agent via field promotion.
-	turnState
 }
 
 // streamEntry pairs a pooled SDK stream with the last time it was handed
@@ -274,4 +275,3 @@ func parseModelSpec(spec string) (oc.ModelRef, error) {
 	}
 	return oc.ModelRef{ProviderID: spec[:idx], ID: spec[idx+1:]}, nil
 }
-

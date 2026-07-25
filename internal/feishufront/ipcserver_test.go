@@ -508,7 +508,7 @@ func TestMarkOffline_ResetsAtCap(t *testing.T) {
 	srv := NewIPCServer(reg, "")
 
 	// Fill past the cap; each markOffline past the cap should trigger a reset.
-	for i := 0; i < maxWasOffline+5; i++ {
+	for i := range maxWasOffline + 5 {
 		srv.markOffline(fmt.Sprintf("backend-%d", i))
 	}
 
