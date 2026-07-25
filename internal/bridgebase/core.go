@@ -206,6 +206,9 @@ func (c *Core) EmitCardUpdateLogged(chatID, messageID, level, title, body string
 	}
 }
 
+// EmitPromptNotice and RunGitJob (the shared /pull /push spine) live in
+// git_job.go — centralised copies of what every bridge used to duplicate.
+
 // EmitAsync sends a Control in a background goroutine (fire-and-forget) so
 // the stream loop never blocks on IPC latency. Each goroutine uses an
 // independent 5s context (not the prompt ctx); intermediate controls are

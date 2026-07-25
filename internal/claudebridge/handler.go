@@ -97,17 +97,7 @@ func (h *Handler) emitAsync(promptID string, ctrl *protocol.Control) {
 	h.EmitAsync(promptID, ctrl)
 }
 
-// emitPromptNotice emits a Notice bound to promptID (the command's triggering
-// message). The frontend terminates that message's progress card in place, so
-// a picker failure does not leave the "处理中" placeholder hanging next to a
-// standalone error card. Fire-and-forget on a fresh ctx: picker goroutines
-// outlive the dispatcher's command ctx.
+// emitPromptNotice delegates to Core.EmitPromptNotice (shared across bridges).
 func (h *Handler) emitPromptNotice(chatID, promptID, level, title, body string) {
-	ctx, cancel := context.WithTimeout(h.AppCtx, 10*time.Second)
-	defer cancel()
-	h.emitLogged(ctx, promptID, chatID, &protocol.Control{
-		Type:   protocol.TypeNotice,
-		ChatID: chatID,
-		Notice: &protocol.NoticePayload{Level: level, Title: title, Message: body},
-	})
+	h.EmitPromptNotice(chatID, promptID, level, title, body)
 }
