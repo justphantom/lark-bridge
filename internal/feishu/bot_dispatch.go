@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -44,7 +46,27 @@ func (b *Bot) handleP2MessageReceiveV1(ctx context.Context, event *larkimv1.P2Me
 		return nil
 	}
 
-	err = (*h)(ctx, incoming)
+	// Recover per inbound message: handleP2MessageReceiveV1 runs on the
+	// SDK's WS goroutine, and (*h) is dispatcher.DispatchIncoming which
+	// fans out into routing, prompt emission, command execution — any of
+	// which can panic on a malformed payload. Letting the panic escape
+	// either crashes the SDK's WS reader (silently dropping every later
+	// message) or gets swallowed by an SDK recover (the click silently
+	// no-ops); neither surfaces the failure. Catch it here, log, and
+	// promote to a returned error so the SDK still sees the failure.
+	err = func() (outErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.logger.Error("panic in incoming handler",
+					log.FieldChatID, incoming.ChatID,
+					log.FieldMessageID, incoming.MessageID,
+					log.FieldPanic, r,
+					log.FieldStack, string(debug.Stack()))
+				outErr = fmt.Errorf("incoming handler panic: %v", r)
+			}
+		}()
+		return (*h)(ctx, incoming)
+	}()
 	duration := time.Since(start)
 	if err != nil {
 		b.logger.Error("message handling failed",

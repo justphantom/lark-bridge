@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -162,15 +163,29 @@ func run(cfgPath, addr string) error {
 	go ipc.StartHealthCheck(ctx, healthInterval, time.Duration(cfg.Timeouts.BackendHealth))
 
 	// Control pump: drain registry.Controls() and dispatch each.
+	// Recover per-message so a panic in DispatchControl (nil deref, slice
+	// bounds, map concurrent write in updateProgress/sendResult/notice/…)
+	// cannot kill the pump goroutine — that would fill ctrlCh and 503 every
+	// later /v1/control POST, freezing every backend's card at its last frame.
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case rc := <-registry.Controls():
-				if err := dispatcher.DispatchControl(ctx, rc); err != nil {
-					logger.Error("dispatch control", "control_type", rc.Control.Type, log.FieldError, err)
-				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("panic in control dispatch",
+								"control_type", rc.Control.Type,
+								log.FieldPanic, r,
+								log.FieldStack, string(debug.Stack()))
+						}
+					}()
+					if err := dispatcher.DispatchControl(ctx, rc); err != nil {
+						logger.Error("dispatch control", "control_type", rc.Control.Type, log.FieldError, err)
+					}
+				}()
 			}
 		}
 	}()

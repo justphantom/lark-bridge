@@ -2,6 +2,8 @@ package feishu
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 
 	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -64,7 +66,23 @@ func (b *Bot) handleCardAction(ctx context.Context, ev *sdktypes.CardActionEvent
 		b.logger.Debug("drop card action: empty operator openid", "event_id", ev.EventID, log.FieldChatID, ev.ChatID)
 		return nil
 	}
-	return (*h)(ctx, buildCardAction(ev))
+	// Mirror handleP2MessageReceiveV1: DispatchCardAction fans out into
+	// permission/question/notice renderers and per-backend senders; a
+	// panic there must not escape into the SDK's WS goroutine (silent
+	// no-op or dropped reader).
+	return func() (outErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.logger.Error("panic in card action handler",
+					"event_id", ev.EventID,
+					log.FieldChatID, ev.ChatID,
+					log.FieldPanic, r,
+					log.FieldStack, string(debug.Stack()))
+				outErr = fmt.Errorf("card action handler panic: %v", r)
+			}
+		}()
+		return (*h)(ctx, buildCardAction(ev))
+	}()
 }
 
 func toLarkLogLevel(level string) larkcore.LogLevel {
