@@ -110,9 +110,12 @@ func newHandler(rpc controlSender, cmd Commander) *Handler {
 }
 
 func promptEvent(chatID, text string) *protocol.Event {
+	// PromptID is stamped so tests exercise the promptID-bound notice path
+	// (production events carry the frontend's message ID).
 	return &protocol.Event{
-		Type:   protocol.TypePrompt,
-		Prompt: &protocol.PromptPayload{ChatID: chatID, Text: text},
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-" + chatID,
+		Prompt:   &protocol.PromptPayload{ChatID: chatID, Text: text},
 	}
 }
 
@@ -125,10 +128,17 @@ func TestHandleEvent_DeployTriggersAndNotices(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	// Immediate "triggered" notice is sent synchronously.
+	// Immediate emit is now a non-terminal TypeProgress banner bound to the
+	// promptID (single-card lifecycle: no separate "triggered" card).
 	immediate := rpc.snapshot()
-	if len(immediate) != 1 || immediate[0].Notice.Level != "info" {
-		t.Fatalf("expected one immediate info notice, got %+v", immediate)
+	if len(immediate) != 1 || immediate[0].Type != protocol.TypeProgress {
+		t.Fatalf("expected one immediate TypeProgress banner, got %+v", immediate)
+	}
+	if immediate[0].PromptID != "msg-c1" {
+		t.Errorf("banner PromptID = %q, want msg-c1", immediate[0].PromptID)
+	}
+	if immediate[0].Progress == nil || !strings.Contains(immediate[0].Progress.Description, "部署") {
+		t.Errorf("banner description = %+v, want contains '部署'", immediate[0].Progress)
 	}
 
 	// Terminal notice arrives after the async deploy; poll up to 1s.
@@ -143,6 +153,12 @@ func TestHandleEvent_DeployTriggersAndNotices(t *testing.T) {
 
 	all := rpc.snapshot()
 	terminal := all[len(all)-1]
+	if terminal.Type != protocol.TypeNotice {
+		t.Fatalf("terminal want TypeNotice, got %s", terminal.Type)
+	}
+	if terminal.PromptID != "msg-c1" {
+		t.Errorf("terminal PromptID = %q, want msg-c1 (must bind to patch card in place)", terminal.PromptID)
+	}
 	if terminal.ChatID != "c1" || terminal.Notice.Level != "success" {
 		t.Errorf("terminal notice want c1/success, got %s/%s",
 			terminal.ChatID, terminal.Notice.Level)
