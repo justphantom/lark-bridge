@@ -54,20 +54,20 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 ## 部署
 
 ```bash
-make deploy                              # 构建 + 安装 4 个业务 systemd 服务（不含 opencode-serve）
+make deploy                              # 构建 + 安装 5 个业务 systemd 服务（默认含 opencode-serve，serve 进程未就绪则自动剔除）
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services opencode-serve  # 单独部署 opencode-serve-back（前置：用户已启动 `opencode serve`）
 make upgrade-monitor                     # 单独升级 deploy-monitor（~2s 离线）
 make upgrade-monitor ARGS=--init
 ```
 
-opencode-serve-back 默认不入全量部署（要求外部 `opencode serve --port 4096 --hostname 127.0.0.1` 已就绪）。运维准备好 serve 进程后，用 `--services opencode-serve` 显式启用。
+opencode-serve-back 在 `make deploy` 全量部署中，但 deploy.sh 启动前会探测 `opencode serve --port 4096 --hostname 127.0.0.1` 是否就绪；不就绪则自动剔除并告警。若要事后单独部署，用 `--services opencode-serve`。
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 
 ## 目录约定
 
 - `cmd/`：6 个二进制的入口（feishu-front、claude-back、opencode-back、opencode-serve-back、miniagent-back、deploy-monitor）。
-- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `opencodeserve` `opencodeservebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
+- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `opencodeservebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

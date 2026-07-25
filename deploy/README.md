@@ -5,15 +5,16 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-        ┌───────────┬───────────┬──────────────┐    ┌──────────────┐
-   claude-back  opencode-back  miniagent-back      deploy-monitor
-   (Claude CLI) (opencode CLI) (LLM API 直调)      (make deploy)
-                                                    ↑ 独立部署
+   ┌──────────┬──────────┬────────────────────┬──────────────┐    ┌──────────────┐
+ claude-back opencode-back opencode-serve-back  miniagent-back    deploy-monitor
+ (Claude CLI)(opencode CLI)(opencode serve HTTP)(LLM API 直调)    (make deploy)
+                                                                   ↑ 独立部署
 ```
 
-前端 feishu-front + 三个 agent 后端（claude/opencode/miniagent）由 `make deploy`
-管理（4 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**（`make
-upgrade-monitor`），避免「部署脚本管自己的触发者」循环依赖。
+前端 feishu-front + 四个 agent 后端（claude/opencode/opencode-serve/miniagent）由 `make deploy`
+管理（默认 5 个 systemd 服务；opencode-serve-back 在外部 `opencode serve` 进程未就绪时被
+自动剔除）。deploy-monitor 是部署触发者，**独立管理**（`make upgrade-monitor`），避免
+「部署脚本管自己的触发者」循环依赖。
 
 ## 前置条件
 
@@ -29,10 +30,11 @@ upgrade-monitor`），避免「部署脚本管自己的触发者」循环依赖�
 
 ```bash
 make build
-# 产物：bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#       bin/lark-miniagent-back, bin/miniagent（deploy-monitor 由 upgrade-monitor.sh 单独构建）
-# miniagent 是 miniagent-back 的子进程：每个 prompt fork 一次，跑完退出。
-# 类比 claude CLI 被 claude-back fork 的模式。
+# 产物（6 个二进制）：
+#   bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
+#   bin/lark-opencode-serve-back, bin/lark-miniagent-back, bin/lark-deploy-monitor。
+# miniagent 是 miniagent-back fork 的子进程（独立项目，不在本仓库 make build 范围内）：
+# 每个 prompt fork 一次，跑完退出。类比 claude CLI 被 claude-back fork 的模式。
 ```
 
 ## 2. 准备配置
@@ -49,9 +51,15 @@ cp config.example.json claude-config.json
 # feishu/opencode 各自再复制一份（或直接共用 claude-config.json）
 
 # 方式 B：分文件（deploy/ 下的示例模板）
-# deploy/feishu-config.json   — 飞书凭证 + ipc_secret + state_dir
-# deploy/claude-config.json   — backend_id + frontend_url + claude 配置
-# deploy/opencode-config.json — backend_id + frontend_url + opencode 配置
+# deploy/feishu-config.json         — 飞书凭证 + ipc_secret + state_dir
+# deploy/claude-config.json         — backend_id + frontend_url + claude 配置
+# deploy/opencode-config.json       — backend_id + frontend_url + opencode 配置
+# deploy/opencode-serve-config.json — backend_id + frontend_url + opencode_serve 配置
+#
+# ⚠️ 重要：deploy/*.json 仅用于手动启动模式（./bin/lark-xxx -config deploy/xxx.json）。
+# deploy.sh 流程不读取这些文件——配置真源优先级为：repo 根 <service>-config.json
+# → config.example.json → tarball 解包的 example，再派生 STAGE 副本。
+# 在 deploy/*.json 上做修改期望 deploy.sh 流程生效，会导致「已改未生效」陷阱。
 ```
 
 ## 3. 创建 state 目录
@@ -182,7 +190,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-opencode-serve-back lark-miniagent-back
 ```
 
 ## 6.5. deploy-monitor 部署（独立）
@@ -221,7 +229,7 @@ journalctl -u lark-miniagent-back -f
 deploy.sh 支持三种正交维度，组合使用：
 
 - `--binaries <tar|dir>`：从已编译产物部署，目标机无需 Go/repo。
-- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode miniagent`）。
+- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode opencode-serve miniagent`）。
 - `--init` / `--force`：首次生成配置 / 跳过运行中会话检查。
 
 ### 8.1 打包分发（编译与部署解耦）
@@ -230,7 +238,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 6 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机

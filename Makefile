@@ -1,13 +1,13 @@
 # lark-bridge build and test entry points.
 #
 # Targets:
-#   build       compile the five binaries into bin/ (version-stamped)
+#   build       compile the six binaries into bin/ (version-stamped)
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
 #   test        build-check + vet + go test -race ./...
 #   deploy      build, then install as systemd services via deploy/deploy.sh
-#   pack        build all five binaries and bundle into a distributable tarball
+#   pack        build all six binaries and bundle into a distributable tarball
 #               (bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz); cross-compile via
 #               GOOS=/GOARCH= on the command line
 #   clean       rm -rf bin/
@@ -22,7 +22,7 @@
 
 .PHONY: build build-check test vet fmt clean deploy upgrade-monitor pack
 
-# Default to `build` so a bare `make` produces the five binaries.
+# Default to `build` so a bare `make` produces the six binaries.
 .DEFAULT_GOAL := build
 
 # VERSION is the short commit hash (dirty-suffixed when the worktree has
@@ -35,7 +35,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
-# build-check compiles every package (not just the five cmds) so a syntax/type
+# build-check compiles every package (not just the six cmds) so a syntax/type
 # error in an internal package fails fast instead of surfacing only under test.
 build-check:
 	go build ./...
@@ -49,7 +49,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
-# pack 交叉编译五个二进制 + VERSION 标记，打成一个可分发的 tarball。
+# pack 交叉编译六个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
 # 输出 bin/lark-bridge-<version>-<goos>-<goarch>.tar.gz，解包后顶层即各二进制。
 pack:
@@ -84,9 +84,10 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
-# Note: deploy.sh only manages the 4 business services. lark-deploy-monitor
-# is managed independently by upgrade-monitor.sh (it triggers deploy, so
-# self-managing would be a circular dependency).
+# Note: deploy.sh manages the 5 business services (feishu / claude / opencode
+# / opencode-serve / miniagent). lark-deploy-monitor is managed independently
+# by upgrade-monitor.sh (it triggers deploy, so self-managing would be a
+# circular dependency).
 deploy:
 	./deploy/deploy.sh $(ARGS)
 
