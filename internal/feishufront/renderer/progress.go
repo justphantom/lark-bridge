@@ -320,11 +320,12 @@ func appendZones(zones []cardkit.Element) []cardkit.Element {
 	return out
 }
 
-// maxThinkingRunes caps the reasoning shown on the progress card. Reasoning
-// blocks run to thousands of tokens; the progress card is a live dashboard,
-// not a reading surface, so only the trailing window is useful while the model
-// works. The full reasoning remains in the session for later review.
-const maxThinkingRunes = 400
+// maxThinkingRunes caps the reasoning shown on the progress card. The card is
+// a live dashboard: only the trailing ~50 runes of the model's current
+// reasoning are useful as a "what it's doing right now" hint, not a reading
+// surface — showing more crowds the action zones without adding value. The
+// full reasoning stays in the session for later review.
+const maxThinkingRunes = 50
 
 // renderThinkingZone returns the reasoning zone element, or nil when thinking
 // is empty. The body is grey-dimmed markdown under a "💭 思考中" header, capped
