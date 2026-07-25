@@ -80,13 +80,55 @@ func (e *Event) Validate() error {
 
 // controlRule describes the per-type validation for Control.Validate. The
 // payloadIsNil predicate checks that the matching payload field is present,
-// payloadName names that field for the error message, and needsChatID flags
+// payloadName names that field for the error message, needsChatID flags
 // controls that must carry a destination chatID even when sent as standalone
-// cards.
+// cards, and extraCheck runs type-specific semantic validation (enum fields
+// like todo.status or notice.level) after the structural checks pass.
 type controlRule struct {
 	payloadIsNil func(*Control) bool
 	payloadName  string
 	needsChatID  bool
+	extraCheck   func(*Control) error
+}
+
+// validTodoStatuses / validTodoPriorities / validNoticeLevels are the enum
+// sets referenced by field-level comments in protocol_control.go. Kept here
+// (next to the validator) so a contributor adding a new value updates the
+// comment and the validator in one place. Empty Priority is valid (omitempty
+// field), so it is checked as "either empty or in the set" rather than in.
+var (
+	validTodoStatuses   = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
+	validTodoPriorities = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
+	validNoticeLevels   = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
+)
+
+// validateTodo enumerates each Todo's Status and Priority against the enum
+// sets. opencode's SDK emits these literal strings, but a backend bug or a
+// future SDK schema change could ship an unknown value; failing here names
+// the offending field instead of letting the renderer silently drop the
+// row or render a placeholder status.
+func validateTodo(c *Control) error {
+	for _, t := range c.Todo.Todos {
+		if _, ok := validTodoStatuses[t.Status]; !ok {
+			return fmt.Errorf("todo.status %q must be one of pending/in_progress/completed/cancelled", t.Status)
+		}
+		if t.Priority != "" {
+			if _, ok := validTodoPriorities[t.Priority]; !ok {
+				return fmt.Errorf("todo.priority %q must be one of high/medium/low", t.Priority)
+			}
+		}
+	}
+	return nil
+}
+
+// validateNotice pins Notice.Level to the four levels the renderer's
+// noticeTemplate switch understands; an unknown level would fall through to
+// the default "grey" template, hiding the level the backend intended.
+func validateNotice(c *Control) error {
+	if _, ok := validNoticeLevels[c.Notice.Level]; !ok {
+		return fmt.Errorf("notice.level %q must be one of info/success/warning/error", c.Notice.Level)
+	}
+	return nil
 }
 
 // controlRules maps every allowed control type to its validation rule.
@@ -101,10 +143,10 @@ var controlRules = map[string]controlRule{
 	TypeResult:      {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
 	TypeError:       {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
 	TypeProgress:    {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress"},
-	TypeTodo:        {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo"},
+	TypeTodo:        {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo", extraCheck: validateTodo},
 	TypeQuestion:    {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
 	TypePermission:  {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},
-	TypeNotice:      {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true},
+	TypeNotice:      {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true, extraCheck: validateNotice},
 }
 
 // Validate checks Control consistency:
@@ -126,6 +168,11 @@ func (c *Control) Validate() error {
 	}
 	if rule.payloadIsNil(c) {
 		return fmt.Errorf("protocol: %s control requires %s payload", c.Type, rule.payloadName)
+	}
+	if rule.extraCheck != nil {
+		if err := rule.extraCheck(c); err != nil {
+			return err
+		}
 	}
 	if rule.needsChatID && c.ChatID == "" {
 		return fmt.Errorf("protocol: %s control requires chatID", c.Type)

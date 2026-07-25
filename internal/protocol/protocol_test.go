@@ -137,6 +137,11 @@ func TestControlValidate(t *testing.T) {
 		{"permission ok", &Control{Type: TypePermission, ChatID: "c1", Permission: &PermissionPayload{RequestID: "r", Options: []PermissionOption{{Label: "a", Value: "a"}}}}, false},
 		{"notice missing chatID", &Control{Type: TypeNotice, Notice: &NoticePayload{Level: "info", Title: "t"}}, true},
 		{"notice ok", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "info", Title: "t"}}, false},
+		{"notice bad level", &Control{Type: TypeNotice, ChatID: "c1", Notice: &NoticePayload{Level: "trace", Title: "t"}}, true},
+		{"todo ok", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "pending", Priority: "high"}}}}, false},
+		{"todo bad status", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "done"}}}}, true},
+		{"todo bad priority", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "pending", Priority: "urgent"}}}}, true},
+		{"todo empty priority ok", &Control{Type: TypeTodo, Todo: &TodoPayload{Todos: []TodoItem{{Content: "x", Status: "pending"}}}}, false},
 		{"unknown type", &Control{Type: "unknown"}, true},
 		// BackendID present but irrelevant to validation.
 		{"text with backendID ok", &Control{Type: TypeText, BackendID: "b", Text: &TextPayload{Delta: "x"}}, false},
