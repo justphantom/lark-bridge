@@ -207,7 +207,7 @@ func TestFormatToolLine_LongNameTruncated(t *testing.T) {
 func TestFormatToolLine_CountOutsideBudget(t *testing.T) {
 	s := NewProgressState()
 	exactDesc := strings.Repeat("d", maxToolDescLen)
-	for i := 0; i < 99; i++ {
+	for range 99 {
 		s.AddToolUse("read", exactDesc, false, "")
 	}
 	got := formatToolLine(s.tools[0])

@@ -62,7 +62,7 @@ func (h Headers) GetString(key string) string {
 func (h Headers) GetInt(key string) int {
 	v := h.GetString(key)
 	n := 0
-	for i := 0; i < len(v); i++ {
+	for i := range v {
 		c := v[i]
 		if c < '0' || c > '9' {
 			return 0
@@ -72,21 +72,20 @@ func (h Headers) GetInt(key string) int {
 	return n
 }
 
-// Add appends a key/value pair.
-func (h *Headers) Add(key, value string) {
-	*h = append(*h, Header{Key: key, Value: value})
+// appendHeader returns h with a new key/value pair appended. Functional form
+// avoids a pointer-receiver/value-receiver mix on the Headers slice type.
+func appendHeader(h Headers, key, value string) Headers {
+	return append(h, Header{Key: key, Value: value})
 }
 
 // NewPingFrame builds a control-frame ping (Method=control, type=ping) seeded
 // with the connection's service id. The server replies with a pong that may
 // carry an updated ClientConfig in its payload.
 func NewPingFrame(serviceID int32) *Frame {
-	hs := Headers{}
-	hs.Add(HeaderType, TypePing)
 	return &Frame{
 		Method:  MethodControl,
 		Service: serviceID,
-		Headers: hs,
+		Headers: Headers{{Key: HeaderType, Value: TypePing}},
 	}
 }
 
@@ -118,10 +117,12 @@ func (f *Frame) Marshal() ([]byte, error) {
 	// Field 2: LogID (varint, tag 0x10)
 	b.tagVarint(2, f.LogID)
 	// Field 3: Service (varint, tag 0x18) — int32 zigzag is NOT used; lark
-	// treats service as a plain varint (matches gogo varint encoding).
-	b.tagVarint(3, uint64(f.Service))
+	// treats service as a plain varint (matches gogo varint encoding). The
+	// int32→uint32→uint64 two-step is the bit-faithful conversion the SDK
+	// performs; values are always non-negative in this protocol.
+	b.tagVarint(3, uint64(uint32(f.Service))) //nolint:gosec // G115: bit-faithful int32→varint, matches SDK pbbp2.pb.go encoding; Service is protocol-bounded non-negative.
 	// Field 4: Method (varint, tag 0x20)
-	b.tagVarint(4, uint64(f.Method))
+	b.tagVarint(4, uint64(uint32(f.Method))) //nolint:gosec // G115: see Service above; Method is 0 (control) or 1 (data).
 	// Field 5: Headers (repeated nested message, tag 0x2a)
 	for _, h := range f.Headers {
 		hb := marshalHeader(h)
@@ -190,6 +191,12 @@ func (f *Frame) Unmarshal(data []byte) error {
 			if n <= 0 {
 				return errVarint
 			}
+			// Service is an int32 wire field; reject values that would
+			// overflow int32 (lark never sends these — a malformed frame
+			// should not silently truncate to a bogus service id).
+			if v > math.MaxInt32 {
+				return fmt.Errorf("ws: service field overflow: %d", v)
+			}
 			f.Service = int32(v)
 			i += n
 		case 4:
@@ -199,6 +206,9 @@ func (f *Frame) Unmarshal(data []byte) error {
 			v, n := readVarint(data[i:])
 			if n <= 0 {
 				return errVarint
+			}
+			if v > math.MaxInt32 {
+				return fmt.Errorf("ws: method field overflow: %d", v)
 			}
 			f.Method = int32(v)
 			i += n
@@ -357,7 +367,7 @@ func (b *buf) tagBytes(field int, p []byte) {
 }
 
 func (b *buf) writeTag(field, wire int) {
-	b.writeVarint(uint64(field<<3 | wire))
+	b.writeVarint(uint64(field)<<3 | uint64(wire)) //nolint:gosec // G115: field is a protobuf field number (1-9), wire a wire type (0-5); both well within uint64.
 }
 
 func (b *buf) writeVarint(v uint64) {
@@ -372,7 +382,7 @@ func (b *buf) writeVarint(v uint64) {
 // error.
 func readVarint(data []byte) (uint64, int) {
 	var v uint64
-	for i := 0; i < len(data); i++ {
+	for i := range data {
 		if i >= 10 {
 			return 0, -1 // varint longer than 64 bits
 		}
@@ -387,15 +397,22 @@ func readVarint(data []byte) (uint64, int) {
 
 // readBytes reads a length-delimited field: a varint length followed by the
 // payload. Returns (payload, bytesConsumed including length); n<=0 on error.
+// Bounds the length to MaxInt32 before the int conversion so a malformed frame
+// cannot overflow.
 func readBytes(data []byte) ([]byte, int) {
 	length, n := readVarint(data)
 	if n <= 0 {
 		return nil, -1
 	}
-	if length > math.MaxInt32 || uint64(len(data)-n) < length {
+	if length > math.MaxInt32 {
 		return nil, -1
 	}
-	return data[n : n+int(length)], n + int(length)
+	need := int(length)
+	remaining := len(data) - n
+	if remaining < 0 || remaining < need {
+		return nil, -1
+	}
+	return data[n : n+need], n + need
 }
 
 // EncodeFixed64/DecodeFixed64 are unused for lark's Frame (no fixed64 fields)

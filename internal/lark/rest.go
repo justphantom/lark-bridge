@@ -131,7 +131,7 @@ func (r *restClient) doJSON(ctx context.Context, method, path, query string, bod
 	if err != nil {
 		return fmt.Errorf("lark: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return fmt.Errorf("lark: read response: %w", err)

@@ -143,7 +143,7 @@ func TestHeaders_Accessors(t *testing.T) {
 	if got := hs.GetInt(HeaderType); got != 0 { // non-numeric value → 0
 		t.Fatalf("GetInt type=%d want 0", got)
 	}
-	hs.Add(HeaderBizRt, "42")
+	hs = appendHeader(hs, HeaderBizRt, "42")
 	if got := hs.GetString(HeaderBizRt); got != "42" {
 		t.Fatalf("GetString after Add=%q want 42", got)
 	}
@@ -182,10 +182,9 @@ func TestNewAckFrame_ClonesHeaders(t *testing.T) {
 		t.Fatalf("ack header message_id = %q want om_x", got)
 	}
 	// Mutating ack headers must not bleed into the inbound frame (independent storage).
-	ackHs := Headers(ack.Headers)
-	ackHs.Add("x", "y")
+	mutatedAck := appendHeader(Headers(ack.Headers), "x", "y")
 	if got := len(in.Headers); got != 2 {
-		t.Fatalf("mutating ack headers bled into inbound: %d", got)
+		t.Fatalf("mutating ack headers bled into inbound: %d (mutated=%v)", got, mutatedAck)
 	}
 }
 

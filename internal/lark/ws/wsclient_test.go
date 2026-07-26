@@ -166,14 +166,6 @@ func (f *fakeServer) sendFrame(payload []byte) {
 	_, _ = c.Write(append(hdr, payload...))
 }
 
-func (f *fakeServer) closeConn() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.conns) > 0 {
-		_ = f.conns[len(f.conns)-1].Close()
-	}
-}
-
 func (f *fakeServer) Close() error {
 	f.closeOnce.Do(func() {
 		_ = f.ln.Close()
@@ -217,7 +209,6 @@ type recordingHandler struct {
 	mu    sync.Mutex
 	msgs  []*MessageReceive
 	cards []*CardAction
-	errs  []error
 }
 
 func (h *recordingHandler) OnMessage(_ context.Context, ev *MessageReceive) error {

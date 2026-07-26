@@ -66,7 +66,6 @@ type Conn struct {
 	// fragmented message and cleared once delivered; frameBuf accumulates.
 	messageOpcode int
 	frameBuf      []byte
-	readFinal     bool
 
 	// Close handshake bookkeeping.
 	closeSent     bool
@@ -178,21 +177,31 @@ func (c *Conn) readFrame() (op int, payload []byte, fin bool, err error) {
 	}
 	op = int(hdr[0] & 0x0f)
 	masked := hdr[1]&0x80 != 0
-	payloadLen := int64(hdr[1] & 0x7f)
-	switch payloadLen {
+	rawLen := uint64(hdr[1] & 0x7f)
+	switch rawLen {
 	case 126:
 		var ext [2]byte
 		if _, err = io.ReadFull(c.br, ext[:]); err != nil {
 			return 0, nil, false, err
 		}
-		payloadLen = int64(binary.BigEndian.Uint16(ext[:]))
+		rawLen = uint64(binary.BigEndian.Uint16(ext[:]))
 	case 127:
 		var ext [8]byte
 		if _, err = io.ReadFull(c.br, ext[:]); err != nil {
 			return 0, nil, false, err
 		}
-		payloadLen = int64(binary.BigEndian.Uint64(ext[:]))
+		rawLen = binary.BigEndian.Uint64(ext[:])
 	}
+	// Cap allocation to a sane ceiling so a hostile/buggy server cannot OOM
+	// (or send a 64-bit length that overflows int on read). lark control
+	// frames and acks are tiny; 1 MiB is well above any legit single frame
+	// and fragmentation handles larger logical messages. Bound the raw value
+	// BEFORE the int conversion so a >maxInt64 length cannot wrap negative.
+	const maxSingleFrame uint64 = 1 << 20
+	if rawLen > maxSingleFrame {
+		return 0, nil, false, fmt.Errorf("websocket: frame too large: %d", rawLen)
+	}
+	payloadLen := int(rawLen)
 	if isControlFrame(op) && (payloadLen > maxControlPayload || !fin) {
 		return 0, nil, false, errors.New("websocket: invalid control frame")
 	}
@@ -201,13 +210,6 @@ func (c *Conn) readFrame() (op int, payload []byte, fin bool, err error) {
 		if _, err = io.ReadFull(c.br, mask[:]); err != nil {
 			return 0, nil, false, err
 		}
-	}
-	// Cap allocation to a sane ceiling so a hostile/buggy server cannot OOM.
-	// lark control frames and acks are tiny; 1 MiB is well above any legit
-	// single frame and fragmentation handles larger logical messages.
-	const maxSingleFrame = 1 << 20
-	if payloadLen > maxSingleFrame {
-		return 0, nil, false, fmt.Errorf("websocket: frame too large: %d", payloadLen)
 	}
 	payload = make([]byte, payloadLen)
 	if payloadLen > 0 {
@@ -260,7 +262,7 @@ func (c *Conn) writeFrameLocked(opcode int, data []byte, final, mask bool) error
 	if final {
 		hdr[0] |= 0x80
 	}
-	n := 1
+	var n int
 	var maskKey [4]byte
 	if mask {
 		if _, err := rand.Read(maskKey[:]); err != nil {
@@ -294,7 +296,7 @@ func (c *Conn) writeFrameLocked(opcode int, data []byte, final, mask bool) error
 	}
 	if mask {
 		out := make([]byte, plen)
-		for i := 0; i < plen; i++ {
+		for i := range plen {
 			out[i] = data[i] ^ maskKey[i%4]
 		}
 		_, err := c.nc.Write(out)
@@ -342,6 +344,6 @@ func parseClosePayload(p []byte) (code int, text string) {
 
 func makeClosePayload(code int) []byte {
 	b := make([]byte, 2)
-	binary.BigEndian.PutUint16(b, uint16(code))
+	binary.BigEndian.PutUint16(b, uint16(code)) //nolint:gosec // G115: code is an RFC 6455 status constant (1000-1011), always fits uint16.
 	return b
 }

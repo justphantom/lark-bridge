@@ -12,7 +12,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G401/G505: SHA-1 is MANDATED by RFC 6455 §1.3 for the Sec-WebSocket-Accept handshake integrity check; not a password hash or token.
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -30,9 +30,15 @@ import (
 // needed; wss:// is transparently wrapped in TLS. header is merged into the
 // request (use it for subprotocol/origin etc.); it may be nil.
 //
-// The returned http.Response is the Upgrade response (status 101) with its
-// Body already closed; callers may inspect StatusCode/Header. Ownership of the
-// underlying TCP/TLS connection transfers to the returned *Conn.
+// The returned http.Response is the Upgrade response (status 101) provided
+// for inspection (status/headers); its Body is ALREADY closed by Dial in all
+// cases (success and every failure path that produced a response) — the body
+// of an upgraded connection IS the connection itself, so it must not outlive
+// this call. Callers therefore must NOT call resp.Body.Close again, but may
+// safely do so (the close is idempotent).
+//
+// Ownership of the underlying TCP/TLS connection transfers to the returned
+// *Conn on success; on failure any partial conn is closed before returning.
 func Dial(ctx context.Context, rawURL string, header http.Header) (*Conn, *http.Response, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -67,13 +73,17 @@ func Dial(ctx context.Context, rawURL string, header http.Header) (*Conn, *http.
 		}
 	}
 
-	// Honour context deadline for the TCP/TLS+handshake phase.
-	d := &net.Dialer{Timeout: 30 * time.Second}
+	// Honour context deadline/cancellation for the TCP/TLS+handshake phase.
+	// The context-aware tls.Dialer routes through NetDialer.DialContext so a
+	// cancelled ctx aborts the in-flight handshake (noctx: tls.DialWithDialer
+	// does not take a context).
+	netDialer := &net.Dialer{Timeout: 30 * time.Second}
 	var nc net.Conn
 	if useTLS {
-		nc, err = tls.DialWithDialer(d, dialNet, dialAddr, &tls.Config{ServerName: tlsServerName(host)})
+		tlsDialer := &tls.Dialer{NetDialer: netDialer, Config: &tls.Config{ServerName: tlsServerName(host)}}
+		nc, err = tlsDialer.DialContext(ctx, dialNet, dialAddr)
 	} else {
-		nc, err = d.DialContext(ctx, dialNet, dialAddr)
+		nc, err = netDialer.DialContext(ctx, dialNet, dialAddr)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("websocket: dial: %w", err)
@@ -199,7 +209,7 @@ func makeChallengeKey() (string, error) {
 // computeAccept returns the expected Sec-WebSocket-Accept value for a given
 // client key per RFC 6455 Section 1.3 (append magic GUID, SHA-1, base64).
 func computeAccept(key string) string {
-	h := sha1.New()
+	h := sha1.New() //nolint:gosec // G401: SHA-1 mandated by RFC 6455 §1.3 handshake; not security-sensitive.
 	h.Write([]byte(key))
 	h.Write([]byte("258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))

@@ -41,7 +41,7 @@ func (f *fakeClient) Send(context.Context, *lark.SendInput) (*lark.SendResult, e
 func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
 	n := f.patchCalls.Add(1)
 	f.patchLast = content
-	if f.patchErrOnNth != 0 && int32(n) == f.patchErrOnNth {
+	if f.patchErrOnNth != 0 && n == f.patchErrOnNth {
 		return f.patchErr
 	}
 	if f.patchErrOnNth == 0 {

@@ -3,7 +3,6 @@ package feishu
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -94,10 +93,6 @@ type Bot struct {
 	// frontend watchdog reads it to decide whether to exit for supervisor
 	// recovery. 0 means "never healthy".
 	lastHealthy atomic.Int64
-
-	// readyOnce guards markHealthy against the Start→Stop→Start reuse of a
-	// bot instance racing the WS lifecycle callbacks.
-	startOnce sync.Once
 }
 
 // BotOption configures a Bot at construction time.

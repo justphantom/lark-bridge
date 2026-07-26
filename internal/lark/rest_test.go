@@ -3,6 +3,7 @@ package lark
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,8 +115,8 @@ func TestTokenManager_PropagatesBusinessError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	ae, ok := err.(*APIError)
-	if !ok {
+	var ae *APIError
+	if !errors.As(err, &ae) {
 		t.Fatalf("expected *APIError, got %T (%v)", err, err)
 	}
 	if ae.Code != 99991663 || !strings.Contains(ae.Msg, "invalid") {
@@ -274,8 +275,8 @@ func TestRestClient_BusinessErrorIsAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	ae, ok := err.(*APIError)
-	if !ok {
+	var ae *APIError
+	if !errors.As(err, &ae) {
 		t.Fatalf("expected *APIError, got %T (%v)", err, err)
 	}
 	if ae.Code != 230025 {
@@ -296,7 +297,8 @@ func TestRestClient_HTTP5xxWraps(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if _, ok := err.(*APIError); ok {
+	var ae *APIError
+	if errors.As(err, &ae) {
 		t.Fatalf("5xx must not be *APIError, got %v", err)
 	}
 }

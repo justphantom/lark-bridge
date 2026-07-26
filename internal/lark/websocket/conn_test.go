@@ -45,8 +45,6 @@ func startTestServer(t *testing.T, script func(*serverSession)) (url string) {
 type serverSession struct {
 	t      *testing.T
 	mu     sync.Mutex
-	conn   net.Conn
-	br     *bufio.Reader
 	steps  []func(net.Conn, *bufio.Reader)
 	closed chan struct{}
 }
@@ -55,29 +53,6 @@ func (s *serverSession) sendText(payload string) {
 	s.mu.Lock()
 	s.steps = append(s.steps, func(c net.Conn, _ *bufio.Reader) {
 		writeServerFrame(c, OpcodeText, []byte(payload))
-	})
-	s.mu.Unlock()
-}
-
-func (s *serverSession) sendBinary(payload []byte) {
-	s.mu.Lock()
-	s.steps = append(s.steps, func(c net.Conn, _ *bufio.Reader) {
-		writeServerFrame(c, OpcodeBinary, payload)
-	})
-	s.mu.Unlock()
-}
-
-func (s *serverSession) sendFragmented(opcode int, parts ...[]byte) {
-	s.mu.Lock()
-	s.steps = append(s.steps, func(c net.Conn, _ *bufio.Reader) {
-		for i, p := range parts {
-			op := opcode
-			fin := i == len(parts)-1
-			if i > 0 {
-				op = OpcodeContinuation
-			}
-			writeServerFrameExt(c, op, p, fin)
-		}
 	})
 	s.mu.Unlock()
 }
@@ -137,7 +112,7 @@ func writeServerFrameExt(w io.Writer, opcode int, payload []byte, fin bool) {
 	if fin {
 		hdr[0] |= 0x80
 	}
-	n := 1
+	var n int
 	switch {
 	case len(payload) <= 125:
 		hdr[1] = byte(len(payload))
@@ -210,6 +185,9 @@ func TestDial_HandshakeAndEcho(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	conn, resp, err := Dial(ctx, url, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -234,7 +212,10 @@ func TestWriteMessage_ClientMasks(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := Dial(ctx, url, nil)
+	conn, resp, err := Dial(ctx, url, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -278,7 +259,10 @@ func TestReadMessage_ReassemblesFragmentation(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := Dial(ctx, url, nil)
+	conn, resp, err := Dial(ctx, url, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -307,7 +291,10 @@ func TestReadMessage_ServerCloseReturnsCloseError(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := Dial(ctx, url, nil)
+	conn, resp, err := Dial(ctx, url, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}

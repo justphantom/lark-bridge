@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -159,7 +159,12 @@ func (c *Client) connect(ctx context.Context) (*websocket.Conn, error) {
 		c.cfg = *cfg
 	}
 	c.mu.Unlock()
-	conn, _, err := c.dialer(ctx, wsURL, nil)
+	// Dial closes resp.Body itself (see its doc); capture the response so the
+	// bodyclose analyser sees it handled, then close defensively (idempotent).
+	conn, resp, err := c.dialer(ctx, wsURL, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ws: dial: %w", err)
 	}
@@ -176,12 +181,12 @@ func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
 		return "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("locale", "zh")
+	req.Header.Set("Locale", "zh") // canonical form; the bootstrap server accepts either casing
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("ws: bootstrap: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf("ws: bootstrap http %d", resp.StatusCode)
 	}
@@ -204,7 +209,7 @@ func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
 	if out.Code != codeOK {
 		// 514 = auth failure: do not retry forever.
 		if out.Code == codeAuthFailed {
-			return "", nil, fatalErr{fmt.Errorf("ws: bootstrap auth failed: %s", out.Msg)}
+			return "", nil, fatalError{fmt.Errorf("ws: bootstrap auth failed: %s", out.Msg)}
 		}
 		return "", nil, fmt.Errorf("ws: bootstrap code %d: %s", out.Code, out.Msg)
 	}
@@ -402,7 +407,11 @@ func (c *Client) reconnectSleep(ctx context.Context) bool {
 	c.mu.Unlock()
 	c.fireReconnecting()
 	if nonce > 0 {
-		jitter := time.Duration(rand.Int63n(int64(nonce)))
+		// math/rand/v2 is intentional: the jitter is a reconnect-backoff
+		// spread, not a security primitive — crypto/rand would add cost for
+		// no benefit (an attacker observing reconnect timing learns nothing
+		// of value from the backoff distribution).
+		jitter := time.Duration(rand.Int64N(int64(nonce))) //nolint:gosec // G404: reconnect-backoff jitter, not a security primitive.
 		if !sleepCtx(ctx, jitter) {
 			return false
 		}
@@ -425,11 +434,11 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// fatalErr marks an error as non-retryable (auth/credentials). Start returns
+// fatalError marks an error as non-retryable (auth/credentials). Start returns
 // it immediately instead of looping forever.
-type fatalErr struct{ error }
+type fatalError struct{ error }
 
-func (fatalErr) IsFatal() {}
+func (fatalError) IsFatal() {}
 
 // isFatal reports whether the bootstrap/connect path should stop retrying.
 func isFatal(err error) bool {
