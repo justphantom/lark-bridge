@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -161,7 +160,3 @@ func (r *restClient) doJSON(ctx context.Context, method, path, query string, bod
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
-
-// ensure strings is used (truncate references it indirectly via auth.go in
-// the same package; this keeps rest.go self-contained if split out later).
-var _ = strings.TrimSpace

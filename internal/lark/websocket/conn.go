@@ -74,9 +74,8 @@ type Conn struct {
 	frameBuf      []byte
 
 	// Close handshake bookkeeping.
-	closeSent     bool
-	closeReceived bool
-	closeMu       sync.Mutex
+	closeSent bool
+	closeMu   sync.Mutex
 
 	readDeadline time.Time
 }
@@ -163,9 +162,6 @@ func (c *Conn) handleControl(opcode int, payload []byte) error {
 	switch opcode {
 	case OpcodeClose:
 		code, text := parseClosePayload(payload)
-		c.closeMu.Lock()
-		c.closeReceived = true
-		c.closeMu.Unlock()
 		// Echo the close so the peer sees the handshake complete.
 		_ = c.writeControl(OpcodeClose, makeClosePayload(code))
 		return &CloseError{Code: code, Text: text}

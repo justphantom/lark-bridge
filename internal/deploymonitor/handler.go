@@ -71,6 +71,12 @@ type Handler struct {
 
 	mu      sync.Mutex
 	running bool
+
+	// jobWg tracks in-flight runJob goroutines so Close can wait for a deploy
+	// /pull /push to finish instead of being SIGKILLed mid-run (which would
+	// leave docker half-built or git half-pushed). The job's own ctx timeout
+	// still bounds its length; Close just refuses to abandon it early.
+	jobWg sync.WaitGroup
 }
 
 // New wires the handler. status supplies the in-flight turn snapshot for
@@ -167,8 +173,32 @@ func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, name stri
 	if err := h.notifyProgress(ctx, chatID, promptID, "⏳ "+label+"执行中…"); err != nil {
 		return err
 	}
-	go h.runJob(chatID, promptID, name, args, label) //nolint:gosec // G118: job must outlive the triggering request's ctx
+	// Track the job under jobWg BEFORE the goroutine starts so Close (which
+	// may run the instant backendrpc.Run returns on SIGTERM) cannot race ahead
+	// of the Add and observe an empty WaitGroup. The job runs on its own ctx
+	// (runJob builds a context.Background()-rooted timeout) precisely so it
+	// outlives the triggering request — and the process, until Close returns.
+	h.jobWg.Add(1)
+	go func() {
+		defer h.jobWg.Done()
+		h.runJob(chatID, promptID, name, args, label)
+	}() //nolint:gosec // G118: job must outlive the triggering request's ctx
 	return nil
+}
+
+// Close waits up to ctx for any in-flight job to finish. A deploy/pull/push
+// is never cancelled mid-run (cutting it short leaves docker/git in a broken
+// state); the job's own timeout still bounds it. main calls this after
+// backendrpc.Run returns so SIGTERM does not SIGKILL a running make.
+func (h *Handler) Close(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { h.jobWg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // runJob runs name args in ProjectRoot and emits the terminal notice. It runs

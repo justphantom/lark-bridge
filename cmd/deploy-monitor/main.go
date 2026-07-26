@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
@@ -92,13 +93,26 @@ func run(cfgPath string) error {
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
 	}
-	return backendrpc.Run(ctx, cfg.BackendID, "deploy-monitor", cfg.FrontendURL, cfg.IPCSecret,
+	runErr := backendrpc.Run(ctx, cfg.BackendID, "deploy-monitor", cfg.FrontendURL, cfg.IPCSecret,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", "event_type", ev.Type, log.FieldError, err)
 			}
 			return nil
 		}, eventErr)
+
+	// Graceful drain: a SIGTERM makes backendrpc.Run return, but a make deploy
+	// /pull /push may still be mid-flight in its own goroutine. Wait up to the
+	// job timeout (+buffer) for it to finish so the process exit does not
+	// SIGKILL a half-built docker image or half-pushed git state. The job's
+	// own ctx timeout is the hard bound; the +30s absorbs the final notice
+	// POST back to the frontend.
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Minute+30*time.Second)
+	defer drainCancel()
+	if err := h.Close(drainCtx); err != nil {
+		logger.Warn("deploy job drain timed out, process exiting", log.FieldError, err)
+	}
+	return runErr
 }
 
 // execCommander is the production commander: runs `name args...` inside dir,

@@ -29,10 +29,18 @@ const offlineNoticeDebounce = 30 * time.Second
 // timer != nil means an offline notice is pending confirmation; notifiedOffline
 // is true once an offline card has actually been shown to users. Guarded by
 // Dispatcher.flapMu.
+//
+// generation is a cancel token for the debounce timer's callback: each
+// OnBackendOnline that cancels a pending timer bumps it, so a callback that
+// already fired (timer.Stop returned false) and is now waiting on flapMu
+// notices its armedGen is stale and returns without sending the offline
+// card. Without this, a backend that blips offline→online within the window
+// could still see its offline notice posted AFTER the online recovery.
 type flapState struct {
 	timer           *time.Timer
 	pendingType     string
 	notifiedOffline bool
+	generation      int
 }
 
 // OnBackendOffline arms a debounce timer rather than posting immediately: a
@@ -62,8 +70,9 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 	if st.timer != nil {
 		st.timer.Reset(d.offlineNoticeDebounce)
 	} else {
+		armedGen := st.generation
 		st.timer = time.AfterFunc(d.offlineNoticeDebounce, func() {
-			d.fireOfflineNotice(backendID)
+			d.fireOfflineNotice(backendID, armedGen)
 		})
 	}
 	d.flapMu.Unlock()
@@ -71,11 +80,14 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 
 // fireOfflineNotice runs in the debounce timer's goroutine once an offline
 // event has persisted for the whole window. It flips the backend to
-// offline-presented and posts the offline card to every bound chat.
-func (d *Dispatcher) fireOfflineNotice(backendID string) {
+// offline-presented and posts the offline card to every bound chat. armedGen
+// is the generation token captured when the timer was armed; if it no longer
+// matches st.generation the timer was cancelled (backend recovered) while the
+// callback was waiting on flapMu, and the notice is suppressed.
+func (d *Dispatcher) fireOfflineNotice(backendID string, armedGen int) {
 	d.flapMu.Lock()
 	st := d.flap[backendID]
-	if st == nil {
+	if st == nil || st.generation != armedGen {
 		d.flapMu.Unlock()
 		return
 	}
@@ -100,10 +112,13 @@ func (d *Dispatcher) OnBackendOnline(backendID, backendType string) {
 		return // never went offline-presented; nothing to recover
 	}
 	// A pending offline notice means the backend blipped and came back: cancel
-	// it silently — no offline card, no recovery card.
+	// it silently — no offline card, no recovery card. Bump generation so a
+	// timer callback that already fired (Stop returned false) and is waiting
+	// on flapMu sees its armedGen is stale and does not post the offline card.
 	if st.timer != nil {
 		st.timer.Stop()
 		st.timer = nil
+		st.generation++
 		d.flapMu.Unlock()
 		return
 	}

@@ -91,9 +91,12 @@ func (s *dedupSet) Delete(id string) {
 // StartPrune on its periodic tick; also exported for tests and any caller
 // that wants an immediate sweep. Returns the number of entries removed.
 func (s *dedupSet) Prune() int {
-	cutoff := time.Now().Add(-s.ttl)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// cutoff is computed under the lock: Configure writes s.ttl under the
+	// same lock, so reading it here avoids a data race flagged by the Go race
+	// detector (time.Duration is not guaranteed atomic on all platforms).
+	cutoff := time.Now().Add(-s.ttl)
 	n := 0
 	for k, t := range s.seen {
 		if t.Before(cutoff) {

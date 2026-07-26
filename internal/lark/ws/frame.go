@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -45,10 +44,6 @@ type Header struct {
 // carry. Legit lark frames use <10; the cap defends against a malicious peer
 // attaching thousands of headers to burn CPU in the linear-scan accessors.
 const maxFrameHeaders = 64
-
-// Headers returns a view of the frame headers with helper accessors. The
-// returned slice shares storage with the frame; do not mutate concurrently.
-func (f *Frame) HeadersView() Headers { return Headers(f.Headers) }
 
 // Headers is a []Header with linear-scan lookup helpers.
 type Headers []Header
@@ -425,8 +420,3 @@ func readBytes(data []byte) ([]byte, int) {
 	}
 	return data[n : n+need], n + need
 }
-
-// EncodeFixed64/DecodeFixed64 are unused for lark's Frame (no fixed64 fields)
-// but referenced here to document the wire-type coverage and keep binary
-// import meaningful for future schema additions.
-var _ = binary.LittleEndian
