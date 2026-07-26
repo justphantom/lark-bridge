@@ -236,7 +236,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 6 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机

@@ -48,7 +48,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
-# pack 交叉编译六个二进制 + VERSION 标记，打成一个可分发的 tarball。
+# pack 交叉编译五个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
 # 输出 bin/lark-bridge-<version>-<goos>-<goarch>.tar.gz，解包后顶层即各二进制。
 pack:

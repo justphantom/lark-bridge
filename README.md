@@ -34,7 +34,7 @@
 ## 构建
 
 ```bash
-make build      # 产物在 bin/：6 个二进制，git 版本号注入
+make build      # 产物在 bin/：5 个二进制，git 版本号注入
 make test       # build-check + vet + go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -s -w .
