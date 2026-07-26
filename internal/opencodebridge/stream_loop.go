@@ -3,7 +3,6 @@ package opencodebridge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -57,30 +56,37 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			if _, ok := h.Router.Lookup(chatID); ok {
 				h.Router.SetSessionID(chatID, sessionID)
 			}
+			// opencode CLI 1.18+ does not emit session.created in --format
+			// json mode (the sessionID rides on every part instead), so the
+			// dead EventSession case below never fires. Synthesising the
+			// TypeSessionInit here on first sight of the id lets the
+			// frontend footer render Model + SessionID instead of leaving
+			// those fields blank for the whole turn.
+			h.emitAsync(promptID, &protocol.Control{
+				Type: protocol.TypeSessionInit,
+				SessionInit: &protocol.SessionInitPayload{
+					SessionID: sessionID,
+					Model:     resolveModel("", modelSpec),
+				},
+			})
 		}
 
 		switch ev.GetType() {
-		case opencode.EventSession:
-			if sessionID != "" {
-				h.emitAsync(promptID, &protocol.Control{
-					Type: protocol.TypeSessionInit,
-					SessionInit: &protocol.SessionInitPayload{
-						SessionID: sessionID,
-						Model:     resolveModel("", modelSpec),
-					},
-				})
-			}
 		case opencode.EventStepStart:
 			stepCount++
 			if startTime.IsZero() {
 				startTime = time.Now()
 			}
+			// Emit TypeProgress WITHOUT a Description: dispatcher still
+			// bumps stepCount (so the card title shows "第 N 轮"), but no
+			// banner is set — the title already conveys the step, and a
+			// banner here would duplicate it as well as overwrite any
+			// standing gate/loading notice from a picker or permission
+			// card on the same prompt.
 			h.emitAsync(promptID, &protocol.Control{
-				Type:   protocol.TypeProgress,
-				ChatID: chatID,
-				Progress: &protocol.ProgressPayload{
-					Description: fmt.Sprintf("🔄 第 %d 轮…", stepCount),
-				},
+				Type:     protocol.TypeProgress,
+				ChatID:   chatID,
+				Progress: &protocol.ProgressPayload{},
 			})
 		case opencode.EventStepFinish:
 			// Non-terminal step (reason != "stop"): accumulate its tokens and

@@ -195,3 +195,49 @@ func TestStreamRun_ThinkingDoesNotPolluteReply(t *testing.T) {
 		t.Errorf("reply = %q, want contains 'final answer'", res.reply)
 	}
 }
+
+// TestStreamRun_SessionIDPropagatedToResult verifies the sessionID captured
+// from the first event carrying it lands on the promptResult. This is the
+// bridge-side half of the E2 fix: stream_loop also synthesises a
+// TypeSessionInit at that moment so the frontend footer can render
+// Model + SessionID; the emit itself is a no-op when rpc is nil, but the
+// sessionID propagation downstream of the same code path is assertable here.
+func TestStreamRun_SessionIDPropagatedToResult(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"ses_test_123","part":{"type":"step-start"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"ses_test_123","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, stepStart, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "glm-5")
+	if res.sessionID != "ses_test_123" {
+		t.Errorf("sessionID = %q, want ses_test_123", res.sessionID)
+	}
+}
+
+// TestStreamRun_StepStartDoesNotPanicOnEmptyProgress verifies the simplified
+// EventStepStart emit (no Description) is well-formed: it ships an empty
+// ProgressPayload rather than a banner string, so the dispatcher bumps
+// stepCount without overwriting any standing loading/gate banner. The
+// observable bridge-side effect is just that streamRun returns cleanly with
+// the right step total; the front-end effect (title shows "第 N 轮" without
+// a banner row) is verified in renderer/dispatcher tests.
+func TestStreamRun_StepStartDoesNotPanicOnEmptyProgress(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"s1","part":{"type":"step-start"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, stepStart, stepStart, stepStart, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	if res.err != nil {
+		t.Fatalf("streamRun: %v", res.err)
+	}
+	if res.steps != 3 {
+		t.Errorf("steps = %d, want 3 (one per step_start)", res.steps)
+	}
+}
