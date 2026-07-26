@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 #
-# lark-bridge 一键部署脚本（systemd）
+# lark-bridge one-shot deployment script (systemd).
 #
-# 用法：
-#   ./deploy/deploy.sh            # 使用 repo 根目录的 .env；config 从 config.example.json 派生
-#   ./deploy/deploy.sh --init     # 首次部署，自动从 example 生成 .env
-#   ./deploy/deploy.sh --force    # 强制部署，跳过运行中会话检查
+# Usage:
+#   ./deploy/deploy.sh            # use repo-root .env; config derived from config.example.json
+#   ./deploy/deploy.sh --init     # first-time deploy; auto-generate .env from example
+#   ./deploy/deploy.sh --force    # force deploy, skip in-flight session check
 #   ./deploy/deploy.sh --binaries <tar|dir>
-#                                # 跳过 make build，从已编译产物部署（目标机免 Go/免 repo）。
-#                                # <tar>：make pack 产出的 tarball，解包取顶层二进制；
-#                                # <dir>：已解包目录，内含 lark-* 二进制。
+#                                # skip make build; deploy from pre-built artifacts (no Go/repo needed on target host).
+#                                # <tar>: tarball produced by `make pack`, top-level binaries extracted.
+#                                # <dir>: already-extracted directory containing lark-* binaries.
 #   ./deploy/deploy.sh --services claude,opencode
-#                                # 只部署指定服务子集（逗号分隔，可用：feishu claude
-#                                # opencode miniagent）。默认全量。多主机部署时每台机
-#                                # 用不同子集：前端机 --services feishu，后端机 --services claude,...
+#                                # deploy only the given service subset (comma-separated; one of: feishu claude
+#                                # opencode miniagent). Default is all. For multi-host deployments each host
+#                                # uses its own subset: front-end host --services feishu, back-end host --services claude,...
 #
-# 可选环境变量：
-#   IPC_ADDR   IPC 监听地址。优先级：环境变量 > repo 根 .env > localhost:6060
-#              （改 .env 即生效；环境变量优先用于一次性覆盖）
-#   STATE_DIR  持久化目录（默认 /var/lib/lark-bridge，环境变量覆盖）
+# Optional environment variables:
+#   IPC_ADDR   IPC listen address. Precedence: env var > repo-root .env > localhost:6060
+#              (edit .env to persist; env var wins for one-shot overrides)
+#   STATE_DIR  persistence directory (default /var/lib/lark-bridge; env var overrides)
 #
 set -euo pipefail
 
-# ── 路径 ──────────────────────────────────────────────
+# -- Paths ----------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$PROJECT_ROOT/bin"
@@ -31,28 +31,29 @@ DEPLOY_DIR="/opt/lark-bridge/bin"
 CONFIG_DIR="/etc/lark-bridge"
 STATE_DIR="${STATE_DIR:-/var/lib/lark-bridge}"
 
-# ── 超时/轮询常量（集中调参，避免 magic number 散落）─────────
-# HTTP_TIMEOUT       curl 探测 IPC 的上限（本地/局域网）
-# WAIT_RETRIES       systemctl 冷启动轮询次数（每次 sleep 1s，约 15s 上限）
-# STOP_TIMEOUT       systemctl stop 限时；超过用 SIGKILL 兜底（默认 TimeoutStopSec=90s 太长）
-# CLI_PROBE_TIMEOUT  外部 CLI --version 探测上限，与 backend readyTimeout 同源
-#                    （internal/opencode/client.go:27）
+# -- Timeouts / polling constants (centralised to avoid magic numbers) ----------
+# HTTP_TIMEOUT       upper bound for curl IPC probes (local/LAN)
+# WAIT_RETRIES       systemctl cold-start poll retries (1s each, ~15s cap)
+# STOP_TIMEOUT       systemctl stop deadline; SIGKILL fallback beyond it (default TimeoutStopSec=90s is too long)
+# CLI_PROBE_TIMEOUT  external CLI --version probe cap; mirrors backend readyTimeout
+#                    (internal/opencode/client.go:27)
 HTTP_TIMEOUT=3
 WAIT_RETRIES=15
 STOP_TIMEOUT=15
 CLI_PROBE_TIMEOUT=30
 
-# ── 运行用户（脚本内嵌 sudo；禁止整体以 root 运行）────
-# 直接 sudo 调用会让 whoami 返回 root，导致服务以 root 运行。
-# 此处从 SUDO_USER 还原真实调用者；无则报错退出（fail 尚未定义，内联等价实现）。
+# -- Run user (script uses embedded sudo; running as root is forbidden) ---------
+# Direct sudo would make whoami return root and the services would run as root.
+# Restore the real caller from SUDO_USER; bail out if absent (fail is not defined
+# yet, so the inline equivalent runs).
 if [[ "$EUID" -eq 0 ]]; then
     RUN_USER="${SUDO_USER:-}"
-    [[ -n "$RUN_USER" ]] || { echo "[FAIL] 请勿直接以 root 运行本脚本；它会在需要时自行 sudo。若必须，请用 'sudo -E' 以保证 SUDO_USER 可用" >&2; exit 1; }
+    [[ -n "$RUN_USER" ]] || { echo "[FAIL] Do not run this script as root directly; it sudo's internally when needed. If you must, use 'sudo -E' so SUDO_USER is preserved." >&2; exit 1; }
 else
     RUN_USER="$(whoami)"
 fi
 
-# ── 颜色 ──────────────────────────────────────────────
+# -- Colors ---------------------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -61,64 +62,75 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
-# ERR trap：set -e 触发的失败（非 || true 容忍的）打出失败行 + 命令，定位根因。
-# -E 让 trap 在函数内也生效。fail() 自己 exit 1（非失败命令），不触发 ERR，
-# 故 fail 的退出消息独占一行。${RED}/${NC} 在 trap 触发时（运行时）求值，已定义。
+# ERR trap: failures triggered by set -e (not those tolerated with || true)
+# print the failing line + command to locate the root cause. -E propagates the
+# trap into functions. fail() itself exits 1 (not a failing command) so it does
+# not trigger ERR; its exit message therefore stands alone on its own line.
+# ${RED}/${NC} are evaluated at trap-fire time (runtime), by which point they
+# are defined.
 set -E
-trap 'echo -e "${RED}[FAIL]${NC} 错误行 $LINENO: $BASH_COMMAND" >&2' ERR
+trap 'echo -e "${RED}[FAIL]${NC} error at line $LINENO: $BASH_COMMAND" >&2' ERR
 
-# 从 repo 根 .env 读 KEY=VALUE 的 VALUE；文件不存在或键缺失返回空。首次部署
-# （.env 还未生成）时返回空，由调用方默认值兜底。
-# || true 兜底：pipefail 下 grep 无匹配会返回 1，使命令替换在 set -e 下误退出。
+# env_get reads KEY=VALUE from the repo-root .env; returns empty if the file is
+# missing or the key absent. First-time deploy (.env not generated yet) returns
+# empty and the caller's default kicks in.
+# `|| true` guards: under pipefail a grep with no match returns 1 and would
+# otherwise abort the command substitution under set -e.
 env_get() {
     local key="$1"
     grep -E "^${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
-# ── IPC 地址 ─────────────────────────────────────────
-# 优先级：环境变量 > repo 根 .env > 默认值（localhost:6060）。让"改 .env 不
-# 带环境变量启动"也生效（与运行时配置同源）；环境变量优先用于一次性覆盖。
+# -- IPC address ----------------------------------------------------------------
+# Precedence: env var > repo-root .env > default (localhost:6060). Lets "edit
+# .env without an env var" still take effect (same source as runtime config);
+# env var wins for one-shot overrides.
 IPC_ADDR="${IPC_ADDR:-$(env_get IPC_ADDR)}"
 IPC_ADDR="${IPC_ADDR:-localhost:6060}"
 
-# ── 服务列表 ──────────────────────────────────────────
-# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 4 个业务服务。
+# -- Service list ---------------------------------------------------------------
+# SERVICES (unit-name array) is derived from --services by the arg parser;
+# default is all 4 business services.
 
-# 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
-# systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
-# 故用 timeout $STOP_TIMEOUT 限定等待。超时后 systemd 仍在异步停止，下面用 SIGKILL 兜底。
+# Force-stop every service and confirm it exited before returning, to avoid
+# overwriting a running binary (ETXTBSY). systemctl stop suppresses
+# Restart=on-failure but blocks until TimeoutStopSec (90s) by default, so we
+# bound the wait with `timeout $STOP_TIMEOUT`. After the timeout systemd keeps
+# stopping asynchronously and the SIGKILL loop below mops up.
 stop_services() {
-    info "停止旧服务（systemctl stop，限时 ${STOP_TIMEOUT}s）..."
+    info "Stopping existing services (systemctl stop, ${STOP_TIMEOUT}s timeout)..."
     timeout "$STOP_TIMEOUT" sudo systemctl stop "${SERVICES[@]}" 2>/dev/null || true
     sleep 1
 
-    # 仍存活的进程：SIGKILL 连同 cgroup 内子进程一并清理。systemd 的
-    # cgroup kill 已覆盖单元内所有子进程，无需再 pgrep 兜底——后者可能
-    # 误伤 deploy-monitor（它可能正 fork 出本次 make deploy 进程树）。
+    # Survivors: SIGKILL along with everything in the cgroup. systemd's cgroup
+    # kill already reaches all children of the unit, so no pgrep fallback is
+    # needed -- that could even kill deploy-monitor (it may be forking this
+    # very `make deploy` process tree).
     for svc in "${SERVICES[@]}"; do
         local pid
         pid="$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)"
         if [[ -n "$pid" && "$pid" != "0" ]] && kill -0 "$pid" 2>/dev/null; then
-            warn "$svc 仍在运行（PID=$pid），SIGKILL"
+            warn "$svc still running (PID=$pid), sending SIGKILL"
             sudo systemctl kill --signal=SIGKILL "$svc" 2>/dev/null || true
         fi
     done
     sleep 1
 
-    # 最终确认：任一仍 active 则中止部署
+    # Final check: abort the deploy if any unit is still active.
     for svc in "${SERVICES[@]}"; do
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
-            fail "$svc 无法停止，中止部署以避免覆盖运行中的二进制"
+            fail "$svc could not be stopped; aborting deploy to avoid overwriting a running binary"
         fi
     done
-    info "旧服务已全部停止"
+    info "All existing services stopped"
 }
 
-# 部署前检查：若 feishu-front 正在运行且报告有 in-flight 会话，中止部署，
-# 避免中途重启打断用户正在进行的对话。读 repo 根 .env 取 IPC_SECRET
-# 以访问 GET /v1/status；服务未运行或端点不可达时放行（首次部署/已停止场景）。
+# Pre-deploy check: if feishu-front is running and reports in-flight sessions,
+# abort to avoid interrupting user conversations mid-turn. Reads IPC_SECRET
+# from repo-root .env to access GET /v1/status; passes when the service is not
+# running or the endpoint is unreachable (first deploy / already-stopped).
 preflight_inflight_check() {
-    # 服务未运行 → 无 in-flight 风险，直接放行。
+    # Service not running -> no in-flight risk, pass.
     if ! systemctl is-active --quiet "$(svc_unit feishu)" 2>/dev/null; then
         return 0
     fi
@@ -126,12 +138,13 @@ preflight_inflight_check() {
     local secret
     secret="$(env_get IPC_SECRET)"
     if [[ -z "$secret" ]]; then
-        warn "未从 $PROJECT_ROOT/.env 读取到 IPC_SECRET，跳过 in-flight 检查"
+        warn "IPC_SECRET missing from $PROJECT_ROOT/.env; skipping in-flight check"
         return 0
     fi
 
-    # 单次 curl 用 -w $'\n%{http_code}' 把状态码追加到 body 末尾，再 tail/sed 拆分。
-    # 比原先 body 与 code 各请求一次少一轮 IPC 往返；失败时 resp 空 → code 兜底 000。
+    # Single curl uses -w $'\n%{http_code}' to append the status code to the
+    # body, then tail/sed split it back out. Saves one IPC round-trip vs.
+    # fetching body and code separately; on failure resp is empty -> code=000.
     local resp body code
     resp="$(curl -s -m "$HTTP_TIMEOUT" -w $'\n%{http_code}' -H "Authorization: Bearer $secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || true)"
     code="$(tail -1 <<<"$resp")"
@@ -139,45 +152,48 @@ preflight_inflight_check() {
     body="$(sed '$d' <<<"$resp")"
 
     if [[ "$code" == "000" ]]; then
-        # 端口不可达（服务在 active 但端口还没 listen）→ 放行，后续 stop_services 会处理。
+        # Port unreachable (service active but not listening yet) -> pass; stop_services will handle it.
         return 0
     fi
     if [[ "$code" == "401" ]]; then
-        fail "IPC 返回 401（repo 根 .env 的 IPC_SECRET 与运行中的服务不一致）；请核对后重试"
+        fail "IPC returned 401 (repo-root .env IPC_SECRET does not match the running service); please verify and retry"
     fi
     if [[ "$code" != "200" ]]; then
-        warn "IPC /v1/status 返回非预期状态码 $code，跳过 in-flight 检查"
+        warn "IPC /v1/status returned unexpected status $code; skipping in-flight check"
         return 0
     fi
 
     local inflight
     inflight="$(echo "$body" | grep -oE '"inflight":[0-9]+' | head -1 | cut -d: -f2 || echo 0)"
     if [[ "${inflight:-0}" -gt 0 ]]; then
-        fail "检测到 ${inflight} 个运行中会话（in-flight turn），中止部署以避免打断对话。请在对话结束后重试"
+        fail "Detected ${inflight} in-flight session(s); aborting deploy to avoid disrupting conversations. Retry once they finish."
     fi
-    info "无运行中会话，可安全部署"
+    info "No in-flight sessions; safe to deploy"
 }
 
-# 探测外部 CLI（claude/opencode/miniagent）二进制是否就绪：command -v 命中 +
-# `<cli> --version` 退出 0。30s 超时与 backend IsReady 的 readyTimeout 一致
-# （internal/opencode/client.go:27），防止 hang 阻塞部署。作为对应 backend
-# 部署的硬性条件：CLI 不在 PATH → backend 启动必崩，systemd Restart=on-failure
-# 每 5s 重试。提前探测并停禁剔除，等运维装好 CLI 重新部署。
+# Probe whether the external CLI (claude/opencode/miniagent) binary is ready:
+# `command -v` hits AND `<cli> --version` exits 0. The 30s timeout mirrors the
+# backend IsReady readyTimeout (internal/opencode/client.go:27) so a hang does
+# not block the deploy. Hard precondition for the corresponding backend: a
+# missing CLI -> backend crashes on startup, systemd Restart=on-failure retries
+# every 5s. We probe up front, stop+disable and drop the service so the
+# operator can install the CLI and re-deploy.
 probe_cli() {
     local cli="$1"
     if ! command -v "$cli" >/dev/null 2>&1; then
-        warn "$cli 二进制未就绪：command -v 找不到（请装到 PATH）"
+        warn "$cli binary not ready: command -v not found (install it onto PATH)"
         return 1
     fi
     if ! timeout "$CLI_PROBE_TIMEOUT" "$cli" --version >/dev/null 2>&1; then
-        warn "$cli 二进制未就绪：$cli --version 退出非 0 或超时（${CLI_PROBE_TIMEOUT}s）"
+        warn "$cli binary not ready: $cli --version non-zero exit or timeout (${CLI_PROBE_TIMEOUT}s)"
         return 1
     fi
-    info "$cli 二进制就绪（$(command -v "$cli")）"
+    info "$cli binary ready ($(command -v "$cli"))"
     return 0
 }
 
-# 轮询等待服务 active，最多 ~15s；避免冷启动时固定 sleep 导致的误判
+# Poll up to ~15s for the service to become active; avoids fixed sleeps that
+# misreport during cold start.
 wait_active() {
     local svc="$1" i
     for ((i=0; i<WAIT_RETRIES; i++)); do
@@ -187,14 +203,16 @@ wait_active() {
     return 1
 }
 
-# 轮询等待 feishu-front 的 IPC 端口 listen，最多 ~15s。
-# 后端启动即连 6060，若 feishu-front 未 listen 会崩溃-重启（RestartSec=5），
-# deploy.sh 在崩溃窗口抓 MainPID 会得到 0 → 误报。故先起前端、等端口通，
-# 再起后端，从根因消除崩溃-重启。
-# 带 .env 的 IPC_SECRET 请求 /v1/status（非流式 GET；/v1/events 是 SSE，鉴权
-# 通过后服务会持续推流让 curl hang）。-m $HTTP_TIMEOUT 兜底防任何流式端点误阻塞轮询。
-# 000=端口未通仍重试；任何非 000 响应都算 listen（401=端口 listen 但 secret
-# 不匹配，可能是部署间隙旧 secret；不阻塞起后端）。
+# Poll up to ~15s for the feishu-front IPC port to listen.
+# Backends connect to 6060 on startup; if feishu-front is not listening yet
+# they crash-loop (RestartSec=5), and catching MainPID during that crash window
+# returns 0 -> false negative. So we start the front-end first, wait for the
+# port, then start backends -- eliminating the crash-loop at the root.
+# Uses the .env IPC_SECRET to GET /v1/status (non-streaming; /v1/events is SSE
+# and would hang curl after auth). -m $HTTP_TIMEOUT guards against any
+# streaming-endpoint stall. 000=port not up yet, retry; any non-000 response
+# counts as listening (401=port up but secret mismatch, possibly a stale secret
+# from a deploy gap; does not block backends).
 wait_listen() {
     local secret auth=() i
     secret="$(env_get IPC_SECRET)"
@@ -208,39 +226,46 @@ wait_listen() {
     return 1
 }
 
-# 生成单个 systemd unit。$unit 同时作为 Description 后缀和二进制名
-# （unit=lark-xxx-back，二进制同路径同名，Description=lark-bridge $unit）。
-#   $1=unit 名  $2=配置文件名  $3=依赖 unit（可空，仅 feishu-front 留空）
-#   $4=额外的 Environment= 行（可空，多行用 $'\n' 分隔）  $5=privileged（默认 false）
-# 用 Wants= 而非 Requires=：前端崩溃时后端不被连带停止，in-flight Claude 对话
-# 继续运行，backendrpc.Run 的重连机制在前端恢复后重新接上 SSE。
+# Generate one systemd unit. $unit doubles as the Description suffix and the
+# binary name (unit=lark-xxx-back, same path/name for the binary,
+# Description=lark-bridge $unit).
+#   $1=unit name  $2=config filename  $3=depends-on unit (empty for feishu-front only)
+#   $4=extra Environment= lines (empty allowed; multi-line with $'\n')  $5=privileged (default false)
+# Uses Wants= rather than Requires=: a front-end crash does not tear down
+# backends, so in-flight Claude sessions keep running and the backendrpc.Run
+# reconnect logic picks up the SSE stream once the front-end is back.
 write_unit() {
     local unit="$1" config="$2" requires="${3:-}" extra_env="${4:-}" privileged="${5:-false}"
     local deps="After=network.target"
     [[ -n "$requires" ]] && deps="After=$requires.service"$'\n'"Wants=$requires.service"
-    # extra_env 非空时尾部补一个换行，使 heredoc 里 ExecStart 独立成行；空则留空。
+    # Pad extra_env with a trailing newline so ExecStart stays on its own line
+    # in the heredoc; empty leaves it as-is.
     local env_block=""
     [[ -n "$extra_env" ]] && env_block="$extra_env"$'\n'
-    # privileged=true 时整个沙箱块省略：供需要 sudo 提权的单元用（如
-    # deploy-monitor 跑 `make deploy` 时要 systemctl/cp 到 /etc）。沙箱的
-    # NoNewPrivileges 会禁止 sudo 的 setuid 提权，故提权单元必须绕过沙箱。
-    # claude/opencode/miniagent 三个 backend 同样用 privileged=true：它们透传执行
-    # 任意外部 CLI 链（git/node/npm/bash 及子进程），保守沙箱（NoNewPrivileges/
-    # RestrictSUIDSGID 拦 setuid helper、ProtectSystem=full 拦写 /usr）会误伤，故裸跑；
-    # 仅 feishu-front 不 fork 外部 CLI，保留沙箱。
+    # privileged=true drops the sandbox block entirely: units that need sudo
+    # (deploy-monitor running `make deploy` -> systemctl/cp to /etc). The
+    # sandbox's NoNewPrivileges would block sudo's setuid step, so privileged
+    # units must skip it. claude/opencode/miniagent backends also use
+    # privileged=true: they spawn arbitrary external CLIs
+    # (git/node/npm/bash and their children); a conservative sandbox
+    # (NoNewPrivileges/RestrictSUIDSGID blocking setuid helpers,
+    # ProtectSystem=full blocking writes to /usr) would break them, so they
+    # run unsandboxed. Only feishu-front (no external CLI fork) is sandboxed.
     local sandbox=""
     if [[ "$privileged" != "true" ]]; then
-        sandbox='# 沙箱加固（保守集，只加确定不阻断 backend 正常 fork/exec CLI 的项）：
-#   NoNewPrivileges      禁 setuid 提权（backend 不需要）
-#   ProtectSystem=full   /usr /boot 只读；/var/lib(state_dir) 与 /home 仍可写
-#                        （不用 strict：claude 写 ~/.claude、opencode 读 ~/.config）
-#   ProtectHome 不设：backend 依赖用户 home 下的 CLI 配置与缓存
-#   PrivateTmp           独立 /tmp 命名空间，不共享系统 tmp
-#   ProtectKernel*       禁止改内核运行时/模块/日志/cgroup
-#   RestrictSUIDSGID     拒绝执行 setuid/setgid 二进制
-#   CapabilityBoundingSet=  清空能力集（无需任何 Linux capability）
-# 不设 SystemCallFilter：backend 透传执行任意外部 CLI（git/node/shell…），
-# 系统调用白名单极易误伤，收益不抵风险。
+        sandbox='# Sandbox hardening (conservative set; only entries known not to
+# break backend fork/exec of CLIs):
+#   NoNewPrivileges      no setuid escalation (backends do not need it)
+#   ProtectSystem=full   /usr /boot read-only; /var/lib (state_dir) and /home stay writable
+#                        (not strict: claude writes ~/.claude, opencode reads ~/.config)
+#   ProtectHome not set: backends depend on user-home CLI config and caches
+#   PrivateTmp           private /tmp namespace, not shared with system tmp
+#   ProtectKernel*       forbid changing kernel runtime/modules/logs/cgroup
+#   RestrictSUIDSGID     refuse to exec setuid/setgid binaries
+#   CapabilityBoundingSet=  empty capability set (no Linux capability needed)
+# SystemCallFilter intentionally omitted: backends spawn arbitrary external
+# CLIs (git/node/shell...); a syscall allowlist is too easy to break for the
+# benefit it gives.
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
@@ -269,9 +294,9 @@ WantedBy=multi-user.target
 EOF
 }
 
-# ── 参数解析 ──────────────────────────────────────────
-# 全部 flag 在此一次性解析到变量，后续不再直接读 $1（旧的 --init/--force
-# 位置检查改为读 $INIT/$FORCE）。--binaries / --services 接受紧跟的下一个参数。
+# -- Argument parsing ----------------------------------------------------------
+# All flags parse into variables here; the rest of the script reads $INIT/$FORCE
+# rather than $1. --binaries / --services consume the next argument.
 BINARIES_SRC=""
 SERVICES_ARG=""
 INIT=false
@@ -292,35 +317,40 @@ for arg in "$@"; do
         --debug)       DEBUG=true ;;
         --help|-h)     awk 'NR==1{next} /^#!/{next} /^[^#]/{exit} {sub(/^#[[:space:]]?/,""); print}' "$0" | sed 's/^$//'; exit 0 ;;
         --binaries|--services) prev="$arg" ;;
-        *)             fail "未知参数：$arg（可用：--init --force --debug --help --binaries <path> --services <list>）" ;;
+        *)             fail "Unknown argument: $arg (valid: --init --force --debug --help --binaries <path> --services <list>)" ;;
     esac
 done
-[[ -z "$prev" ]] || fail "${prev} 需要一个参数"
+[[ -z "$prev" ]] || fail "${prev} requires an argument"
 
-# --debug：开启 set -x 跟踪每条命令（含变量展开），用于排查部署链路。
-# 放参数解析后，避免解析过程本身被 trace 淹没。
+# --debug: enable `set -x` tracing of every command (with variable expansion)
+# for diagnosing the deploy chain. Run after arg parsing so the parse itself
+# does not drown in trace noise.
 $DEBUG && set -x
 
-# 服务短名 ↔ unit/配置/依赖/提权 映射。新增 backend 仅在此登记四处即可被
-# --services 识别，无需改部署流程的各操作点。
+# Service short-name -> unit/config/depends/privileged mapping. Add a new
+# backend here in four spots and --services picks it up; no other deploy-flow
+# touch-points need changing.
 svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
 svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; miniagent) echo miniagent-config.json;; esac; }
-# backend 依赖前端 listen 且需提权（透传外部 CLI）；feishu-front 两者皆无。
+# Backends depend on the front-end listening and need privileged mode
+# (passthrough of external CLIs); feishu-front has neither.
 svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
-# CLI 二进制名（probe_cli 用）；feishu 无 CLI。
+# CLI binary name (for probe_cli); feishu has no CLI.
 svc_cli(){ case "$1" in claude) echo "claude";; opencode) echo "opencode";; miniagent) echo "miniagent";; *) echo "";; esac; }
 
-# SELECTED → SERVICES：短名 → unit 名重建。改 SELECTED 后必须调用，否则
-# stop/enable/start/验证等用 SERVICES 的地方会偏离。
+# SELECTED -> SERVICES: rebuild unit names from short names. Must be called
+# after any SELECTED mutation, else stop/enable/start/verify (which use
+# SERVICES) drift.
 rebuild_services() {
     SERVICES=()
     local s
     for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
 }
 
-# 从 SELECTED 剔除指定短名（probe 不就绪/env 占位时调用），再同步 SERVICES。
-# 用 _keep 数组保留除目标外的项，避免 splice 索引计算。
+# Drop a short-name from SELECTED (used when probe/env placeholder says "not
+# ready") and re-sync SERVICES. Uses a _keep array to retain everything except
+# the target, avoiding splice-index arithmetic.
 drop_service() {
     local drop="$1" s
     _keep=(); for s in "${SELECTED[@]}"; do [[ "$s" != "$drop" ]] && _keep+=("$s"); done
@@ -328,35 +358,39 @@ drop_service() {
     rebuild_services
 }
 
-# 等待单元就绪失败时先 stop 再 fail：单元已 enabled，systemd 会按 Restart=on-failure
-# 每 5s 反复重启留下半残状态，stop 后才让运维介入。$1=unit 名 $2=失败消息。
+# When a unit fails to become ready, stop it before failing: the unit is
+# already enabled, so systemd would otherwise Restart=on-failure every 5s and
+# leave a half-broken state. Stopping lets the operator intervene cleanly.
+# $1=unit name  $2=failure message.
 fail_after_stop() {
     local unit="$1" msg="$2"
     sudo systemctl stop "$unit" 2>/dev/null || true
     fail "$msg"
 }
 
-# 体检：RUN_USER 是否具备免密 sudo。remote /deploy（经 deploy-monitor 触发本
-# 脚本）无 tty，sudo 没配 NOPASSWD 会挂起到 deploy-monitor 超时——前置到步骤0
-# 前，让运维第一时间看到修复建议，而不是部署完才发现下次远程会挂。
+# Health check: does RUN_USER have passwordless sudo? A remote /deploy (this
+# script triggered by deploy-monitor) has no tty; without NOPASSWD sudo hangs
+# until deploy-monitor times out. Front-load this to step 0 so the operator
+# sees the fix hint immediately, not after the next remote call hangs.
 deploy_sudo_check() {
     if sudo -u "$RUN_USER" sudo -n systemctl is-active "$(svc_unit feishu)" >/dev/null 2>&1; then
-        info "$RUN_USER 具备免密 sudo"
+        info "$RUN_USER has passwordless sudo"
     else
-        warn "$RUN_USER 无免密 sudo，remote /deploy 将挂起至超时失败"
-        warn "  修复：配 /etc/sudoers.d/lark-bridge，例如："
+        warn "$RUN_USER lacks passwordless sudo; remote /deploy will hang until timeout"
+        warn "  Fix: configure /etc/sudoers.d/lark-bridge, e.g.:"
         warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/chmod, /usr/bin/chown, /usr/bin/sed, /usr/bin/tee, /usr/bin/rm, /usr/bin/mv"
-        warn "  （仅授予本脚本用到的命令，遵循最小权限）"
+        warn "  (Grant only the commands this script uses; least privilege.)"
     fi
 }
 
-# SELECTED：本次部署的服务短名；未传 --services 则全部（默认全量，行为不变）。
-# SERVICES 为对应 unit 名数组，供 stop/enable/start/验证等沿用旧变量名。
+# SELECTED: short-name list for this deploy; if --services is absent, all
+# (default-all behaviour preserved). SERVICES is the matching unit-name array
+# and reuses the historical variable name for stop/enable/start/verify.
 SELECTED=()
 if [[ -n "$SERVICES_ARG" ]]; then
     IFS=',' read -ra _parts <<< "$SERVICES_ARG"
     for s in "${_parts[@]}"; do
-        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode miniagent）"
+        svc_unit "$s" >/dev/null || fail "Unknown service: $s (valid: feishu claude opencode miniagent)"
         SELECTED+=("$s")
     done
 else
@@ -364,69 +398,75 @@ else
 fi
 rebuild_services
 
-# ── 前置检查 ──────────────────────────────────────────
-# 仅源码构建模式（无 --binaries）才要求本机有 Makefile/go/make；
-# --binaries 模式目标机无需 Go 工具链与 repo 源码。
+# -- Pre-flight ----------------------------------------------------------------
+# Only source-build mode (no --binaries) requires Makefile/go/make locally;
+# --binaries mode needs neither Go toolchain nor repo source on the target host.
 if [[ -z "$BINARIES_SRC" ]]; then
-    [[ -f "$PROJECT_ROOT/Makefile" ]] || fail "未找到 Makefile，请在 repo 根目录运行"
-    command -v go   >/dev/null || fail "未安装 Go"
-    command -v make >/dev/null || fail "未安装 make"
+    [[ -f "$PROJECT_ROOT/Makefile" ]] || fail "Makefile not found; run from the repo root"
+    command -v go   >/dev/null || fail "Go is not installed"
+    command -v make >/dev/null || fail "make is not installed"
 fi
 
-# ── 步骤 0：部署前会话检查 + sudo 体检（先于构建，避免浪费编译时间）──
+# -- Step 0: pre-deploy session check + sudo health (before building, to avoid wasting compile time)
 deploy_sudo_check
 if $FORCE; then
-    warn "--force：跳过运行中会话检查，强制部署（可能打断正在进行的对话）"
+    warn "--force: skipping in-flight session check; force-deploy may interrupt active conversations"
 else
-    info "检查运行中会话..."
+    info "Checking for in-flight sessions..."
     preflight_inflight_check
 fi
 
-# ── 步骤 1：准备二进制 ────────────────────────────────
-# 源码模式：make build 本机编译。--binaries 模式：从 tarball 解包或从目录复制，
-# 解耦编译与部署（目标机无需 Go/repo）。两种模式产物都落到 BIN_DIR，后续
-# cp 到 DEPLOY_DIR 的流程不变。
+# -- Step 1: prepare binaries --------------------------------------------------
+# Source mode: `make build` compiles locally. --binaries mode: extract from
+# tarball or copy from a directory, decoupling build from deploy (target host
+# needs neither Go nor repo). Both modes drop artifacts into BIN_DIR; the
+# subsequent cp to DEPLOY_DIR is identical.
 ensure_binaries() {
     mkdir -p "$BIN_DIR"
     if [[ -z "$BINARIES_SRC" ]]; then
-        info "构建二进制（源码编译）..."
+        info "Building binaries (source compile)..."
         make -C "$PROJECT_ROOT" build
         return
     fi
     if [[ -f "$BINARIES_SRC" ]]; then
-        info "从 tarball 解包二进制：$BINARIES_SRC"
+        info "Extracting binaries from tarball: $BINARIES_SRC"
         tar -xzf "$BINARIES_SRC" -C "$BIN_DIR"
     elif [[ -d "$BINARIES_SRC" ]]; then
-        info "从目录复制二进制：$BINARIES_SRC"
+        info "Copying binaries from directory: $BINARIES_SRC"
         cp "$BINARIES_SRC"/lark-* "$BIN_DIR/" 2>/dev/null || cp "$BINARIES_SRC"/* "$BIN_DIR/"
     else
-        fail "--binaries 路径不存在：$BINARIES_SRC"
+        fail "--binaries path does not exist: $BINARIES_SRC"
     fi
     chmod 755 "$BIN_DIR"/lark-* 2>/dev/null || true
 }
 ensure_binaries
-[[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "构建产物缺失：lark-feishu-front"
-[[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "构建产物缺失：lark-claude-back"
-[[ -x "$BIN_DIR/lark-opencode-back" ]]        || fail "构建产物缺失：lark-opencode-back"
-[[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "构建产物缺失：lark-miniagent-back"
-# NOTE: miniagent 二进制（github.com/justphantom/miniagent）独立项目，需通过其
-# 自带 Makefile 单独部署到 /usr/local/bin/miniagent，不归本 deploy.sh 管。
-# lark-deploy-monitor 同理：本 tarball 内但由 upgrade-monitor.sh 独立部署；
-# 解包后留在 BIN_DIR 无害，下方 cp 会一并落到 DEPLOY_DIR 供其覆盖。
+[[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "Build artifact missing: lark-feishu-front"
+[[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "Build artifact missing: lark-claude-back"
+[[ -x "$BIN_DIR/lark-opencode-back" ]]        || fail "Build artifact missing: lark-opencode-back"
+[[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "Build artifact missing: lark-miniagent-back"
+# NOTE: the miniagent binary (github.com/justphantom/miniagent) is a separate
+# project; deploy it to /usr/local/bin/miniagent via its own Makefile. Not
+# managed by this script. Same for lark-deploy-monitor: shipped in this
+# tarball but deployed independently by upgrade-monitor.sh; leaving the binary
+# in BIN_DIR is harmless -- the cp below moves it to DEPLOY_DIR for
+# upgrade-monitor to overwrite.
 
-# ── 步骤 2：在临时目录生成各 backend 独立 config（不修改 repo 源文件）──
-# 四个进程各用独立 config：claude/opencode/miniagent/feishu-config.json。
-# 都从同一份基础 config 派生（各进程只读自己需要的字段，多余字段无害）。
-# 各 backend 必须用不同的 router_path（feishu-front 除外），否则
-# 写同一文件互相覆盖。
-# deploy-monitor 的 config/unit 由 upgrade-monitor.sh 独立管理，不在此流程内。
+# -- Step 2: generate per-backend configs in a staging dir (no repo-source mutation)
+# Each of the four processes gets its own config:
+# claude/opencode/miniagent/feishu-config.json. All derived from the same base
+# (each process reads only the fields it needs; extras are inert).
+# Each backend must use a distinct router_path (except feishu-front), otherwise
+# they overwrite each other's chat bindings.
+# deploy-monitor's config/unit is managed by upgrade-monitor.sh and not in this flow.
 #
-# 所有 sed 在临时副本上操作，repo 里的源 config 不被污染（git 不变 dirty）。
-info "准备配置文件..."
+# All sed runs operate on the staging copy; repo source configs stay untouched
+# (git tree does not go dirty).
+info "Preparing config files..."
 STAGE="$(mktemp -d)"
-# EXIT/HUP/INT/TERM 时清理 STAGE 临时目录与 DEPLOY_DIR 残留 .new 临时文件
-# （cp 后 mv 前被中断会留下 .X.new，归 root；不清理会污染目录但每次 cp 覆盖亦无害，
-# 仍清理以保持整洁）。trap 即使正常完成也触发一次，那时已 mv 完成，rm 无害。
+# On EXIT/HUP/INT/TERM clean up STAGE and any .new temp files left in DEPLOY_DIR
+# (an interrupt between cp and mv would leave .X.new owned by root; harmless on
+# next cp but cleaned up for tidiness). The trap also fires once on normal
+# completion, by which point mv is done and rm is a no-op.
 trap 'rm -rf "$STAGE"; sudo rm -f "$DEPLOY_DIR"/.lark-*.new 2>/dev/null || true' EXIT
 
 if $INIT; then
@@ -436,48 +476,52 @@ if $INIT; then
         elif [[ -f "$BIN_DIR/env.example" ]]; then
             cp "$BIN_DIR/env.example" "$PROJECT_ROOT/.env"
         else
-            fail "找不到 env.example 模板（repo deploy/ 或 tarball）"
+            fail "env.example template not found (repo deploy/ or tarball)"
         fi
     fi
-    # 生成 IPC_SECRET（仅匹配未改过的占位符）。用 _init_secret 前缀避免与下方
-    # 函数内的 local secret 同名混淆（顶层赋值在 bash 中是全局污染）。
+    # Generate IPC_SECRET (only if the placeholder is still unchanged). The
+    # _init_secret prefix avoids colliding with a same-named local in a
+    # function below (top-level assignment would otherwise pollute globals).
     if grep -q '^IPC_SECRET=change-me' "$PROJECT_ROOT/.env" 2>/dev/null; then
         _init_secret="$(openssl rand -hex 32)"
         sed -i "s|^IPC_SECRET=.*|IPC_SECRET=$_init_secret|" "$PROJECT_ROOT/.env"
-        info "已自动生成 IPC_SECRET"
+        info "Generated IPC_SECRET"
     fi
-    warn ".env 中的飞书凭证等仍需手动填写"
+    warn "Feishu credentials and other secrets in .env still need manual editing"
 fi
-[[ -f "$PROJECT_ROOT/.env" ]] || fail "未找到 .env（用 --init 自动生成或手动 cp deploy/env.example）"
+[[ -f "$PROJECT_ROOT/.env" ]] || fail ".env not found (use --init to generate it, or manually cp deploy/env.example)"
 
-# 补齐缺失变量：env.example 里有、而 repo 根 .env 里没有的 KEY，用 example 的
-# 默认值整行追加。已存在的 KEY 一律不动（尊重运维已配置的值）。应对升级新增了
-# 变量、旧 .env 没有的情况（如 OPENCODE_SERVER_PASSWORD 缺失导致进程启动 expand 失败）。
+# Backfill missing variables: any KEY present in env.example but absent from
+# repo-root .env is appended with the example's default. Existing KEYs are
+# never touched (operator-set values are respected). Covers the upgrade case
+# where new variables were added that an old .env lacks (e.g. a missing
+# OPENCODE_SERVER_PASSWORD would make config.Load fail at process expand time).
 if [[ -f "$PROJECT_ROOT/deploy/env.example" ]]; then
     while IFS= read -r line; do
         [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] || continue
         key="${BASH_REMATCH[1]}"
         grep -q "^${key}=" "$PROJECT_ROOT/.env" && continue
         printf '%s\n' "$line" >> "$PROJECT_ROOT/.env"
-        info "补齐缺失变量 ${key}（用 env.example 默认值）"
+        info "Backfilled missing variable ${key} (from env.example default)"
     done < "$PROJECT_ROOT/deploy/env.example"
 fi
 
-# 检查 .env 是否仍含占位值（首次部署容易忘改）
+# Warn if .env still contains placeholder values (a common first-deploy oversight)
 check_env_placeholder() {
     local key="$1" pattern="$2" hint="$3"
     if grep -q "^${key}=${pattern}" "$PROJECT_ROOT/.env" 2>/dev/null; then
-        warn "$key 仍为占位值，请编辑 .env 后重新部署：$hint"
+        warn "$key is still the placeholder; edit .env and re-deploy: $hint"
     fi
 }
-check_env_placeholder FEISHU_APP_ID 'cli_xxx' '飞书应用 App ID'
-check_env_placeholder FEISHU_APP_SECRET 'xxx' '飞书应用 App Secret'
-check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI 兼容 API key'
-check_env_placeholder IPC_SECRET 'change-me' 'IPC 共享密钥（用 --init 自动生成或 openssl rand -hex 32）'
+check_env_placeholder FEISHU_APP_ID 'cli_xxx' 'Feishu app App ID'
+check_env_placeholder FEISHU_APP_SECRET 'xxx' 'Feishu app App Secret'
+check_env_placeholder MINIAGENT_API_KEY 'sk-xxx' 'OpenAI-compatible API key'
+check_env_placeholder IPC_SECRET 'change-me' 'IPC shared secret (auto-generated with --init, or use openssl rand -hex 32)'
 
-# 服务部署条件：基于 repo 根 .env 的占位值判定（占位 = 不具备条件）。
-# feishu 依赖飞书凭证非占位；miniagent 依赖 MINIAGENT_API_KEY 非占位；
-# claude/opencode 无需用户密钥 → 恒具备。
+# Per-service deploy readiness, based on placeholder values in repo-root .env
+# (placeholder = not ready). feishu needs real Feishu credentials; miniagent
+# needs a non-placeholder MINIAGENT_API_KEY; claude/opencode need no user
+# key -> always ready.
 svc_env_ready() {
     local envf="$PROJECT_ROOT/.env"
     case "$1" in
@@ -492,187 +536,213 @@ svc_env_ready() {
     esac
 }
 
-# 按 env 条件筛选本次选中服务：不具备的停止并禁用现有单元（避免反复重启），
-# 并从 SELECTED 剔除。feishu 是前端基础（所有 backend 经 Wants= 依赖它），
-# 选中却不具备条件直接 fail——其余 backend 部署了也连不上前端。未选中的
-# 服务不触碰（多机分离部署时后端机 .env 无飞书凭证属正常）。
+# Filter the selected services by env readiness: stop+disable any unit that is
+# not ready (to avoid crash-loops) and drop it from SELECTED. feishu is the
+# front-end foundation (every backend Wants= it); selecting it without
+# readiness is a hard fail -- other backends cannot connect without it.
+# Services not selected are untouched (multi-host split: back-end host .env
+# without Feishu credentials is normal).
 READY=()
 for s in "${SELECTED[@]}"; do
     if svc_env_ready "$s"; then READY+=("$s"); continue; fi
     u="$(svc_unit "$s")"
     if [[ "$s" == "feishu" ]]; then
-        fail "FEISHU_APP_ID/SECRET 仍为占位值，无法部署前端（所有 backend 依赖前端）。请编辑 .env 填入真实飞书凭证后重试"
+        fail "FEISHU_APP_ID/SECRET are still placeholders; cannot deploy the front-end (every backend depends on it). Edit .env with real Feishu credentials and retry."
     fi
     if systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null; then
-        warn "$s 不具备部署条件（env 占位值），停止并禁用 $u"
+        warn "$s not ready (env placeholder); stopping and disabling $u"
         sudo systemctl disable --now "$u" 2>/dev/null || true
     else
-        warn "$s 不具备部署条件（env 占位值），跳过"
+        warn "$s not ready (env placeholder); skipping"
     fi
 done
-[[ ${#READY[@]} -gt 0 ]] || fail "选中服务均不具备部署条件"
+[[ ${#READY[@]} -gt 0 ]] || fail "None of the selected services are ready to deploy"
 SELECTED=("${READY[@]}")
 rebuild_services
 
-# 基础 config 真源：repo example > tarball 解包的 example（--binaries 部署目标机
-# 可能无 repo 源码，仅 tarball + deploy.sh）。不再用 repo root 的 claude-config.json
-# ——它不在 git 里（git ls-files 为空），schema 可能滞后，曾让业务 backend 因
-# DisallowUnknownFields 启动失败（memory_enabled 字段已被上游删除但本地残留）。
+# Base config source of truth: repo example > tarball-extracted example
+# (--binaries target host may have no repo source, only tarball + deploy.sh).
+# Do NOT use repo-root claude-config.json -- it is not in git (git ls-files is
+# empty), its schema can drift, and it once broke business backends via
+# DisallowUnknownFields (a memory_enabled field removed upstream was still
+# present locally).
 if [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
     cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
 elif [[ -f "$BIN_DIR/config.example.json" ]]; then
     cp "$BIN_DIR/config.example.json" "$STAGE/claude-config.json"
 else
-    fail "找不到 config 基底（config.example.json）"
+    fail "Base config not found (config.example.json)"
 fi
 
-# log_level 改写为 ${LOG_LEVEL} 占位符：与 ${STATE_DIR} / ${IPC_ADDR} 同一展开
-# 机制（进程启动时 config.Load 从 EnvironmentFile 展开，见下方注释）。运维改
-# repo 根 .env 的 LOG_LEVEL 重新部署即全服务生效，无需碰 JSON。改的是 STAGE
-# 副本，repo 里的基底原样保留；注入后显式校验，防基底缺字段时 sed 静默失败。
-# 单引号禁止 shell 展开 ${LOG_LEVEL}（留给 Go config.Load 展开），shellcheck SC2016
-# 是预期告警，行内 disable 声明意图。
+# Rewrite log_level to a ${LOG_LEVEL} placeholder: same expansion mechanism
+# as ${STATE_DIR} / ${IPC_ADDR} (process-start config.Load expands them from
+# EnvironmentFile -- see below). Editing LOG_LEVEL in repo-root .env and
+# re-deploying applies to every service, no JSON editing needed. The STAGE
+# copy is modified; the repo base stays as-is. Asserted explicitly so a
+# missing field in the base does not let sed fail silently.
+# Single quotes prevent shell expansion of ${LOG_LEVEL} (left for Go config.Load);
+# shellcheck SC2016 is the expected warning, disabled inline to document intent.
 # shellcheck disable=SC2016
 sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/claude-config.json"
 # shellcheck disable=SC2016
 # Verify the log_level placeholder took effect. Use a regex so the assertion
 # is robust to whitespace alignment changes in the sed substitution above.
 grep -Eq '"log_level"[[:space:]]*:[[:space:]]*"\$\{LOG_LEVEL\}"' "$STAGE/claude-config.json" \
-    || fail "log_level 占位符注入失败：$STAGE/claude-config.json 缺少 log_level 字段（注入锚点缺失）"
+    || fail "log_level placeholder injection failed: $STAGE/claude-config.json has no log_level field (injection anchor missing)"
 
-# state_dir / ipc_addr / frontend_url 已在 config 模板里写成 ${STATE_DIR} / ${IPC_ADDR}
-# 占位符，由各进程的 config.Load 在启动时从环境变量展开（见 internal/config 的
-# expandEnvVars）。deploy.sh 只需保证 IPC_ADDR / STATE_DIR 进入 EnvironmentFile（见
-# 步骤 3 的 .env 写入），无需 sed 改 JSON——既消除字面量替换的元字符转义陷阱，也避免
-# sed 静默失败导致 state 分裂。
+# state_dir / ipc_addr / frontend_url are already ${STATE_DIR} / ${IPC_ADDR}
+# placeholders in the config template, expanded by each process's config.Load
+# at startup from environment variables (see internal/config's expandEnvVars).
+# deploy.sh only has to make sure IPC_ADDR / STATE_DIR reach the
+# EnvironmentFile (see step 3 below) -- no JSON sed needed. This avoids both
+# the metacharacter-escape traps of literal substitution and the silent-fail
+# risk of sed that would split state.
 
-# 各 backend（claude/opencode/miniagent）注入独立 router_path。三者共享同一个
-# state_dir，若用默认的同一 router.v5.json 会互相覆盖会话绑定，故部署脚本
-# 显式拆为 claude/opencode/miniagent-router.json（文件名仅本脚本约定，
-# 与 config 默认的 router.v5.json 不同；router_path 字段本身可配）。
+# Each backend (claude/opencode/miniagent) gets its own router_path injected.
+# They share one state_dir, so defaulting to the same router.v5.json would
+# overwrite each other's chat bindings. The deploy script explicitly splits
+# them into claude/opencode/miniagent-router.json (filename convention of this
+# script only; differs from the config default router.v5.json; the router_path
+# field is configurable).
 #
-# 可选第 3 参数 backend_id：非空则同时改写 backend_id（opencode/miniagent 派生
-# 自 claude-config 时需改）；空则保留基底（claude/feishu）。
-# router_path 注入用 sed '/"backend_id"/a\...'：以 backend_id 行为锚点在其后
-# 追加。若用户自定义 config 缺 backend_id 字段，sed 静默不追加，回退到同一
-# 默认 router.v5.json 会互相覆盖会话绑定，故注入后必须显式校验存在。
+# Optional 3rd parameter backend_id: when non-empty, also rewrite backend_id
+# (opencode/miniagent derived from claude-config need it); empty preserves the
+# base (claude/feishu).
+# router_path injection uses sed `/\"backend_id\"/a\...`: anchored on the
+# backend_id line, appended after it. If a user-customised config lacks
+# backend_id, sed silently skips and the unit would fall back to the same
+# default router.v5.json -- overwriting bindings -- so we explicitly assert
+# router_path landed.
 inject_router_path() {
     local file="$1" path="$2" backend_id="${3:-}"
-    # delete 旧 router_path + 在 backend_id 行后 append 新值，合并为 1 次 sed -i
-    # （1 次 fsync）；backend_id 改写条件执行（claude/feishu 派生时为空，跳过）。
+    # Delete any old router_path and append the new one after backend_id in a
+    # single sed -i (one fsync); backend_id rewrite runs conditionally
+    # (empty for claude/feishu derivation, skipped).
     sed -i -e '/"router_path"/d' \
            -e '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     [[ -n "$backend_id" ]] && sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "'"$backend_id"'",|' "$file"
     grep -q '"router_path"' "$file" \
-        || fail "router_path 注入失败：$file 缺少 backend_id 字段（注入锚点缺失），backend 将共用默认 router 文件互相覆盖"
+        || fail "router_path injection failed: $file has no backend_id field (injection anchor missing); backends would share a default router file and overwrite each other"
 }
 
 inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 
-# opencode-back：独立 backend_id + 独立 router_path
+# opencode-back: distinct backend_id + distinct router_path
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json" "opencode-1"
 
-# miniagent-back：独立 backend_id + 独立 router_path（同 opencode 模式）
+# miniagent-back: distinct backend_id + distinct router_path (same pattern as opencode)
 cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
 inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
-# feishu-front：派生自 claude-config（同一份 base）。注意：所有 backend 共用
-# internal/config.Config struct + DisallowUnknownFields，没有"多余字段无害"——
-# struct 必须识别 config 的所有 key，否则 parse fail。当前安全只因 struct 是
-# example 字段的超集；schema 漂移时会一起失败。
+# feishu-front: derived from claude-config (same base). Note: every backend
+# shares internal/config.Config struct + DisallowUnknownFields, so "extra
+# fields are inert" is NOT true -- the struct must recognise every key in the
+# config or parse fails. Today it is safe only because the struct is a
+# superset of the example fields; a schema drift would break all of them.
 cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"
+info "Generated claude-config / opencode-config / miniagent-config / feishu-config"
 
-# 移除历史遗留：opencode-serve-back 已从代码库移除（CLI 模式替代），部署时一并
-# 清理已存在的 systemd unit + state 文件，避免机器上留下"幽灵服务"反复重启。
-# 即使本次 --services 不含相关项，也强制清理一次（升级路径必须收敛到无 unit）。
+# Legacy cleanup: opencode-serve-back was removed from the codebase (CLI mode
+# replaces it). On every deploy we now detect and remove any leftover unit +
+# state files, so the machine does not carry a "ghost service" that
+# crash-loops. Forced even when --services does not list it -- the upgrade
+# path must converge to "no such unit".
 legacy_unit="lark-opencode-serve-back"
 if sudo systemctl list-unit-files 2>/dev/null | grep -q "^${legacy_unit}\.service"; then
-    warn "检测到遗留单元 ${legacy_unit}.service（opencode-serve-back 已移除），停止并禁用..."
+    warn "Detected legacy unit ${legacy_unit}.service (opencode-serve-back was removed); stopping and disabling..."
     sudo systemctl disable --now "$legacy_unit" 2>/dev/null || true
     sudo rm -f "/etc/systemd/system/${legacy_unit}.service"
     sudo systemctl daemon-reload
-    info "${legacy_unit}.service 已清理"
+    info "Cleaned up ${legacy_unit}.service"
 fi
-# 同时清理遗留的 state 文件（router 持久化 + usage 统计 + session 列表）
+# Also clean up legacy state files (router persistence + usage stats)
 for legacy_state in \
     "$STATE_DIR/opencode-serve-router.json" \
     "$STATE_DIR/usage-opencode-serve.json"; do
     if [[ -e "$legacy_state" ]]; then
         sudo rm -f "$legacy_state"
-        info "清理遗留状态文件：$legacy_state"
+        info "Removed legacy state file: $legacy_state"
     fi
 done
-# 遗留 config 模板（CONFIG_DIR 下的派生文件）
+# Legacy config template (derived file under CONFIG_DIR)
 if [[ -e "$CONFIG_DIR/opencode-serve-config.json" ]]; then
     sudo rm -f "$CONFIG_DIR/opencode-serve-config.json"
-    info "清理遗留配置：$CONFIG_DIR/opencode-serve-config.json"
+    info "Removed legacy config: $CONFIG_DIR/opencode-serve-config.json"
 fi
 
-# claude/opencode/miniagent 三 backend 的 CLI 二进制就绪是对应 backend 部署的硬性
-# 条件：CLI 不在 PATH → backend 启动必崩（IsReady 跑 `<cli> --version`），
-# systemd 每 5s 重试。提前探测并停禁剔除，避免反复崩溃噪音。放在 stop_services
-# 前：停禁先于本次服务重启。
-# 迭代中改 SELECTED/SERVICES 不影响本次 for-in（bash 先把数组展开为位置参数）。
+# CLI binary readiness is a hard precondition for each of
+# claude/opencode/miniagent: a missing CLI -> backend crashes on startup
+# (IsReady runs `<cli> --version`), systemd retrying every 5s. We probe up
+# front, stop+disable+drop the service so the noise stays down. Runs before
+# stop_services: stop+disable ahead of this run's service restarts.
+# Mutating SELECTED/SERVICES during the loop does not affect this iteration
+# (bash expands the array to positional params once, up front).
 for s in "${SELECTED[@]}"; do
     cli="$(svc_cli "$s")"
     [[ -z "$cli" ]] && continue
     if probe_cli "$cli"; then
-        info "$s-back 纳入部署（$cli 就绪）"
+        info "$s-back included in deploy ($cli ready)"
         continue
     fi
     u="$(svc_unit "$s")"
-    warn "$s-back 不具备部署条件（$cli CLI 未就绪），停止并禁用 $u（本次不部署）"
+    warn "$s-back not deploy-ready ($cli CLI not ready); stopping and disabling $u (skipped this run)"
     case "$s" in
-        claude)    warn "  安装 Claude Code CLI 后重新部署即可纳入：https://github.com/anthropics/claude-code" ;;
-        opencode)  warn "  安装 opencode CLI 后重新部署即可纳入：https://github.com/sst/opencode" ;;
-        miniagent) warn "  安装 miniagent CLI 后重新部署即可纳入：https://github.com/justphantom/miniagent" ;;
+        claude)    warn "  Install the Claude Code CLI and re-deploy to include it: https://github.com/anthropics/claude-code" ;;
+        opencode)  warn "  Install the opencode CLI and re-deploy to include it: https://github.com/sst/opencode" ;;
+        miniagent) warn "  Install the miniagent CLI and re-deploy to include it: https://github.com/justphantom/miniagent" ;;
     esac
     sudo systemctl disable --now "$u" 2>/dev/null || true
     drop_service "$s"
 done
 
-# ── 步骤 3：创建目录 + 复制文件 + 修权限 ─────────────
-# STATE_DIR/{claude,opencode} 是两个 backend 的 default_directory，
-# per-chat 工作目录在运行时由 MkdirAll 在其下自动创建。
-info "创建系统目录..."
+# -- Step 3: create directories + copy files + fix permissions -----------------
+# STATE_DIR/{claude,opencode} are the two backends' default_directory;
+# per-chat working dirs are auto-created under them at runtime via MkdirAll.
+info "Creating system directories..."
 sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode"
 
-# 必须先停服务，否则覆盖二进制会 "Text file busy"
+# Services must be stopped before binary overwrite, otherwise ETXTBSY.
 stop_services
 
-info "复制二进制和配置..."
+info "Copying binaries and configs..."
 
-# 二进制用「写临时文件 + 原子 rename」更新，而非直接 cp 覆盖。rename(2) 替换
-# 路径不触发 ETXTBSY——运行中的进程继续持有旧 inode，直到被重启才换上新文件。
-# 临时文件落在同一 $DEPLOY_DIR，确保 mv 是同卷 rename（原子、不跨设备）。
-# 业务服务已在 stop_services 停止，rename 同样安全。
-# 注意：deploy-monitor 的二进制不在此流程内——它由 upgrade-monitor.sh 独立管理。
+# Binaries are updated via "write temp file + atomic rename" rather than a
+# direct cp overwrite. rename(2) replacing the path does not trigger ETXTBSY
+# -- a running process keeps the old inode until it is restarted. The temp
+# file lives in the same $DEPLOY_DIR so mv is a same-filesystem rename
+# (atomic, no cross-device copy). Business services are already stopped in
+# stop_services, so the rename is also safe.
+# Note: deploy-monitor's binary is not in this flow -- upgrade-monitor.sh
+# manages it independently.
 for s in "${SELECTED[@]}"; do
     u="$(svc_unit "$s")"
-    [[ -f "$BIN_DIR/$u" ]] || fail "构建产物缺失：$u（--binaries 产物或 make build 输出不全）"
+    [[ -f "$BIN_DIR/$u" ]] || fail "Build artifact missing: $u (--binaries input or make build output incomplete)"
     sudo cp "$BIN_DIR/$u" "$DEPLOY_DIR/.${u}.new"
     sudo mv -f "$DEPLOY_DIR/.${u}.new" "$DEPLOY_DIR/$u"
 done
 sudo chmod 755 "$DEPLOY_DIR"/*
 
-# config 是部署产物，每次从 STAGE 覆盖到 CONFIG_DIR
+# Configs are deploy artifacts; each run copies them from STAGE to CONFIG_DIR.
 for s in "${SELECTED[@]}"; do
     sudo cp "$STAGE/$(svc_config "$s")" "$CONFIG_DIR/"
 done
 sudo chmod 600 "$CONFIG_DIR"/*.json
 
-# .env 以 repo 根目录的为唯一真源：每次部署先在 repo 根 .env 上同步本次
-# 部署参数（IPC_ADDR / STATE_DIR），再整文件覆盖到 CONFIG_DIR/.env。运维改
-# 了 .env 的任何键（凭证、模型、工作区等）重新部署即生效；不再保留
-# CONFIG_DIR 上的旧 .env。
-# update_env_key 幂等更新一个键：存在用 sed 改整行，不存在追加。
+# The repo-root .env is the single source of truth: each deploy first syncs
+# this run's parameters (IPC_ADDR / STATE_DIR) into repo-root .env, then
+# wholesale-overwrites CONFIG_DIR/.env from it. Any operator edit to .env
+# (credentials, models, workspace, ...) takes effect on re-deploy; the old
+# CONFIG_DIR/.env is not preserved.
+# update_env_key idempotently updates one key: in-place sed if present, append
+# otherwise.
 update_env_key() {
     local key="$1" val="$2" file="$3"
-    # 内联 sed replacement 转义（& \ 和分隔符 |），避免 PROJECT_ROOT 等路径
-    # 含元字符时被解释为反向引用或截断分隔符。仅此一处使用，不抽 helper。
+    # Inline sed-replacement escaping (& \ and the | separator), so paths like
+    # PROJECT_ROOT containing metacharacters are not interpreted as
+    # backreferences or truncating separators. Used only here; no helper
+    # extracted.
     local esc_val="${val//\\/\\\\}"
     esc_val="${esc_val//&/\\&}"
     esc_val="${esc_val//|/\\|}"
@@ -682,65 +752,72 @@ update_env_key() {
         echo "${key}=${val}" | sudo tee -a "$file" > /dev/null
     fi
 }
-# 先同步部署参数到 repo 根 .env，否则整文件覆盖后 CONFIG_DIR/.env 会丢这两项，
-# config 模板里的 ${IPC_ADDR} / ${STATE_DIR} 展开会失败。
+# Sync deploy params into repo-root .env first, otherwise the wholesale
+# overwrite would drop them and config's ${IPC_ADDR} / ${STATE_DIR} expansion
+# would fail.
 update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
 update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
 update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
-# LOG_LEVEL：缺省补 info（config 的 ${LOG_LEVEL} 展开对未设/空值报错）；已设值
-# 不覆盖，运维调 debug 后重新部署即生效。
+# LOG_LEVEL: default to info if absent (config's ${LOG_LEVEL} errors on
+# unset/empty); existing value is preserved so operators toggling to debug
+# survive a re-deploy.
 if ! grep -q '^LOG_LEVEL=' "$PROJECT_ROOT/.env" 2>/dev/null; then
     update_env_key LOG_LEVEL info "$PROJECT_ROOT/.env"
-    warn ".env 缺少 LOG_LEVEL，已追加 LOG_LEVEL=info（改 debug 后重新部署生效）"
+    warn ".env missing LOG_LEVEL; appended LOG_LEVEL=info (change to debug and re-deploy to take effect)"
 fi
-# WORKSPACE_ROOT: 如果 .env 里没设或仍是占位值，自动推导为 PROJECT_ROOT 的上一级
-# （repo 的父目录，通常是所有项目的公共根）。运维可在 .env 里显式覆盖。
+# WORKSPACE_ROOT: if .env does not set it or still has the placeholder, default
+# to PROJECT_ROOT's parent (typically the common root of all projects). The
+# operator can override explicitly in .env.
 if ! grep -q '^WORKSPACE_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null || \
    grep -q '^WORKSPACE_ROOT=$\|^WORKSPACE_ROOT=/home/user/your-project' "$PROJECT_ROOT/.env" 2>/dev/null; then
     WORKSPACE_ROOT_DEFAULT="$(dirname "$PROJECT_ROOT")"
     update_env_key WORKSPACE_ROOT "$WORKSPACE_ROOT_DEFAULT" "$PROJECT_ROOT/.env"
-    info "WORKSPACE_ROOT 自动设为 $WORKSPACE_ROOT_DEFAULT（PROJECT_ROOT 的上一级）"
+    info "WORKSPACE_ROOT auto-set to $WORKSPACE_ROOT_DEFAULT (parent of PROJECT_ROOT)"
 fi
-# FRONTEND_URL：单机默认 http://$IPC_ADDR。仅当 .env 未设或为空时推导；
-# 多机部署由运维显式设前端机可达地址（不被覆盖）。
+# FRONTEND_URL: defaults to http://$IPC_ADDR on a single host. Only derived
+# when .env does not set it or it is empty; multi-host deploys have the
+# operator set the front-end reachable address explicitly (not overridden).
 if ! grep -q '^FRONTEND_URL=' "$PROJECT_ROOT/.env" 2>/dev/null || \
    grep -q '^FRONTEND_URL=$' "$PROJECT_ROOT/.env" 2>/dev/null; then
     update_env_key FRONTEND_URL "http://$IPC_ADDR" "$PROJECT_ROOT/.env"
 fi
 sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
 sudo chmod 600 "$CONFIG_DIR/.env"
-info "已覆盖 $CONFIG_DIR/.env（以 repo 根 .env 为真源）"
+info "Overwrote $CONFIG_DIR/.env (repo-root .env is the source of truth)"
 
-info "修复目录和文件权限 → owner=$RUN_USER"
+info "Fixing directory and file permissions -> owner=$RUN_USER"
 sudo chown -R "$RUN_USER:$RUN_USER" "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
 
-# ── 步骤 4：生成 systemd unit（动态用户）─────────────
-info "生成 systemd unit 文件（User=$RUN_USER）..."
+# -- Step 4: generate systemd units (dynamic user) -----------------------------
+info "Generating systemd unit files (User=$RUN_USER)..."
 
 for s in "${SELECTED[@]}"; do
     u="$(svc_unit "$s")"
     write_unit "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "" "$(svc_privileged "$s")"
 done
 
-# ── 步骤 5：启动（串行：前端先 listen，再起后端）─────
-info "启动服务..."
+# -- Step 5: start (serial: front-end listens first, then backends) ------------
+info "Starting services..."
 sudo systemctl daemon-reload
-# enable 所有服务开机自启，但不 --now；下面显式控制启动顺序。
-# 不吞错到 /dev/null：write_unit 已生成文件，enable 真失败说明 systemd 自身
-# 异常（路径冲突等），保留 stderr 让 set -e 立即暴露根因。仍 || true：
-# 部分 systemctl 版本对已 enabled 的单元返回非 0，不视为部署失败。
+# enable every service for autostart, but NOT --now; we control order below.
+# Stderr is not silenced: write_unit has produced the file, so a real enable
+# failure means systemd itself is unwell (path conflict etc.) -- keep stderr
+# so set -e surfaces the cause immediately. Still `|| true`: some systemctl
+# versions return non-zero for already-enabled units, not a deploy failure.
 sudo systemctl enable "${SERVICES[@]}" || true
 
-# 先起前端（若本次部署含前端），等 IPC 端口 listen，避免后端连不上而崩溃-重启。
-# 仅部署 backend 时前端已在运行，跳过等待直接起 backend。
+# Start the front-end first (if part of this deploy) and wait for the IPC port
+# to listen, so backends do not crash-loop trying to connect.
+# When only deploying backends, the front-end is already running; skip the
+# wait and start backends directly.
 if [[ " ${SELECTED[*]} " == *" feishu "* ]]; then
     front_unit="$(svc_unit feishu)"
     sudo systemctl start "$front_unit"
-    wait_active "$front_unit" || fail_after_stop "$front_unit" "$front_unit 启动失败"
-    wait_listen || fail_after_stop "$front_unit" "feishu-front IPC 端口 $IPC_ADDR 未 listen，后端无法连接"
+    wait_active "$front_unit" || fail_after_stop "$front_unit" "$front_unit failed to start"
+    wait_listen || fail_after_stop "$front_unit" "feishu-front IPC port $IPC_ADDR not listening; backends cannot connect"
 fi
 
-# 端口已通，再起选中的 backend（不含 feishu，并行互不依赖）
+# Port is up; start the selected backends (excluding feishu, independent of each other)
 backends=()
 for s in "${SELECTED[@]}"; do
     [[ "$s" == "feishu" ]] && continue
@@ -748,43 +825,45 @@ for s in "${SELECTED[@]}"; do
 done
 [[ ${#backends[@]} -eq 0 ]] || sudo systemctl start "${backends[@]}"
 
-# ── 步骤 6：验证（轮询 is-active，替代固定 sleep）─────
-info "验证..."
+# -- Step 6: verify (poll is-active; replaces a fixed sleep) -------------------
+info "Verifying..."
 all_ok=true
 for svc in "${SERVICES[@]}"; do
     if wait_active "$svc"; then
-        echo -e "  ${GREEN}✓${NC} $svc  $(systemctl show -p MainPID --value "$svc")"
+        echo -e "  ${GREEN}OK${NC}   $svc  $(systemctl show -p MainPID --value "$svc")"
     else
-        echo -e "  ${RED}✗${NC} $svc  FAILED"
+        echo -e "  ${RED}FAIL${NC} $svc"
         all_ok=false
     fi
 done
 
-# IPC 就绪+鉴权检查：带 .env 的 IPC_SECRET 请求 /v1/status，期望 200。
-# 旧版裸请求期望 401 只能证明"鉴权机制存在"，不能证明"密钥与 .env 一致 →
-# 服务真正可用"；带正确 Bearer 得 200 才算鉴权链路通。
+# IPC ready + auth check: GET /v1/status with .env's IPC_SECRET, expecting 200.
+# The legacy unauthenticated probe expecting 401 only proved "auth is enforced";
+# it did not prove "the key matches .env -> the service is actually usable".
+# A correct Bearer getting 200 means the auth chain end-to-end works.
 ipc_secret="$(env_get IPC_SECRET)"
 if [[ -z "$ipc_secret" ]]; then
-    echo -e "  ${YELLOW}!${NC} repo 根 .env 无 IPC_SECRET，跳过 IPC 鉴权检查"
+    echo -e "  ${YELLOW}WARN${NC} repo-root .env has no IPC_SECRET; skipping IPC auth check"
 else
     code="$(curl -s -o /dev/null -m "$HTTP_TIMEOUT" -w '%{http_code}' -H "Authorization: Bearer $ipc_secret" "http://$IPC_ADDR/v1/status" 2>/dev/null || echo 000)"
     if [[ "$code" == "200" ]]; then
-        echo -e "  ${GREEN}✓${NC} IPC ($IPC_ADDR) 带鉴权返回 200（就绪）"
+        echo -e "  ${GREEN}OK${NC}   IPC ($IPC_ADDR) returned 200 with auth (ready)"
     elif [[ "$code" == "401" ]]; then
-        echo -e "  ${YELLOW}!${NC} IPC ($IPC_ADDR) 返回 401（.env 的 IPC_SECRET 与运行中服务不一致）"
+        echo -e "  ${YELLOW}WARN${NC} IPC ($IPC_ADDR) returned 401 (.env IPC_SECRET does not match the running service)"
     else
-        echo -e "  ${YELLOW}!${NC} IPC ($IPC_ADDR) 返回 $code（期望 200）"
+        echo -e "  ${YELLOW}WARN${NC} IPC ($IPC_ADDR) returned $code (expected 200)"
     fi
 fi
 
 if $all_ok; then
-    info "部署完成"
+    info "Deploy complete"
 else
-    # 失败单元输出最近 10 行日志，避免运维手敲 journalctl；sudo 因为日志归 root。
+    # Dump the last 10 log lines of failed units so the operator does not have
+    # to invoke journalctl by hand; sudo because the journal is root-owned.
     for svc in "${SERVICES[@]}"; do
         systemctl is-active --quiet "$svc" 2>/dev/null && continue
-        warn "$svc 最近日志（journalctl -u $svc -n 10）："
+        warn "Recent $svc logs (journalctl -u $svc -n 10):"
         sudo journalctl -u "$svc" -n 10 --no-pager 2>/dev/null | sed 's/^/    /' || true
     done
-    fail "部分服务启动失败（详见上方 journalctl 摘要）"
+    fail "Some services failed to start (see journalctl summary above)"
 fi
