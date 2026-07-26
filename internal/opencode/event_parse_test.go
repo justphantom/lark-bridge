@@ -194,6 +194,105 @@ func TestParseEvent_ToolUseNoMetadataNotError(t *testing.T) {
 	}
 }
 
+// TestParseEvent_ToolUseErrorFieldSurfaced verifies that when status="error"
+// opencode swaps state.output for state.error, and the parser surfaces the
+// cause ("File not found", "PermissionDenied", ...) as the result text —
+// without this the card shows an empty body and only the red tag.
+func TestParseEvent_ToolUseErrorFieldSurfaced(t *testing.T) {
+	// Shape mirrors a real opencode 1.18 read of a missing file:
+	// state.output is absent, state.error carries the cause.
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"read","callID":"call_x","state":{"status":"error","input":{"filePath":"/tmp/missing"},"error":"File not found: /tmp/missing","time":{"start":1785051111461,"end":1785051111652}},"id":"prt_x","sessionID":"s1","messageID":"msg_x"}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	res := got[0]
+	if !res.isToolError {
+		t.Errorf("expected isToolError=true for status=error")
+	}
+	if res.text != "File not found: /tmp/missing" {
+		t.Errorf("text = %q, want the cause from state.error", res.text)
+	}
+	if !strings.Contains(res.GetToolInput(), "/tmp/missing") {
+		// input fallback still works (no title here so input JSON is used)
+		t.Errorf("toolInput = %q, want contains the file path", res.GetToolInput())
+	}
+}
+
+// TestParseEvent_ToolUseErrorFieldOnWrite verifies the same state.error
+// surfacing for write failures (PermissionDenied).
+func TestParseEvent_ToolUseErrorFieldOnWrite(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"write","state":{"status":"error","input":{"filePath":"/tmp/readonly/x","content":"hello"},"error":"PermissionDenied: FileSystem.writeFile (/tmp/readonly/x)"}}}`
+	got, _ := parseEvent(line)
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	if !got[0].isToolError {
+		t.Error("expected isToolError=true")
+	}
+	if !strings.Contains(got[0].text, "PermissionDenied") {
+		t.Errorf("text = %q, want contains PermissionDenied", got[0].text)
+	}
+}
+
+// TestParseEvent_ToolUseErrorFieldEmptyFallsBackToOutput verifies that when
+// status=error but state.error is absent (defensive — older CLI shapes), the
+// parser falls back to state.output rather than emitting empty text.
+func TestParseEvent_ToolUseErrorFieldEmptyFallsBackToOutput(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"bash","state":{"status":"error","output":"legacy output field"}}}`
+	got, _ := parseEvent(line)
+	if got[0].text != "legacy output field" {
+		t.Errorf("text = %q, want fallback to state.output", got[0].text)
+	}
+}
+
+// TestParseEvent_EditDiffStatAppended verifies edit results carry a "+N -M"
+// suffix on the tool-input summary when state.metadata.filediff is populated.
+// The renderer has no structured diff slot today, so the stat rides on the
+// input string the tool row already displays.
+func TestParseEvent_EditDiffStatAppended(t *testing.T) {
+	// Shape mirrors a real opencode 1.18 edit: title is the path, metadata
+	// .filediff carries additions/deletions.
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"edit","title":"tmp/x.txt","state":{"status":"completed","input":{"filePath":"/tmp/x.txt","oldString":"a","newString":"b"},"output":"Edit applied successfully.","metadata":{"filediff":{"file":"/tmp/x.txt","additions":3,"deletions":1},"truncated":false}}}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	res := got[0]
+	if !strings.Contains(res.toolInput, "tmp/x.txt") {
+		t.Errorf("toolInput = %q, want contains the path", res.toolInput)
+	}
+	if !strings.Contains(res.toolInput, "(+3 -1)") {
+		t.Errorf("toolInput = %q, want '(+3 -1)' suffix", res.toolInput)
+	}
+}
+
+// TestParseEvent_EditNoDiffStatWhenAbsent verifies edit results without a
+// filediff block don't get a phantom "(+0 -0)" suffix.
+func TestParseEvent_EditNoDiffStatWhenAbsent(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"edit","title":"tmp/x.txt","state":{"status":"completed","output":"ok"}}}`
+	got, _ := parseEvent(line)
+	if got[0].toolInput != "tmp/x.txt" {
+		t.Errorf("toolInput = %q, want bare path when filediff absent", got[0].toolInput)
+	}
+}
+
+// TestParseEvent_EditZeroDiffOmitted verifies additions=0 AND deletions=0
+// does not append a "(+0 -0)" suffix (the case where a no-op edit landed).
+func TestParseEvent_EditZeroDiffOmitted(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"edit","title":"tmp/x.txt","state":{"status":"completed","metadata":{"filediff":{"additions":0,"deletions":0}}}}}`
+	got, _ := parseEvent(line)
+	if strings.Contains(got[0].toolInput, "(+0 -0)") {
+		t.Errorf("toolInput = %q, must not append zero diffstat", got[0].toolInput)
+	}
+}
+
 func TestParseEvent_StepFinishStop(t *testing.T) {
 	// reason="stop" is terminal: produces an EventResult with token/cost.
 	line := `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}`

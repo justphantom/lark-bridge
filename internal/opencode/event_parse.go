@@ -33,12 +33,25 @@ type partShape struct {
 		Status string          `json:"status"`
 		Input  json.RawMessage `json:"input"`
 		Output json.RawMessage `json:"output"`
+		// Error carries the failure description when status="error".
+		// opencode swaps state.output for state.error on tool failure
+		// (read of a missing file, write to a read-only path, ...),
+		// so without this field the bridge sees an empty result and
+		// drops the actual cause ("File not found", "PermissionDenied").
+		Error string `json:"error"`
 		// Metadata is populated by shell-style tools (bash): its exit
 		// field carries the command's exit code. status stays
 		// "completed" even on non-zero exit, so exit!=0 is the only
-		// signal that the underlying command failed.
+		// signal that the underlying command failed. FileDiff is
+		// populated by edit and carries the additions/deletions count
+		// surfaced as a "+N -M" suffix on the tool row.
 		Metadata struct {
-			Exit int `json:"exit"`
+			Exit      int  `json:"exit"`
+			Truncated bool `json:"truncated"`
+			FileDiff  struct {
+				Additions int `json:"additions"`
+				Deletions int `json:"deletions"`
+			} `json:"filediff"`
 		} `json:"metadata"`
 	} `json:"state"`
 	// step-finish carries token/cost accounting.
@@ -192,13 +205,30 @@ func parseToolEvent(base Event, p partShape) []Event {
 	result.text = stringifyContent(p.State.Output)
 	// Three failure signals, any one of which flags the result as an error:
 	//   - status "error"/"failed": the tool framework itself failed
-	//     (timeout, permission denied, missing binary, ...)
+	//     (timeout, permission denied, missing file, ...)
 	//   - metadata.exit != 0: the command exited non-zero. opencode sets
 	//     status="completed" even when bash returns 1, so without this
 	//     check a failed `cat /nonexistent` renders identically to a
 	//     successful `ls` on the card.
 	if p.State.Status == "error" || p.State.Status == "failed" || p.State.Metadata.Exit != 0 {
 		result.isToolError = true
+		// On failure opencode swaps state.output for state.error; the
+		// cause ("File not found", "PermissionDenied", ...) lives there.
+		// Surface it as the result text so the card shows why, not just
+		// that, the tool failed.
+		if p.State.Error != "" {
+			result.text = p.State.Error
+		}
+	}
+	// Append the diffstat to edit's tool-input summary so a tool row reads
+	// "tmp/x.txt (+1 -1)" instead of just the path. Cheap, single-place
+	// formatting; not promoted to a structured field because the renderer
+	// has no +N/-M slot today.
+	if p.Tool == "edit" {
+		fd := p.State.Metadata.FileDiff
+		if fd.Additions > 0 || fd.Deletions > 0 {
+			result.toolInput = fmt.Sprintf("%s (+%d -%d)", result.toolInput, fd.Additions, fd.Deletions)
+		}
 	}
 	return []Event{result}
 }

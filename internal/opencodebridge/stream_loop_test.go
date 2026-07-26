@@ -2,6 +2,7 @@ package opencodebridge
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
@@ -165,5 +166,32 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
 	if res.costUSD != 0.02 {
 		t.Errorf("costUSD = %v, want 0.02", res.costUSD)
+	}
+}
+
+// TestStreamRun_ThinkingDoesNotPolluteReply verifies the EventThinking case
+// fires (no default-branch drop) and the reasoning text stays out of the
+// final reply. opencode emits reasoning as a separate part preceding text in
+// the same step; without a dedicated case the thinking block would either
+// fall through to default (lost) or be appended to the reply (wrong).
+func TestStreamRun_ThinkingDoesNotPolluteReply(t *testing.T) {
+	const reasoningEv = `{"type":"reasoning","sessionID":"s1","part":{"type":"reasoning","text":"SECRET_REASONING"}}`
+	const textEv = `{"type":"text","sessionID":"s1","part":{"type":"text","text":"final answer"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, reasoningEv, textEv, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	if res.err != nil {
+		t.Fatalf("streamRun: %v", res.err)
+	}
+	if strings.Contains(res.reply, "SECRET_REASONING") {
+		t.Errorf("reply leaked reasoning text: %q", res.reply)
+	}
+	if !strings.Contains(res.reply, "final answer") {
+		t.Errorf("reply = %q, want contains 'final answer'", res.reply)
 	}
 }

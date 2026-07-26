@@ -174,6 +174,11 @@ func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, 
 		"run",
 		"--format", "json",
 		"--auto",
+		// Surface the model's reasoning parts as `reasoning` events so the
+		// bridge can stream them to the thinking zone of the progress card.
+		// Without this flag the CLI drops reasoning client-side and the
+		// EventThinking case in stream_loop is unreachable.
+		"--thinking",
 	}
 	if opts.SessionID != "" {
 		args = append(args, "--session", opts.SessionID)

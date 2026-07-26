@@ -93,6 +93,19 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			accCost += ev.GetCost()
 		case opencode.EventText:
 			text.WriteString(ev.GetText())
+		case opencode.EventThinking:
+			// opencode emits one reasoning event per part carrying the
+			// complete block (not a delta), so Replace=true lets the
+			// renderer's thinking zone reflect the latest part instead of
+			// concatenating every step's reasoning into an unreadable wall.
+			h.emitAsync(promptID, &protocol.Control{
+				Type:   protocol.TypeThinking,
+				ChatID: chatID,
+				Thinking: &protocol.ThinkingPayload{
+					Delta:   ev.GetText(),
+					Replace: true,
+				},
+			})
 		case opencode.EventToolUse:
 			// opencode emits one completed event per call (parsed into
 			// EventToolResult below), so this case is reached only if a

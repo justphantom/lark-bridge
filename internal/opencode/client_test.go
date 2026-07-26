@@ -42,6 +42,20 @@ func TestBuildCommand_IncludesSessionAndModel(t *testing.T) {
 	}
 }
 
+// TestBuildCommand_AlwaysThinking verifies --thinking is always passed so the
+// CLI emits reasoning events the bridge's EventThinking case can stream to
+// the progress card. Without it the case is dead code.
+func TestBuildCommand_AlwaysThinking(t *testing.T) {
+	c := New(Config{CLIPath: "opencode"}, log.Nop())
+	cmd, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("buildCommand: %v", err)
+	}
+	if !slices.Contains(cmd.Args, "--thinking") {
+		t.Errorf("missing --thinking, args=%v", cmd.Args)
+	}
+}
+
 // TestBuildCommand_OmitsEmptyFlags verifies session/model/agent are absent when
 // unset so the CLI uses its own defaults.
 func TestBuildCommand_OmitsEmptyFlags(t *testing.T) {
