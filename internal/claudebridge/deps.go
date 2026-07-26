@@ -3,7 +3,7 @@ package claudebridge
 import (
 	"context"
 
-	"github.com/justphantom/claude-go-sdk"
+	"github.com/justphantom/lark-bridge/internal/claude"
 )
 
 // claudeAPI is the Claude backend capability the bridge needs. The

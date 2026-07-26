@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justphantom/claude-go-sdk"
+	"github.com/justphantom/lark-bridge/internal/claude"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"

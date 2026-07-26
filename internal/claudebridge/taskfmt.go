@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/justphantom/claude-go-sdk"
+	"github.com/justphantom/lark-bridge/internal/claude"
 )
 
 // taskToolName renders the subagent as a tool-row name. taskKind discriminates

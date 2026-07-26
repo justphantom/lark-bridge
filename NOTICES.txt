@@ -1,0 +1,19 @@
+# Third-party notices
+
+## internal/claude/
+
+Source: github.com/justphantom/claude-go-sdk
+Pinned upstream commit: 3bd8cf91e7b4 (2026-07-22)
+Imported at: 2026-07-26
+
+License: MIT — see each file's top-of-file Copyright notice.
+
+The package was vendored in-tree (rather than declared as a go.mod
+dependency) to keep the lark-bridge module self-contained for the
+Claude Code backend. All upstream files (code + tests) were copied
+verbatim; only `examples/`, `integration_test.go`, the standalone
+`go.mod`, and project-level docs (`README.md` / `PLAN.md` / `AGENTS.md`)
+were dropped as library-irrelevant.
+
+Upstream fix / feature merges: diff against the pinned commit and apply
+manually; bump this notice's "Pinned upstream commit" line when syncing.

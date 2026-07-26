@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/justphantom/claude-go-sdk"
+	"github.com/justphantom/lark-bridge/internal/claude"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/claudebridge"
