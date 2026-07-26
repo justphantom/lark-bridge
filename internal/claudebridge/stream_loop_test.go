@@ -250,3 +250,185 @@ func TestStreamRun_UnknownEventNotFatal(t *testing.T) {
 		}
 	}
 }
+
+// TestStreamRun_TodoWriteEmitsTypeTodoNotToolUse pins the single-send
+// behaviour for claude's TodoWrite tool: tool_use is buffered (no TypeToolUse
+// row opened), the matching tool_result is rewritten to a TypeTodo control
+// (so the progress card's todo zone renders ✅/⏳/⬜/✘ rows), and NO
+// TypeToolUse / TypeToolResult is emitted for it. The tool_use input shape
+// `{"todos":[...]}` matches protocol.TodoItem 1:1.
+func TestStreamRun_TodoWriteEmitsTypeTodoNotToolUse(t *testing.T) {
+	// Real claude stream-json shape: tool_use carries name+id+input, the
+	// later tool_result carries only tool_use_id (no name).
+	useEvents, err := claude.ParseEvent(`{"type":"assistant","session_id":"s1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_todo","name":"TodoWrite","input":{"todos":[{"content":"写测试","status":"in_progress","priority":"high"},{"content":"跑测试","status":"pending"}]}}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_use: %v", err)
+	}
+	resultEvents, err := claude.ParseEvent(`{"type":"user","session_id":"s1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_todo","content":"ok","is_error":false}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_result: %v", err)
+	}
+	termEvents, err := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	events := append(append(append([]claude.Event{}, useEvents...), resultEvents...), termEvents...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-todo", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-todo",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-todo", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawTodo bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			sawTodo = true
+			if len(c.Todo.Todos) != 2 {
+				t.Errorf("todo items = %d, want 2", len(c.Todo.Todos))
+				continue
+			}
+			if c.Todo.Todos[0].Content != "写测试" || c.Todo.Todos[0].Status != "in_progress" || c.Todo.Todos[0].Priority != "high" {
+				t.Errorf("todo[0] = %+v", c.Todo.Todos[0])
+			}
+			if c.Todo.Todos[1].Content != "跑测试" || c.Todo.Todos[1].Status != "pending" {
+				t.Errorf("todo[1] = %+v", c.Todo.Todos[1])
+			}
+			continue
+		}
+		if c.Type == protocol.TypeToolUse && c.ToolUse.Name == "TodoWrite" {
+			t.Errorf("TodoWrite must NOT emit TypeToolUse (row suppressed): %+v", c.ToolUse)
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "TodoWrite" {
+			t.Errorf("TodoWrite success must NOT emit TypeToolResult (single-send to TypeTodo): %+v", c.ToolResult)
+		}
+	}
+	if !sawTodo {
+		t.Fatalf("no TypeTodo control received; got %d controls: %v", len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_TodoWriteFailureFallsBackToToolResult locks the fallback: a
+// failed TodoWrite (is_error=true) is NOT rewritten to TypeTodo (the list did
+// not update); it ships as a TypeToolResult so the user sees the failure on
+// the card. The TypeToolUse was suppressed at tool_use time, so AddToolResult
+// renders a no-prior-row result as a standalone row.
+func TestStreamRun_TodoWriteFailureFallsBackToToolResult(t *testing.T) {
+	useEvents, err := claude.ParseEvent(`{"type":"assistant","session_id":"s1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fail","name":"TodoWrite","input":{"todos":[{"content":"x","status":"pending"}]}}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_use: %v", err)
+	}
+	resultEvents, err := claude.ParseEvent(`{"type":"user","session_id":"s1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fail","content":"db locked","is_error":true}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_result: %v", err)
+	}
+	termEvents, err := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	events := append(append(append([]claude.Event{}, useEvents...), resultEvents...), termEvents...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-fail", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-fail",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-fail", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawFailedToolResult bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			t.Errorf("failed TodoWrite must NOT emit TypeTodo; got %+v", c.Todo)
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "TodoWrite" {
+			sawFailedToolResult = true
+			if !c.ToolResult.IsError {
+				t.Errorf("ToolResult IsError = false, want true")
+			}
+			if !strings.Contains(c.ToolResult.Output, "db locked") {
+				t.Errorf("ToolResult Output = %q, want contains 'db locked'", c.ToolResult.Output)
+			}
+		}
+	}
+	if !sawFailedToolResult {
+		t.Fatalf("no TypeToolResult for failed TodoWrite; got %d controls: %v", len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_OtherToolsUnaffectedByTodoRouting guards the side-effect
+// boundary: a non-TodoWrite tool (Bash) still emits the TypeToolUse +
+// TypeToolResult pair exactly as before — the TodoWrite→TypeTodo rewrite is
+// gated on the tool name.
+func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
+	useEvents, err := claude.ParseEvent(`{"type":"assistant","session_id":"s1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{"command":"ls"}}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_use: %v", err)
+	}
+	resultEvents, err := claude.ParseEvent(`{"type":"user","session_id":"s1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash","content":"file.txt","is_error":false}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_result: %v", err)
+	}
+	termEvents, err := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	events := append(append(append([]claude.Event{}, useEvents...), resultEvents...), termEvents...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-bash", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-bash",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-bash", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawBashUse, sawBashResult bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			t.Errorf("Bash tool must NOT emit TypeTodo; got %+v", c.Todo)
+		}
+		if c.Type == protocol.TypeToolUse && c.ToolUse.Name == "Bash" {
+			sawBashUse = true
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "Bash" {
+			sawBashResult = true
+		}
+	}
+	if !sawBashUse || !sawBashResult {
+		t.Fatalf("missed Bash controls: use=%v result=%v (got %d controls: %v)",
+			sawBashUse, sawBashResult, len(controls), controlTypes(controls))
+	}
+}

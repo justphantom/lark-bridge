@@ -26,6 +26,15 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// tool_result (which carries only the id, not the name) can be
 		// rendered with the right tool row in the progress card.
 		toolNames = map[string]string{}
+
+		// todoInputs buffers a TodoWrite call's input (`{"todos":[...]}`) by
+		// tool_use id so the matching tool_result can rewrite the call to a
+		// TypeTodo control. The tool_use itself emits no TypeToolUse: the row
+		// would only need to be closed by the result, which the success path
+		// replaces with TypeTodo (single-send, no row opened). The failure /
+		// unparseable path falls back to a standalone TypeToolResult — the
+		// renderer renders a no-prior-row result as its own row.
+		todoInputs = map[string]string{}
 	)
 
 	for ev := range events {
@@ -119,6 +128,15 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			if id := ev.ToolID; id != "" {
 				toolNames[id] = ev.ToolName
 			}
+			// TodoWrite: buffer the input and suppress the TypeToolUse that
+			// would otherwise open a row. The matching tool_result decides
+			// the outcome — TypeTodo on success (no row at all), TypeToolResult
+			// on failure (AddToolResult renders a no-prior-row result as a
+			// standalone row, so the failure still surfaces).
+			if ev.ToolName == "TodoWrite" && ev.ToolID != "" {
+				todoInputs[ev.ToolID] = ev.ToolInput
+				continue
+			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName, Input: bridgebase.SummarizeToolInput(ev.ToolName, ev.ToolInput)},
@@ -129,6 +147,21 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			name := ev.ToolName
 			if name == "" {
 				name = toolNames[ev.ToolID]
+			}
+			// TodoWrite success rewrites to TypeTodo (single-send, no row
+			// opened at tool_use time). Failure or unparseable input falls
+			// through to a TypeToolResult so the failure is still visible.
+			if name == "TodoWrite" && !ev.IsToolError {
+				if input, ok := todoInputs[ev.ToolID]; ok {
+					if items, parsed := parseTodoItems(input); parsed {
+						h.emitAsync(promptID, &protocol.Control{
+							Type:   protocol.TypeTodo,
+							ChatID: chatID,
+							Todo:   &protocol.TodoPayload{Todos: items},
+						})
+						continue
+					}
+				}
 			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
