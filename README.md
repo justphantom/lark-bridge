@@ -25,7 +25,7 @@
 
 ## 斜杠命令
 
-- 前端：`/backend list|use {id}`（绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
+- 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
 - claude-back：`/running` `/session-list` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/pull` `/push` `/help`。
 - opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-list` `/session-use` `/session-clean` `/current` `/model` `/agent` `/cd` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/models` `/cd` `/pull` `/push` `/running` `/session-abort` `/help`。

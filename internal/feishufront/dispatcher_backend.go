@@ -8,6 +8,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
+	"github.com/justphantom/lark-bridge/internal/feishufront/renderer"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -195,8 +196,65 @@ func (d *Dispatcher) handleBackendCommand(ctx context.Context, msg *feishu.Incom
 	if err != nil {
 		return err
 	}
-	_, err = d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
-	return err
+	messageID, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
+	if err != nil {
+		return err
+	}
+	// Arm a TTL so a picker nobody clicks does not stay clickable forever.
+	// Mirrors the interactive-card expiry: after cardkit.InteractiveTimeout
+	// the card flips to a grey "已失效" state. Cancelled on the first click
+	// (handleBackendChoice). Keyed by messageID — each /backend sends a
+	// fresh card with its own id.
+	d.armPickerExpiry(messageID, card)
+	return nil
+}
+
+// armPickerExpiry caches the picker card bytes and schedules the TTL flip.
+// Guarded by cardMu alongside the interactive-card timer maps.
+func (d *Dispatcher) armPickerExpiry(messageID string, card []byte) {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	d.pickerCards[messageID] = card
+	msgID := messageID
+	d.pickerTimers[messageID] = time.AfterFunc(cardkit.InteractiveTimeout, func() {
+		d.expirePicker(msgID)
+	})
+}
+
+// cancelPickerExpiry stops a pending TTL flip and drops the cached bytes.
+// Called when the user clicks any backend button so a late expiry cannot
+// overwrite the success/failure card the click produced. No-op when the
+// picker already expired or was never armed.
+func (d *Dispatcher) cancelPickerExpiry(messageID string) ([]byte, bool) {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	t, ok := d.pickerTimers[messageID]
+	if ok {
+		t.Stop()
+		delete(d.pickerTimers, messageID)
+	}
+	card, hadCard := d.pickerCards[messageID]
+	delete(d.pickerCards, messageID)
+	return card, hadCard
+}
+
+// expirePicker runs in the TTL timer's goroutine. It flips the picker card to
+// its expired form (grey + "已失效" footer) and clears the binding. A click
+// racing this flip wins via cancelPickerExpiry (no cached bytes → no-op).
+func (d *Dispatcher) expirePicker(messageID string) {
+	d.cardMu.Lock()
+	orig := d.pickerCards[messageID]
+	delete(d.pickerCards, messageID)
+	delete(d.pickerTimers, messageID)
+	d.cardMu.Unlock()
+	if orig == nil {
+		return
+	}
+	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
+		defer cancel()
+		_ = d.bot.UpdateCard(ctx, messageID, expired)
+	}
 }
 
 // renderBackendPicker builds an interactive card listing every online backend
@@ -209,7 +267,7 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 	sort.Strings(ids)
 	current, _ := d.router.Resolve(chatID)
 	header := cardkit.HeaderInfo{Title: "选择后端", Template: "blue"}
-	footer := cardkit.FooterInfo{Status: "选择后端", Time: time.Now()}
+	footer := cardkit.FooterInfo{Status: "待确认", Time: time.Now()}
 	actions := make([]cardkit.Action, 0, len(ids))
 	for _, id := range ids {
 		label := id + "（" + d.registry.BackendType(id) + "）"
@@ -226,34 +284,56 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 // handleBackendChoice is the frontend-side consumer of a backend-picker click:
 // it binds the chat to the chosen backend and updates the original picker card
 // to a green result state (disabled buttons + confirmation) so the switch
-// produces only one message.
+// produces only one message. Failure paths (chosen backend offline, router.Set
+// error) flip the SAME picker card to a red failure state rather than emitting
+// a separate notice — the one-card principle holds for the whole /backend flow.
 func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.CardAction) error {
+	// The user clicked; the picker can no longer expire. Cancel before any
+	// return path so a late TTL flip cannot overwrite the outcome card.
+	d.cancelPickerExpiry(action.MessageID)
+
 	id, _ := action.Value["backendID"].(string)
 	btype := d.registry.BackendType(id)
 	if btype == "" {
-		return d.notice(ctx, action.ChatID, "warning", "后端离线",
-			"backend "+id+" 已不在线。发送 /backend 重新选择。")
+		return d.patchBackendOutcome(ctx, action.ChatID, action.MessageID, id, "",
+			"error", "后端离线", "backend "+id+" 已不在线。发送 /backend 重新选择。")
 	}
 	if err := d.router.Set(action.ChatID, id); err != nil {
-		return d.notice(ctx, action.ChatID, "error", "切换失败", err.Error())
+		return d.patchBackendOutcome(ctx, action.ChatID, action.MessageID, id, btype,
+			"error", "切换失败", err.Error())
 	}
-	card, err := d.renderBackendResult(action.ChatID, id, btype)
-	if err != nil {
-		return d.notice(ctx, action.ChatID, "error", "切换失败", err.Error())
-	}
-	return d.bot.UpdateCard(ctx, action.MessageID, card)
+	return d.patchBackendOutcome(ctx, action.ChatID, action.MessageID, id, btype,
+		"success", "已切换后端", "当前后端: "+id+"（"+btype+"）")
 }
 
-// renderBackendResult builds the result-state backend picker card: green
-// header, confirmation body, and every backend button disabled (the selected
-// one prefixed ✓). This replaces the original picker card in place so /backend
-// emits only one message.
-func (d *Dispatcher) renderBackendResult(chatID, selectedID, selectedType string) ([]byte, error) {
+// patchBackendOutcome renders the picker's terminal state (green success or
+// red failure) and UpdateCards the original picker in place. When messageID
+// is empty (defensive: should not happen for a real card click) it falls
+// back to a standalone notice so the user still gets feedback.
+func (d *Dispatcher) patchBackendOutcome(ctx context.Context, chatID, messageID, selectedID, selectedType, level, title, body string) error {
+	card, err := d.renderBackendOutcome(chatID, selectedID, selectedType, level, title, body)
+	if err != nil {
+		return err
+	}
+	if messageID == "" {
+		_, err = d.bot.SendCard(ctx, chatID, card, "")
+		return err
+	}
+	return d.bot.UpdateCard(ctx, messageID, card)
+}
+
+// renderBackendOutcome builds the terminal-state backend picker card in one
+// of two colours: green (level="success") confirms a switch; red
+// (level="error") reports the chosen backend went offline or the router
+// rejected the binding. Every backend button is disabled so the card stays
+// terminal; the chosen backend (still bound on the success path, or the
+// unchanged prior binding on failure) is prefixed ✓.
+func (d *Dispatcher) renderBackendOutcome(chatID, selectedID, selectedType, level, title, body string) ([]byte, error) {
 	ids := d.registry.Registered()
 	sort.Strings(ids)
 	current, _ := d.router.Resolve(chatID)
-	header := cardkit.HeaderInfo{Title: "已切换后端", Template: "green"}
-	footer := cardkit.FooterInfo{BackendID: selectedID, BackendType: selectedType, Status: "已完成", Time: time.Now()}
+	header := cardkit.HeaderInfo{Title: title, Template: backendOutcomeTemplate(level)}
+	footer := cardkit.FooterInfo{BackendID: selectedID, BackendType: selectedType, Status: title, Time: time.Now()}
 	actions := make([]cardkit.Action, 0, len(ids))
 	for _, id := range ids {
 		label := id + "（" + d.registry.BackendType(id) + "）"
@@ -263,6 +343,13 @@ func (d *Dispatcher) renderBackendResult(chatID, selectedID, selectedType string
 		actions = append(actions, cardkit.ButtonAction(label, "backend",
 			map[string]any{"backendID": id}, id == current, true))
 	}
-	body := "当前后端: " + selectedID + "（" + selectedType + "）"
 	return cardkit.Card(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions)
+}
+
+// backendOutcomeTemplate maps an outcome level to a header template colour.
+func backendOutcomeTemplate(level string) string {
+	if level == "success" {
+		return "green"
+	}
+	return "red"
 }

@@ -96,6 +96,12 @@ type Dispatcher struct {
 	// a returning user sees why the backend stopped waiting. Cancelled when the
 	// user submits (DispatchCardAction). Guarded by cardMu alongside cards.
 	interactiveTimers map[string]*time.Timer
+	// pickerCards / pickerTimers mirror the interactive-card TTL machinery but
+	// for frontend-owned /backend picker cards (which carry no requestID). A
+	// picker left unclicked for cardkit.InteractiveTimeout is flipped to a grey
+	// "已失效" state; cancelled on the first button click. Guarded by cardMu.
+	pickerCards  map[string][]byte
+	pickerTimers map[string]*time.Timer
 
 	// flapMu guards flap, the per-backend debounce state for online/offline
 	// notices. A flapping backend (rapid disconnect/reconnect) would otherwise
@@ -127,6 +133,8 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		terminals:             newDedupSet(terminalDedupTTL, 0),
 		cards:                 make(map[string][]byte),
 		interactiveTimers:     make(map[string]*time.Timer),
+		pickerCards:           make(map[string][]byte),
+		pickerTimers:          make(map[string]*time.Timer),
 		flap:                  make(map[string]*flapState),
 		offlineNoticeDebounce: offlineNoticeDebounce,
 	}
@@ -269,7 +277,7 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 	backendType := d.registry.BackendType(backendID)
 	if backendType == "" {
 		return d.notice(ctx, msg.ChatID, "warning", "后端离线",
-			"backend "+backendID+" 未连接。请用 /backend list 查看在线后端，或 /backend use {id} 切换。")
+			"backend "+backendID+" 未连接。请用 /backend 重新选择在线后端。")
 	}
 	// 5. progress card with "starting" placeholder. Body starts empty: the
 	// title "处理中" + footer status convey the state, and the first event

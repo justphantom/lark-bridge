@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
 )
@@ -60,7 +61,7 @@ func TestRenderBackendPicker(t *testing.T) {
 }
 
 // TestHandleBackendCommand_Picker verifies /backend sends exactly one picker
-// card when at least one backend is online.
+// card when at least one backend is online, and arms the TTL expiry timer.
 func TestHandleBackendCommand_Picker(t *testing.T) {
 	reg := NewBackendRegistry()
 	reg.Register("claude-1", "claude")
@@ -78,6 +79,17 @@ func TestHandleBackendCommand_Picker(t *testing.T) {
 	}
 	if !strings.Contains(string(sink.lastSendCard()), "选择后端") {
 		t.Errorf("sent card is not a picker: %s", sink.lastSendCard())
+	}
+	// The picker's TTL timer must be armed so an unclicked card expires.
+	d.cardMu.Lock()
+	timers := len(d.pickerTimers)
+	cards := len(d.pickerCards)
+	d.cardMu.Unlock()
+	if timers != 1 {
+		t.Errorf("want 1 picker timer armed, got %d", timers)
+	}
+	if cards != 1 {
+		t.Errorf("want 1 picker card cached, got %d", cards)
 	}
 }
 
@@ -98,8 +110,8 @@ func TestHandleBackendCommand_NoBackends(t *testing.T) {
 }
 
 // TestDispatchCardAction_BackendPicker_Switches drives a picker button click
-// end-to-end: the chat is rebound, the card is refreshed in place, and —
-// critically — nothing is forwarded to any backend.
+// end-to-end: the chat is rebound, the card is refreshed in place, the TTL
+// timer is cancelled, and — critically — nothing is forwarded to any backend.
 func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	reg := NewBackendRegistry()
 	conn := reg.Register("claude-1", "claude")
@@ -107,6 +119,9 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	rt := &pickerRouter{current: "claude-1"}
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
+	// Pre-arm a picker TTL so the test can assert the click cancels it.
+	d.pickerCards["om_card"] = []byte("{}")
+	d.pickerTimers["om_card"] = time.AfterFunc(time.Hour, func() {})
 
 	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",
@@ -130,20 +145,28 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	if sends != 0 || updates != 1 {
 		t.Errorf("want 0 sends + 1 update, got %d sends + %d updates", sends, updates)
 	}
+	// Click cancels the TTL flip so a late expiry cannot overwrite the result.
+	d.cardMu.Lock()
+	timers := len(d.pickerTimers)
+	cards := len(d.pickerCards)
+	d.cardMu.Unlock()
+	if timers != 0 || cards != 0 {
+		t.Errorf("want picker TTL cancelled (0 timers, 0 cards), got %d timers, %d cards", timers, cards)
+	}
 }
 
-// TestRenderBackendResult verifies the result-state picker card has a green
-// header, confirmation body, and every backend button disabled.
-func TestRenderBackendResult(t *testing.T) {
+// TestRenderBackendOutcome_Success verifies the success-state picker card has
+// a green header, confirmation body, and every backend button disabled.
+func TestRenderBackendOutcome_Success(t *testing.T) {
 	reg := NewBackendRegistry()
 	reg.Register("claude-1", "claude")
 	reg.Register("opencode-1", "opencode")
 	rt := &pickerRouter{current: "opencode-1"}
 	d := NewDispatcher(&fakeSink{}, reg, NewTurnManager(), rt)
 
-	card, err := d.renderBackendResult("oc_x", "opencode-1", "opencode")
+	card, err := d.renderBackendOutcome("oc_x", "opencode-1", "opencode", "success", "已切换后端", "当前后端: opencode-1（opencode）")
 	if err != nil {
-		t.Fatalf("renderBackendResult: %v", err)
+		t.Fatalf("renderBackendOutcome: %v", err)
 	}
 	s := string(card)
 	if !strings.Contains(s, "已切换后端") {
@@ -163,9 +186,37 @@ func TestRenderBackendResult(t *testing.T) {
 	}
 }
 
+// TestRenderBackendOutcome_Failure verifies the failure-state picker card has
+// a red header, the failure body, and every backend button disabled.
+func TestRenderBackendOutcome_Failure(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("claude-1", "claude")
+	rt := &pickerRouter{current: "claude-1"}
+	d := NewDispatcher(&fakeSink{}, reg, NewTurnManager(), rt)
+
+	card, err := d.renderBackendOutcome("oc_x", "ghost", "", "error", "后端离线", "backend ghost 已不在线。发送 /backend 重新选择。")
+	if err != nil {
+		t.Fatalf("renderBackendOutcome: %v", err)
+	}
+	s := string(card)
+	if !strings.Contains(s, `"template":"red"`) {
+		t.Errorf("failure card header not red: %s", s)
+	}
+	if !strings.Contains(s, "后端离线") {
+		t.Errorf("failure card missing title: %s", s)
+	}
+	if !strings.Contains(s, "已不在线") {
+		t.Errorf("failure card missing body: %s", s)
+	}
+	if !strings.Contains(s, `"disabled":true`) {
+		t.Errorf("failure card buttons not disabled: %s", s)
+	}
+}
+
 // TestDispatchCardAction_BackendPicker_OfflineRejected verifies that clicking
-// a backend that went offline between render and click does not rebind and
-// surfaces a warning notice instead.
+// a backend that went offline between render and click flips the SAME picker
+// card to a red failure state in place (one-card principle) instead of
+// emitting a separate notice.
 func TestDispatchCardAction_BackendPicker_OfflineRejected(t *testing.T) {
 	reg := NewBackendRegistry()
 	reg.Register("claude-1", "claude")
@@ -183,12 +234,66 @@ func TestDispatchCardAction_BackendPicker_OfflineRejected(t *testing.T) {
 	if rt.current != "claude-1" {
 		t.Errorf("current changed to %q on offline pick", rt.current)
 	}
-	// Offline → notice via SendCard (no in-place refresh).
+	// Offline path patches the picker card in place — no extra notice send.
 	sends, updates := sink.counts()
-	if sends != 1 || updates != 0 {
-		t.Errorf("want 1 notice send + 0 updates, got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 1 {
+		t.Errorf("want 0 sends + 1 update (in-place flip), got %d sends + %d updates", sends, updates)
 	}
-	if !strings.Contains(string(sink.lastSendCard()), "离线") {
-		t.Errorf("want offline notice, got %s", sink.lastSendCard())
+	s := string(sink.updates[0].card)
+	if !strings.Contains(s, "离线") {
+		t.Errorf("want failure card mentioning offline, got %s", s)
+	}
+	if !strings.Contains(s, `"template":"red"`) {
+		t.Errorf("want red header on failure card: %s", s)
+	}
+}
+
+// TestExpirePicker verifies the TTL timer flips a cached picker card to its
+// expired form (grey + "已失效") via UpdateCard, then drops the cache.
+func TestExpirePicker(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("claude-1", "claude")
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, reg, NewTurnManager(), &pickerRouter{})
+	// Render and cache a real picker so RenderInteractiveExpired has bytes to
+	// mutate; fakeSink.SendCard returns om_1 for the first call.
+	picker, err := d.renderBackendPicker("oc_x")
+	if err != nil {
+		t.Fatalf("renderBackendPicker: %v", err)
+	}
+	d.armPickerExpiry("om_card", picker)
+
+	d.expirePicker("om_card")
+
+	if len(sink.updates) != 1 {
+		t.Fatalf("want 1 UpdateCard on expiry, got %d", len(sink.updates))
+	}
+	s := string(sink.updates[0].card)
+	if !strings.Contains(s, "已失效") {
+		t.Errorf("expired card missing 已失效 marker: %s", s)
+	}
+	d.cardMu.Lock()
+	timers := len(d.pickerTimers)
+	cards := len(d.pickerCards)
+	d.cardMu.Unlock()
+	if timers != 0 || cards != 0 {
+		t.Errorf("want expiry to drop cache, got %d timers + %d cards", timers, cards)
+	}
+}
+
+// TestExpirePicker_NoopAfterClick verifies a late expiry (racing a click that
+// already cancelled the timer) does not overwrite the outcome card.
+func TestExpirePicker_NoopAfterClick(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), &pickerRouter{})
+	d.pickerCards["om_card"] = []byte("{}")
+	d.pickerTimers["om_card"] = time.AfterFunc(time.Hour, func() {})
+
+	if _, ok := d.cancelPickerExpiry("om_card"); !ok {
+		t.Fatalf("cancelPickerExpiry should report a cached card")
+	}
+	d.expirePicker("om_card") // cache already cleared → no-op
+	if len(sink.updates) != 0 {
+		t.Errorf("late expiry overwrote the outcome: %v", sink.updates)
 	}
 }
