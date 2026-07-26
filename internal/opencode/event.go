@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package opencode
 
 // EventType constants for the discriminator carried by Event. These collapse

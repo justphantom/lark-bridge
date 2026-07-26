@@ -442,6 +442,36 @@ func TestReassembler_SweepDropsStale(t *testing.T) {
 	}
 }
 
+// TestReassembler_RejectsHugeSum pins the §3.5 bound: a "sum" header above
+// maxReassembleChunks is refused outright (no allocation), so a malicious
+// peer claiming sum=1e9 cannot grow an 8 GB slice header.
+func TestReassembler_RejectsHugeSum(t *testing.T) {
+	r := newReassembler()
+	joined, ok := r.feed("om_big", maxReassembleChunks+1, 0, []byte("x"))
+	if ok || joined != nil {
+		t.Fatalf("huge sum should be rejected, got ok=%v joined=%q", ok, joined)
+	}
+	r.mu.Lock()
+	_, present := r.pending["om_big"]
+	r.mu.Unlock()
+	if present {
+		t.Fatal("huge-sum group must not allocate a pending entry")
+	}
+}
+
+// TestFrame_RejectsTooManyHeaders pins the §3.5 bound: a frame carrying more
+// than maxFrameHeaders Header submessages fails to decode.
+func TestFrame_RejectsTooManyHeaders(t *testing.T) {
+	var b buf
+	for i := 0; i <= maxFrameHeaders; i++ {
+		b.tagBytes(5, marshalHeader(Header{Key: "x", Value: "y"}))
+	}
+	var f Frame
+	if err := f.Unmarshal(b.bytes); err == nil {
+		t.Fatalf("frame with %d headers must fail to decode", maxFrameHeaders+1)
+	}
+}
+
 // TestBootstrap_AuthFailureIsFatal verifies a 514 auth code from bootstrap
 // surfaces as a fatal error Start does NOT retry forever.
 func TestBootstrap_AuthFailureIsFatal(t *testing.T) {

@@ -286,7 +286,19 @@ EnvironmentFile=$CONFIG_DIR/.env
 ${env_block}ExecStart=$DEPLOY_DIR/$unit -config $CONFIG_DIR/$config
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=10
+# Bounded restart burst so a misconfig that bypasses the readiness probe does
+# not bounce the unit every 5s forever (systemd gives up + stays down for an
+# interval, then the operator fixes config and clears manually).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Graceful shutdown: feishu-front needs up to ~10s (bot+ipc) to drain; give
+# systemd headroom past that so it does not SIGKILL mid-drain.
+TimeoutStopSec=20
+# Resource backstop so a leak class of bug (goroutine/connection/file) cannot
+# OOM the host. 1G is well above the observed steady-state footprint (~50M)
+# but low enough to protect a co-located host.
+MemoryMax=1G
+LimitNOFILE=4096
 User=$RUN_USER
 ${sandbox}
 [Install]
@@ -378,8 +390,13 @@ deploy_sudo_check() {
     else
         warn "$RUN_USER lacks passwordless sudo; remote /deploy will hang until timeout"
         warn "  Fix: configure /etc/sudoers.d/lark-bridge, e.g.:"
-        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/chmod, /usr/bin/chown, /usr/bin/sed, /usr/bin/tee, /usr/bin/rm, /usr/bin/mv"
-        warn "  (Grant only the commands this script uses; least privilege.)"
+        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl"
+        warn "  Least-privilege: grant NOPASSWD only on systemctl. The script's"
+        warn "  cp/mkdir/chmod/chown/tee steps already run under a root-owned"
+        warn "  install (deploy.sh is invoked by an operator with root sudo),"
+        warn "  and the remote /deploy path only needs systemctl to restart units."
+        warn "  Avoid NOPASSWD on sed/tee/rm/mv: with arbitrary args those are"
+        warn "  equivalent to root (read/write/delete any file)."
     fi
 }
 

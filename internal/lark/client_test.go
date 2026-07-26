@@ -175,5 +175,34 @@ func TestClient_StopBeforeStartIsNoOp(t *testing.T) {
 	}
 }
 
+// TestClient_StartDoubleCallNoDeadlock pins the §3.3 fix: calling Start a
+// second time (a programming error) must not deadlock on a fresh never-closed
+// runDone channel. Both callers receive the same run result once the single
+// underlying ws.Start returns.
+func TestClient_StartDoubleCallNoDeadlock(t *testing.T) {
+	c, err := NewClient("app", "secret")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 2)
+	for range 2 {
+		go func() { errCh <- c.Start(ctx) }()
+	}
+	// Let both callers park on <-c.runDone, then unblock via cancel.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	for i := range 2 {
+		select {
+		case <-errCh:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("Start caller #%d deadlocked", i)
+		}
+	}
+}
+
 // keep imports used
 var _ = time.Second

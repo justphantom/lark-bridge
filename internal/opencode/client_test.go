@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package opencode
 
 import (
@@ -5,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -110,13 +111,11 @@ func TestNew_ConcurrencyDefault(t *testing.T) {
 // ListAgents are exercised against realistic output without a network.
 func writeFakeOpencode(t *testing.T, script string) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("fake binary test relies on a POSIX shell")
-	}
+	// The file's //go:build linux || darwin constraint already excludes
+	// Windows (which has no /bin/sh for the shebang below); no runtime.GOOS
+	// guard needed here.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode")
-	// The script shebang is /bin/sh; platforms without it skip via the GOOS
-	// guard above.
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
 		t.Fatalf("write fake opencode: %v", err)
 	}

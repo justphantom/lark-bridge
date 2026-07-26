@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // Package opencode wraps the opencode CLI as the bridge's agent backend.
 //
 // This bridge shells out to the `opencode` binary in run/json mode per turn

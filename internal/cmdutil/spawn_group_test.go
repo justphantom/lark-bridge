@@ -1,10 +1,11 @@
+//go:build linux || darwin
+
 package cmdutil
 
 import (
 	"bytes"
 	"context"
 	"os/exec"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -22,9 +23,6 @@ import (
 // the whole process group is SIGKILLed and Wait returns within
 // GroupKillTimeout (test overrides it to keep the run fast).
 func TestApplyGroupCancel_KillsGrandchildren(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only")
-	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -62,9 +60,6 @@ func TestApplyGroupCancel_KillsGrandchildren(t *testing.T) {
 // os.ErrProcessDone when cmd.Process is nil (Start not called yet).
 // This guards the nil-check inside the closure.
 func TestApplyGroupCancel_CancelBeforeStart(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only")
-	}
 	cmd := exec.CommandContext(context.Background(), "true")
 	ApplyGroupCancel(cmd)
 	if cmd.Cancel == nil {
@@ -78,9 +73,6 @@ func TestApplyGroupCancel_CancelBeforeStart(t *testing.T) {
 // TestApplyGroupCancel_HappyPath verifies a normal exit still works:
 // group-kill is a ctx-cancel path, the happy path must be unaffected.
 func TestApplyGroupCancel_HappyPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only")
-	}
 	// Cancel can only be set on a cmd created via CommandContext.
 	cmd := exec.CommandContext(context.Background(), "echo", "hello")
 	ApplyGroupCancel(cmd)
@@ -96,9 +88,6 @@ func TestApplyGroupCancel_HappyPath(t *testing.T) {
 // TestRunCombinedBounded_Truncates verifies output past MaxCombinedOutput
 // is dropped (the head is kept; tail is the caller's job via tailOutput).
 func TestRunCombinedBounded_Truncates(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only")
-	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -120,9 +109,6 @@ func TestRunCombinedBounded_Truncates(t *testing.T) {
 // TestRunCombinedBounded_KillsOnCancel verifies ctx cancel propagates as
 // a group SIGKILL and Wait returns within GroupKillTimeout.
 func TestRunCombinedBounded_KillsOnCancel(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only")
-	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
