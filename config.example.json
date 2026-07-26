@@ -31,13 +31,6 @@
     "list_cache_ttl":    3600
   },
 
-  "opencode_serve": {
-    "base_url":         "${OPENCODE_SERVER_URL}",
-    "username":         "opencode",
-    "password":         "${OPENCODE_SERVER_PASSWORD}",
-    "max_concurrent":   4
-  },
-
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",
     "base_url":        "${MINIAGENT_BASE_URL}",

@@ -7,14 +7,13 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-         ┌───────────┬───────────┬──────────────┬─────────────────────┐    ┌──────────────┐
-    claude-back  opencode-back  opencode-serve-back  miniagent-back      deploy-monitor
-    (Claude CLI) (opencode CLI)  (opencode serve)    (LLM API 直调)      (make deploy)
+          ┌───────────┬───────────┬─────────────────────┐    ┌──────────────┐
+     claude-back  opencode-back  miniagent-back            deploy-monitor
+     (Claude CLI) (opencode CLI) (LLM API 直调)            (make deploy)
 ```
 
 - `feishu-front`：持有飞书 WebSocket 机器人，IPC 服务（SSE + Control POST），chatID→后端路由，分发器（消息→Prompt 事件，Control→卡片）。
 - `claude-back` / `opencode-back`：每个 prompt fork 一次对应 CLI 子进程。
-- `opencode-serve-back`：连接常驻 `opencode serve` HTTP server（用户自管进程），每 turn POST `/session/{id}/message?async=true` + 全局 `/event` SSE 订阅。适合长期高并发场景，避免每 turn 6-11s 的 CLI 启动开销。
 - `miniagent-back`：每个 prompt fork 一次 miniagent 二进制（自带 ReAct 循环与 LLM 调用）。
 - `deploy-monitor`：收到 `/deploy`、`/pull`、`/push` 在项目根执行 `make`，单飞（single-flight），结果回执。**独立部署**，避免「部署脚本管自己的触发者」循环依赖。
 
@@ -28,8 +27,7 @@
 
 - 前端：`/backend list|use {id}`（绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
 - claude-back：`/running` `/session-list` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/pull` `/push` `/help`。
-- opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/agent` `/cd` `/pull` `/push` `/help`。
-- opencode-serve-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-clean` `/session-list` `/session-use` `/current` `/model` `/agent` `/cd` `/pull` `/push` `/help`（连 opencode serve HTTP server，而非 fork CLI）。
+- opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-list` `/session-use` `/session-clean` `/current` `/model` `/agent` `/cd` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/models` `/cd` `/pull` `/push` `/running` `/session-abort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/pull` `/push` `/running`。
 
@@ -54,20 +52,20 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 ## 部署
 
 ```bash
-make deploy                              # 构建 + 安装 5 个业务 systemd 服务（默认含 opencode-serve，serve 进程未就绪则自动剔除）
+make deploy                              # 构建 + 安装 4 个业务 systemd 服务
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
-make deploy ARGS=--services opencode-serve  # 单独部署 opencode-serve-back（前置：用户已启动 `opencode serve`）
+make deploy ARGS=--services opencode     # 单独部署某服务子集（逗号分隔）
 make upgrade-monitor                     # 单独升级 deploy-monitor（~2s 离线）
 make upgrade-monitor ARGS=--init
 ```
 
-opencode-serve-back 在 `make deploy` 全量部署中，但 deploy.sh 启动前会探测 `opencode serve --port 4096 --hostname 127.0.0.1` 是否就绪；不就绪则自动剔除并告警。若要事后单独部署，用 `--services opencode-serve`。
+> **升级注意**：从此版本起 `opencode-serve-back` 已移除（CLI 模式功能已对齐）。`make deploy` 会自动检测并清理遗留的 `lark-opencode-serve-back.service` 单元、state 文件与 config 模板。
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 
 ## 目录约定
 
-- `cmd/`：6 个二进制的入口（feishu-front、claude-back、opencode-back、opencode-serve-back、miniagent-back、deploy-monitor）。
-- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `opencodeservebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
+- `cmd/`：5 个二进制的入口（feishu-front、claude-back、opencode-back、miniagent-back、deploy-monitor）。
+- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

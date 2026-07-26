@@ -7,11 +7,11 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// This file holds two Core helpers that used to be triplicated across the
-// opencode / claude / opencode-serve bridges: a promptID-bound notice emit
-// (every picker / git command used a byte-identical copy) and the /pull /push
-// spine (single-flight + banner + terminal-notice lifecycle). Centralising
-// them here keeps the heavy logic in one place; bridges keep only the
+// This file holds two Core helpers that used to be duplicated across the
+// opencode / claude bridges: a promptID-bound notice emit (every picker /
+// git command used a byte-identical copy) and the /pull /push spine
+// (single-flight + banner + terminal-notice lifecycle). Centralising them
+// here keeps the heavy logic in one place; bridges keep only the
 // bridge-specific bits (ensureBinding).
 
 // EmitPromptNotice emits a Notice bound to promptID on a fresh 10s context

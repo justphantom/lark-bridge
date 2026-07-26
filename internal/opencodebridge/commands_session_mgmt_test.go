@@ -372,6 +372,185 @@ func TestCmdSessionClean_Batch_PartialFailure(t *testing.T) {
 	}
 }
 
+// --- /session-use ---
+
+// TestCmdSessionUse_NoBinding verifies the synchronous no-binding message.
+func TestCmdSessionUse_NoBinding(t *testing.T) {
+	h, _ := newSessionTestHandler(t, &sessionFakeAgent{})
+	res, err := h.cmdSessionUse(context.Background(), "chat-1", nil)
+	if err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	if !strings.Contains(res.Body, "当前群尚无会话") {
+		t.Errorf("Body = %q", res.Body)
+	}
+}
+
+// TestCmdSessionUse_NoDirectory verifies the synchronous no-directory message.
+func TestCmdSessionUse_NoDirectory(t *testing.T) {
+	h, r := newSessionTestHandler(t, &sessionFakeAgent{})
+	r.Bind("chat-1", "", "", "", "", "")
+	res, err := h.cmdSessionUse(context.Background(), "chat-1", nil)
+	if err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	if !strings.Contains(res.Body, "尚未设置工作目录") {
+		t.Errorf("Body = %q", res.Body)
+	}
+}
+
+// TestCmdSessionUse_InvalidNumber verifies a non-numeric arg surfaces a
+// synchronous hint instead of forking the CLI.
+func TestCmdSessionUse_InvalidNumber(t *testing.T) {
+	h, r := newSessionTestHandler(t, &sessionFakeAgent{})
+	r.Bind("chat-1", "ses_x", "/tmp/proj", "", "", "")
+	res, err := h.cmdSessionUse(context.Background(), "chat-1", []string{"abc"})
+	if err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	if !strings.Contains(res.Body, "会话序号必须是数字") {
+		t.Errorf("Body = %q", res.Body)
+	}
+}
+
+// TestCmdSessionUse_NumberOutOfRange verifies an out-of-range index emits an
+// error Notice after the (fake) list returns, with no binding change.
+func TestCmdSessionUse_NumberOutOfRange(t *testing.T) {
+	agent := &recordingSessionAgent{
+		sessionFakeAgent: sessionFakeAgent{
+			sessions: []opencode.Session{
+				{ID: "ses_a", Title: "A", Updated: 1000},
+			},
+		},
+	}
+	h, r := newSessionTestHandler(t, agent)
+	r.Bind("chat-1", "ses_a", "/tmp/proj", "", "", "")
+
+	if _, err := h.cmdSessionUse(context.Background(), "chat-1", []string{"5"}); err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	if !waitCond(time.Second, func() bool { return agent.listCalls.Load() >= 1 }) {
+		t.Fatal("ListSessions not invoked")
+	}
+	// Give the goroutine a moment to emit the range error.
+	if !waitCond(time.Second, func() bool { return len(h.Answers.PendingIDs()) == 0 }) {
+		t.Fatal("expected no pending slot after range error")
+	}
+	b, _ := r.Lookup("chat-1")
+	if b.SessionID != "ses_a" {
+		t.Errorf("SessionID = %q, binding must be unchanged", b.SessionID)
+	}
+}
+
+// TestCmdSessionUse_ByIndexSwitches verifies /session-use <n> repoints the
+// binding to the n-th session of the sorted list and aborts the in-flight
+// turn first.
+func TestCmdSessionUse_ByIndexSwitches(t *testing.T) {
+	agent := &sessionFakeAgent{sessions: []opencode.Session{
+		{ID: "ses_old", Title: "Old", Updated: 1000},
+		{ID: "ses_new", Title: "New", Updated: 2000},
+	}}
+	h, r := newSessionTestHandler(t, agent)
+	r.Bind("chat-1", "ses_old", "/tmp/proj", "", "", "")
+
+	if _, err := h.cmdSessionUse(context.Background(), "chat-1", []string{"1"}); err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	if !waitCond(time.Second, func() bool {
+		b, _ := r.Lookup("chat-1")
+		return b.SessionID == "ses_new"
+	}) {
+		b, _ := r.Lookup("chat-1")
+		t.Fatalf("SessionID = %q, want ses_new (sorted[0])", b.SessionID)
+	}
+}
+
+// TestCmdSessionUse_AlreadyCurrentNoop verifies switching to the currently
+// bound session is a no-op: no AbortChat, no SetSessionID, no log entry.
+func TestCmdSessionUse_AlreadyCurrentNoop(t *testing.T) {
+	agent := &sessionFakeAgent{sessions: []opencode.Session{
+		{ID: "ses_only", Title: "Only", Updated: 1000},
+	}}
+	h, r := newSessionTestHandler(t, agent)
+	r.Bind("chat-1", "ses_only", "/tmp/proj", "", "", "")
+
+	if _, err := h.cmdSessionUse(context.Background(), "chat-1", []string{"1"}); err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	// Wait for the goroutine to land the no-op notice.
+	if !waitCond(time.Second, func() bool { return len(h.Answers.PendingIDs()) == 0 }) {
+		t.Fatal("expected goroutine to terminate after no-op switch")
+	}
+	b, _ := r.Lookup("chat-1")
+	if b.SessionID != "ses_only" {
+		t.Errorf("SessionID = %q, must be unchanged", b.SessionID)
+	}
+}
+
+// TestCmdSessionUse_Picker_ConfirmsAndSwitches verifies the no-args picker
+// path: AskAndWait pops a Question card, the user picks an option, and the
+// binding repoints to the matching session. Uses a fixed recent timestamp so
+// formatSessionTime yields a predictable "刚刚" suffix.
+func TestCmdSessionUse_Picker_ConfirmsAndSwitches(t *testing.T) {
+	recent := time.Now().Add(-20 * time.Second).UnixMilli()
+	agent := &sessionFakeAgent{sessions: []opencode.Session{
+		{ID: "ses_old", Title: "Old", Updated: recent},
+		{ID: "ses_new", Title: "New", Updated: recent},
+	}}
+	h, r := newSessionTestHandler(t, agent)
+	r.Bind("chat-1", "ses_old", "/tmp/proj", "", "", "")
+
+	if _, err := h.cmdSessionUse(context.Background(), "chat-1", nil); err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	waitPending(t, h, time.Second)
+	pending := h.Answers.PendingIDs()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending slot, got %v", pending)
+	}
+	// runSessionUsePicker sorts sessions (stable on ties, so input order
+	// preserved) and labels them "<n>. <title> · <time>", prefixing the
+	// currently-bound one with "★ ". With Old first and current:
+	//   options[0] = "★ 1. Old · 刚刚"
+	//   options[1] = "2. New · 刚刚"
+	// Delivering the non-current option repoints the binding to ses_new.
+	h.Answers.Deliver(pending[0], &protocol.AnswerPayload{Choices: []string{"2. New · 刚刚"}})
+
+	if !waitCond(2*time.Second, func() bool {
+		b, _ := r.Lookup("chat-1")
+		return b.SessionID == "ses_new"
+	}) {
+		b, _ := r.Lookup("chat-1")
+		t.Fatalf("SessionID = %q, want ses_new after picker confirm", b.SessionID)
+	}
+}
+
+// TestCmdSessionUse_Picker_CurrentIsNoop verifies picking the currently-bound
+// session's option is a no-op (binding unchanged).
+func TestCmdSessionUse_Picker_CurrentIsNoop(t *testing.T) {
+	recent := time.Now().Add(-20 * time.Second).UnixMilli()
+	agent := &sessionFakeAgent{sessions: []opencode.Session{
+		{ID: "ses_only", Title: "Only", Updated: recent},
+	}}
+	h, r := newSessionTestHandler(t, agent)
+	r.Bind("chat-1", "ses_only", "/tmp/proj", "", "", "")
+
+	if _, err := h.cmdSessionUse(context.Background(), "chat-1", nil); err != nil {
+		t.Fatalf("cmdSessionUse: %v", err)
+	}
+	waitPending(t, h, time.Second)
+	pending := h.Answers.PendingIDs()
+	h.Answers.Deliver(pending[0], &protocol.AnswerPayload{Choices: []string{"★ 1. Only · 刚刚"}})
+
+	if !waitCond(time.Second, func() bool { return len(h.Answers.PendingIDs()) == 0 }) {
+		t.Fatal("picker did not terminate after no-op answer")
+	}
+	b, _ := r.Lookup("chat-1")
+	if b.SessionID != "ses_only" {
+		t.Errorf("SessionID = %q, must be unchanged", b.SessionID)
+	}
+}
+
 // --- formatSessionList / summarizeClean / formatSessionTime ---
 
 func TestFormatSessionList_SortedAndMarksCurrent(t *testing.T) {

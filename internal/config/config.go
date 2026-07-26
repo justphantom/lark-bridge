@@ -44,7 +44,6 @@ type Config struct {
 	// —— 后端运行时：各后端按需 ——
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
-	OpencodeServe OpencodeServe `json:"opencode_serve,omitempty"` // opencode-serve-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
 
@@ -111,6 +110,8 @@ type Claude struct {
 // The legacy HTTP-mode fields (base_url/username/password) are retained for
 // backward compatibility with existing config files but are no longer used by
 // opencode-back in CLI mode; they are ignored.
+// Opencode holds settings for the opencode-back CLI subprocess mode. The
+// bridge shells out to the `opencode` binary per turn via `opencode run`.
 type Opencode struct {
 	// CLI mode (current):
 	CLIPath          string `json:"cli_path,omitempty"`          // path to the opencode binary (default "opencode")
@@ -127,25 +128,6 @@ type Opencode struct {
 	// repeated /model and /agent pickers instant. <=0/unset -> 3600 (1h).
 	// Set to a negative value to disable caching entirely.
 	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
-}
-
-// OpencodeServe holds settings for the opencode-serve backend, which talks
-// to a running `opencode serve` HTTP server over JSON+SSE via the
-// opencode-go-sdk-lite SDK. Unlike Opencode (CLI mode), the server is
-// started and managed by the operator; the bridge only connects.
-type OpencodeServe struct {
-	// BaseURL is the opencode serve root (e.g. "http://127.0.0.1:4096").
-	// Required.
-	BaseURL string `json:"base_url,omitempty"`
-	// Username/Password carry HTTP Basic auth credentials for `opencode serve`
-	// (started with OPENCODE_SERVER_PASSWORD). Empty means no auth header.
-	// Use ${VAR} to pull from the environment.
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	// MaxConcurrent caps parallel in-flight sessions. The serve server
-	// already serialises requests per session; this only guards against
-	// runaway per-chat fan-out. <=0 → 4.
-	MaxConcurrent int `json:"max_concurrent,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which

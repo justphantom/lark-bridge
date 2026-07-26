@@ -3,6 +3,29 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Removed
+
+- **opencode-serve-back 整体移除**：CLI 模式（`opencode-back`）功能已对齐，
+  独立维护两套 opencode 对接代码（CLI 子进程 vs `opencode serve` HTTP）的成本
+  超过收益。本次移除包括：
+  - `cmd/opencode-serve-back/` 与 `internal/opencodeservebridge/`（约 7800 行）。
+  - `opencode-go-sdk-lite` Go 依赖（仅此包使用）。
+  - `config.OpencodeServe` 字段/默认值/校验/测试。
+  - `deploy/opencode-serve-config.json`、`Makefile` build target、`deploy.sh`
+    的 `probe_opencode_serve` / `svc_unit` 分支 / SELECTED 默认数组 / 派生 config。
+  - `deploy.sh` 新增遗留清理：升级时自动 `disable --now` 并删除已部署的
+    `lark-opencode-serve-back.service` unit、`/etc/lark-bridge/opencode-serve-config.json`
+    以及 `STATE_DIR` 下的 `opencode-serve-router.json` / `usage-opencode-serve.json`。
+
+### Added
+
+- **opencode-back 新增 `/session-use`**：从 opencode-serve-back 移植。CLI 模式
+  通过 `--session <id>` 续接历史会话，无 serve 模式的 `SessionStatuses` 实时
+  busy 检查（CLI 模式无跨进程 session 状态共享，目标 session 始终视为可切换）。
+  与 `/session-list` 共享排序（`sortSessionsByUpdated`），序号一致。
+
 ## [1.1.0] - 2026-07-25
 
 交互卡片与 git/deploy 命令的呈现与生命周期重构。所有改动向后兼容（新增协议字段均

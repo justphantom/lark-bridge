@@ -12,7 +12,7 @@
 #                                # <dir>：已解包目录，内含 lark-* 二进制。
 #   ./deploy/deploy.sh --services claude,opencode
 #                                # 只部署指定服务子集（逗号分隔，可用：feishu claude
-#                                # opencode opencode-serve miniagent）。默认全量。多主机部署时每台机
+#                                # opencode miniagent）。默认全量。多主机部署时每台机
 #                                # 用不同子集：前端机 --services feishu，后端机 --services claude,...
 #
 # 可选环境变量：
@@ -32,7 +32,7 @@ CONFIG_DIR="/etc/lark-bridge"
 STATE_DIR="${STATE_DIR:-/var/lib/lark-bridge}"
 
 # ── 超时/轮询常量（集中调参，避免 magic number 散落）─────────
-# HTTP_TIMEOUT       curl 探测 IPC / opencode serve 的上限（本地/局域网）
+# HTTP_TIMEOUT       curl 探测 IPC 的上限（本地/局域网）
 # WAIT_RETRIES       systemctl 冷启动轮询次数（每次 sleep 1s，约 15s 上限）
 # STOP_TIMEOUT       systemctl stop 限时；超过用 SIGKILL 兜底（默认 TimeoutStopSec=90s 太长）
 # CLI_PROBE_TIMEOUT  外部 CLI --version 探测上限，与 backend readyTimeout 同源
@@ -67,8 +67,8 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 set -E
 trap 'echo -e "${RED}[FAIL]${NC} 错误行 $LINENO: $BASH_COMMAND" >&2' ERR
 
-# 从 repo 根 .env 读 KEY=VALUE 的 VALUE（与 probe_opencode_serve 同源）；文件
-# 不存在或键缺失返回空。首次部署（.env 还未生成）时返回空，由调用方默认值兜底。
+# 从 repo 根 .env 读 KEY=VALUE 的 VALUE；文件不存在或键缺失返回空。首次部署
+# （.env 还未生成）时返回空，由调用方默认值兜底。
 # || true 兜底：pipefail 下 grep 无匹配会返回 1，使命令替换在 set -e 下误退出。
 env_get() {
     local key="$1"
@@ -82,7 +82,7 @@ IPC_ADDR="${IPC_ADDR:-$(env_get IPC_ADDR)}"
 IPC_ADDR="${IPC_ADDR:-localhost:6060}"
 
 # ── 服务列表 ──────────────────────────────────────────
-# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 5 个业务服务（含 opencode-serve）。
+# SERVICES（unit 名数组）由参数解析块按 --services 派生；默认全量 4 个业务服务。
 
 # 强制停止所有服务；确认全部退出后才返回，避免覆盖运行中的二进制（Text file busy）
 # systemctl stop 抑制 Restart=on-failure；但默认会阻塞至 TimeoutStopSec（90s），
@@ -156,51 +156,6 @@ preflight_inflight_check() {
         fail "检测到 ${inflight} 个运行中会话（in-flight turn），中止部署以避免打断对话。请在对话结束后重试"
     fi
     info "无运行中会话，可安全部署"
-}
-
-# 探测外部 opencode serve 进程是否就绪。opencode-serve-back 是客户端，连一个
-# operator-managed 的 `opencode serve` HTTP 服务器，Basic auth 用户名固定 opencode，
-# 密码=OPENCODE_SERVER_PASSWORD。地址+密码均从 repo 根 .env 读（OPENCODE_SERVER_URL /
-# OPENCODE_SERVER_PASSWORD），与 backend 启动时实际读到的值同源——config 模板里
-# opencode_serve.base_url 写成 ${OPENCODE_SERVER_URL}，password 写成
-# ${OPENCODE_SERVER_PASSWORD}，二者均由 config.Load 从同一 EnvironmentFile 展开。
-# 就绪返回 0，否则 1 并 warn 原因。作为 opencode-serve-back 部署的硬性条件：
-# 不就绪时由调用方停止、禁用现有单元并从本次部署集合剔除，避免 backend 反复崩溃-重启。
-probe_opencode_serve() {
-    local base_url password
-    base_url="$(env_get OPENCODE_SERVER_URL)"
-    password="$(env_get OPENCODE_SERVER_PASSWORD)"
-    if [[ -z "$base_url" ]]; then
-        warn ".env 缺 OPENCODE_SERVER_URL（opencode serve 地址），无法探测就绪"
-        return 1
-    fi
-
-    info "检查 opencode serve 就绪（$base_url/global/health）..."
-    # 单次 curl 同时取 code+body（同 preflight 模式）。code=000（不可达）时重试
-    # 1 次：opencode serve 在远端，瞬时网络抖动不应让 backend 被错误剔除。
-    local resp code body
-    for _ in 1 2; do
-        resp="$(curl -s -m "$HTTP_TIMEOUT" -w $'\n%{http_code}' -u "opencode:$password" "$base_url/global/health" 2>/dev/null || true)"
-        code="$(tail -1 <<<"$resp")"
-        [[ "$code" =~ ^[0-9]+$ ]] || code=000
-        [[ "$code" != "000" ]] && break
-        sleep 1
-    done
-    if [[ "$code" == "000" ]]; then
-        warn "opencode serve 不可达（$base_url，重试 1 次仍失败）"
-        return 1
-    fi
-    if [[ "$code" != "200" ]]; then
-        warn "opencode serve /global/health 返回 $code（期望 200）"
-        return 1
-    fi
-    body="$(sed '$d' <<<"$resp")"
-    if echo "$body" | grep -q '"healthy"[[:space:]]*:[[:space:]]*true'; then
-        info "opencode serve 就绪"
-        return 0
-    fi
-    warn "opencode serve /global/health 返回 200 但 body 非 {healthy:true}：$body"
-    return 1
 }
 
 # 探测外部 CLI（claude/opencode/miniagent）二进制是否就绪：command -v 命中 +
@@ -348,12 +303,12 @@ $DEBUG && set -x
 
 # 服务短名 ↔ unit/配置/依赖/提权 映射。新增 backend 仅在此登记四处即可被
 # --services 识别，无需改部署流程的各操作点。
-svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; opencode-serve) echo lark-opencode-serve-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
-svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; opencode-serve) echo opencode-serve-config.json;; miniagent) echo miniagent-config.json;; esac; }
+svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; opencode) echo lark-opencode-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
+svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; opencode) echo opencode-config.json;; miniagent) echo miniagent-config.json;; esac; }
 # backend 依赖前端 listen 且需提权（透传外部 CLI）；feishu-front 两者皆无。
 svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
-# CLI 二进制名（probe_cli 用）；feishu 无 CLI，opencode-serve 走 HTTP 探测（probe_opencode_serve）。
+# CLI 二进制名（probe_cli 用）；feishu 无 CLI。
 svc_cli(){ case "$1" in claude) echo "claude";; opencode) echo "opencode";; miniagent) echo "miniagent";; *) echo "";; esac; }
 
 # SELECTED → SERVICES：短名 → unit 名重建。改 SELECTED 后必须调用，否则
@@ -401,11 +356,11 @@ SELECTED=()
 if [[ -n "$SERVICES_ARG" ]]; then
     IFS=',' read -ra _parts <<< "$SERVICES_ARG"
     for s in "${_parts[@]}"; do
-        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode opencode-serve miniagent）"
+        svc_unit "$s" >/dev/null || fail "未知服务：$s（可用：feishu claude opencode miniagent）"
         SELECTED+=("$s")
     done
 else
-    SELECTED=(feishu claude opencode opencode-serve miniagent)
+    SELECTED=(feishu claude opencode miniagent)
 fi
 rebuild_services
 
@@ -453,7 +408,6 @@ ensure_binaries
 [[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "构建产物缺失：lark-feishu-front"
 [[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "构建产物缺失：lark-claude-back"
 [[ -x "$BIN_DIR/lark-opencode-back" ]]        || fail "构建产物缺失：lark-opencode-back"
-[[ -x "$BIN_DIR/lark-opencode-serve-back" ]]  || fail "构建产物缺失：lark-opencode-serve-back"
 [[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "构建产物缺失：lark-miniagent-back"
 # NOTE: miniagent 二进制（github.com/justphantom/miniagent）独立项目，需通过其
 # 自带 Makefile 单独部署到 /usr/local/bin/miniagent，不归本 deploy.sh 管。
@@ -523,8 +477,7 @@ check_env_placeholder IPC_SECRET 'change-me' 'IPC 共享密钥（用 --init 自�
 
 # 服务部署条件：基于 repo 根 .env 的占位值判定（占位 = 不具备条件）。
 # feishu 依赖飞书凭证非占位；miniagent 依赖 MINIAGENT_API_KEY 非占位；
-# claude/opencode/opencode-serve 无需用户密钥（OPENCODE_SERVER_PASSWORD 有合法
-# 默认值 opencode）→ 恒具备。
+# claude/opencode 无需用户密钥 → 恒具备。
 svc_env_ready() {
     local envf="$PROJECT_ROOT/.env"
     case "$1" in
@@ -620,20 +573,11 @@ inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
 cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
 inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json" "opencode-1"
 
-# opencode-serve-back：派生自 opencode-config（保留 opencode_serve 字段即用）。
-# 默认部署（与其他 backend 同级）。外部 opencode serve 进程是否就绪由
-# probe_opencode_serve 在 stop_services 前探测并告警；不就绪时 backend
-# 的 IsReady 会 fail fast，systemd Restart=on-failure 每 5s 重试直到 serve 上线。
-if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
-    cp "$STAGE/opencode-config.json" "$STAGE/opencode-serve-config.json"
-    inject_router_path "$STAGE/opencode-serve-config.json" "$STATE_DIR/opencode-serve-router.json" "opencode-serve-1"
-fi
-
 # miniagent-back：独立 backend_id + 独立 router_path（同 opencode 模式）
 cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
 inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
-# feishu-front：派生自 claude-config（同一份 base）。注意：6 个 backend 共用
+# feishu-front：派生自 claude-config（同一份 base）。注意：所有 backend 共用
 # internal/config.Config struct + DisallowUnknownFields，没有"多余字段无害"——
 # struct 必须识别 config 的所有 key，否则 parse fail。当前安全只因 struct 是
 # example 字段的超集；schema 漂移时会一起失败。
@@ -641,28 +585,36 @@ cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
 info "claude-config / opencode-config / miniagent-config / feishu-config 已生成"
 
-# opencode serve 进程就绪是 opencode-serve-back 部署的硬性条件：不就绪则停止、
-# 禁用现有单元并从 SELECTED/SERVICES 剔除（与 env 占位不具备条件的服务同处理），
-# 避免 backend 反复崩溃-重启。放在 stop_services 前：停禁先于本次服务重启；
-# probe 从 repo 根 .env 读地址+密码，不依赖 STAGE config（解耦 config 生成阶段）。
-if [[ " ${SELECTED[*]} " == *" opencode-serve "* ]]; then
-    if probe_opencode_serve; then
-        info "opencode serve 就绪，opencode-serve-back 纳入部署"
-    else
-        warn "opencode serve 未就绪，停止并禁用 opencode-serve-back（本次不部署）"
-        warn "  启动后重新部署即可纳入：opencode serve（默认监听 :4096）"
-        warn "  安装 opencode（独立项目，不归本 deploy.sh 管）：https://github.com/sst/opencode"
-        u="$(svc_unit opencode-serve)"
-        sudo systemctl disable --now "$u" 2>/dev/null || true
-        drop_service opencode-serve
+# 移除历史遗留：opencode-serve-back 已从代码库移除（CLI 模式替代），部署时一并
+# 清理已存在的 systemd unit + state 文件，避免机器上留下"幽灵服务"反复重启。
+# 即使本次 --services 不含相关项，也强制清理一次（升级路径必须收敛到无 unit）。
+legacy_unit="lark-opencode-serve-back"
+if sudo systemctl list-unit-files 2>/dev/null | grep -q "^${legacy_unit}\.service"; then
+    warn "检测到遗留单元 ${legacy_unit}.service（opencode-serve-back 已移除），停止并禁用..."
+    sudo systemctl disable --now "$legacy_unit" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${legacy_unit}.service"
+    sudo systemctl daemon-reload
+    info "${legacy_unit}.service 已清理"
+fi
+# 同时清理遗留的 state 文件（router 持久化 + usage 统计 + session 列表）
+for legacy_state in \
+    "$STATE_DIR/opencode-serve-router.json" \
+    "$STATE_DIR/usage-opencode-serve.json"; do
+    if [[ -e "$legacy_state" ]]; then
+        sudo rm -f "$legacy_state"
+        info "清理遗留状态文件：$legacy_state"
     fi
+done
+# 遗留 config 模板（CONFIG_DIR 下的派生文件）
+if [[ -e "$CONFIG_DIR/opencode-serve-config.json" ]]; then
+    sudo rm -f "$CONFIG_DIR/opencode-serve-config.json"
+    info "清理遗留配置：$CONFIG_DIR/opencode-serve-config.json"
 fi
 
 # claude/opencode/miniagent 三 backend 的 CLI 二进制就绪是对应 backend 部署的硬性
 # 条件：CLI 不在 PATH → backend 启动必崩（IsReady 跑 `<cli> --version`），
 # systemd 每 5s 重试。提前探测并停禁剔除，避免反复崩溃噪音。放在 stop_services
-# 前：停禁先于本次服务重启。opencode-serve 不在此列——它的就绪条件是外部
-# `opencode serve` HTTP 服务（已由上面的 probe_opencode_serve 探测）。
+# 前：停禁先于本次服务重启。
 # 迭代中改 SELECTED/SERVICES 不影响本次 for-in（bash 先把数组展开为位置参数）。
 for s in "${SELECTED[@]}"; do
     cli="$(svc_cli "$s")"

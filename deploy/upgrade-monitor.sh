@@ -2,8 +2,8 @@
 #
 # upgrade-monitor.sh — 独立管理 lark-deploy-monitor 的部署。
 #
-# 与 deploy.sh 完全解耦：deploy.sh 默认管 5 个业务服务（feishu-front/claude/
-# opencode/opencode-serve/miniagent），不碰 monitor。monitor 是「部署的触发者」，
+# 与 deploy.sh 完全解耦：deploy.sh 默认管 4 个业务服务（feishu-front/claude/
+# opencode/miniagent），不碰 monitor。monitor 是「部署的触发者」，
 # 让它管自己的升级会形成循环依赖，故分离。
 #
 # 用法：
@@ -65,7 +65,7 @@ init_monitor() {
     # 删 monitor 不消费的业务子块，免疫上游 schema 变动。要求 base 2 空格缩进、
     # 块闭合行 ^  }, 独占——config.example.json 满足。删后显式校验，防 base
     # 格式漂移时 sed 静默失败。
-    for block in claude opencode opencode_serve miniagent; do
+    for block in claude opencode miniagent; do
         sed -i '/^  "'"$block"'":/,/^  },/d' "$stage/$CONFIG_NAME"
         grep -q "\"$block\":" "$stage/$CONFIG_NAME" \
             && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"

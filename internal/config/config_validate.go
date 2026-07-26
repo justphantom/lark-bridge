@@ -74,12 +74,6 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("opencode.max_concurrent must be >= 1, got %d", cfg.Opencode.MaxConcurrent)
 	}
 
-	// OpencodeServe mirrors Opencode's MaxConcurrent invariant. applyDefaults
-	// already rewrote 0 → 4, so only an explicit negative reaches here.
-	if cfg.OpencodeServe.MaxConcurrent < 1 {
-		return fmt.Errorf("opencode_serve.max_concurrent must be >= 1, got %d", cfg.OpencodeServe.MaxConcurrent)
-	}
-
 	// StateDir writability.
 	if cfg.StateDir != "" {
 		stateDirAbs, err := filepath.Abs(cfg.StateDir)

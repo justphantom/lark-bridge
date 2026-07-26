@@ -383,7 +383,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
 		{"claude negative concurrency", `{"claude":{"max_concurrent":-1}}`, "claude.max_concurrent"},
 		{"opencode negative concurrency", `{"opencode":{"max_concurrent":-1}}`, "opencode.max_concurrent"},
-		{"opencode_serve negative concurrency", `{"opencode_serve":{"max_concurrent":-1}}`, "opencode_serve.max_concurrent"},
 		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
 		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
 		{"prompt_timeout too short", `{"timeouts":{"prompt_timeout":"100ms"}}`, "timeouts.prompt_timeout"},

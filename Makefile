@@ -45,7 +45,6 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-feishu-front ./cmd/feishu-front
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-back ./cmd/opencode-back
-	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-serve-back ./cmd/opencode-serve-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
@@ -55,7 +54,7 @@ build:
 pack:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT; \
 	mkdir -p bin; \
-	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-opencode-back:cmd/opencode-back lark-opencode-serve-back:cmd/opencode-serve-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor; do \
+	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-opencode-back:cmd/opencode-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor; do \
 		out=$${name%%:*}; src=./$${name##*:}; \
 		echo "build  $$out ($(GOOS)/$(GOARCH))"; \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $$tmp/$$out $$src; \
@@ -84,8 +83,8 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
-# Note: deploy.sh manages the 5 business services (feishu / claude / opencode
-# / opencode-serve / miniagent). lark-deploy-monitor is managed independently
+# Note: deploy.sh manages the 4 business services (feishu / claude / opencode
+# / miniagent). lark-deploy-monitor is managed independently
 # by upgrade-monitor.sh (it triggers deploy, so self-managing would be a
 # circular dependency).
 deploy:

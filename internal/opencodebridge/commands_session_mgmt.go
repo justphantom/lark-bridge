@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,9 +188,7 @@ func formatSessionList(sessions []opencode.Session, currentID string) string {
 	if len(sessions) == 0 {
 		return "当前目录下没有任何会话。"
 	}
-	sorted := make([]opencode.Session, len(sessions))
-	copy(sorted, sessions)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Updated > sorted[j].Updated })
+	sorted := sortSessionsByUpdated(sessions)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📋 目录下会话（%d）\n\n", len(sorted))
@@ -209,9 +208,169 @@ func formatSessionList(sessions []opencode.Session, currentID string) string {
 	return sb.String()
 }
 
-// formatSessionTime renders a millisecond timestamp as a relative string,
-// matching opencodeservebridge.formatTime's bands so the two bridges read
-// alike for the same input.
+// sortSessionsByUpdated returns a copy of sessions sorted most-recent-first.
+// /session-list (formatSessionList) and /session-use share this ordering so
+// the 1-based numbering the user reads off /session-list matches the index
+// they pass to /session-use <n>.
+func sortSessionsByUpdated(sessions []opencode.Session) []opencode.Session {
+	sorted := make([]opencode.Session, len(sessions))
+	copy(sorted, sessions)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Updated > sorted[j].Updated })
+	return sorted
+}
+
+// cmdSessionUse switches the chat's binding to another session of the same
+// working directory. Forms:
+//   - /session-use      → pop a selection card of the directory's sessions
+//   - /session-use <n>  → switch directly to the n-th session of the sorted
+//     list (1-based, same numbering as /session-list)
+//
+// CLI mode does not have a real-time busy-status RPC (the serve backend did
+// via SessionStatuses), so a target session is always considered switchable;
+// if another chat is mid-turn on the same session, that turn keeps running
+// until it finishes or its chat issues /session-abort. The current chat's own
+// in-flight turn is aborted before the binding is repointed.
+func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []string) (commandResult, error) {
+	b, ok := h.Router.Lookup(chatID)
+	if !ok {
+		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
+	}
+	if b.Directory == "" {
+		return commandResult{Body: "尚未设置工作目录。发送 /cd 选择一个项目目录后再切换会话。"}, nil
+	}
+	if len(args) == 0 {
+		return h.runSessionUsePicker(ctx, chatID), nil
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil {
+		//nolint:nilerr // 用户输入错误以提示文案返回；非内部错误，不上报 error 级别
+		return commandResult{Body: fmt.Sprintf("会话序号必须是数字：%q", args[0])}, nil
+	}
+	replyToID := bridgebase.ReplyToID(ctx)
+	dir := b.Directory
+	curSession := b.SessionID
+	// Loading banner on the command's progress card.
+	h.emitAsync(replyToID, &protocol.Control{
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取会话列表，请稍候（约半分钟）…"},
+	})
+	bridgebase.GoSafe(h.Logger, "session-use:"+chatID, func() {
+		sessions, err := h.agent.ListSessions(h.AppCtx, dir)
+		if err != nil {
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
+			return
+		}
+		sorted := sortSessionsByUpdated(sessions)
+		if len(sorted) == 0 {
+			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
+			return
+		}
+		if n < 1 || n > len(sorted) {
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败",
+				fmt.Sprintf("会话序号 %d 越界，有效范围 1-%d。", n, len(sorted)))
+			return
+		}
+		h.applySessionSwitch(chatID, replyToID, sorted[n-1], curSession, "")
+	})
+	return commandResult{Handled: true}, nil
+}
+
+// runSessionUsePicker drives the interactive session selection. ListSessions
+// is slow (CLI forks ~15-30s), so the command returns immediately and the
+// goroutine emits a Question card once the listing lands. The chosen label
+// maps back to a session via a candidates map (each label is unique because
+// of the 1-based number prefix).
+func (h *Handler) runSessionUsePicker(ctx context.Context, chatID string) commandResult {
+	replyToID := bridgebase.ReplyToID(ctx)
+	h.emitAsync(replyToID, &protocol.Control{
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取当前目录的会话，请稍候…"},
+	})
+	bridgebase.GoSafe(h.Logger, "session-use-picker:"+chatID, func() {
+		b, ok := h.Router.Lookup(chatID)
+		if !ok || b.Directory == "" {
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "尚未设置工作目录。")
+			return
+		}
+		sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
+		if err != nil {
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
+			return
+		}
+		sorted := sortSessionsByUpdated(sessions)
+		if len(sorted) == 0 {
+			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
+			return
+		}
+		// Number prefix keeps every label unique so the choice maps to one
+		// session; ★ marks the current binding so the user sees what they
+		// would switch away from.
+		options := make([]string, len(sorted))
+		candidates := make(map[string]opencode.Session, len(sorted))
+		for i, s := range sorted {
+			title := s.Title
+			if title == "" {
+				title = "(未命名会话)"
+			}
+			label := fmt.Sprintf("%d. %s · %s", i+1, title, formatSessionTime(s.Updated))
+			if s.ID == b.SessionID {
+				label = "★ " + label
+			}
+			options[i] = label
+			candidates[label] = s
+		}
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "会话", "选择要切换的会话",
+			bridgebase.StaticOptions(options), false)
+		if err != nil {
+			h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+			return
+		}
+		sess, ok := candidates[choice]
+		if !ok {
+			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
+			return
+		}
+		h.applySessionSwitch(chatID, messageID, sess, b.SessionID, "")
+	})
+	return commandResult{Handled: true}
+}
+
+// applySessionSwitch repoints the chat's binding to sess and emits the result
+// notice. messageID is the card to patch: replyToID for the synchronous path
+// (no picker card morphed), messageID for the picker path (patch the picker
+// card in place).
+//
+// Switching to the session already bound is a no-op (binding untouched). Any
+// in-flight turn on this chat is aborted first so the old session is not
+// resumed mid-turn when the next prompt arrives.
+func (h *Handler) applySessionSwitch(chatID, messageID string, sess opencode.Session, curSession, _ string) {
+	if sess.ID == curSession {
+		title := sess.Title
+		if title == "" {
+			title = "(未命名会话)"
+		}
+		h.emitCardUpdateLogged(chatID, messageID, "info", "会话未切换",
+			fmt.Sprintf("已是当前会话「%s」。", title))
+		return
+	}
+	h.AbortChat(chatID)
+	h.Router.SetSessionID(chatID, sess.ID)
+	h.Logger.Info("session switched",
+		log.FieldChatID, chatID,
+		log.FieldSessionID, sess.ID)
+	title := sess.Title
+	if title == "" {
+		title = "(未命名会话)"
+	}
+	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换会话",
+		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /session-use 切回（/session-clean 会清理未绑定的会话）。", title))
+}
+
+// formatSessionTime renders a millisecond timestamp as a relative string.
+// Bands follow the opencode-serve bridge's historical formatTime so former
+// users see the same shape after the migration to CLI mode.
 func formatSessionTime(ms int64) string {
 	if ms == 0 {
 		return "(未知)"
