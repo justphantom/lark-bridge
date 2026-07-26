@@ -5,11 +5,60 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-26
+
+opencode-back 与 claude-back 的工具事件呈现重构，外加 `claude-go-sdk` 内联
+消除一项直接 module 依赖。所有改动向后兼容（`TypeTodo` 协议早就有，本次只是
+首次接入；`Mention` 类型替换在内部包，对外 API 不变）。
+
+> 本段同时补记 v1.1.0 期间合入但当时未在 CHANGELOG 注明的两项
+> （`opencode-serve-back` 整体移除、`opencode-back /session-use`）。
+
+### Added
+
+- **进度卡 Zone 3.5 todo 清单渲染**：opencode-back 的 `todowrite` 与
+  claude-back 的 `TodoWrite` 工具事件现路由到 `TypeTodo`，进度卡片原生展示
+  ✅/⏳/⬜/✘ 清单（≤10 项展开、>10 项折叠为 `清单 N/M · ✅a ⏳b ⬜c ✘d`、
+  cancelled 灰显），不再以 raw-JSON 工具行呈现。失败 fallback 仍走 `TypeToolResult`
+  以保留可见性。
+- **`/backend` picker 10min TTL**：未被点击的选择卡 10 分钟后自动翻"已失效"，
+  与后端 interactive 卡的 TTL 行为对齐；点击即取消定时器。
+- **opencode-back 新增 `/session-use`**（v1.1.0 期间合入，补记）：从
+  opencode-serve-back 移植，CLI 模式通过 `--session <id>` 续接历史会话。
+
+### Changed
+
+- **`claude-go-sdk` 内联**：从外部 module 依赖变为 `internal/claude/` 子包
+  （9 个非测试文件 + 10 个测试，~2200 行）。lark-bridge 的 `require` 从 2 个
+  缩减到 1 个（仅剩 `larksuite/oapi-sdk-go/v3`）。`NOTICES.txt` 记录上游 commit。
+  Logger 通过 `log.Logger = slog.Logger` type alias 零适配。
+- **`/backend` picker 一卡片原则**：离线/`router.Set` 失败路径改为原地 `UpdateCard`
+  翻红（不再发独立 notice），与成功路径的绿色翻红对称。`renderBackendResult`
+  泛化为 `renderBackendOutcome(level)`，picker footer status 从「选择后端」改
+  为「待确认」让 `RenderInteractiveExpired` 的 footer 翻转生效。
+- **进度卡工具行字段上限 50 runes**：`name` 与 `desc` 各自独立常量
+  （`maxToolNameLen` / `maxToolDescLen`，与已有 `maxToolOutputLen` 同值但独立
+  命名保留语义），通过 `truncateRunes` 截断 + `…` 后缀。` ×N` 计数后缀不算
+  入 50 runes 预算。
+
+### Fixed
+
+- **opencode `edit` 工具的 title 缺失不再 dump 完整 input JSON**：
+  opencode CLI 部分版本不在 edit 工具事件里填 `part.title`，旧 fallback
+  `stringifyJSON(state.input)` 会把整个 input（含 `oldString`/`newString`
+  数百字符）当作工具行 desc，且后续 `(+N -M)` diffstat 拼接破坏 JSON 结构
+  让下游 `SummarizeToolInput` 无法二次提取。新增 `extractToolInputField`
+  按优先级表（`file_path`/`filePath`/`command`/`pattern`/`path`/`query`/
+  `description`）提取单字段，仅当无匹配时落回 `stringifyJSON`。
+- **`/backend` 提示文案错误**：`dispatcher.go` 的"后端离线"提示指向不存在的
+  `/backend use {id}` 子命令（README 同样过时），改为「请用 `/backend`
+  重新选择在线后端」。
+
 ### Removed
 
-- **opencode-serve-back 整体移除**：CLI 模式（`opencode-back`）功能已对齐，
-  独立维护两套 opencode 对接代码（CLI 子进程 vs `opencode serve` HTTP）的成本
-  超过收益。本次移除包括：
+- **`opencode-serve-back` 整体移除**（v1.1.0 期间合入，补记）：CLI 模式
+  （`opencode-back`）功能已对齐，独立维护两套 opencode 对接代码（CLI 子进程
+  vs `opencode serve` HTTP）的成本超过收益。本次移除包括：
   - `cmd/opencode-serve-back/` 与 `internal/opencodeservebridge/`（约 7800 行）。
   - `opencode-go-sdk-lite` Go 依赖（仅此包使用）。
   - `config.OpencodeServe` 字段/默认值/校验/测试。
@@ -18,13 +67,6 @@
   - `deploy.sh` 新增遗留清理：升级时自动 `disable --now` 并删除已部署的
     `lark-opencode-serve-back.service` unit、`/etc/lark-bridge/opencode-serve-config.json`
     以及 `STATE_DIR` 下的 `opencode-serve-router.json` / `usage-opencode-serve.json`。
-
-### Added
-
-- **opencode-back 新增 `/session-use`**：从 opencode-serve-back 移植。CLI 模式
-  通过 `--session <id>` 续接历史会话，无 serve 模式的 `SessionStatuses` 实时
-  busy 检查（CLI 模式无跨进程 session 状态共享，目标 session 始终视为可切换）。
-  与 `/session-list` 共享排序（`sortSessionsByUpdated`），序号一致。
 
 ## [1.1.0] - 2026-07-25
 
