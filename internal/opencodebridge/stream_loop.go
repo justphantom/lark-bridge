@@ -122,7 +122,26 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput())},
 			})
 		case opencode.EventToolResult:
-			// opencode's "task" tool IS the subagent delegation.
+			// todowrite carries the session's full todo list as input
+			// (`{"todos":[...]}`), whose shape is identical to
+			// protocol.TodoItem. Route it to TypeTodo so the progress card's
+			// todo zone renders ✅/⏳/⬜/✘ rows instead of a raw-JSON tool
+			// output. Single-sends (no parallel TypeToolResult) keep the card
+			// clean: the timeline anchor ("model updated the list at step N")
+			// is implicit in the step_count banner. A failed todowrite or an
+			// unparseable input falls through to the generic tool row so the
+			// failure is still visible.
+			if ev.GetToolName() == "todowrite" && !ev.GetIsToolError() {
+				if items, ok := parseTodoItems(ev.GetToolInput()); ok {
+					h.emitAsync(promptID, &protocol.Control{
+						Type:   protocol.TypeTodo,
+						ChatID: chatID,
+						Todo:   &protocol.TodoPayload{Todos: items},
+					})
+					continue
+				}
+			}
+			//opencode's "task" tool IS the subagent delegation.
 			isSub := ev.GetToolName() == "task"
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,

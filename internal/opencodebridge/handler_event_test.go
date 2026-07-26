@@ -60,6 +60,33 @@ func (blockingOpencode) Run(ctx context.Context, _ opencode.RunOptions) (<-chan 
 	return ch, nil
 }
 
+// scriptOpencode feeds a fixed event list to the stream and closes, so a test
+// can drive streamRun through the real parse→emit path without spawning a
+// subprocess. The events MUST include a terminal (EventResult / EventError)
+// or runPrompt's defensive "no terminal event" branch fires after close.
+type scriptOpencode struct {
+	events []opencode.Event
+}
+
+func (s *scriptOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+func (s *scriptOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
+
+func (s *scriptOpencode) ListSessions(context.Context, string) ([]opencode.Session, error) {
+	return nil, nil
+}
+
+func (s *scriptOpencode) DeleteSession(context.Context, string, string) error { return nil }
+
+func (s *scriptOpencode) Run(_ context.Context, _ opencode.RunOptions) (<-chan opencode.Event, error) {
+	ch := make(chan opencode.Event, len(s.events))
+	for _, e := range s.events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
 // connectTestRPC spins up a real IPCServer + backendrpc.Client pair so the
 // Handler under test emits Controls exactly as it would in production, and
 // the test can read them back from the registry's Controls() channel.

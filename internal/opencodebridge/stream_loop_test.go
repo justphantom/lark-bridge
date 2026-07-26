@@ -8,6 +8,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -239,5 +240,148 @@ func TestStreamRun_StepStartDoesNotPanicOnEmptyProgress(t *testing.T) {
 	}
 	if res.steps != 3 {
 		t.Errorf("steps = %d, want 3 (one per step_start)", res.steps)
+	}
+}
+
+// TestStreamRun_TodoWriteEmitsTypeTodoNotToolResult pins the single-send
+// behaviour: a completed todowrite tool result is rewritten to a TypeTodo
+// control (so the progress card's todo zone renders ✅/⏳/⬜/✘ rows) and
+// NO TypeToolResult is emitted for it (so the card is not doubled up by a
+// raw-JSON tool row). The todo input shape matches protocol.TodoItem 1:1.
+func TestStreamRun_TodoWriteEmitsTypeTodoNotToolResult(t *testing.T) {
+	// Real opencode shape: tool_use carries state.status="completed" and the
+	// todos array under state.input; part.tool="todowrite".
+	const todoLine = `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","id":"prt_1","sessionID":"s1","messageID":"msg_1","callID":"call_1","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"写测试","status":"in_progress","priority":"high"},{"content":"跑测试","status":"pending"}]},"output":"[\n  {\"content\":\"写测试\"}\n]","title":"1 todos","metadata":{}}}}`
+	const stopLine = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, todoLine, stopLine)
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-todo", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-todo",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-todo", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawTodo bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			sawTodo = true
+			if len(c.Todo.Todos) != 2 {
+				t.Errorf("todo items = %d, want 2", len(c.Todo.Todos))
+				continue
+			}
+			if c.Todo.Todos[0].Content != "写测试" || c.Todo.Todos[0].Status != "in_progress" || c.Todo.Todos[0].Priority != "high" {
+				t.Errorf("todo[0] = %+v", c.Todo.Todos[0])
+			}
+			if c.Todo.Todos[1].Content != "跑测试" || c.Todo.Todos[1].Status != "pending" {
+				t.Errorf("todo[1] = %+v", c.Todo.Todos[1])
+			}
+			continue
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "todowrite" {
+			t.Errorf("todowrite must NOT emit TypeToolResult (single-send to TypeTodo); got %+v", c.ToolResult)
+		}
+	}
+	if !sawTodo {
+		t.Fatalf("no TypeTodo control received; got %d controls: %v", len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_TodoWriteFailureFallsBackToToolResult locks the fallback: a
+// failed todowrite (state.status="error" → EventToolResult.isToolError=true)
+// is NOT rewritten to TypeTodo (the list did not update); it ships as a
+// normal TypeToolResult so the user sees the failure on the card.
+func TestStreamRun_TodoWriteFailureFallsBackToToolResult(t *testing.T) {
+	const todoFailLine = `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","id":"prt_1","sessionID":"s1","messageID":"msg_1","callID":"call_1","tool":"todowrite","state":{"status":"error","input":{"todos":[]},"error":"db locked"}}}`
+	const stopLine = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, todoFailLine, stopLine)
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-fail", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-fail",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-fail", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawFailedToolResult bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			t.Errorf("failed todowrite must NOT emit TypeTodo; got %+v", c.Todo)
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "todowrite" {
+			sawFailedToolResult = true
+			if !c.ToolResult.IsError {
+				t.Errorf("ToolResult IsError = false, want true")
+			}
+			if !strings.Contains(c.ToolResult.Output, "db locked") {
+				t.Errorf("ToolResult Output = %q, want contains 'db locked'", c.ToolResult.Output)
+			}
+		}
+	}
+	if !sawFailedToolResult {
+		t.Fatalf("no TypeToolResult for failed todowrite; got %d controls: %v", len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_OtherToolsUnaffectedByTodoRouting guards the side-effect
+// boundary: a non-todowrite tool (bash) still emits TypeToolResult exactly as
+// before — the todowrite→TypeTodo rewrite is gated on the tool name, not on
+// the input shape.
+func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
+	const bashLine = `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","id":"prt_1","sessionID":"s1","messageID":"msg_1","callID":"call_1","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"file.txt","title":"ls","metadata":{"exit":0}}}}`
+	const stopLine = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, bashLine, stopLine)
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-bash", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-bash",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-bash", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawBashResult bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeTodo {
+			t.Errorf("bash tool must NOT emit TypeTodo; got %+v", c.Todo)
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "bash" {
+			sawBashResult = true
+		}
+	}
+	if !sawBashResult {
+		t.Fatalf("no TypeToolResult for bash; got %d controls: %v", len(controls), controlTypes(controls))
 	}
 }
