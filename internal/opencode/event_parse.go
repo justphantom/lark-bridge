@@ -200,7 +200,17 @@ func parseToolEvent(base Event, p partShape) []Event {
 	if p.Title != "" {
 		result.toolInput = p.Title
 	} else if len(p.State.Input) > 0 {
-		result.toolInput = stringifyJSON(p.State.Input)
+		// opencode does not always populate part.title (notably edit on
+		// some versions), and dumping the whole input via stringifyJSON
+		// pollutes the row — edit's oldString/newString can run to hundreds
+		// of runes. Pick the most informative single field instead, mirroring
+		// bridgebase.SummarizeToolInput's priority table. The helper lives
+		// here (not in bridgebase) because the SDK is a lower layer.
+		if s := extractToolInputField(p.State.Input); s != "" {
+			result.toolInput = s
+		} else {
+			result.toolInput = stringifyJSON(p.State.Input)
+		}
 	}
 	result.text = stringifyContent(p.State.Output)
 	// Three failure signals, any one of which flags the result as an error:
@@ -231,6 +241,26 @@ func parseToolEvent(base Event, p partShape) []Event {
 		}
 	}
 	return []Event{result}
+}
+
+// extractToolInputField picks the most informative single string field from a
+// tool input JSON, mirroring bridgebase.SummarizeToolInput's priority list.
+// Used when opencode did not populate part.title, so a fallback to
+// stringifyJSON does not dump the whole input (notably edit's oldString/
+// newString, which can run to hundreds of runes). Returns "" when no priority
+// field is present; the caller falls back to stringifyJSON for unknown tool
+// shapes.
+func extractToolInputField(raw json.RawMessage) string {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	for _, key := range []string{"file_path", "filePath", "command", "pattern", "path", "query", "description"} {
+		if v, ok := m[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // stringifyContent normalises a tool output field (string or content-block array).

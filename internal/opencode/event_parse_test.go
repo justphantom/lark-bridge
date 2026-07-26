@@ -293,6 +293,57 @@ func TestParseEvent_EditZeroDiffOmitted(t *testing.T) {
 	}
 }
 
+// TestParseEvent_EditNoTitleFallsBackToFilePath pins the title-absent path:
+// opencode does not always populate part.title (edit on some versions),
+// and without this fallback the whole input JSON — including oldString/
+// newString, often hundreds of runes — would land in the tool-row
+// description. The helper extracts filePath/command/.../description in that
+// order, mirroring bridgebase.SummarizeToolInput.
+func TestParseEvent_EditNoTitleFallsBackToFilePath(t *testing.T) {
+	// Same input shape as a real edit (filePath + oldString + newString),
+	// but part.title is absent.
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"edit","state":{"status":"completed","input":{"filePath":"/tmp/x.txt","oldString":"a","newString":"b"},"output":"Edit applied successfully."}}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	res := got[0]
+	if res.toolInput != "/tmp/x.txt" {
+		t.Errorf("toolInput = %q, want /tmp/x.txt extracted from filePath", res.toolInput)
+	}
+	// oldString/newString must NOT leak into the tool-row description.
+	if strings.Contains(res.toolInput, "oldString") || strings.Contains(res.toolInput, "newString") {
+		t.Errorf("toolInput = %q, must not contain oldString/newString", res.toolInput)
+	}
+}
+
+// TestParseEvent_EditNoTitleDiffStatAppended verifies the title-absent path
+// still appends the diffstat suffix after extracting filePath, so the row
+// reads "/tmp/x.txt (+3 -1)" — same shape as the title-present path.
+func TestParseEvent_EditNoTitleDiffStatAppended(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"edit","state":{"status":"completed","input":{"filePath":"/tmp/x.txt","oldString":"a","newString":"bbbb"},"output":"ok","metadata":{"filediff":{"additions":3,"deletions":1}}}}}`
+	got, _ := parseEvent(line)
+	res := got[0]
+	if res.toolInput != "/tmp/x.txt (+3 -1)" {
+		t.Errorf("toolInput = %q, want \"/tmp/x.txt (+3 -1)\" (filePath + diffstat)", res.toolInput)
+	}
+}
+
+// TestParseEvent_NoTitleUnknownToolFallsBackToStringifyJSON guards the final
+// fallback: an unknown tool shape (no priority field in input) still
+// serialises the whole input so the row shows something rather than empty.
+func TestParseEvent_NoTitleUnknownToolFallsBackToStringifyJSON(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"custom_tool","state":{"status":"completed","input":{"foo":"bar","count":3},"output":"ok"}}}`
+	got, _ := parseEvent(line)
+	res := got[0]
+	if !strings.Contains(res.toolInput, `"foo":"bar"`) {
+		t.Errorf("toolInput = %q, want stringifyJSON of the whole input", res.toolInput)
+	}
+}
+
 func TestParseEvent_StepFinishStop(t *testing.T) {
 	// reason="stop" is terminal: produces an EventResult with token/cost.
 	line := `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}`
