@@ -3,6 +3,8 @@ package feishufront
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -59,7 +61,34 @@ type IPCServer struct {
 	// onOffline/onOnline above. Defaults to a no-op until main.go wires the real
 	// one via SetLogger.
 	logger atomic.Pointer[log.Logger]
+
+	// authFailures tracks per-client-IP bearer-auth failure counts for rate
+	// limiting (brute-force defence on a short or compromised secret). Bounded
+	// by authMaxFailures per IP + a periodic reset on success; map size is
+	// further capped by authFailuresCap (defence against an IP-spoofing flood
+	// filling the map, since client IP comes from RemoteAddr).
+	authFailures sync.Map // map[string]*authFailureState
 }
+
+// authFailureState is the per-IP bearer-auth failure tracker.
+type authFailureState struct {
+	mu       sync.Mutex
+	count    int
+	lastFail time.Time
+}
+
+const (
+	// authMaxFailures is the per-IP failure count that triggers a lockout.
+	// The shared secret is a 256-bit token in production, so online brute force
+	// is infeasible anyway; this is a defence-in-depth rate cap.
+	authMaxFailures = 10
+	// authLockout is how long an IP stays blocked after hitting authMaxFailures.
+	authLockout = 1 * time.Minute
+	// authFailuresCap bounds the tracker map size so a connection flood from
+	// many spoofed RemoteAddrs cannot leak memory. LRU would be nicer but the
+	// legit steady-state set is tiny (a handful of backend IPs).
+	authFailuresCap = 256
+)
 
 // NewIPCServer wraps a BackendRegistry. secret is the shared bearer token
 // every backend must present in its Authorization header; when non-empty,
@@ -101,17 +130,114 @@ func (s *IPCServer) fireCallback(fn *func(backendID, backendType string), id, ty
 
 // authOK reports whether r carries the configured bearer token. When no
 // secret is configured (loopback-only) every request is accepted. The
-// comparison is constant-time to avoid timing oracles.
+// comparison is constant-time to avoid timing oracles, and per-IP failure
+// rate limiting blocks an IP for authLockout after authMaxFailures bad
+// attempts (brute-force defence on a short or compromised secret).
 func (s *IPCServer) authOK(r *http.Request) bool {
 	if s.secret == "" {
 		return true
 	}
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
+	ip := clientIPFromRequest(r)
+	if s.isLockedOut(ip) {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, prefix)), []byte(s.secret)) == 1
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	ok := strings.HasPrefix(h, prefix) &&
+		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, prefix)), []byte(s.secret)) == 1
+	if ok {
+		s.authFailures.Delete(ip)
+	} else {
+		s.recordAuthFailure(ip)
+	}
+	return ok
+}
+
+// isLockedOut reports whether ip has exceeded authMaxFailures within the
+// lockout window.
+func (s *IPCServer) isLockedOut(ip string) bool {
+	v, ok := s.authFailures.Load(ip)
+	if !ok {
+		return false
+	}
+	f, ok := v.(*authFailureState)
+	if !ok {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.count >= authMaxFailures && time.Since(f.lastFail) < authLockout
+}
+
+// recordAuthFailure increments ip's failure counter (resetting it if the
+// lockout window has elapsed) and caps the map size.
+func (s *IPCServer) recordAuthFailure(ip string) {
+	now := time.Now()
+	v, _ := s.authFailures.LoadOrStore(ip, &authFailureState{})
+	f, ok := v.(*authFailureState)
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	if now.Sub(f.lastFail) > authLockout {
+		f.count = 0 // window elapsed: fresh count
+	}
+	f.count++
+	f.lastFail = now
+	f.mu.Unlock()
+	// Bound the map: if it grew past the cap, drop this entry's bookkeeping
+	// for stale IPs opportunistically (cheap scan; the legit set is tiny).
+	if n := authFailuresMapSize(&s.authFailures); n > authFailuresCap {
+		s.authFailures.Range(func(k any, vv any) bool {
+			ff, ok := vv.(*authFailureState)
+			if !ok {
+				return true
+			}
+			ff.mu.Lock()
+			stale := now.Sub(ff.lastFail) > authLockout
+			ff.mu.Unlock()
+			if stale {
+				s.authFailures.Delete(k)
+			}
+			return true
+		})
+	}
+}
+
+func authFailuresMapSize(m *sync.Map) int {
+	n := 0
+	m.Range(func(_, _ any) bool { n++; return true })
+	return n
+}
+
+// clientIPFromRequest extracts the peer IP for rate-limiting. It does NOT
+// honour X-Forwarded-For (a remote attacker would otherwise pin failures on a
+// victim IP to DoS it, or rotate XFF to evade the cap). The listener is
+// expected to be loopback or behind a trusted reverse proxy whose rate
+// limiting happens upstream.
+func clientIPFromRequest(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// isLoopbackAddr reports whether addr binds to a loopback interface (so a
+// missing bearer is acceptable). Empty host ("") counts as loopback since the
+// default listen is ":6060" which on Go's listener still means all-interfaces
+// — but the project default config explicitly sets 127.0.0.1, and a ":port"
+// bind with an empty secret is rejected by deploy-time validation upstream.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	return false
 }
 
 // Routes returns the mux serving /v1/events (SSE), /v1/control/{backendID}
@@ -149,6 +275,13 @@ const ipcIdleTimeout = 120 * time.Second
 // a per-frame write deadline (sseWriteTimeout), which is the correct shape
 // for streaming endpoints.
 func (s *IPCServer) Listen(addr string) error {
+	// Refuse to start without auth on a non-loopback address: the bearer
+	// token would travel in cleartext and any reachable host could connect.
+	// Loopback deployments (the default :6060 on 127.0.0.1) may legitimately
+	// run with an empty secret.
+	if s.secret == "" && !isLoopbackAddr(addr) {
+		return fmt.Errorf("feishufront: ipc_secret is required when IPC binds non-loopback %q (bearer would be cleartext and the endpoint unauthenticated)", addr)
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Routes(),

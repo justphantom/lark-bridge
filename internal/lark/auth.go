@@ -16,6 +16,11 @@ import (
 // skew and the cost of an in-flight request at the boundary.
 const tokenRefreshLead = 5 * time.Minute
 
+// maxAuthBodyBytes caps how much of a token-endpoint response is read. The
+// legit body is a tiny JSON blob; the bound defends against a hostile proxy
+// or buggy endpoint streaming a multi-GB body to exhaust memory.
+const maxAuthBodyBytes = 1 << 20 // 1 MiB
+
 // tokenManager fetches and caches a tenant_access_token for the configured
 // app. Only the internal (self-built app) flow is supported, since the bridge
 // runs as exactly one self-built app and needs no other token type.
@@ -72,7 +77,9 @@ func (t *tokenManager) fetch(ctx context.Context) (*tokenResponse, error) {
 		return nil, fmt.Errorf("lark: token fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
+	// Cap the read: the token endpoint returns a small JSON blob; a hostile
+	// or buggy endpoint returning a multi-GB body must not exhaust memory.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAuthBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("lark: token read: %w", err)
 	}

@@ -279,6 +279,10 @@ func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, 
 	// keeps holding the stdout pipe: WaitDelay forces the pipe closed within
 	// cmdutil.GroupKillTimeout so cmd.Wait() never blocks forever. Without
 	// it, a stuck grandchild wedges the dispatcher goroutine indefinitely.
+	// Sanitised env: strip the bridge's own secrets (FEISHU_APP_SECRET, IPC_
+	// SECRET, ENCRYPT_KEY, …) so a user-run Bash tool inside the CLI cannot
+	// read them. The CLI's own *_API_KEY etc. survive (deny-list, not allow).
+	cmd.Env = cmdutil.SanitizeChildEnv()
 	cmdutil.ApplyGroupCancel(cmd)
 	return cmd, nil
 }

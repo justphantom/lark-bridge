@@ -49,6 +49,11 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 
 完整字段与默认值见 `config.example.json` 与 `internal/config/config_defaults.go`。
 
+### 敏感数据落盘
+
+- **streamarchive**：`stream_history > 0` 时，每个 backend 把该轮 CLI stdout 原文落盘到 `{state_dir}/streams/{backend}/`（仅剔除 claude 的 thinking_tokens 行）。**含用户 prompt、agent 读到的文件内容、模型回复**。文件权限 0600，但若 `state_dir` 进了备份/日志转发/共享快照，这些内容随之离开主机。生产环境若不需要排障，设 `stream_history: 0` 关闭，或把 `streams/` 排除出备份。`log_debug_redact` 只影响日志，不影响 archive。
+- **debug 日志**：`log_debug_redact: false`（零值默认）时 prompt/result/error 文本原样进 debug 日志。生产建议显式设 `true`。
+
 ## 部署
 
 ```bash

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -102,8 +101,10 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	cmd.Stdin = strings.NewReader(opts.Prompt)
 	// Pass the API key via env, not a flag: miniagent's CLI has no -api-key
 	// (passing one fails startup with "flag provided but not defined"). Inherit
-	// the parent env so PATH/HOME/etc. survive, then set/override the key.
-	cmd.Env = append(os.Environ(), "MINIAGENT_API_KEY="+c.apiKey)
+	// a SANITISED parent env (bridge's own secrets — FEISHU_APP_SECRET / IPC_
+	// SECRET / ENCRYPT_KEY … — are stripped so a user-run Bash tool inside
+	// miniagent cannot read them), then set/override the API key.
+	cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+c.apiKey)
 	// Tree-wide SIGKILL on ctx cancel: the CLI spawns tool subprocesses
 	// (bash, git …) that inherit the stdout pipe write end. Without a
 	// process group + WaitDelay, those grandchildren keep the scanner

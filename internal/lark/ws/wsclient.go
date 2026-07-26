@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -15,6 +16,11 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/lark/websocket"
 )
+
+// maxBootstrapBodyBytes caps the WS bootstrap response read. The legit body
+// is a small JSON blob; the bound defends against a hostile/buggy endpoint
+// streaming a large body to exhaust memory.
+const maxBootstrapBodyBytes = 1 << 20 // 1 MiB
 
 // Lifecycle is the ws-level copy of lark.Lifecycle (callback fields only). It
 // is duplicated here so ws does not import the parent lark package and create
@@ -116,9 +122,15 @@ func (c *Client) SetLifecycle(lc Lifecycle) {
 }
 
 // Start runs the connect→session→reconnect loop. It returns only when ctx is
-// cancelled or a fatal bootstrap error (bad credentials, forbidden) occurs;
-// transient network errors trigger reconnection per cfg.
+// cancelled, a fatal bootstrap error (bad credentials, forbidden) occurs, or
+// the server-supplied reconnect budget is exhausted; transient network errors
+// trigger reconnection per cfg.
+//
+// ReconnectCount == -1 means infinite retries (the production server default).
+// >= 0 bounds total reconnect attempts per successful session; a successful
+// session resets the budget, matching the SDK's per-reconnect-call semantics.
 func (c *Client) Start(ctx context.Context) error {
+	var reconnects int
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -130,18 +142,30 @@ func (c *Client) Start(ctx context.Context) error {
 				return err
 			}
 			c.fireError(err)
-			if !c.reconnectSleep(ctx) {
-				return ctx.Err()
-			}
-			continue
+		} else {
+			c.fireReady()
+			reconnects = 0 // healthy session resets the per-session budget
+			c.runSession(ctx, conn)
+			c.fireDisconnected()
 		}
-		c.fireReady()
-		c.runSession(ctx, conn)
-		c.fireDisconnected()
-		if !c.reconnectSleep(ctx) {
+		if !c.reconnectStep(ctx, &reconnects) {
 			return ctx.Err()
 		}
 	}
+}
+
+// reconnectStep enforces the ReconnectCount budget then sleeps the nonce/
+// interval before the next attempt. Returns false if ctx was cancelled OR the
+// budget is exhausted; the caller distinguishes by re-checking ctx.Err().
+func (c *Client) reconnectStep(ctx context.Context, reconnects *int) bool {
+	c.mu.Lock()
+	budget := c.cfg.ReconnectCount
+	c.mu.Unlock()
+	if budget >= 0 && *reconnects >= budget {
+		return false // budget exhausted — Start returns
+	}
+	*reconnects++
+	return c.reconnectSleep(ctx)
 }
 
 // connect performs one bootstrap + dial cycle. On success the conn is live and
@@ -203,7 +227,9 @@ func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
 			} `json:"ClientConfig"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	// Bound the decode: the bootstrap body is a small JSON blob; a hostile
+	// or buggy endpoint returning a huge body must not exhaust memory.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBootstrapBodyBytes)).Decode(&out); err != nil {
 		return "", nil, fmt.Errorf("ws: bootstrap decode: %w", err)
 	}
 	if out.Code != codeOK {

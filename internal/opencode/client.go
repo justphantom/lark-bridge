@@ -200,6 +200,10 @@ func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, 
 	if opts.Directory != "" {
 		cmd.Dir = opts.Directory
 	}
+	// Sanitised env: strip the bridge's own secrets (FEISHU_APP_SECRET, IPC_
+	// SECRET, ENCRYPT_KEY, OPENCODE_SERVER_PASSWORD …) so a user-run Bash tool
+	// inside the CLI cannot read them. The CLI's own *_API_KEY survives.
+	cmd.Env = cmdutil.SanitizeChildEnv()
 	// ApplyGroupCancel puts the CLI in its own process group AND wires ctx
 	// cancellation to SIGKILL the whole tree + bounds Wait via WaitDelay. A
 	// tool grandchild that escapes the SIGKILL but keeps holding the stdout

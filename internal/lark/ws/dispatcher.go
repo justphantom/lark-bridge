@@ -80,12 +80,27 @@ type pendingChunks struct {
 
 func newReassembler() *reassembler { return &reassembler{pending: make(map[string]*pendingChunks)} }
 
+// maxReassembleChunks bounds the "sum" header value the reassembler will
+// honour. The server splits only very large payloads (a handful of chunks at
+// most); a malicious/buggy peer claiming sum=1e9 would otherwise allocate an
+// 8 GB slice header on the first chunk. Anything above this is treated as a
+// malformed group: dropped (the partial state is swept within chunkTTL).
+const maxReassembleChunks = 256
+
 // feed returns the joined payload when this frame completes the group, or
 // nil (with ok=false) when more chunks are still outstanding. sum<=1 short-
 // circuits to the payload itself (no buffering).
+//
+// A sum above maxReassembleChunks is rejected outright (no allocation): the
+// frame is dropped silently rather than buffered, since a legit payload never
+// exceeds the cap. seq out of range is ignored (does not count toward got).
 func (r *reassembler) feed(msgID string, sum, seq int, payload []byte) (joined []byte, ok bool) {
 	if sum <= 1 {
 		return payload, true
+	}
+	if sum > maxReassembleChunks {
+		// Refuse to buffer an unbounded group; treat as undeliverable.
+		return nil, false
 	}
 	if msgID == "" {
 		// No correlation id with sum>1: cannot recombine safely. Deliver as-is

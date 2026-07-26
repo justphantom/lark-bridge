@@ -256,13 +256,24 @@ func ShouldExitUnhealthy(now, lastHealthy, startedAt time.Time, fatalAfter time.
 	return now.Sub(lastHealthy) > fatalAfter
 }
 
-// OnIncoming registers the handler invoked for each inbound message.
+// OnIncoming registers the handler invoked for each inbound message. Passing
+// nil unregisters (a nil IncomingHandler stored as a non-nil pointer would
+// otherwise defeat the Load()==nil guard and panic on every message).
 func (b *Bot) OnIncoming(handler IncomingHandler) {
+	if handler == nil {
+		b.onIncoming.Store(nil)
+		return
+	}
 	b.onIncoming.Store(&handler)
 }
 
-// OnCardAction registers the handler invoked for each card callback.
+// OnCardAction registers the handler invoked for each card callback. nil
+// unregisters (see OnIncoming).
 func (b *Bot) OnCardAction(handler CardActionHandler) {
+	if handler == nil {
+		b.onCardAction.Store(nil)
+		return
+	}
 	b.onCardAction.Store(&handler)
 }
 

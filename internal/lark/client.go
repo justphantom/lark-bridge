@@ -94,20 +94,26 @@ func NewClient(appID, appSecret string, opts ...Option) (*Client, error) {
 
 // Start connects the WebSocket and blocks until Stop is called, ctx is
 // cancelled, or a fatal (auth) bootstrap error occurs. It is the lark-
-// bridge frontend's main goroutine. Safe to call once; a second call returns
-// the original termination error.
+// bridge frontend's main goroutine.
+//
+// Calling Start more than once is a programming error: the second call waits
+// for the first run to finish and returns the same error. The ctx/cancel/
+// runDone are created inside startOnce so a racing second caller cannot
+// overwrite them (which previously deadlocked on a fresh, never-closed
+// runDone channel and leaked the first ctx's cancel).
 func (c *Client) Start(ctx context.Context) error {
-	c.ctx, c.cancel = context.WithCancel(ctx)
-	c.runDone = make(chan struct{})
-	var started bool
 	c.startOnce.Do(func() {
-		started = true
-		c.runErr = c.ws.Start(c.ctx)
-		close(c.runDone)
+		c.ctx, c.cancel = context.WithCancel(ctx)
+		c.runDone = make(chan struct{})
+		go func() {
+			c.runErr = c.ws.Start(c.ctx)
+			close(c.runDone)
+		}()
 	})
-	if !started {
-		<-c.runDone
+	if c.runDone == nil {
+		return errors.New("lark: Start not initialised")
 	}
+	<-c.runDone
 	return c.runErr
 }
 

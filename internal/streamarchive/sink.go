@@ -5,6 +5,18 @@
 //
 // The sink is best-effort: any setup failure (mkdir, open) returns nil and is
 // logged by the caller, so archiving never fails a run.
+//
+// # Sensitive content
+//
+// The archive captures the CLI stdout verbatim (minus claude's thinking_tokens
+// lines, which the bridge drops as inert). That includes the user's prompt,
+// any file contents the agent reads (via a Read tool), and the model's reply.
+// The files are created 0600, but if {stateDir} is included in backups, log
+// forwarding, or shared snapshots this content leaves the host with them.
+//
+// To disable archiving entirely, set stream_history<=0 in the config (per
+// backend) or leave state_dir empty. The DebugRedact flag affects only log
+// output, NOT the archive.
 package streamarchive
 
 import (

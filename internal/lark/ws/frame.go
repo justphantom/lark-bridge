@@ -41,6 +41,11 @@ type Header struct {
 	Value string
 }
 
+// maxFrameHeaders bounds how many Header submessages a decoded Frame may
+// carry. Legit lark frames use <10; the cap defends against a malicious peer
+// attaching thousands of headers to burn CPU in the linear-scan accessors.
+const maxFrameHeaders = 64
+
 // Headers returns a view of the frame headers with helper accessors. The
 // returned slice shares storage with the frame; do not mutate concurrently.
 func (f *Frame) HeadersView() Headers { return Headers(f.Headers) }
@@ -215,6 +220,12 @@ func (f *Frame) Unmarshal(data []byte) error {
 		case 5:
 			if wire != 2 {
 				return fmt.Errorf("ws: field %d wire %d", field, wire)
+			}
+			// Cap the header count: legit lark frames carry <10 headers; a
+			// malicious peer could otherwise attach thousands of tiny header
+			// submessages to burn CPU on the linear-scan accessors.
+			if len(f.Headers) >= maxFrameHeaders {
+				return fmt.Errorf("ws: too many headers (>%d)", maxFrameHeaders)
 			}
 			msg, n := readBytes(data[i:])
 			if n <= 0 {

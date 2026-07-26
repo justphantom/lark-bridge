@@ -36,6 +36,12 @@ const (
 // maxControlPayload caps a control-frame body (RFC 6455 Section 5.5: ≤ 125).
 const maxControlPayload = 125
 
+// maxMessageSize caps the reassembled size of one logical message across
+// fragmented continuation frames. A single frame is already bounded by
+// maxSingleFrame in readFrame; this bound closes the fragmentation-amplification
+// path (many small continuations). 4 MiB is well above any legit lark payload.
+const maxMessageSize = 4 << 20
+
 // ErrCloseSent is returned by WriteMessage after a Close frame has been written.
 var ErrCloseSent = errors.New("websocket: close sent")
 
@@ -130,6 +136,15 @@ func (c *Conn) ReadMessage() (int, []byte, error) {
 			c.frameBuf = append(c.frameBuf, payload...)
 		default:
 			return 0, nil, fmt.Errorf("websocket: unknown opcode %d", op)
+		}
+		// Bound the reassembled message: readFrame caps a single frame at
+		// maxSingleFrame, but a peer could stream many continuation frames to
+		// grow the logical message without limit. Reject above the cap so an
+		// amok peer cannot OOM the reader; legit lark messages are far smaller.
+		if len(c.frameBuf) > maxMessageSize {
+			c.frameBuf = c.frameBuf[:0]
+			c.messageOpcode = -1
+			return 0, nil, fmt.Errorf("websocket: message too large: >%d bytes", maxMessageSize)
 		}
 		if fin {
 			op := c.messageOpcode
