@@ -41,7 +41,7 @@ make fmt        # gofmt -s -w .
 make clean
 ```
 
-Go 1.25+。直接依赖仅 `github.com/larksuite/oapi-sdk-go/v3`（飞书开放平台 SDK）；`gorilla/websocket`、`gogo/protobuf` 为 SDK 的间接依赖。
+Go 1.25+。**直接依赖仅 Go 标准库**——飞书 WebSocket 长连接、REST 收发、卡片回调、protobuf 帧编解码均由 `internal/lark/` 自实现（RFC 6455 WebSocket 客户端 + 手写 protobuf），无任何第三方模块。背景见 `docs/lark-client-rewrite.md`。
 
 ## 配置
 

@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 飞书客户端完全自实现，移除 `github.com/larksuite/oapi-sdk-go/v3` 及其间接依赖
+  `gorilla/websocket`、`gogo/protobuf`。`go.mod` 现仅含标准库。新增 `internal/lark/`
+  （RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + 鉴权/REST/重连/分片重组），
+  `internal/feishu/` 改为对 `*lark.Client` 的业务封装层。`docs/lark-client-rewrite.md`
+  为本次落地的方案文档。
+- `feishu.Bot.Restart` / `feishu.ErrTooManyRestarts` / `restartMax` 删除：新客户端
+  自管重连、无 goroutine 泄漏，软重启机制不再需要。`cmd/feishu-front` 看门狗
+  简化为「超 fatalAfter 仍不健康 → 退出交 supervisor 拉起」。
+- `feishu.IncomingMessage.Mentions` 类型由 SDK 的 `sdktypes.Mention` 改为本包
+  `Mention`（字段集不变，下游 `internal/feishufront` 零改动）。
+
 ## [1.2.0] - 2026-07-26
 
 opencode-back 与 claude-back 的工具事件呈现重构，外加 `claude-go-sdk` 内联

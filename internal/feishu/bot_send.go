@@ -9,9 +9,7 @@ import (
 	"strings"
 	"time"
 
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-
+	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
@@ -23,14 +21,10 @@ import (
 // fallback (e.g. when a result card is rejected for too many tables).
 const MaxTextBodyBytes = 25000
 
-// maxContentSize aliases MaxTextBodyBytes for the in-package call sites
-// (bot.go's text-chunk limit) that pre-date the export.
-const maxContentSize = MaxTextBodyBytes
-
 // cardRetry is the max number of extra UpdateCard attempts after a transient
 // failure. UpdateCard is idempotent for a given messageID, so a retry never
 // produces a duplicate card; SendCard is NOT retried (it would double-post).
-// Only network/SDK-layer errors retry — business codes (content too large,
+// Only network/transport errors retry — business codes (content too large,
 // permission) return immediately since retrying cannot help.
 const cardRetry = 3
 
@@ -39,15 +33,13 @@ const cardRetry = 3
 const cardRetryBase = 300 * time.Millisecond
 
 // feishuCodeContentTooLarge is the Feishu API error code for "message
-// content reaches its limit" (body byte size). Used for direct resp.Code
-// comparison on Patch responses; channel errors embed it as the substring
-// "code:"+strconv.Itoa(feishuCodeContentTooLarge) (the SDK classifies
-// 230025 as an unknown code, so detection is by that substring).
+// content reaches its limit" (body byte size). The REST client surfaces this
+// as *lark.APIError whose Error() contains "code:230025"; isCardContentRejected
+// matches on that substring.
 const feishuCodeContentTooLarge = 230025
 
 // feishuCodeCardElementOverLimit is the Feishu error for a card exceeding an
-// element-count cap (tables/columns/images/…). Observed as
-// "card table number over limit" wrapping code 11310 inside the generic
+// element-count cap (tables/columns/images/…). Surfaced inside the generic
 // 230099 "Failed to create card content"; the body itself is under the byte
 // limit, so this is distinct from feishuCodeContentTooLarge.
 const feishuCodeCardElementOverLimit = 11310
@@ -67,7 +59,7 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 		log.FieldChatID, chatID,
 		"reply_to", replyToID,
 		"card", strutil.DebugRedact(string(card), b.logDebugRedact.Load()))
-	res, err := (*b.ch.Load()).Send(ctx, &sdktypes.SendInput{
+	res, err := b.client.Send(ctx, &lark.SendInput{
 		ChatID:         chatID,
 		Card:           string(card),
 		ReplyMessageID: replyToID,
@@ -87,9 +79,6 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 	}
 	b.markHealthy() // outbound success refreshes the watchdog: without this, a long conversation with no inbound WS traffic trips fatal_after=5m
 	if res == nil {
-		// The SDK returned success but no result. Treat as an error so the
-		// caller does not silently proceed with an empty messageID (which would
-		// leave every later UpdateCard targeting "" and the turn stuck).
 		return "", errors.New("feishu: send card returned no result")
 	}
 	return res.MessageID, nil
@@ -104,7 +93,7 @@ func (b *Bot) SendText(ctx context.Context, chatID, text, replyToID string) (str
 	if text == "" {
 		return "", errors.New("feishu: empty text body")
 	}
-	res, err := (*b.ch.Load()).Send(ctx, &sdktypes.SendInput{
+	res, err := b.client.Send(ctx, &lark.SendInput{
 		ChatID:         chatID,
 		Text:           text,
 		ReplyMessageID: replyToID,
@@ -128,8 +117,8 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 	if messageID == "" {
 		return errors.New("feishu: message_id required")
 	}
-	if b.imService == nil {
-		return errors.New("feishu: im service not initialized")
+	if b.client == nil {
+		return errors.New("feishu: client not initialized")
 	}
 
 	b.logger.Debug("update feishu card",
@@ -138,29 +127,17 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 		"card_size_bytes", len(card),
 		"card_preview", strutil.DebugRedact(strutil.Truncate(string(card), 300), b.logDebugRedact.Load()))
 
-	// Build update request
-	req := larkim.NewPatchMessageReqBuilder().
-		MessageId(messageID).
-		Body(larkim.NewPatchMessageReqBodyBuilder().
-			Content(string(card)).
-			Build()).
-		Build()
-
-	// Send update request with bounded retry on transient (network/SDK) errors.
-	// Content-too-large is detected on the error string and short-circuits to
-	// the fallback; business codes after a successful HTTP round-trip are not
+	// Send update request with bounded retry on transient (network) errors.
+	// Content-too-large is detected on the error and short-circuits to the
+	// fallback; business codes after a successful HTTP round-trip are not
 	// retried (retrying a content/permission rejection cannot help).
-	var resp *larkim.PatchMessageResp
-	var err error
 	backoff := cardRetryBase
 	for attempt := 0; ; attempt++ {
-		resp, err = b.imService.Message.Patch(ctx, req)
+		err := b.client.PatchMessage(ctx, messageID, string(card))
 		if err == nil {
 			break
 		}
 		if isCardContentRejected(err) {
-			// Same fallback as the resp.Code path below: a minimal card beats
-			// an erroring one. Not retried (retrying cannot shrink the content).
 			b.logger.Info("card content rejected, falling back to minimal card",
 				log.FieldMessageID, messageID,
 				"card_size_bytes", len(card))
@@ -177,56 +154,16 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 		backoff *= 2
 	}
 
-	// Check response status
-	if resp == nil || !resp.Success() {
-		code := -1
-		msg := "unknown error"
-		if resp != nil {
-			code = resp.Code
-			msg = resp.Msg
-		}
-		// Content-limit rejection (230025 body too large, or an "over limit"
-		// element-count code surfaced only in msg for Patch responses). Re-patch
-		// with a minimal card so the existing message shows a readable
-		// placeholder instead of erroring.
-		if code == feishuCodeContentTooLarge || strings.Contains(msg, "over limit") {
-			b.logger.Info("card content rejected, falling back to minimal card",
-				log.FieldMessageID, messageID,
-				"card_size_bytes", len(card))
-			return b.updateFallbackCard(ctx, messageID)
-		}
-		return fmt.Errorf("feishu: update card failed: code=%d, msg=%s", code, msg)
-	}
-
 	b.markHealthy() // outbound success refreshes the watchdog
-
-	b.logger.Info("card update completed",
-		log.FieldMessageID, messageID,
-		"response_code", resp.Code)
-
+	b.logger.Info("card update completed", log.FieldMessageID, messageID)
 	return nil
 }
 
 // updateFallbackCard re-patches messageID with a minimal card after the
 // original content was rejected as too large (230025).
 func (b *Bot) updateFallbackCard(ctx context.Context, messageID string) error {
-	req := larkim.NewPatchMessageReqBuilder().
-		MessageId(messageID).
-		Body(larkim.NewPatchMessageReqBodyBuilder().
-			Content(string(fallbackCardJSON())).
-			Build()).
-		Build()
-	resp, err := b.imService.Message.Patch(ctx, req)
-	if err != nil {
+	if err := b.client.PatchMessage(ctx, messageID, string(fallbackCardJSON())); err != nil {
 		return fmt.Errorf("feishu: update card request failed: %w", err)
-	}
-	if resp == nil || !resp.Success() {
-		code, msg := -1, "unknown error"
-		if resp != nil {
-			code = resp.Code
-			msg = resp.Msg
-		}
-		return fmt.Errorf("feishu: update card failed: code=%d, msg=%s", code, msg)
 	}
 	b.markHealthy()
 	return nil
@@ -234,10 +171,10 @@ func (b *Bot) updateFallbackCard(ctx context.Context, messageID string) error {
 
 // isCardContentRejected reports whether err represents a Feishu CONTENT
 // rejection: body too large (230025), too many tables/elements (11310), or
-// any sibling "over limit" rejection. The SDK classifies these as unknown
-// codes, so identification is by substring (the inner code + the English
-// "over limit" phrase Feishu uses for element-count caps) rather than a typed
-// constant.
+// any sibling "over limit" rejection. The REST client surfaces these as
+// *lark.APIError whose Error() contains "code:<N>"; we identify by substring
+// (the inner code + the English "over limit" phrase Feishu uses for element-
+// count caps) so both direct APIError codes and any wrapped variants match.
 func isCardContentRejected(err error) bool {
 	if err == nil {
 		return false

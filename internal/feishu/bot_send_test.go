@@ -7,48 +7,39 @@ import (
 	"strings"
 	"testing"
 
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-
+	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// newSendOnlyBot builds a Bot whose channel/imService are nil. The send
-// methods reach their input-validation branches (empty card, empty messageID,
-// nil imService) before touching the channel, so this is enough to exercise
-// the pre-send guards.
-func newSendOnlyBot(t *testing.T) *Bot {
-	t.Helper()
-	return &Bot{logger: log.Nop()}
-}
-
+// TestSendCardEmptyBody verifies the input guard fires before reaching the client.
 func TestSendCardEmptyBody(t *testing.T) {
-	b := newSendOnlyBot(t)
-	_, err := b.SendCard(context.Background(), "oc_chat", nil, "")
-	if err == nil {
+	b := &Bot{logger: log.Nop(), client: &fakeClient{}}
+	if _, err := b.SendCard(context.Background(), "oc_chat", nil, ""); err == nil {
 		t.Fatal("expected error for empty card body")
 	}
 }
 
+// TestUpdateCardEmptyBody/EmptyMessageID/NilClient cover the pre-send guards.
 func TestUpdateCardEmptyBody(t *testing.T) {
-	b := newSendOnlyBot(t)
+	b := &Bot{logger: log.Nop(), client: &fakeClient{}}
 	if err := b.UpdateCard(context.Background(), "om_msg", nil); err == nil {
 		t.Fatal("expected error for empty card body")
 	}
 }
 
 func TestUpdateCardEmptyMessageID(t *testing.T) {
-	b := newSendOnlyBot(t)
+	b := &Bot{logger: log.Nop(), client: &fakeClient{}}
 	if err := b.UpdateCard(context.Background(), "", []byte("{}")); err == nil {
 		t.Fatal("expected error for empty messageID")
 	}
 }
 
-func TestUpdateCardNilIMService(t *testing.T) {
-	// imService nil guard returns a descriptive error before any API call.
-	b := newSendOnlyBot(t)
+func TestUpdateCardNilClient(t *testing.T) {
+	// client nil guard returns a descriptive error before any API call.
+	b := &Bot{logger: log.Nop()}
 	err := b.UpdateCard(context.Background(), "om_msg", []byte("{}"))
-	if err == nil || err.Error() != "feishu: im service not initialized" {
-		t.Fatalf("expected im service error, got %v", err)
+	if err == nil || err.Error() != "feishu: client not initialized" {
+		t.Fatalf("expected client-not-initialized error, got %v", err)
 	}
 }
 
@@ -63,10 +54,10 @@ func TestIsCardContentRejected(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"230025 body too large", errors.New("FeishuChannelError(code=unknown): ...code:230025..."), true},
-		{"11310 table over limit", errors.New("Create message API error: Code=230099, ext=ErrCode: 11310; ErrMsg: card table number over limit"), true},
+		{"230025 body too large", &lark.APIError{Code: 230025, Msg: "content too large"}, true},
+		{"11310 table over limit", &lark.APIError{Code: 11310, Msg: "card table number over limit"}, true},
 		{"over limit phrase only", errors.New("ErrMsg: column number over limit"), true},
-		{"other code", errors.New("feishu: send card: code:230002"), false},
+		{"other code", &lark.APIError{Code: 230002, Msg: "other"}, false},
 		{"plain error", errors.New("network timeout"), false},
 	}
 	for _, c := range cases {
@@ -80,10 +71,10 @@ func TestIsCardContentRejected(t *testing.T) {
 
 // TestSendCard_ContentRejectedReturnsSentinel pins that SendCard surfaces the
 // detectable ErrCardContentRejected (so a caller with the original text can
-// fall back) instead of silently swallowing or auto-sending a stub.
+// fall back) instead of silently swallowing.
 func TestSendCard_ContentRejectedReturnsSentinel(t *testing.T) {
-	b := &Bot{logger: log.Nop()}
-	setCh(b, &fakeChannel{sendErr: errors.New("Create message API error: Code=230099, ext=ErrCode: 11310; ErrMsg: card table number over limit")})
+	fc := &fakeClient{sendErr: &lark.APIError{Code: 11310, Msg: "card table number over limit"}}
+	b := &Bot{logger: log.Nop(), client: fc}
 	_, err := b.SendCard(context.Background(), "oc_chat", []byte("{}"), "")
 	if !errors.Is(err, ErrCardContentRejected) {
 		t.Fatalf("SendCard err = %v, want errors.Is ErrCardContentRejected", err)
@@ -109,48 +100,12 @@ func TestFallbackText(t *testing.T) {
 	}
 }
 
-// fakeChannel implements sdktypes.Channel for SendCard tests. Only Send is
-// configurable; all other methods are no-ops so the test can drive the success
-// path without a real WebSocket connection.
-type fakeChannel struct {
-	sendResult *sdktypes.SendResult
-	sendErr    error
-}
-
-func (f *fakeChannel) Send(_ context.Context, _ *sdktypes.SendInput) (*sdktypes.SendResult, error) {
-	return f.sendResult, f.sendErr
-}
-func (f *fakeChannel) OnMessage(func(context.Context, *sdktypes.NormalizedMessage) error)  {}
-func (f *fakeChannel) OnReaction(func(context.Context, *sdktypes.ReactionEvent) error)     {}
-func (f *fakeChannel) OnComment(func(context.Context, *sdktypes.CommentEvent) error)       {}
-func (f *fakeChannel) OnBotAdded(func(context.Context, *sdktypes.BotAddedEvent) error)     {}
-func (f *fakeChannel) OnCardAction(func(context.Context, *sdktypes.CardActionEvent) error) {}
-func (f *fakeChannel) OnReject(func(context.Context, *sdktypes.RejectEvent) error)         {}
-func (f *fakeChannel) DownloadFile(context.Context, string, string) ([]byte, error)        { return nil, nil }
-func (f *fakeChannel) OnReady(func())                                                      {}
-func (f *fakeChannel) OnError(func(error))                                                 {}
-func (f *fakeChannel) OnReconnecting(func())                                               {}
-func (f *fakeChannel) OnReconnected(func())                                                {}
-func (f *fakeChannel) OnDisconnected(func())                                               {}
-func (f *fakeChannel) Start(context.Context) error                                         { return nil }
-func (f *fakeChannel) Stream(context.Context, *sdktypes.SendInput) (sdktypes.StreamController, error) {
-	return nil, nil //nolint:nilnil // sdk contract: (nil, nil) signals "no stream supported" by this fake
-}
-func (f *fakeChannel) UpdatePolicy(sdktypes.PolicyConfig)                   {}
-func (f *fakeChannel) GetPolicy() sdktypes.PolicyConfig                     { return sdktypes.PolicyConfig{} }
-func (f *fakeChannel) GetBotIdentity(context.Context) *sdktypes.BotIdentity { return nil }
-func (f *fakeChannel) Stop(context.Context) error                           { return nil }
-
-// TestSendCard_RefreshesWatchdog verifies that a successful SendCard calls
-// markHealthy, so the frontend watchdog does not kill the process during a
-// long conversation with no inbound WS traffic (the root cause of Claude
-// being killed mid-conversation).
+// TestSendCard_RefreshesWatchdog verifies a successful SendCard calls
+// markHealthy, so the watchdog does not kill the process during a long
+// conversation with no inbound WS traffic.
 func TestSendCard_RefreshesWatchdog(t *testing.T) {
-	b := &Bot{logger: log.Nop()}
-	fake := &fakeChannel{
-		sendResult: &sdktypes.SendResult{MessageID: "om_test"},
-	}
-	setCh(b, fake)
+	fc := &fakeClient{sendResult: &lark.SendResult{MessageID: "om_test"}}
+	b := &Bot{logger: log.Nop(), client: fc}
 	if !b.LastHealthy().IsZero() {
 		t.Fatal("expected zero lastHealthy before any send")
 	}
@@ -165,16 +120,49 @@ func TestSendCard_RefreshesWatchdog(t *testing.T) {
 // TestSendCard_ErrorDoesNotRefreshWatchdog verifies a failed send does not
 // refresh the watchdog — only success proves the connection is alive.
 func TestSendCard_ErrorDoesNotRefreshWatchdog(t *testing.T) {
-	b := &Bot{logger: log.Nop()}
-	fake := &fakeChannel{
-		sendErr: errors.New("network error"),
-	}
-	setCh(b, fake)
+	fc := &fakeClient{sendErr: errors.New("network error")}
+	b := &Bot{logger: log.Nop(), client: fc}
 	if _, err := b.SendCard(context.Background(), "oc_chat", []byte("{}"), ""); err == nil {
 		t.Fatal("expected error from failed send")
 	}
 	if !b.LastHealthy().IsZero() {
 		t.Fatal("expected zero lastHealthy after failed SendCard")
+	}
+}
+
+// TestUpdateCard_SuccessAndPatch verifies UpdateCard delegates to
+// PatchMessage exactly once on success and marks the bot healthy.
+func TestUpdateCard_SuccessAndPatch(t *testing.T) {
+	fc := &fakeClient{}
+	b := &Bot{logger: log.Nop(), client: fc}
+	if err := b.UpdateCard(context.Background(), "om_msg", []byte("{}")); err != nil {
+		t.Fatalf("UpdateCard: %v", err)
+	}
+	if got := fc.patchCalls.Load(); got != 1 {
+		t.Errorf("patch calls = %d, want 1", got)
+	}
+	if b.LastHealthy().IsZero() {
+		t.Error("expected markHealthy after successful UpdateCard")
+	}
+}
+
+// TestUpdateCard_ContentRejectedFallsBack verifies a 230025 rejection during
+// patch triggers the minimal fallback card and returns success.
+func TestUpdateCard_ContentRejectedFallsBack(t *testing.T) {
+	fc := &fakeClient{
+		patchErr:      &lark.APIError{Code: 230025, Msg: "too large"},
+		patchErrOnNth: 1, // first patch rejected; second (fallback) succeeds
+	}
+	b := &Bot{logger: log.Nop(), client: fc}
+	if err := b.UpdateCard(context.Background(), "om_msg", []byte("{}")); err != nil {
+		t.Fatalf("UpdateCard should swallow content-rejected via fallback: %v", err)
+	}
+	// Two patches: the original (rejected) + the fallback.
+	if got := fc.patchCalls.Load(); got != 2 {
+		t.Errorf("patch calls = %d, want 2 (original + fallback)", got)
+	}
+	if !strings.Contains(fc.patchLast, fallbackText) {
+		t.Errorf("fallback patch body missing fallback text: %q", fc.patchLast)
 	}
 }
 

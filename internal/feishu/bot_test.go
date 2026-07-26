@@ -2,278 +2,96 @@ package feishu
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
-	"time"
 
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-
+	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// withChannelFactory routes freshChannel through a fake factory instead of
-// newChannel. Test-only BotOption; production never wires it.
-func withChannelFactory(fn func() sdktypes.Channel) BotOption {
-	return func(c *botConfig) { c.channelFactory = fn }
+// withClientFactory routes NewBotWithLogger's client through a fake instead
+// of constructing a real *lark.Client. Test-only BotOption; production never
+// wires it.
+func withClientFactory(c feishuClient) BotOption {
+	return func(cfg *botConfig) { cfg.clientFactory = c }
 }
 
-// setCh injects a channel into b.ch via the same atomic.Pointer production
-// code uses (NewBotWithLogger does Store(&ch); tests mirror that here).
-func setCh(b *Bot, ch sdktypes.Channel) { b.ch.Store(&ch) }
-
-// recordingChannel is a fakeChannel with thread-safe counters. startGate
-// makes Start observable: closing it lets the goroutine Restart spawns
-// return, so -race tests synchronize on startCount without a fixed sleep.
-type recordingChannel struct {
-	startCount atomic.Int32
-	stopCount  atomic.Int32
-
-	onCardActionCnt atomic.Int32
-	onReadyCnt      atomic.Int32
-	onErrorCnt      atomic.Int32
-	onReconnecting  atomic.Int32
-	onReconnected   atomic.Int32
-	onDisconnected  atomic.Int32
-
-	startGate chan struct{}
+// fakeClient is a controllable stand-in for *lark.Client. Each method
+// records its call count and returns the configured result/error, letting
+// tests assert the Bot's send/update paths without a real REST round-trip.
+type fakeClient struct {
+	sendResult *lark.SendResult
+	sendErr    error
+	patchErr   error
+	// patchErrOnNth, when non-nil, returns the error only on the Nth call
+	// (1-indexed); other calls use patchErr. Lets the fallback-card test
+	// simulate "first patch rejected, second succeeds".
+	patchErrOnNth    int32
+	patchCalls       atomic.Int32
+	patchLast        string
+	startErr         error
+	started          atomic.Int32
+	stopped          atomic.Int32
+	setHandlerCalled atomic.Bool
 }
 
-func newRecordingChannel() *recordingChannel {
-	return &recordingChannel{startGate: make(chan struct{})}
+func (f *fakeClient) Send(context.Context, *lark.SendInput) (*lark.SendResult, error) {
+	return f.sendResult, f.sendErr
 }
-
-func (r *recordingChannel) releaseStart() {
-	select {
-	case <-r.startGate:
-	default:
-		close(r.startGate)
+func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
+	n := f.patchCalls.Add(1)
+	f.patchLast = content
+	if f.patchErrOnNth != 0 && int32(n) == f.patchErrOnNth {
+		return f.patchErr
 	}
-}
-
-func (r *recordingChannel) Send(_ context.Context, _ *sdktypes.SendInput) (*sdktypes.SendResult, error) {
-	return nil, errors.New("recordingChannel: Send not used")
-}
-func (r *recordingChannel) OnMessage(func(context.Context, *sdktypes.NormalizedMessage) error) {}
-func (r *recordingChannel) OnReaction(func(context.Context, *sdktypes.ReactionEvent) error)    {}
-func (r *recordingChannel) OnComment(func(context.Context, *sdktypes.CommentEvent) error)      {}
-func (r *recordingChannel) OnBotAdded(func(context.Context, *sdktypes.BotAddedEvent) error)    {}
-func (r *recordingChannel) OnCardAction(func(context.Context, *sdktypes.CardActionEvent) error) {
-	r.onCardActionCnt.Add(1)
-}
-func (r *recordingChannel) OnReject(func(context.Context, *sdktypes.RejectEvent) error) {}
-func (r *recordingChannel) DownloadFile(context.Context, string, string) ([]byte, error) {
-	return nil, nil
-}
-func (r *recordingChannel) OnReady(func())        { r.onReadyCnt.Add(1) }
-func (r *recordingChannel) OnError(func(error))   { r.onErrorCnt.Add(1) }
-func (r *recordingChannel) OnReconnecting(func()) { r.onReconnecting.Add(1) }
-func (r *recordingChannel) OnReconnected(func())  { r.onReconnected.Add(1) }
-func (r *recordingChannel) OnDisconnected(func()) { r.onDisconnected.Add(1) }
-func (r *recordingChannel) Start(ctx context.Context) error {
-	r.startCount.Add(1)
-	select {
-	case <-r.startGate:
-	case <-ctx.Done():
+	if f.patchErrOnNth == 0 {
+		return f.patchErr
 	}
 	return nil
 }
-func (r *recordingChannel) Stream(context.Context, *sdktypes.SendInput) (sdktypes.StreamController, error) {
-	return nil, nil //nolint:nilnil // sdk contract: (nil, nil) signals "no stream supported"
-}
-func (r *recordingChannel) UpdatePolicy(sdktypes.PolicyConfig)                   {}
-func (r *recordingChannel) GetPolicy() sdktypes.PolicyConfig                     { return sdktypes.PolicyConfig{} }
-func (r *recordingChannel) GetBotIdentity(context.Context) *sdktypes.BotIdentity { return nil }
-func (r *recordingChannel) Stop(context.Context) error {
-	r.stopCount.Add(1)
-	return nil
-}
+func (f *fakeClient) SetHandler(lark.Handler)     { f.setHandlerCalled.Store(true) }
+func (f *fakeClient) SetLifecycle(lark.Lifecycle) {}
+func (f *fakeClient) Start(context.Context) error { f.started.Add(1); return f.startErr }
+func (f *fakeClient) Stop(context.Context) error  { f.stopped.Add(1); return nil }
 
-// waitForInt32 polls c until it reaches want or timeout. Synchronizes on
-// the `go Start` goroutine Restart spawns.
-func waitForInt32(c *atomic.Int32, want int32, timeout time.Duration) int32 {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if got := c.Load(); got >= want {
-			return got
-		}
-		time.Sleep(time.Millisecond)
-	}
-	return c.Load()
-}
-
-// assertHandlersMounted fails t if any of the six callbacks was not registered.
-func assertHandlersMounted(t *testing.T, r *recordingChannel) {
+// newFakeBot returns a Bot wired to a fakeClient, skipping the real lark
+// client construction. Used by tests that exercise the Bot's own logic.
+func newFakeBot(t *testing.T, fc *fakeClient) *Bot {
 	t.Helper()
-	cases := []struct {
-		name string
-		got  int32
-	}{
-		{"OnCardAction", r.onCardActionCnt.Load()},
-		{"OnReady", r.onReadyCnt.Load()},
-		{"OnError", r.onErrorCnt.Load()},
-		{"OnReconnecting", r.onReconnecting.Load()},
-		{"OnReconnected", r.onReconnected.Load()},
-		{"OnDisconnected", r.onDisconnected.Load()},
-	}
-	for _, c := range cases {
-		if c.got != 1 {
-			t.Errorf("%s registrations = %d, want 1", c.name, c.got)
-		}
-	}
-}
-
-// TestRestart_SwapsChannel verifies Restart's core contract: a fresh channel
-// becomes the new Load() target, handlers re-mount on it, its Start runs in
-// a goroutine, and the old channel is Stopped exactly once.
-func TestRestart_SwapsChannel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	old := newRecordingChannel()
-	old.releaseStart()
-	b := &Bot{logger: log.Nop()}
-	setCh(b, old)
-	oldStartsBefore := old.startCount.Load()
-
-	fresh := newRecordingChannel()
-	b.newChannelFn = func() sdktypes.Channel { return fresh }
-
-	if err := b.Restart(ctx); err != nil {
-		t.Fatalf("Restart: %v", err)
-	}
-	if got := waitForInt32(&fresh.startCount, 1, time.Second); got != 1 {
-		t.Fatalf("fresh.Start count = %d, want 1", got)
-	}
-	if got := old.stopCount.Load(); got != 1 {
-		t.Errorf("old.Stop count = %d, want 1", got)
-	}
-	if got := old.startCount.Load(); got != oldStartsBefore {
-		t.Errorf("old.Start count drifted: was %d now %d", oldStartsBefore, got)
-	}
-	loaded := b.ch.Load()
-	if loaded == nil || *loaded != sdktypes.Channel(fresh) {
-		t.Errorf("b.ch.Load() = %v, want fresh %p", loaded, fresh)
-	}
-	assertHandlersMounted(t, fresh)
-}
-
-// TestRestart_NoOldChannelNoStop verifies Restart tolerates a nil prior
-// channel: it must skip the (*old).Stop call and not panic.
-func TestRestart_NoOldChannelNoStop(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	b := &Bot{logger: log.Nop()} // b.ch zero → Load() returns nil
-	fresh := newRecordingChannel()
-	b.newChannelFn = func() sdktypes.Channel { return fresh }
-
-	if err := b.Restart(ctx); err != nil {
-		t.Fatalf("Restart with no prior channel: %v", err)
-	}
-	if got := waitForInt32(&fresh.startCount, 1, time.Second); got != 1 {
-		t.Fatalf("fresh.Start count = %d, want 1", got)
-	}
-	loaded := b.ch.Load()
-	if loaded == nil || *loaded != sdktypes.Channel(fresh) {
-		t.Errorf("b.ch.Load() = %v, want fresh %p", loaded, fresh)
-	}
-}
-
-// TestRestart_LimitReturnsAfterMax pins the leak-bounds contract: each
-// Restart increments restartCount; at restartMax+1 it returns
-// ErrTooManyRestarts so the watchdog can exit for supervisor recovery
-// instead of leaking goroutines unboundedly.
-func TestRestart_LimitReturnsAfterMax(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // 释放所有阻塞的 Start goroutine
-
-	b := &Bot{logger: log.Nop()}
-	b.newChannelFn = func() sdktypes.Channel { return newRecordingChannel() }
-
-	for i := 1; i <= restartMax; i++ {
-		if err := b.Restart(ctx); err != nil {
-			t.Fatalf("Restart #%d: unexpected error: %v", i, err)
-		}
-	}
-	if err := b.Restart(ctx); !errors.Is(err, ErrTooManyRestarts) {
-		t.Fatalf("Restart #%d: err = %v, want ErrTooManyRestarts", restartMax+1, err)
-	}
-}
-
-// TestMarkHealthy_ResetsRestartCount verifies the soft-restart budget
-// resets when the connection recovers (OnReady / OnReconnected / outbound
-// success), so a deployment with intermittent WS issues that recovers
-// between events is not eventually killed.
-func TestMarkHealthy_ResetsRestartCount(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	b := &Bot{logger: log.Nop()}
-	b.newChannelFn = func() sdktypes.Channel { return newRecordingChannel() }
-
-	for i := range restartMax - 1 {
-		if err := b.Restart(ctx); err != nil {
-			t.Fatalf("Restart #%d before reset: %v", i+1, err)
-		}
-	}
-	b.markHealthy()
-
-	for i := range restartMax {
-		if err := b.Restart(ctx); err != nil {
-			t.Fatalf("Restart #%d after reset: %v", i+1, err)
-		}
-	}
-}
-
-// TestNewBotWithLogger_UsesNewChannel verifies the constructor stores a
-// channel, wires larkClient/imService, and that registerHandlersOn mounts
-// every lifecycle callback. Uses withChannelFactory so OnXXX counts are
-// observable (the real SDK channel hides its internals).
-func TestNewBotWithLogger_UsesNewChannel(t *testing.T) {
-	fake := newRecordingChannel()
-	b, err := NewBotWithLogger("fake_app_id", "fake_secret", log.Nop(),
-		withChannelFactory(func() sdktypes.Channel { return fake }),
-	)
+	b, err := NewBotWithLogger("app", "secret", log.Nop(), withClientFactory(fc))
 	if err != nil {
 		t.Fatalf("NewBotWithLogger: %v", err)
 	}
-	loaded := b.ch.Load()
-	if loaded == nil || *loaded != sdktypes.Channel(fake) {
-		t.Errorf("b.ch.Load() = %v, want fake %p", loaded, fake)
-	}
-	if b.larkClient == nil {
-		t.Error("b.larkClient = nil, want initialized")
-	}
-	if b.imService == nil {
-		t.Error("b.imService = nil, want initialized")
-	}
-	assertHandlersMounted(t, fake)
+	return b
 }
 
-// TestStart_UsesLoad verifies Start reads the channel via b.ch.Load() (not a
-// stale direct field). With a fakeChannel injected, its Start must be called
-// exactly once.
-func TestStart_UsesLoad(t *testing.T) {
-	fake := newRecordingChannel()
-	fake.releaseStart()
-	b := &Bot{logger: log.Nop()}
-	setCh(b, fake)
+// TestNewBotWithLogger_WiresHandlerAndLifecycle verifies the constructor
+// installs the lark.Handler adapter and stores the client.
+func TestNewBotWithLogger_WiresHandlerAndLifecycle(t *testing.T) {
+	fc := &fakeClient{}
+	b := newFakeBot(t, fc)
+	if b.client == nil {
+		t.Fatal("b.client = nil")
+	}
+	if !fc.setHandlerCalled.Load() {
+		t.Fatal("SetHandler not called by constructor")
+	}
+}
 
+// TestStart_Stop_Delegates verifies Start/Stop reach the underlying client.
+func TestStart_Stop_Delegates(t *testing.T) {
+	fc := &fakeClient{}
+	b := newFakeBot(t, fc)
 	if err := b.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if got := fake.startCount.Load(); got != 1 {
-		t.Errorf("fake.Start count = %d, want 1", got)
+	if got := fc.started.Load(); got != 1 {
+		t.Errorf("client.Start count = %d, want 1", got)
 	}
-}
-
-// TestRegisterHandlersOn_MountsAllCallbacks covers registerHandlersOn in
-// isolation so the "handlers re-mount on each Restart" guarantee is unit-
-// testable apart from the Restart flow.
-func TestRegisterHandlersOn_MountsAllCallbacks(t *testing.T) {
-	fake := newRecordingChannel()
-	b := &Bot{logger: log.Nop()}
-	b.registerHandlersOn(fake)
-	assertHandlersMounted(t, fake)
+	if err := b.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := fc.stopped.Load(); got != 1 {
+		t.Errorf("client.Stop count = %d, want 1", got)
+	}
 }

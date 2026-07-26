@@ -6,17 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"strconv"
 	"time"
 
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-	larkimv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-
+	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-func (b *Bot) handleP2MessageReceiveV1(ctx context.Context, event *larkimv1.P2MessageReceiveV1) error {
-	incoming, err := extractIncomingMessage(event, b.logger)
+// handleMessageReceive is the lark.Handler entry point for inbound messages.
+// The lark client calls it (via a small adapter) on its WS goroutine after
+// parsing the im.message.receive_v1 payload. We normalize the event into
+// IncomingMessage and fan out to the registered IncomingHandler.
+func (b *Bot) handleMessageReceive(ctx context.Context, ev *lark.MessageReceiveEvent) error {
+	incoming, err := buildIncomingMessage(ev, b.logger)
 	if err != nil {
 		b.logger.Warn("message handling failed", log.FieldReason, err.Error())
 		return nil
@@ -46,14 +47,13 @@ func (b *Bot) handleP2MessageReceiveV1(ctx context.Context, event *larkimv1.P2Me
 		return nil
 	}
 
-	// Recover per inbound message: handleP2MessageReceiveV1 runs on the
-	// SDK's WS goroutine, and (*h) is dispatcher.DispatchIncoming which
-	// fans out into routing, prompt emission, command execution — any of
-	// which can panic on a malformed payload. Letting the panic escape
-	// either crashes the SDK's WS reader (silently dropping every later
-	// message) or gets swallowed by an SDK recover (the click silently
-	// no-ops); neither surfaces the failure. Catch it here, log, and
-	// promote to a returned error so the SDK still sees the failure.
+	// Recover per inbound message: OnMessageReceive runs on the lark
+	// client's WS goroutine, and (*h) fans out into routing, prompt
+	// emission, command execution — any of which can panic on a malformed
+	// payload. Letting the panic escape would crash the WS reader and
+	// silently drop every later message. Catch it here, log, and promote
+	// to a returned error so the lark client still sees (and ACKs) the
+	// failure.
 	err = func() (outErr error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -83,62 +83,77 @@ func (b *Bot) handleP2MessageReceiveV1(ctx context.Context, event *larkimv1.P2Me
 	return nil
 }
 
-// extractIncomingMessage converts the SDK event into our internal message.
-// It is intentionally strict about nil pointer checks because the SDK fields
-// are pointers and panics here were observed in production; extracting the
-// data keeps the handler focused on routing/logging.
-func extractIncomingMessage(event *larkimv1.P2MessageReceiveV1, logger *log.Logger) (*IncomingMessage, error) {
-	if event == nil || event.Event == nil || event.Event.Message == nil {
+// handleCardAction is the lark.Handler entry point for card callbacks.
+// Guard logic mirrors handleMessageReceive: drop events with no operator,
+// then fan out under a recover so a downstream panic cannot escape into the
+// WS goroutine.
+func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) error {
+	if ev == nil {
+		return nil
+	}
+	b.markHealthy() // any inbound event proves the WS is alive
+	h := b.onCardAction.Load()
+	if h == nil {
+		return nil
+	}
+	if ev.Operator.OpenID == "" {
+		b.logger.Debug("drop card action: empty operator openid", "event_id", ev.EventID, log.FieldChatID, ev.ChatID)
+		return nil
+	}
+	return func() (outErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.logger.Error("panic in card action handler",
+					"event_id", ev.EventID,
+					log.FieldChatID, ev.ChatID,
+					log.FieldPanic, r,
+					log.FieldStack, string(debug.Stack()))
+				outErr = fmt.Errorf("card action handler panic: %v", r)
+			}
+		}()
+		return (*h)(ctx, buildCardAction(ev))
+	}()
+}
+
+// buildIncomingMessage converts the parsed event into the bridge's
+// IncomingMessage. Errors here are non-fatal: the caller logs and ACKs so
+// the server does not redeliver a structurally-bad event forever.
+func buildIncomingMessage(ev *lark.MessageReceiveEvent, logger *log.Logger) (*IncomingMessage, error) {
+	if ev == nil {
 		return nil, errors.New("nil_event")
 	}
-	msg := event.Event.Message
-
-	chatID := derefString(msg.ChatId)
-	messageID := derefString(msg.MessageId)
-	content := derefString(msg.Content)
-	chatType := derefString(msg.ChatType)
-	msgType := derefString(msg.MessageType)
-
-	var senderOpenID string
-	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
-		senderOpenID = derefString(event.Event.Sender.SenderId.OpenId)
-	}
-
-	var createTimeMs int64
-	if msg.CreateTime != nil {
-		if ms, err := strconv.ParseInt(*msg.CreateTime, 10, 64); err == nil {
-			createTimeMs = ms
-		}
-	}
-
-	if msgType == "text" {
-		parsed, parseErr := parseTextContent(content)
-		if parseErr != nil {
+	content := ev.Content
+	if ev.MsgType == "text" {
+		if parsed, parseErr := parseTextContent(content); parseErr != nil {
 			logger.Debug("parse text content failed", log.FieldError, parseErr)
 		} else {
 			content = parsed
 		}
 	}
-
 	return &IncomingMessage{
-		EventID:      event.EventV2Base.Header.EventID,
-		MessageID:    messageID,
-		ChatID:       chatID,
-		ChatType:     chatType,
-		SenderOpenID: senderOpenID,
+		EventID:      ev.EventID,
+		MessageID:    ev.MessageID,
+		ChatID:       ev.ChatID,
+		ChatType:     ev.ChatType,
+		SenderOpenID: ev.SenderOpenID,
 		Content:      content,
-		MsgType:      msgType,
-		Mentions:     extractMentions(msg.Mentions),
-		CreateTimeMs: createTimeMs,
+		MsgType:      ev.MsgType,
+		Mentions:     convertLarkMentions(ev.Mentions),
+		CreateTimeMs: ev.CreateTimeMs,
 	}, nil
 }
 
-// derefString returns the string value of a SDK string pointer, or "" for nil.
-func derefString(p *string) string {
-	if p == nil {
-		return ""
+// convertLarkMentions copies the lark-level mention slice into the feishu
+// package's value type. The field sets match by design; nil → nil.
+func convertLarkMentions(in []lark.Mention) []Mention {
+	if len(in) == 0 {
+		return nil
 	}
-	return *p
+	out := make([]Mention, len(in))
+	for i, m := range in {
+		out[i] = Mention{Key: m.Key, OpenID: m.OpenID, Name: m.Name, IsBot: m.IsBot}
+	}
+	return out
 }
 
 // parseTextContent extracts the inner text from Feishu's text-message JSON
@@ -158,25 +173,15 @@ func parseTextContent(content string) (string, error) {
 	return wrapper.Text, nil
 }
 
-// extractMentions copies SDK mention pointers into a slice of concrete values,
-// skipping nil entries and converting the bot flag to a boolean.
-func extractMentions(raw []*larkimv1.MentionEvent) []sdktypes.Mention {
-	mentions := make([]sdktypes.Mention, 0, len(raw))
-	for _, mention := range raw {
-		if mention == nil {
-			continue
-		}
-		parsed := sdktypes.Mention{
-			Key:  derefString(mention.Key),
-			Name: derefString(mention.Name),
-		}
-		if mention.Id != nil {
-			parsed.OpenID = derefString(mention.Id.OpenId)
-		}
-		if mention.MentionedType != nil && *mention.MentionedType == "app" {
-			parsed.IsBot = true
-		}
-		mentions = append(mentions, parsed)
+// buildCardAction converts a lark CardActionEvent into the bridge's
+// CardAction struct.
+func buildCardAction(ev *lark.CardActionEvent) *CardAction {
+	return &CardAction{
+		EventID:    ev.EventID,
+		ChatID:     ev.ChatID,
+		MessageID:  ev.MessageID,
+		Value:      ev.Action.Value,
+		FormValue:  ev.Action.FormValue,
+		UserOpenID: ev.Operator.OpenID,
 	}
-	return mentions
 }

@@ -4,9 +4,25 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
+
+// Mention is one parsed user mention inside a received Feishu text message.
+// It mirrors the field set the mention-stripping logic consumes; it is a
+// value type owned by the feishu package (previously sourced from the SDK's
+// channel/types) so the bridge no longer depends on an external package for
+// the inbound message shape.
+type Mention struct {
+	// Key is the positional placeholder Feishu embeds in the raw text
+	// ("@_user_1", "@_all") before delivery.
+	Key string
+	// OpenID is the mentioned user's open_id ("ou_xxx"), or the literal
+	// "all" for an @all mention.
+	OpenID string
+	// Name is the display name to substitute when rewriting the text.
+	Name string
+	// IsBot is true when the mention targets the running bot itself.
+	IsBot bool
+}
 
 // horizSpaceRun matches a run of horizontal whitespace (spaces/tabs) so it
 // can be collapsed to a single space without touching interior newlines.
@@ -17,44 +33,42 @@ var horizSpaceRun = regexp.MustCompile(`[ \t]+`)
 var lineBreakSpace = regexp.MustCompile(`[ \t]*\n[ \t]*`)
 
 // StripMentionPlaceholders rewrites a Feishu text-type message by
-// substituting "@_user_N" (and "@_all") placeholders using the
-// SDK-parsed Mentions list. Feishu replaces every "@bot" in a text
-// message with the positional placeholder "@_user_N" before delivery;
-// the SDK only strips these placeholders for post (rich-text) messages,
-// so text-type messages arrive with the raw placeholders intact. This
-// helper closes that gap.
+// substituting "@_user_N" (and "@_all") placeholders using the parsed
+// Mentions list. Feishu replaces every "@bot" in a text message with the
+// positional placeholder "@_user_N" before delivery; this helper strips
+// those placeholders so the downstream prompt reads naturally.
 //
 // Replacement rules:
 //
 //   - bot mentions (IsBot=true) are removed entirely along with one
-//     trailing whitespace run; mentioning the bot is a trigger, not
-//     part of the request.
+//     trailing whitespace run; mentioning the bot is a trigger, not part
+//     of the request.
 //   - "@_all" / OpenID=="all" placeholders are removed along with one
 //     trailing whitespace run (same trigger semantics).
-//   - other user mentions become "@<Name>" (or "@用户" when Name is
-//     empty), preserving the social context for the LLM without leaking
-//     opaque open_id identifiers into the prompt.
+//   - other user mentions become "@<Name>" (or "@用户" when Name is empty),
+//     preserving the social context for the LLM without leaking opaque
+//     open_id identifiers into the prompt.
 //
 // Placeholders are replaced longest-first: "@_user_1" is a string prefix
-// of "@_user_10".."@_user_19", so a naive in-order ReplaceAll would
-// corrupt "@_user_10" into "@<Name1>0". Sorting by descending key length
+// of "@_user_10".."@_user_19", so a naive in-order ReplaceAll would corrupt
+// "@_user_10" into "@<Name1>0". Sorting by descending key length
 // guarantees longer placeholders are consumed before their prefixes.
 //
 // Whitespace is normalised afterwards: collapsed runs of horizontal
 // whitespace become a single space, and leading/trailing whitespace is
 // trimmed, while interior newlines are preserved so multi-line input
-// (pasted code, paragraphs) reaches Claude with its structure intact.
+// (pasted code, paragraphs) reaches the backend with its structure intact.
 //
-// Bot detection relies on the SDK setting m.IsBot for the bot's own mention.
-// (An earlier design also matched a preloaded bot OpenID, but that path was
-// never wired to a live identity fetch — IsBot is sufficient in practice.)
-func StripMentionPlaceholders(text string, mentions []sdktypes.Mention) string {
+// Bot detection relies on the parsed Mention.IsBot flag for the bot's own
+// mention (set by the lark client from the payload's mentioned_type/"is_bot"
+// field).
+func StripMentionPlaceholders(text string, mentions []Mention) string {
 	if text == "" || len(mentions) == 0 {
 		return text
 	}
 	// Copy and sort by descending Key length so "@_user_10" is replaced
 	// before "@_user_1" (substring-prefix collision guard).
-	sorted := make([]sdktypes.Mention, len(mentions))
+	sorted := make([]Mention, len(mentions))
 	copy(sorted, mentions)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Key) > len(sorted[j].Key)
@@ -77,32 +91,29 @@ func StripMentionPlaceholders(text string, mentions []sdktypes.Mention) string {
 }
 
 // isAllMention matches the "@_all" / OpenID=="all" wildcard placeholder.
-func isAllMention(m sdktypes.Mention) bool {
+func isAllMention(m Mention) bool {
 	return m.Key == "@_all" || m.OpenID == "all"
 }
 
 // isBotMention matches a mention that targets the running bot.
-func isBotMention(m sdktypes.Mention) bool {
-	return m.IsBot
-}
+func isBotMention(m Mention) bool { return m.IsBot }
 
 // pickMentionName returns the user-visible name for a non-bot mention.
 // Falls back to "用户" when Name is empty, so an opaque open_id is never
-// injected into the Claude prompt.
-func pickMentionName(m sdktypes.Mention) string {
+// injected into the downstream prompt.
+func pickMentionName(m Mention) string {
 	if m.Name != "" {
 		return m.Name
 	}
 	return "用户"
 }
 
-// removePlaceholder strips the placeholder plus the immediately
-// adjacent single whitespace character (one before, one after) when
-// present, so removing a mention does not leave a double space behind.
-// Whitespace is fully collapsed afterwards by normalizeWhitespace.
-// All occurrences are removed; Feishu doesn't repeat the same mention
-// in a single message, but the helper stays robust against malformed
-// inputs.
+// removePlaceholder strips the placeholder plus the immediately adjacent
+// single whitespace character (one before, one after) when present, so
+// removing a mention does not leave a double space behind. Whitespace is
+// fully collapsed afterwards by normalizeWhitespace. All occurrences are
+// removed; Feishu doesn't repeat the same mention in a single message, but
+// the helper stays robust against malformed inputs.
 func removePlaceholder(text, placeholder string) string {
 	for {
 		idx := strings.Index(text, placeholder)

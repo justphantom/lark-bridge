@@ -1,25 +1,31 @@
 package feishu
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	"github.com/justphantom/lark-bridge/internal/lark"
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// TestBuildCardActionForwardsFormValue pins the SDK→CardAction mapping for a
-// form submit: action.value (button custom data) and action.form_value (form
-// component values) must both reach the dispatcher, which reads FormValue to
-// recover question answers.
+// logNop returns a no-op logger for tests that build a Bot by hand.
+func logNop() *log.Logger { return log.Nop() }
+
+// TestBuildCardActionForwardsFormValue pins the lark event → CardAction
+// mapping for a form submit: action.value (button custom data) and
+// action.form_value (form component values) must both reach the dispatcher,
+// which reads FormValue to recover question answers.
 func TestBuildCardActionForwardsFormValue(t *testing.T) {
-	ev := &sdktypes.CardActionEvent{
+	ev := &lark.CardActionEvent{
 		EventID:   "ev-1",
 		ChatID:    "oc_c",
 		MessageID: "om_m",
-		Operator:  sdktypes.CardActionOperator{OpenID: "ou_x"},
-		Action: sdktypes.CardActionPayload{
-			Value:     map[string]interface{}{"requestID": "r1", "kind": "question"},
-			FormValue: map[string]interface{}{"q_0": "a", "custom_0": "note"},
+		Operator:  lark.CardActionOperator{OpenID: "ou_x"},
+		Action: lark.CardActionPayload{
+			Value:     map[string]any{"requestID": "r1", "kind": "question"},
+			FormValue: map[string]any{"q_0": "a", "custom_0": "note"},
 		},
 	}
 	got := buildCardAction(ev)
@@ -34,6 +40,29 @@ func TestBuildCardActionForwardsFormValue(t *testing.T) {
 	}
 	if got.FormValue["q_0"] != "a" || got.FormValue["custom_0"] != "note" {
 		t.Fatalf("FormValue not forwarded: %v", got.FormValue)
+	}
+}
+
+// TestHandleCardAction_DropsEmptyOperator verifies the guard: a card action
+// with an empty operator open_id is dropped (nil) before reaching the
+// registered handler — downstream permission/reply addressing needs a real
+// user id.
+func TestHandleCardAction_DropsEmptyOperator(t *testing.T) {
+	var called atomic.Bool
+	b := &Bot{logger: logNop()}
+	h := CardActionHandler(func(_ context.Context, _ *CardAction) error {
+		called.Store(true)
+		return nil
+	})
+	b.onCardAction.Store(&h)
+	err := b.handleCardAction(context.Background(), &lark.CardActionEvent{
+		EventID: "ev", Operator: lark.CardActionOperator{OpenID: ""},
+	})
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if called.Load() {
+		t.Fatal("handler should not be called for empty operator")
 	}
 }
 

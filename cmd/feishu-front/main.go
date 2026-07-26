@@ -207,6 +207,11 @@ func run(cfgPath, addr string) error {
 
 	// WS-health watchdog: see wsFatalAfter. Runs alongside the main select;
 	// on a fatal diagnosis it logs and exits so the supervisor restarts us.
+	// The lark client reconnects itself on transient failure, so this is the
+	// catastrophic-case fallback (reconnect loop wedged or process lost the
+	// ability to send/receive entirely) — exit lets systemd pull up a fresh
+	// copy. The SDK-era soft-restart machinery is gone: the new client owns
+	// its own reconnection and does not leak goroutines.
 	startedAt := time.Now()
 	go func() {
 		ticker := time.NewTicker(wsWatchdogInterval)
@@ -217,22 +222,10 @@ func run(cfgPath, addr string) error {
 				return
 			case <-ticker.C:
 				if feishu.ShouldExitUnhealthy(time.Now(), bot.LastHealthy(), startedAt, wsFatalAfter) {
-					// 软重启优先:Stop 旧 WS + 新建一条,业务状态/IPC/turn 全保留。
-					// Restart 失败仍 os.Exit(1) 兜底,等价现行 fail-safe;新连接若再失败,
-					// 下一轮 watchdog tick 会再次触发 Restart 或最终兜底退出。
-					logger.Warn("bot unhealthy, soft-restarting",
+					logger.Error("bot unhealthy past fatal window, exit for supervisor recovery",
 						"last_healthy", bot.LastHealthy(),
 						"fatal_after", wsFatalAfter)
-					if err := bot.Restart(ctx); err != nil {
-						if errors.Is(err, feishu.ErrTooManyRestarts) {
-							logger.Error("soft restart budget exhausted, exit for supervisor recovery",
-								log.FieldError, err)
-						} else {
-							logger.Error("soft restart failed, fall back to exit", log.FieldError, err)
-						}
-						os.Exit(1)
-					}
-					startedAt = time.Now() // 重置宽限窗口,给新连接同样 5min
+					os.Exit(1)
 				}
 			}
 		}

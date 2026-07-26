@@ -3,20 +3,25 @@ package feishu
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	lark "github.com/larksuite/oapi-sdk-go/v3"
-	"github.com/larksuite/oapi-sdk-go/v3/channel"
-	sdktypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im"
-	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
-
+	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
+
+// feishuClient is the subset of *lark.Client the Bot depends on. Declared as
+// an interface so tests inject a fake without a real WS/REST round-trip;
+// production wires *lark.Client, which satisfies it.
+type feishuClient interface {
+	Send(ctx context.Context, in *lark.SendInput) (*lark.SendResult, error)
+	PatchMessage(ctx context.Context, messageID, content string) error
+	SetHandler(h lark.Handler)
+	SetLifecycle(lc lark.Lifecycle)
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
 
 // IncomingMessage is the normalized payload for one inbound Feishu
 // message delivered to the bot.
@@ -31,15 +36,14 @@ type IncomingMessage struct {
 	// The dispatcher rejects anything but "text" so a non-text payload never
 	// reaches the backend as a prompt.
 	MsgType string
-	// Mentions carries the SDK-parsed user mentions in the message.
-	// text-type messages embed "@_user_N" placeholders in Content;
-	// callers must run StripMentionPlaceholders on Content before
-	// forwarding the prompt downstream.
-	Mentions []sdktypes.Mention
-	// CreateTimeMs is the message send time in Unix milliseconds, parsed
-	// from EventMessage.CreateTime. 0 means the field was absent or
-	// unparseable; the dispatcher's stale check lets such messages
-	// through (de-dup alone guards them).
+	// Mentions carries the parsed user mentions in the message. text-type
+	// messages embed "@_user_N" placeholders in Content; callers must run
+	// StripMentionPlaceholders on Content before forwarding the prompt
+	// downstream.
+	Mentions []Mention
+	// CreateTimeMs is the message send time in Unix milliseconds. 0 means
+	// the field was absent or unparseable; the dispatcher's stale check
+	// lets such messages through (de-dup alone guards them).
 	CreateTimeMs int64
 }
 
@@ -63,31 +67,22 @@ type IncomingHandler func(context.Context, *IncomingMessage) error
 // CardActionHandler handles a normalized card-action callback.
 type CardActionHandler func(context.Context, *CardAction) error
 
-// Bot is the Feishu WebSocket client wrapper. It dispatches inbound
-// events to registered handlers, manages reconnection, and exposes
-// send helpers via its methods.
+// Bot is the Feishu client wrapper. It dispatches inbound events to
+// registered handlers, surfaces send/update helpers via its methods, and
+// exposes a health signal for the frontend watchdog. The underlying lark
+// client manages its own WebSocket reconnection; this wrapper no longer
+// needs the SDK-era soft-restart machinery.
 type Bot struct {
-	appID      string
-	appSecret  string
-	botOpts    []BotOption // 留底供 Restart 重建 ws 配置
-	larkClient *lark.Client
+	appID     string
+	appSecret string
+	botOpts   []BotOption
 
-	// ch 用 atomic.Pointer 而非直接字段:支持 Restart 期间并发 Send 调用,Load
-	// 总返回可用 channel(旧或新),不会读到中间态。详见
-	// docs/feishu-ws-soft-restart.md §3。
-	ch        atomic.Pointer[sdktypes.Channel]
-	imService *larkim.Service
-
-	// newChannelFn overrides newChannel when non-nil. Always nil in production;
-	// tests inject a fakeChannel factory to exercise Restart/NewBotWithLogger
-	// without a real WS handshake.
-	newChannelFn func() sdktypes.Channel
+	client feishuClient
 
 	// onIncoming/onCardAction are stored atomically: OnIncoming/OnCardAction
-	// run on the main goroutine while handleP2MessageReceiveV1/handleCardAction
-	// fire on the SDK's WS goroutine. atomic.Pointer removes any ordering
-	// assumption between registration and Start, matching how logger/debug
-	// flags are already protected.
+	// run on the main goroutine while the inbound handlers fire on the
+	// lark client's WS goroutine. atomic.Pointer removes any ordering
+	// assumption between registration and Start.
 	onIncoming   atomic.Pointer[IncomingHandler]
 	onCardAction atomic.Pointer[CardActionHandler]
 	logger       *log.Logger
@@ -95,22 +90,14 @@ type Bot struct {
 	logDebugRedact atomic.Bool // redact sensitive text from debug logs (opt-in); atomic, read concurrently with SetDebugRedact
 
 	// lastHealthy is the unix-nano time of the most recent signal that the WS
-	// connection is live (OnReady / OnReconnected). The frontend watchdog reads
-	// it to detect the SDK's "Start succeeds then silently dies forever" mode:
-	// since Start blocks on select{} and never returns, a permanently-dead link
-	// leaves the process up but dropping every message. 0 means "never healthy".
+	// connection is live (OnReady / OnReconnected / outbound success). The
+	// frontend watchdog reads it to decide whether to exit for supervisor
+	// recovery. 0 means "never healthy".
 	lastHealthy atomic.Int64
 
-	// restartCount 累积 soft-restart 次数,达 restartMax 后 Restart 返回
-	// ErrTooManyRestarts,调用方应让进程退出交由 supervisor 重启。健康恢复时
-	// (markHealthy)清零,仅持续故障才触顶。
-	restartCount atomic.Int32
-
-	// restartMu 串行化 Restart:Swap+Start 之间无锁的话两个并发 Restart
-	// 会丢失对中间 channel 的引用(旧 channel 永远 Stop 不掉)。当前唯一
-	// 调用方是 main.go 的 watchdog(30s tick),并发概率低;锁是为未来第二
-	// 调用方(如运维 HTTP 端点)收口。
-	restartMu sync.Mutex
+	// readyOnce guards markHealthy against the Start→Stop→Start reuse of a
+	// bot instance racing the WS lifecycle callbacks.
+	startOnce sync.Once
 }
 
 // BotOption configures a Bot at construction time.
@@ -119,9 +106,9 @@ type BotOption func(*botConfig)
 type botConfig struct {
 	Domain   string
 	LogLevel string
-	// channelFactory overrides newChannel for tests; nil in production.
-	// Wired in via withChannelFactory (defined in bot_test.go).
-	channelFactory func() sdktypes.Channel
+	// clientFactory overrides *lark.Client for tests; nil in production.
+	// Wired in via withClientFactory (defined in bot_test.go).
+	clientFactory feishuClient
 }
 
 // WithDomain overrides the default Feishu API domain (e.g. for testing).
@@ -129,7 +116,7 @@ func WithDomain(d string) BotOption {
 	return func(c *botConfig) { c.Domain = d }
 }
 
-// WithLogLevel overrides the SDK log level (defaults to "info").
+// WithLogLevel overrides the client log level (defaults to "info").
 func WithLogLevel(l string) BotOption {
 	return func(c *botConfig) { c.LogLevel = l }
 }
@@ -144,32 +131,53 @@ func NewBotWithLogger(appID, appSecret string, logger *log.Logger, opts ...BotOp
 	}
 	cfg := applyBotOpts(opts)
 	b := &Bot{
-		appID:        appID,
-		appSecret:    appSecret,
-		botOpts:      opts,
-		logger:       logger,
-		newChannelFn: cfg.channelFactory,
+		appID:     appID,
+		appSecret: appSecret,
+		botOpts:   opts,
+		logger:    logger,
 	}
-
-	lvl := toLarkLogLevel(cfg.LogLevel)
-	// WithReqTimeout: SDK leaves ReqTimeout==0 → http.DefaultClient (no
-	// Timeout), so a stuck Feishu API would block dispatcher goroutines
-	// forever. Bound it explicitly.
-	// larkClient 一次构造全期复用:SDK 评估项 2 已证 Im 服务无状态、并发安全。
-	b.larkClient = lark.NewClient(appID, appSecret,
-		lark.WithLogLevel(lvl),
-		lark.WithReqTimeout(30*time.Second),
-	)
-	b.imService = b.larkClient.Im
-
-	ch := b.freshChannel()
-	b.ch.Store(&ch)
-	b.registerHandlersOn(ch)
+	if cfg.clientFactory != nil {
+		b.client = cfg.clientFactory
+	} else {
+		c, err := lark.NewClient(appID, appSecret, larkOpts(cfg)...)
+		if err != nil {
+			return nil, err
+		}
+		b.client = c
+	}
+	b.client.SetHandler(larkHandlerAdapter{b: b})
+	b.client.SetLifecycle(b.lifecycle())
 	return b, nil
 }
 
-// applyBotOpts folds the option chain onto a default botConfig. Shared by
-// NewBotWithLogger and newChannel so the two paths cannot drift on defaults.
+// larkHandlerAdapter adapts *Bot to the lark.Handler interface. It exists
+// because the Bot's public API already exposes OnCardAction(CardActionHandler)
+// for handler registration, which collides with lark.Handler.OnCardAction's
+// signature; routing the inbound calls through private methods sidesteps the
+// clash without renaming the public registration surface.
+type larkHandlerAdapter struct{ b *Bot }
+
+func (a larkHandlerAdapter) OnMessageReceive(ctx context.Context, ev *lark.MessageReceiveEvent) error {
+	return a.b.handleMessageReceive(ctx, ev)
+}
+
+func (a larkHandlerAdapter) OnCardAction(ctx context.Context, ev *lark.CardActionEvent) error {
+	return a.b.handleCardAction(ctx, ev)
+}
+
+// larkOpts translates the feishu wrapper config into lark.Client options.
+func larkOpts(cfg botConfig) []lark.Option {
+	opts := []lark.Option{}
+	if cfg.Domain != "" {
+		opts = append(opts, lark.WithDomain(cfg.Domain))
+	}
+	if cfg.LogLevel != "" {
+		opts = append(opts, lark.WithLogLevel(cfg.LogLevel))
+	}
+	return opts
+}
+
+// applyBotOpts folds the option chain onto a default botConfig.
 func applyBotOpts(opts []BotOption) botConfig {
 	cfg := botConfig{Domain: "feishu", LogLevel: "info"}
 	for _, o := range opts {
@@ -178,101 +186,50 @@ func applyBotOpts(opts []BotOption) botConfig {
 	return cfg
 }
 
-// freshChannel returns a channel for NewBotWithLogger / Restart. It routes
-// through newChannelFn when set (tests only); production always calls
-// newChannel.
-func (b *Bot) freshChannel() sdktypes.Channel {
-	if b.newChannelFn != nil {
-		return b.newChannelFn()
+// lifecycle builds the lark.Lifecycle that refreshes the health signal and
+// logs connection state. The new client reconnects itself, so these
+// callbacks are purely informational + health-refresh.
+func (b *Bot) lifecycle() lark.Lifecycle {
+	return lark.Lifecycle{
+		OnReady: func() {
+			b.logger.Info("websocket connection established")
+			b.markHealthy()
+		},
+		OnError: func(err error) {
+			b.logger.Error("websocket connection error", log.FieldError, err.Error())
+		},
+		OnReconnecting: func() {
+			b.logger.Info("websocket reconnection started")
+		},
+		OnReconnected: func() {
+			b.logger.Info("websocket reconnected successfully")
+			b.markHealthy()
+		},
+		OnDisconnected: func() {
+			b.logger.Warn("websocket connection closed", log.FieldReason, "server_initiated_or_network_error")
+		},
 	}
-	return b.newChannel()
 }
 
-// newChannel constructs a fresh underlying WS channel with its own wsClient
-// (the SDK's wsClient is stateful; reusing one across Stop/Start would keep
-// stale conn state). Handlers are NOT registered here — that is
-// registerHandlersOn's job, kept separate so Restart can re-mount them on
-// each fresh channel.
-func (b *Bot) newChannel() sdktypes.Channel {
-	cfg := applyBotOpts(b.botOpts)
-	lvl := toLarkLogLevel(cfg.LogLevel)
-
-	// Each channel needs its own event dispatcher: the SDK routes inbound
-	// P2MessageReceiveV1 through the dispatcher bound at wsClient
-	// construction, so a shared dispatcher would silently drop events on the
-	// new channel after Restart.
-	eventDispatcher := dispatcher.NewEventDispatcher("", "")
-	eventDispatcher.OnP2MessageReceiveV1(b.handleP2MessageReceiveV1)
-	wsOpts := []larkws.ClientOption{
-		larkws.WithLogLevel(lvl),
-		larkws.WithEventHandler(eventDispatcher),
-	}
-	if cfg.Domain != "" && cfg.Domain != "feishu" {
-		wsOpts = append(wsOpts, larkws.WithDomain(cfg.Domain))
-	}
-	wsClient := larkws.NewClient(b.appID, b.appSecret, wsOpts...)
-
-	outboundCfg := sdktypes.DefaultChannelConfig().Outbound
-	outboundCfg.TextChunkLimit = maxContentSize
-	return channel.NewChannel(b.larkClient, wsClient,
-		sdktypes.WithOutboundConfig(outboundCfg),
-	)
-}
-
-// Start connects the WebSocket channel and blocks until ctx is done.
+// Start connects the underlying client and blocks until ctx is done or a
+// fatal (auth) bootstrap error occurs. The lark client owns reconnection;
+// this wrapper no longer performs soft-restart.
 func (b *Bot) Start(ctx context.Context) error {
-	ch := b.ch.Load()
-	if ch == nil {
-		return errors.New("feishu: bot channel not initialized")
-	}
-	if err := (*ch).Start(ctx); err != nil {
-		return fmt.Errorf("feishu: channel start: %w", err)
+	if err := b.client.Start(ctx); err != nil {
+		return err
 	}
 	return nil
 }
 
-// restartMax 限制 soft-restart 累积次数。每次 Restart 必 leak 一个旧 goroutine
-// (SDK 用 select{} 结束 Start,见 Restart 注释),达限后返回 ErrTooManyRestarts
-// 退出进程,由 systemd 拉起干净副本。健康恢复(markHealthy)清零,仅持续故障
-// 触顶。最快 wsFatalAfter/次,5 次即最坏 25min 故障容忍窗口。
-const restartMax = 5
-
-// ErrTooManyRestarts 由 Restart 返回:累计 soft-restart 次数已达 restartMax。
-// 调用方应让进程退出交由 supervisor(systemd Restart=on-failure)拉起干净副本,
-// 避免在 SDK 无法回收旧 Start goroutine 的情况下无限累积。
-var ErrTooManyRestarts = errors.New("feishu: too many soft restarts; exit for supervisor recovery")
-
-// Restart swaps the underlying WS channel for a fresh one in place. On success
-// subsequent Load() returns the new channel; the old channel is stopped.
-//
-// 旧 goroutine leak 不可根除:larksuite SDK 在 ws/client.go:230 用裸 select{}
-// 结束 Start,既不监听 ctx 也不响应 Close,所以旧 Start goroutine 永不返回。每次
-// Restart 必 leak 一个旧 goroutine,由 restartCount+restartMax 限流:累计达
-// restartMax 后返回 ErrTooManyRestarts,调用方 os.Exit 让 supervisor 拉起干净
-// 副本。markHealthy 清零计数。详见 docs/feishu-ws-soft-restart.md §8「已知限制」。
-//
-// P1 已加 restartMu 串行化:并发 Restart 不再丢失中间 channel 引用。watchdog
-// tick 间隔 30s 远大于 Restart 耗时,锁是防御性收口。
-func (b *Bot) Restart(ctx context.Context) error {
-	b.restartMu.Lock()
-	defer b.restartMu.Unlock()
-
-	if b.restartCount.Add(1) > restartMax {
-		return ErrTooManyRestarts
-	}
-	fresh := b.freshChannel()
-	b.registerHandlersOn(fresh)
-	old := b.ch.Swap(&fresh)
-	go func() { _ = fresh.Start(ctx) }() //nolint:errcheck // 新 goroutine;旧 goroutine leak(见上)
-	if old == nil {
-		return nil
-	}
-	return (*old).Stop(ctx)
+// Stop gracefully shuts down the underlying client.
+func (b *Bot) Stop(ctx context.Context) error {
+	return b.client.Stop(ctx)
 }
 
-// LastHealthy returns the time of the most recent OnReady/OnReconnected, or
-// the zero time if the bot has never been healthy. Read by the frontend
-// watchdog (cmd/feishu-front) to detect the SDK's silent-death mode.
+// LastHealthy returns the time of the most recent OnReady/OnReconnected/
+// outbound success, or the zero time if the bot has never been healthy.
+// Read by the frontend watchdog to decide whether to exit for supervisor
+// recovery.
 func (b *Bot) LastHealthy() time.Time {
 	ns := b.lastHealthy.Load()
 	if ns == 0 {
@@ -283,30 +240,25 @@ func (b *Bot) LastHealthy() time.Time {
 
 func (b *Bot) markHealthy() {
 	b.lastHealthy.Store(time.Now().UnixNano())
-	b.restartCount.Store(0)
 }
 
 // ShouldExitUnhealthy reports whether the watchdog should fatal-exit the
 // process: only after the bot has been healthy at least once (so a slow
 // initial connect is not mistaken for death), and only when no healthy
 // signal has arrived within fatalAfter. Pure function for unit testing.
+//
+// The lark client reconnects itself on transient failure; this watchdog is
+// the fallback for catastrophic cases (the reconnect loop wedged, or the
+// process lost the ability to send/receive entirely). Exiting lets systemd
+// pull up a fresh copy.
 func ShouldExitUnhealthy(now, lastHealthy, startedAt time.Time, fatalAfter time.Duration) bool {
 	if lastHealthy.IsZero() {
-		return false // never connected yet; initial-connect failure is surfaced by Start itself
+		return false // never connected yet; initial-connect failure surfaces from Start
 	}
 	if now.Sub(startedAt) < fatalAfter {
-		return false // grace period: let the SDK settle past a transient blip at startup
+		return false // grace period: let the client settle past a transient blip at startup
 	}
 	return now.Sub(lastHealthy) > fatalAfter
-}
-
-// Stop gracefully shuts down the current WebSocket channel.
-func (b *Bot) Stop(ctx context.Context) error {
-	ch := b.ch.Load()
-	if ch == nil {
-		return nil
-	}
-	return (*ch).Stop(ctx)
 }
 
 // OnIncoming registers the handler invoked for each inbound message.
