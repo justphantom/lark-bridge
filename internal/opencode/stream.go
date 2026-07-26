@@ -8,7 +8,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/strutil"
@@ -53,21 +52,9 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		close(stderrDone)
 	}()
 
-	// ctx cancellation → SIGKILL the subprocess GROUP so the stdout reader
-	// unblocks. The CLI runs in its own process group (Setpgid in buildCommand),
-	// so a negative PID reaches the CLI plus any tool subprocesses it spawned
-	// (bash, git, npm…).
-	killDone := make(chan struct{})
-	defer close(killDone)
-	go func() {
-		select {
-		case <-ctx.Done():
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-		case <-killDone:
-		}
-	}()
+	// ctx cancellation is handled by cmdutil.ApplyGroupCancel (set in
+	// buildCommand): SIGKILLs the whole process group + WaitDelay bounds the
+	// pipe teardown. No manual kill goroutine needed.
 
 	sawTerminal := false
 	lineCount := 0

@@ -257,11 +257,21 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 
 // receiveLoop reads frames until the conn errors or ctx is done. Each inbound
 // data frame is reassembled, routed, and ACK'd; each pong refreshes the config.
+//
+// A read deadline is reset after every successfully read frame to 2× the
+// configured ping interval. The lark server replies to each ping with a pong
+// (or sends events) well within that window; if nothing arrives for two ping
+// cycles the connection is half-open (peer host crashed / network split) and
+// the read returns a deadline error → this loop exits → runSession reconnects.
+// Without this the original SDK's gorilla SetReadDeadline analogue is gone and
+// a silent death would otherwise only surface via the 5-minute frontend
+// watchdog, dropping every event in between.
 func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn) {
 	reassembly := newReassembler()
 	rt := &router{sink: c.snapshotSink()}
 	sweepTicker := time.NewTicker(chunkTTL)
 	defer sweepTicker.Stop()
+	c.refreshReadDeadline(conn)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -270,6 +280,9 @@ func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn) {
 		if err != nil {
 			return
 		}
+		// Any frame (data, pong, even a stray ping) proves the peer is alive:
+		// push the deadline out by another 2× ping interval.
+		c.refreshReadDeadline(conn)
 		if op != websocket.OpcodeBinary {
 			continue
 		}
@@ -290,6 +303,19 @@ func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn) {
 		default:
 		}
 	}
+}
+
+// refreshReadDeadline sets the conn read deadline to now + 2×PingInterval. A
+// non-positive PingInterval (misconfigured/bootstrap not yet applied) falls
+// back to a safe default so the deadline is always armed.
+func (c *Client) refreshReadDeadline(conn *websocket.Conn) {
+	c.mu.Lock()
+	interval := c.cfg.PingInterval
+	c.mu.Unlock()
+	if interval <= 0 {
+		interval = 90 * time.Second
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * interval))
 }
 
 // handleControl responds to pong (config refresh). The lark server sends

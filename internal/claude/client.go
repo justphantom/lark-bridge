@@ -12,8 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // readyTimeout bounds the `claude --version` health check performed by
@@ -272,9 +273,12 @@ func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, 
 	if opts.Directory != "" {
 		cmd.Dir = opts.Directory
 	}
-	// Put the CLI in its own process group so cancellation can SIGKILL the
-	// whole tree (the CLI spawns tool subprocesses: bash, git, npm…). Without
-	// this, Kill only reaches the CLI PID and its grandchildren are orphaned.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Put the CLI in its own process group AND wire ctx cancellation to
+	// SIGKILL the whole tree + bound Wait. ApplyGroupCancel covers the case
+	// where a tool grandchild escapes the SIGKILL (setsid/daemonised) but
+	// keeps holding the stdout pipe: WaitDelay forces the pipe closed within
+	// cmdutil.GroupKillTimeout so cmd.Wait() never blocks forever. Without
+	// it, a stuck grandchild wedges the dispatcher goroutine indefinitely.
+	cmdutil.ApplyGroupCancel(cmd)
 	return cmd, nil
 }

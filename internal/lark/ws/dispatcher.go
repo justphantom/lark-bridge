@@ -187,8 +187,8 @@ type receiveEvent struct {
 			ID   struct {
 				OpenID string `json:"open_id"`
 			} `json:"id"`
-			MentionedType string `json:"id.app"` // legacy: "app" tag marks bot mention
-			IsBot         bool   `json:"is_bot"`
+			MentionedType string `json:"mentioned_type"` // "app" when the mention targets the bot itself
+			IsBot         bool   `json:"is_bot"`         // newer field some payloads omit; MentionedType is the primary signal
 		} `json:"mentions"`
 	} `json:"message"`
 }

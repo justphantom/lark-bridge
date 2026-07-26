@@ -10,7 +10,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 )
 
@@ -55,22 +54,10 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		close(stderrDone)
 	}()
 
-	// ctx cancellation → SIGKILL the subprocess GROUP so the stdout reader
-	// unblocks. The CLI runs in its own process group (Setpgid in buildCommand),
-	// so a negative PID reaches the CLI plus any tool subprocesses it spawned
-	// (bash, git, npm…). The CLI does not install its own signal handlers in
-	// -p stream mode, so SIGKILL is sufficient.
-	killDone := make(chan struct{})
-	defer close(killDone)
-	go func() {
-		select {
-		case <-ctx.Done():
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-		case <-killDone:
-		}
-	}()
+	// ctx cancellation is handled by cmdutil.ApplyGroupCancel (set in
+	// buildCommand): it SIGKILLs the whole process group and bounds Wait via
+	// WaitDelay so a stuck tool grandchild cannot keep the stdout pipe open
+	// forever. No manual kill goroutine is needed here.
 
 	sawTerminal := false
 	scanner := bufio.NewScanner(stdout)

@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
+
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // sessionTimeout bounds `opencode session list` / `opencode session delete`.
@@ -45,7 +46,7 @@ func (c *Client) ListSessions(ctx context.Context, dir string) ([]Session, error
 	// #nosec G204 -- c.cliPath comes from the trusted config file; args are
 	// fixed subcommand flags, not user input.
 	cmd := exec.CommandContext(ctx, c.cliPath, "session", "list", "--format", "json")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmdutil.ApplyGroupCancel(cmd)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -83,7 +84,7 @@ func (c *Client) DeleteSession(ctx context.Context, dir, sessionID string) error
 	// is constrained to an ID returned by ListSessions (the slash command
 	// validates it against the listing before reaching here).
 	cmd := exec.CommandContext(ctx, c.cliPath, "session", "delete", sessionID)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmdutil.ApplyGroupCancel(cmd)
 	if dir != "" {
 		cmd.Dir = dir
 	}

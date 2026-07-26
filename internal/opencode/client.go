@@ -13,8 +13,9 @@ import (
 	"io"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 
 	"github.com/justphantom/lark-bridge/internal/log"
 )
@@ -199,9 +200,11 @@ func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, 
 	if opts.Directory != "" {
 		cmd.Dir = opts.Directory
 	}
-	// Put the CLI in its own process group so cancellation can SIGKILL the
-	// whole tree (the CLI spawns tool subprocesses: bash, git, npm…). Without
-	// this, Kill only reaches the CLI PID and its grandchildren are orphaned.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// ApplyGroupCancel puts the CLI in its own process group AND wires ctx
+	// cancellation to SIGKILL the whole tree + bounds Wait via WaitDelay. A
+	// tool grandchild that escapes the SIGKILL but keeps holding the stdout
+	// pipe is force-closed within cmdutil.GroupKillTimeout, so cmd.Wait()
+	// never blocks forever (a known hang mode for CLI backends).
+	cmdutil.ApplyGroupCancel(cmd)
 	return cmd, nil
 }

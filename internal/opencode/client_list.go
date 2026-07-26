@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
 // listTimeout bounds the model/agent listing subcommands. The opencode CLI
@@ -47,7 +48,7 @@ func (c *Client) execLines(ctx context.Context, args ...string) ([]string, error
 	// #nosec G204 -- c.cliPath comes from the trusted config file; args are
 	// fixed subcommands ("models" / "agent" "list"), not user input.
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmdutil.ApplyGroupCancel(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("opencode %s: %w", strings.Join(args, " "), err)

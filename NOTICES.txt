@@ -15,5 +15,13 @@ verbatim; only `examples/`, `integration_test.go`, the standalone
 `go.mod`, and project-level docs (`README.md` / `PLAN.md` / `AGENTS.md`)
 were dropped as library-irrelevant.
 
+Local divergence from the pinned commit (track here so upstream merges do not
+silently revert them):
+- `client.go` + `stream.go`: `buildCommand` now wires `cmdutil.ApplyGroupCancel`
+  (process-group SIGKILL + WaitDelay) instead of a bare `Setpgid`, and the
+  manual kill goroutine in stream.go was removed (ApplyGroupCancel's Cancel
+  closure supersedes it). Fixes a `cmd.Wait()` hang when a tool grandchild
+  escapes the SIGKILL but keeps holding the stdout pipe. To be proposed upstream.
+
 Upstream fix / feature merges: diff against the pinned commit and apply
 manually; bump this notice's "Pinned upstream commit" line when syncing.
