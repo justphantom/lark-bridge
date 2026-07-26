@@ -13,7 +13,11 @@ type ndjsonLine struct {
 	SessionID string          `json:"sessionID"`
 	Part      json.RawMessage `json:"part"`
 	Message   string          `json:"message"`
-	Error     string          `json:"error"`
+	// Error is sent as json.RawMessage because opencode's schema changed
+	// across versions: legacy CLI wrote a plain string here, while 1.18+
+	// writes a structured {name, data:{message, statusCode,...}} object.
+	// extractErrorMessage handles both shapes.
+	Error json.RawMessage `json:"error"`
 }
 
 // partShape is the decoded "part" object nested inside an event line.
@@ -29,6 +33,13 @@ type partShape struct {
 		Status string          `json:"status"`
 		Input  json.RawMessage `json:"input"`
 		Output json.RawMessage `json:"output"`
+		// Metadata is populated by shell-style tools (bash): its exit
+		// field carries the command's exit code. status stays
+		// "completed" even on non-zero exit, so exit!=0 is the only
+		// signal that the underlying command failed.
+		Metadata struct {
+			Exit int `json:"exit"`
+		} `json:"metadata"`
 	} `json:"state"`
 	// step-finish carries token/cost accounting.
 	Tokens struct {
@@ -148,7 +159,7 @@ func parseEvent(line string) ([]Event, error) {
 	case "error":
 		msg := head.Message
 		if msg == "" {
-			msg = head.Error
+			msg = extractErrorMessage(head.Error)
 		}
 		if msg == "" {
 			msg = head.Type + " error"
@@ -179,9 +190,14 @@ func parseToolEvent(base Event, p partShape) []Event {
 		result.toolInput = stringifyJSON(p.State.Input)
 	}
 	result.text = stringifyContent(p.State.Output)
-	// Only explicit failure statuses flag an error; "completed" and an
-	// in-progress "running" (or an absent status) do not.
-	if p.State.Status == "error" || p.State.Status == "failed" {
+	// Three failure signals, any one of which flags the result as an error:
+	//   - status "error"/"failed": the tool framework itself failed
+	//     (timeout, permission denied, missing binary, ...)
+	//   - metadata.exit != 0: the command exited non-zero. opencode sets
+	//     status="completed" even when bash returns 1, so without this
+	//     check a failed `cat /nonexistent` renders identically to a
+	//     successful `ls` on the card.
+	if p.State.Status == "error" || p.State.Status == "failed" || p.State.Metadata.Exit != 0 {
 		result.isToolError = true
 	}
 	return []Event{result}
@@ -222,4 +238,46 @@ func stringifyJSON(raw json.RawMessage) string {
 		return strings.TrimSpace(string(raw))
 	}
 	return buf.String()
+}
+
+// extractErrorMessage decodes the "error" field of an error event, which
+// opencode emits in two shapes depending on version:
+//
+//   - legacy: a plain string ("err field msg")
+//   - 1.18+:  a structured object {"name":"APIError","data":{
+//     "message":"model not allowed for this key",
+//     "statusCode":403, "isRetryable":false, ...}}
+//
+// Returns the most informative message available: data.message (with the
+// HTTP status appended when present), falling back to name, then "". An empty
+// return lets the caller fall back to head.Message / head.Type as before.
+func extractErrorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try the legacy string form first; older CLIs and some error subtypes
+	// still send a bare string.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Structured form: {name, data:{message, statusCode,...}}.
+	var obj struct {
+		Name string `json:"name"`
+		Data struct {
+			Message    string `json:"message"`
+			StatusCode int    `json:"statusCode"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &obj) == nil {
+		switch {
+		case obj.Data.Message != "" && obj.Data.StatusCode != 0:
+			return fmt.Sprintf("%s (HTTP %d)", obj.Data.Message, obj.Data.StatusCode)
+		case obj.Data.Message != "":
+			return obj.Data.Message
+		case obj.Name != "":
+			return obj.Name
+		}
+	}
+	return ""
 }

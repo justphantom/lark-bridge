@@ -138,6 +138,62 @@ func TestParseEvent_ToolUseInputFallback(t *testing.T) {
 	}
 }
 
+// TestParseEvent_ToolUseBashNonZeroExit verifies the bash-failure detection:
+// opencode sets state.status="completed" even when the command exits
+// non-zero, so the parser must read state.metadata.exit and flag the result
+// as an error when exit!=0. Without this, `cat /nonexistent` looks
+// identical to a successful `ls` on the card.
+func TestParseEvent_ToolUseBashNonZeroExit(t *testing.T) {
+	// Shape mirrors a real opencode 1.18 line for `cat /nonexistent`:
+	// status=completed, exit=1, output carries the stderr text.
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"cat /nonexistent"},"output":"cat: /nonexistent: No such file or directory\n","metadata":{"output":"cat: /nonexistent: No such file or directory\n","exit":1,"truncated":false},"title":"cat /nonexistent"}}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d: %+v", len(got), got)
+	}
+	res := got[0]
+	if res.kind != EventToolResult {
+		t.Fatalf("kind = %q, want EventToolResult", res.kind)
+	}
+	if !res.isToolError {
+		t.Errorf("expected isToolError=true for exit!=0, got %+v", res)
+	}
+	if !res.GetIsToolError() {
+		t.Error("GetIsToolError should be true")
+	}
+	if !strings.Contains(res.text, "No such file") {
+		t.Errorf("output not preserved: %q", res.text)
+	}
+}
+
+// TestParseEvent_ToolUseBashZeroExitNotError verifies exit==0 (the default
+// when metadata is absent or explicitly 0) does NOT flag an error — guards
+// against a regression where the new exit check accidentally fires on
+// tools that do not populate metadata (read/write/edit/...).
+func TestParseEvent_ToolUseBashZeroExitNotError(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"file1\nfile2\n","metadata":{"output":"file1\nfile2\n","exit":0,"truncated":false},"title":"ls"}}}`
+	got, _ := parseEvent(line)
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	if got[0].isToolError {
+		t.Errorf("exit=0 must not be flagged as error, got %+v", got[0])
+	}
+}
+
+// TestParseEvent_ToolUseNoMetadataNotError verifies a tool result without
+// any metadata block (e.g. read/write) is unaffected by the new exit check.
+func TestParseEvent_ToolUseNoMetadataNotError(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"read","title":"README.md","state":{"status":"completed","output":"contents"}}}`
+	got, _ := parseEvent(line)
+	if len(got) != 1 || got[0].isToolError {
+		t.Errorf("read without metadata must not be an error, got %+v", got)
+	}
+}
+
 func TestParseEvent_StepFinishStop(t *testing.T) {
 	// reason="stop" is terminal: produces an EventResult with token/cost.
 	line := `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}`
@@ -220,6 +276,64 @@ func TestParseEvent_ErrorFallbackField(t *testing.T) {
 	got, _ := parseEvent(line)
 	if got[0].text != "err field msg" {
 		t.Errorf("text = %q", got[0].text)
+	}
+}
+
+// TestParseEvent_ErrorStructuredObject verifies the 1.18+ structured error
+// shape — `error: {name, data:{message, statusCode,...}}` — is decoded so
+// the human message and HTTP status land in the event text instead of being
+// dropped (which previously produced "error error").
+func TestParseEvent_ErrorStructuredObject(t *testing.T) {
+	// Shape mirrors a real 403 from opencode 1.18 (responseHeaders/body
+	// trimmed; only name + data.message + data.statusCode matter here).
+	line := `{"type":"error","timestamp":1785045798884,"sessionID":"ses_x","error":{"name":"APIError","data":{"message":"model not allowed for this key","statusCode":403,"isRetryable":false}}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != EventError {
+		t.Fatalf("want 1 EventError, got %+v", got)
+	}
+	if !strings.Contains(got[0].text, "model not allowed for this key") {
+		t.Errorf("text = %q, want contains 'model not allowed for this key'", got[0].text)
+	}
+	if !strings.Contains(got[0].text, "403") {
+		t.Errorf("text = %q, want contains the HTTP status '403'", got[0].text)
+	}
+}
+
+// TestParseEvent_ErrorStructuredNoStatusCode verifies a structured error
+// without statusCode surfaces data.message alone (no trailing "HTTP 0").
+func TestParseEvent_ErrorStructuredNoStatusCode(t *testing.T) {
+	line := `{"type":"error","sessionID":"s1","error":{"name":"ConfigError","data":{"message":"missing provider key"}}}`
+	got, _ := parseEvent(line)
+	if !strings.Contains(got[0].text, "missing provider key") {
+		t.Errorf("text = %q", got[0].text)
+	}
+	if strings.Contains(got[0].text, "HTTP") {
+		t.Errorf("text should omit HTTP suffix when statusCode absent: %q", got[0].text)
+	}
+}
+
+// TestParseEvent_ErrorStructuredNameOnly verifies that when data.message is
+// absent but error.name is, the name itself becomes the message (better than
+// the prior "error error" fallback).
+func TestParseEvent_ErrorStructuredNameOnly(t *testing.T) {
+	line := `{"type":"error","sessionID":"s1","error":{"name":"AbortError","data":{}}}`
+	got, _ := parseEvent(line)
+	if got[0].text != "AbortError" {
+		t.Errorf("text = %q, want AbortError", got[0].text)
+	}
+}
+
+// TestParseEvent_ErrorEmptyFieldsFallback verifies that when both message
+// and the error object lack anything usable, the parser still falls back to
+// the typed "<type> error" form.
+func TestParseEvent_ErrorEmptyFieldsFallback(t *testing.T) {
+	line := `{"type":"error","sessionID":"s1"}`
+	got, _ := parseEvent(line)
+	if got[0].text != "error error" {
+		t.Errorf("text = %q, want 'error error' fallback", got[0].text)
 	}
 }
 
