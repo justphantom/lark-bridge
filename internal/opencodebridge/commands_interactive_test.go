@@ -31,6 +31,12 @@ func (f pickerFakeAgent) ListModels(context.Context) ([]string, error) { return 
 
 func (f pickerFakeAgent) ListAgents(context.Context) ([]string, error) { return f.agents, nil }
 
+func (pickerFakeAgent) ListSessions(context.Context, string) ([]opencode.Session, error) {
+	return nil, nil
+}
+
+func (pickerFakeAgent) DeleteSession(context.Context, string, string) error { return nil }
+
 // failingListAgent returns an error from ListModels/ListAgents to exercise the
 // error path of askAndWait (the picker goroutine logs the error and emits a
 // Notice; the test asserts no pending slot is left behind).
@@ -48,6 +54,14 @@ func (failingListAgent) ListModels(context.Context) ([]string, error) {
 
 func (failingListAgent) ListAgents(context.Context) ([]string, error) {
 	return nil, errors.New("provider offline")
+}
+
+func (failingListAgent) ListSessions(context.Context, string) ([]opencode.Session, error) {
+	return nil, errors.New("provider offline")
+}
+
+func (failingListAgent) DeleteSession(context.Context, string, string) error {
+	return errors.New("provider offline")
 }
 
 // TestPickAnswerValue covers the selection-extraction rule: a custom-typed

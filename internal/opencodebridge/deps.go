@@ -28,4 +28,11 @@ type opencodeAPI interface {
 	// ListAgents runs `opencode agent list` for the interactive /agent picker.
 	// Returns user-visible agent names (hidden internal agents filtered).
 	ListAgents(ctx context.Context) ([]string, error)
+	// ListSessions runs `opencode session list --format json` scoped to dir.
+	// The CLI's session store is cwd-bound: only sessions created under dir
+	// are returned. Used by /session-list and /session-clean.
+	ListSessions(ctx context.Context, dir string) ([]opencode.Session, error)
+	// DeleteSession runs `opencode session delete <id>` scoped to dir. The
+	// CLI's lookup is also cwd-bound. Used by /session-clean.
+	DeleteSession(ctx context.Context, dir, sessionID string) error
 }

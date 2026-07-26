@@ -24,6 +24,12 @@ func (closedStreamOpencode) ListModels(context.Context) ([]string, error) { retu
 
 func (closedStreamOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
 
+func (closedStreamOpencode) ListSessions(context.Context, string) ([]opencode.Session, error) {
+	return nil, nil
+}
+
+func (closedStreamOpencode) DeleteSession(context.Context, string, string) error { return nil }
+
 func (closedStreamOpencode) Run(_ context.Context, _ opencode.RunOptions) (<-chan opencode.Event, error) {
 	ch := make(chan opencode.Event)
 	close(ch)
@@ -38,6 +44,12 @@ type blockingOpencode struct{}
 func (blockingOpencode) ListModels(context.Context) ([]string, error) { return nil, nil }
 
 func (blockingOpencode) ListAgents(context.Context) ([]string, error) { return nil, nil }
+
+func (blockingOpencode) ListSessions(context.Context, string) ([]opencode.Session, error) {
+	return nil, nil
+}
+
+func (blockingOpencode) DeleteSession(context.Context, string, string) error { return nil }
 
 func (blockingOpencode) Run(ctx context.Context, _ opencode.RunOptions) (<-chan opencode.Event, error) {
 	ch := make(chan opencode.Event)
