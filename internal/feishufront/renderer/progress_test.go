@@ -166,6 +166,63 @@ func TestFormatToolLine_ErrorShowsExcerpt(t *testing.T) {
 	}
 }
 
+// TestFormatToolLine_LongDescTruncated pins maxToolDescLen: a tool input
+// summary longer than 50 runes is truncated with "…", so a long shell command
+// or deep path cannot dominate the row.
+func TestFormatToolLine_LongDescTruncated(t *testing.T) {
+	s := NewProgressState()
+	longDesc := strings.Repeat("x", maxToolDescLen+20)
+	s.AddToolUse("bash", longDesc, false, "")
+	got := formatToolLine(s.tools[0])
+	if strings.Contains(got, strings.Repeat("x", maxToolDescLen+1)) {
+		t.Errorf("desc should be capped at %d runes: %s", maxToolDescLen, got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("capped desc should end with …: %s", got)
+	}
+}
+
+// TestFormatToolLine_LongNameTruncated pins maxToolNameLen: a long tool name
+// (typically an MCP server-defined name) is truncated with "…".
+func TestFormatToolLine_LongNameTruncated(t *testing.T) {
+	s := NewProgressState()
+	longName := strings.Repeat("n", maxToolNameLen+15)
+	s.AddToolUse(longName, "summary", false, "")
+	got := formatToolLine(s.tools[0])
+	// normalizeToolName upper-cases the first rune; the truncation cap still
+	// applies and the (cap+1)'th original rune must not survive.
+	if strings.Contains(got, strings.Repeat("n", maxToolNameLen)) {
+		t.Errorf("name should be capped at %d runes: %s", maxToolNameLen, got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("capped name should end with …: %s", got)
+	}
+}
+
+// TestFormatToolLine_CountOutsideBudget pins that the "×N" suffix sits outside
+// the name/desc 50-rune budget: a 50-rune desc with a high repetition count
+// still shows the full count suffix (a 100-call collapse is common for read/
+// grep tools inside a subagent turn), and the desc stays truncated rather
+// than shrinking further to make room for the count.
+func TestFormatToolLine_CountOutsideBudget(t *testing.T) {
+	s := NewProgressState()
+	exactDesc := strings.Repeat("d", maxToolDescLen)
+	for i := 0; i < 99; i++ {
+		s.AddToolUse("read", exactDesc, false, "")
+	}
+	got := formatToolLine(s.tools[0])
+	if !strings.Contains(got, "×99") {
+		t.Errorf("count suffix ×99 must be present outside the 50-rune budget: %s", got)
+	}
+	// desc stayed at the cap (no "…" appended because it fits exactly).
+	if strings.Contains(got, "…") {
+		t.Errorf("exact-fit desc should not be truncated: %s", got)
+	}
+	if !strings.Contains(got, exactDesc) {
+		t.Errorf("exact-fit desc must be preserved verbatim: %s", got)
+	}
+}
+
 // TestAddToolResult_UpdatesDescOnNotification verifies a terminal description
 // (a subagent notification summary with cumulative usage) supersedes the live
 // progress description the row held while running.

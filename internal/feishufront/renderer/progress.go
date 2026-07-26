@@ -25,6 +25,17 @@ const maxRunningTools = 5
 // timeout) without letting a verbose stack trace crowd the error zone.
 const maxToolOutputLen = 50
 
+// maxToolNameLen caps a tool name rendered on the card. Built-in tools are
+// well under this; the cap exists for MCP tools whose server-defined names
+// can be arbitrarily long. Kept distinct from maxToolDescLen /
+// maxToolOutputLen so each field's ceiling can evolve independently.
+const maxToolNameLen = 50
+
+// maxToolDescLen caps a tool row's description (the input summary produced by
+// bridgebase.SummarizeToolInput). Without it a long shell command, deep file
+// path, or MCP parameter value can dominate the row.
+const maxToolDescLen = 50
+
 // toolRow tracks one tool invocation through its lifecycle.
 type toolRow struct {
 	name       string

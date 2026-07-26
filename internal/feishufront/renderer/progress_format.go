@@ -6,7 +6,10 @@ import (
 	"unicode"
 )
 
-// formatToolLine renders one tool row as a markdown line.
+// formatToolLine renders one tool row as a markdown line. name and desc are
+// each truncated to maxToolNameLen / maxToolDescLen; the count suffix
+// (×N) and the multi-line error excerpt sit outside those budgets so a
+// long-but-legible row still shows its repetition count and failure cause.
 func formatToolLine(t toolRow) string {
 	var icon, line string
 	switch t.status {
@@ -17,9 +20,9 @@ func formatToolLine(t toolRow) string {
 	default:
 		icon = "✅"
 	}
-	line = icon + " " + t.name
+	line = icon + " " + truncateRunes(t.name, maxToolNameLen)
 	if t.desc != "" {
-		line += ": " + t.desc
+		line += ": " + truncateRunes(t.desc, maxToolDescLen)
 	}
 	if t.count > 1 {
 		line += " ×" + strconv.Itoa(t.count)
