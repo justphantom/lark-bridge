@@ -89,11 +89,22 @@ func (b *Bot) handleMessageReceive(ctx context.Context, ev *lark.MessageReceiveE
 // WS goroutine.
 func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) error {
 	if ev == nil {
+		b.logger.Warn("card action: nil event dropped")
 		return nil
 	}
 	b.markHealthy() // any inbound event proves the WS is alive
+	// 入口 Info：诊断 ws→lark 链路是否把 card 事件投递到 Bot。
+	// value 整条记录，便于发现飞书 schema 2.0 下 button 回调 value 字段缺失。
+	b.logger.Info("card action received",
+		"event_id", ev.EventID,
+		log.FieldChatID, ev.ChatID,
+		log.FieldMessageID, ev.MessageID,
+		"operator_openid", ev.Operator.OpenID,
+		"value", ev.Action.Value)
 	h := b.onCardAction.Load()
 	if h == nil {
+		b.logger.Warn("card action: no handler registered",
+			"event_id", ev.EventID, log.FieldChatID, ev.ChatID)
 		return nil
 	}
 	if ev.Operator.OpenID == "" {

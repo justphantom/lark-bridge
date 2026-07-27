@@ -202,6 +202,15 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		log.FieldEventType, kind,
 		"operator_openid", action.UserOpenID,
 		"request_id", requestIDFromValue(action.Value))
+	// kind=="" 意味着 button value 没回传（schema 2.0 下顶层 value 字段
+	// 已是 historical attribute）。Warn 整个 value，便于区分「空 map」
+	// 与「回了部分字段但缺 kind」两种失效形态。
+	if kind == "" {
+		d.logger.Load().Warn("card action: empty kind in value",
+			log.FieldChatID, action.ChatID,
+			log.FieldMessageID, action.MessageID,
+			"value", action.Value)
+	}
 	// Frontend-owned card (the /backend picker): consume the click directly —
 	// no requestID, no answer forwarding to a backend.
 	//
