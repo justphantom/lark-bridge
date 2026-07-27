@@ -34,6 +34,7 @@ func (p *pickerRouter) Set(_ string, backendID string) error {
 }
 
 func (p *pickerRouter) ChatsOf(string) []string { return nil }
+func (p *pickerRouter) Touch(string)            {}
 
 // TestRenderBackendPicker verifies the picker lists every online backend as a
 // button and marks the currently-bound one ✓ + disabled.

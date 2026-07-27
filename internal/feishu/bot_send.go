@@ -143,6 +143,13 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 				"card_size_bytes", len(card))
 			return b.updateFallbackCard(ctx, messageID)
 		}
+		if IsCardGone(err) {
+			// Card was withdrawn/deleted client-side: PATCH can never succeed,
+			// so don't burn the retry budget. Surface the raw error (carrying
+			// code:230011 via %w) so the caller (status-monitor broadcast) can
+			// detect it with IsCardGone and re-send a fresh card.
+			return fmt.Errorf("feishu: update card (message gone): %w", err)
+		}
 		if attempt >= cardRetry {
 			return fmt.Errorf("feishu: update card request failed after %d retries: %w", attempt, err)
 		}
@@ -183,6 +190,22 @@ func isCardContentRejected(err error) bool {
 	return strings.Contains(s, "code:"+strconv.Itoa(feishuCodeContentTooLarge)) ||
 		strings.Contains(s, "code:"+strconv.Itoa(feishuCodeCardElementOverLimit)) ||
 		strings.Contains(s, "over limit")
+}
+
+// IsCardGone reports whether err represents a card that can no longer be
+// PATCHed: code:230011 ("The message was withdrawn." — the client deleted/
+// withdrew it) or code:99992354 (message_id invalid/non-existent, defensive).
+// Verified against the live Feishu API (2026-07-27): PATCHing a withdrawn
+// message returns exactly code:230011. The status-monitor broadcast path
+// treats either as "drop the cached messageID and SendCard a new one".
+// Exported because the dispatcher (package feishufront) inspects the error
+// returned by CardSink.UpdateCard across the package boundary.
+func IsCardGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "code:230011") || strings.Contains(s, "code:99992354")
 }
 
 // fallbackText is the plain-text body sent when a card is rejected for being

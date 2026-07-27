@@ -8,14 +8,15 @@
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
           ┌───────────┬───────────┬─────────────────────┐    ┌──────────────┐
-     claude-back  opencode-back  miniagent-back            deploy-monitor
-     (Claude CLI) (opencode CLI) (LLM API 直调)            (make deploy)
+     claude-back  opencode-back  miniagent-back   deploy-monitor   status-monitor
+     (Claude CLI) (opencode CLI) (LLM API 直调)  (make deploy)    (状态总览)
 ```
 
 - `feishu-front`：持有飞书 WebSocket 机器人，IPC 服务（SSE + Control POST），chatID→后端路由，分发器（消息→Prompt 事件，Control→卡片）。
 - `claude-back` / `opencode-back`：每个 prompt fork 一次对应 CLI 子进程。
 - `miniagent-back`：每个 prompt fork 一次 miniagent 二进制（自带 ReAct 循环与 LLM 调用）。
 - `deploy-monitor`：收到 `/deploy`、`/pull`、`/push` 在项目根执行 `make`，单飞（single-flight），结果回执。**独立部署**，避免「部署脚本管自己的触发者」循环依赖。
+- `status-monitor`：每 N 秒（`status_monitor.interval`，默认 60s）向绑定的每个群推送一张总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。**独立部署**，push-only。
 
 ## 协议（internal/protocol）
 
@@ -30,6 +31,7 @@
 - opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-list` `/session-use` `/session-clean` `/current` `/model` `/agent` `/cd` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/models` `/cd` `/pull` `/push` `/running` `/session-abort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/pull` `/push` `/running`。
+- status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。
 
 ## 构建
 
@@ -62,6 +64,8 @@ make deploy ARGS=--init                  # 首次：从示例生成 config.json 
 make deploy ARGS=--services opencode     # 单独部署某服务子集（逗号分隔）
 make upgrade-monitor                     # 单独升级 deploy-monitor（~2s 离线）
 make upgrade-monitor ARGS=--init
+make upgrade-status                      # 单独升级 status-monitor（~2s 离线）
+make upgrade-status ARGS=--init
 ```
 
 > **升级注意**：从此版本起 `opencode-serve-back` 已移除（CLI 模式功能已对齐）。`make deploy` 会自动检测并清理遗留的 `lark-opencode-serve-back.service` 单元、state 文件与 config 模板。

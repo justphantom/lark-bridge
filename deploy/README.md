@@ -207,6 +207,24 @@ make upgrade-monitor
 升级时 monitor 短暂离线（systemd restart 期间无法响应 `/deploy`）。monitor 代码
 极少变更，这个代价可接受。
 
+## 6.6. status-monitor 部署（独立）
+
+status-monitor 是「观察者」（每 `status_monitor.interval` 秒向绑定的群推送一张
+在线后端 + 运行中会话总览卡），无副作用、不需提权，**同样不由 deploy.sh 管理**，
+与 deploy-monitor 同模式独立部署：
+
+```bash
+# 首次安装（生成 config + unit + enable + start）
+make upgrade-status ARGS=--init
+
+# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
+make upgrade-status
+```
+
+部署后在飞书群里 `/backend` 选择 `status-monitor` 绑定，下个 tick 起开始收卡。
+卡片 PATCH 失败（被用户删除/撤回，飞书返回 `code:230011`）时自动重发，不叠加。
+升级时短暂离线（systemd restart），期间停推一帧，下个 tick 自动恢复。
+
 ## 7. 验证
 
 ```bash
@@ -218,6 +236,7 @@ journalctl -u lark-feishu-front -f
 journalctl -u lark-claude-back -f
 journalctl -u lark-opencode-back -f
 journalctl -u lark-miniagent-back -f
+journalctl -u lark-status-monitor -f
 
 # 在飞书群里 @机器人 发消息，观察日志输出
 ```

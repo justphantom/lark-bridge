@@ -393,6 +393,7 @@ type boundRouter struct{ backendID string }
 func (b boundRouter) Resolve(string) (string, error) { return b.backendID, nil }
 func (boundRouter) Set(string, string) error         { return nil }
 func (boundRouter) ChatsOf(string) []string          { return nil }
+func (boundRouter) Touch(string)                     {}
 
 // TestDispatchIncoming_SkillStripsPrefix verifies that a "/skill ..." message
 // strips the wrapper, sets the Skill flag, and forwards the rest to the bound
@@ -676,6 +677,7 @@ type stubRouter struct{ chats []string }
 func (stubRouter) Resolve(string) (string, error) { return "", nil }
 func (stubRouter) Set(string, string) error       { return nil }
 func (s stubRouter) ChatsOf(string) []string      { return s.chats }
+func (stubRouter) Touch(string)                   {}
 
 // blockingSink blocks SendCard until the request context is cancelled, then
 // returns the ctx error — proving the notice path propagates a deadline.

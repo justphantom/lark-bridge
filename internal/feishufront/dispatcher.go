@@ -56,6 +56,7 @@ type ChatRouter interface {
 	Resolve(chatID string) (string, error)
 	Set(chatID, backendID string) error
 	ChatsOf(backendID string) []string
+	Touch(chatID string)
 }
 
 // Dispatcher is the frontend orchestrator.
@@ -121,6 +122,14 @@ type Dispatcher struct {
 	// overridable via SetCardPatchDelay from config.
 	cardPatchDelay time.Duration
 
+	// statusMu guards statusCards: key = chatID + "\x00" + reportKey → the
+	// messageID of the standing overview card for that (chat, status-monitor
+	// backend) pair. The status-monitor backend pushes a TypeStatusReport each
+	// tick; the dispatcher PATCHes the existing card, or SendCards a new one
+	// when none is cached or the prior one was withdrawn (feishu.IsCardGone).
+	statusMu    sync.Mutex
+	statusCards map[string]string
+
 	// logger is stored atomically: SetLogger runs on the main goroutine while
 	// notifyBackendChat reads it from the IPCServer.fireCallback goroutine.
 	logger atomic.Pointer[log.Logger]
@@ -142,6 +151,7 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		pickerCards:           make(map[string][]byte),
 		pickerTimers:          make(map[string]*time.Timer),
 		flap:                  make(map[string]*flapState),
+		statusCards:           make(map[string]string),
 		offlineNoticeDebounce: offlineNoticeDebounce,
 		cardPatchDelay:        cardPatchDelayDefault,
 	}

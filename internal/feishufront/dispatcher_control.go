@@ -49,6 +49,13 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 			return d.sendResult(ctx, ctrl, backendType)
 		}
 		return d.sendNoticeControl(ctx, ctrl, backendType)
+	case protocol.TypeStatusReport:
+		// Periodic broadcast from the status-monitor backend. Deliberately NOT
+		// routed through the terminal dedup set (it is keyed by PromptID and
+		// would swallow every tick after the first) nor the card debouncer
+		// (which coalesces high-frequency progress frames, not whole-card
+		// periodic replacements).
+		return d.sendStatusReport(ctx, rc)
 	case protocol.TypeQuestion, protocol.TypePermission:
 		return d.sendInteractive(ctx, ctrl, backendType)
 	default:
@@ -304,6 +311,77 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 	// Mark finalized so a straggler progress frame cannot overwrite this notice.
 	d.markFinalized(messageID)
 	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, card, false)
+}
+
+// sendStatusReport broadcasts the standing overview card to every chat bound
+// to the status-monitor backend that sent rc. The frontend, not the backend,
+// owns the per-chat messageID bookkeeping: each (chatID, reportKey) pair maps
+// to one card PATCHed in place every tick; a card the user withdrew
+// (feishu.IsCardGone on PATCH) is dropped from the map and re-sent fresh.
+func (d *Dispatcher) sendStatusReport(ctx context.Context, rc RoutedControl) error {
+	p := rc.Control.StatusReport
+	if p == nil || p.Key == "" {
+		return nil
+	}
+	chats := d.router.ChatsOf(rc.BackendID)
+	if len(chats) == 0 {
+		// No bound chat yet: nothing to refresh. Common until a user /backend-binds.
+		return nil
+	}
+	footer := cardkit.FooterInfo{BackendID: rc.BackendID, BackendType: "status-monitor", Status: "总览"}
+	rows := make([]cardkit.TurnRow, len(p.Turns))
+	for i, t := range p.Turns {
+		rows[i] = cardkit.TurnRow{BackendID: t.BackendID, ChatID: t.ChatID, ElapsedS: t.ElapsedS}
+	}
+	card, err := cardkit.StatusReport(footer, p.Title, p.GeneratedAt, p.IntervalS, p.InFlight, p.Backends, rows)
+	if err != nil {
+		return err
+	}
+	for _, chatID := range chats {
+		d.patchOrCreateStatusCard(ctx, chatID, p.Key, card)
+		// Refresh lastAccess so the 14-day sweeper does not drop a chat whose
+		// only traffic is this periodic card (ChatsOf alone never touches it).
+		d.router.Touch(chatID)
+	}
+	return nil
+}
+
+// patchOrCreateStatusCard PATCHes the cached card for (chatID, key), or
+// SendCards a new one when none is cached or the prior one was withdrawn. A
+// transient (non-gone) PATCH error leaves the cached messageID in place so the
+// next tick retries the same card instead of stacking a duplicate.
+func (d *Dispatcher) patchOrCreateStatusCard(ctx context.Context, chatID, key string, card []byte) {
+	mapKey := chatID + "\x00" + key
+	d.statusMu.Lock()
+	msgID := d.statusCards[mapKey]
+	d.statusMu.Unlock()
+
+	if msgID != "" {
+		err := d.bot.UpdateCard(ctx, msgID, card)
+		if err == nil {
+			return
+		}
+		if !feishu.IsCardGone(err) {
+			// Network/rate-limit class: keep the cached id, retry next tick.
+			d.logger.Load().Warn("status card update failed",
+				log.FieldChatID, chatID, log.FieldMessageID, msgID, log.FieldError, err)
+			return
+		}
+		// Card withdrawn: drop the stale id and fall through to re-send.
+		d.statusMu.Lock()
+		delete(d.statusCards, mapKey)
+		d.statusMu.Unlock()
+	}
+
+	newID, err := d.bot.SendCard(ctx, chatID, card, "")
+	if err != nil {
+		d.logger.Load().Warn("status card send failed",
+			log.FieldChatID, chatID, log.FieldError, err)
+		return
+	}
+	d.statusMu.Lock()
+	d.statusCards[mapKey] = newID
+	d.statusMu.Unlock()
 }
 
 func (d *Dispatcher) notice(ctx context.Context, chatID, level, title, message string) error {

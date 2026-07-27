@@ -45,6 +45,7 @@ type Config struct {
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
+	StatusMonitor StatusMonitor `json:"status_monitor,omitempty"` // status-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
 
 	// —— 日志：共用 ——
@@ -138,6 +139,16 @@ type DeployMonitor struct {
 	ProjectRoot string `json:"project_root,omitempty"`
 	// DeployTarget is the make target invoked (default "deploy").
 	DeployTarget string `json:"deploy_target,omitempty"`
+}
+
+// StatusMonitor holds settings for the lark-status-monitor backend, which
+// periodically pushes an overview card (online backends + in-flight turns) to
+// every chat bound to it. The card is PATCHed in place each tick and re-sent
+// only if a user deleted it.
+type StatusMonitor struct {
+	// Interval is the refresh period. Go duration string ("60s", "2m").
+	// 0/absent → 60s.
+	Interval Duration `json:"interval,omitempty"`
 }
 
 // MiniAgent holds settings for the miniagent backend. Each turn forks the

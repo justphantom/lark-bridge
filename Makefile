@@ -20,7 +20,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-check test vet fmt clean deploy upgrade-monitor pack
+.PHONY: build build-check test vet fmt clean deploy upgrade-monitor upgrade-status pack
 
 # Default to `build` so a bare `make` produces the six binaries.
 .DEFAULT_GOAL := build
@@ -47,6 +47,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-back ./cmd/opencode-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
+	go build -ldflags "$(LDFLAGS)" -o bin/lark-status-monitor ./cmd/status-monitor
 
 # pack 交叉编译五个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
@@ -54,7 +55,7 @@ build:
 pack:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT; \
 	mkdir -p bin; \
-	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-opencode-back:cmd/opencode-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor; do \
+	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-opencode-back:cmd/opencode-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor; do \
 		out=$${name%%:*}; src=./$${name##*:}; \
 		echo "build  $$out ($(GOOS)/$(GOARCH))"; \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $$tmp/$$out $$src; \
@@ -94,3 +95,9 @@ deploy:
 # from deploy.sh. Use --init for first-time install (creates config + unit).
 upgrade-monitor:
 	./deploy/upgrade-monitor.sh $(ARGS)
+
+# upgrade-status builds and restarts ONLY lark-status-monitor (the periodic
+# overview-card pusher), decoupled from deploy.sh for the same reason monitor
+# is. Use --init for first-time install (creates config + unit).
+upgrade-status:
+	./deploy/upgrade-status.sh $(ARGS)

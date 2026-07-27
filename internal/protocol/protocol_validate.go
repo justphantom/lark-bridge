@@ -12,18 +12,19 @@ var allowedEventTypes = map[string]struct{}{
 
 // allowedControlTypes is the set of valid Control.Type values.
 var allowedControlTypes = map[string]struct{}{
-	TypeSessionInit: {},
-	TypeText:        {},
-	TypeThinking:    {},
-	TypeToolUse:     {},
-	TypeToolResult:  {},
-	TypeResult:      {},
-	TypeError:       {},
-	TypeProgress:    {},
-	TypeTodo:        {},
-	TypeQuestion:    {},
-	TypePermission:  {},
-	TypeNotice:      {},
+	TypeSessionInit:  {},
+	TypeText:         {},
+	TypeThinking:     {},
+	TypeToolUse:      {},
+	TypeToolResult:   {},
+	TypeResult:       {},
+	TypeError:        {},
+	TypeProgress:     {},
+	TypeTodo:         {},
+	TypeQuestion:     {},
+	TypePermission:   {},
+	TypeNotice:       {},
+	TypeStatusReport: {},
 }
 
 // Validate checks Event consistency:
@@ -132,6 +133,17 @@ func validateNotice(c *Control) error {
 	return nil
 }
 
+// validateStatusReport requires a non-empty Key — the stable id the frontend
+// keys its per-chat messageID bookkeeping on. ChatID is intentionally NOT
+// required: the control is broadcast by the frontend to every chat bound to
+// the sending backend, so the backend sends no single chatID.
+func validateStatusReport(c *Control) error {
+	if c.StatusReport.Key == "" {
+		return fmt.Errorf("statusReport.key is required")
+	}
+	return nil
+}
+
 // validateProgress pins Progress.Gate.State to the renderer's known set so a
 // typo or a future schema drift cannot land an unknown banner tone. A nil Gate
 // (plain step / loading description) is always valid.
@@ -149,18 +161,19 @@ func validateProgress(c *Control) error {
 // Keeping the table next to the validator makes the requirements explicit
 // and avoids the long switch that was previously needed.
 var controlRules = map[string]controlRule{
-	TypeSessionInit: {payloadIsNil: func(c *Control) bool { return c.SessionInit == nil }, payloadName: "sessionInit"},
-	TypeText:        {payloadIsNil: func(c *Control) bool { return c.Text == nil }, payloadName: "text"},
-	TypeThinking:    {payloadIsNil: func(c *Control) bool { return c.Thinking == nil }, payloadName: "thinking"},
-	TypeToolUse:     {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse"},
-	TypeToolResult:  {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
-	TypeResult:      {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
-	TypeError:       {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
-	TypeProgress:    {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress", extraCheck: validateProgress},
-	TypeTodo:        {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo", extraCheck: validateTodo},
-	TypeQuestion:    {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
-	TypePermission:  {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},
-	TypeNotice:      {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true, extraCheck: validateNotice},
+	TypeSessionInit:  {payloadIsNil: func(c *Control) bool { return c.SessionInit == nil }, payloadName: "sessionInit"},
+	TypeText:         {payloadIsNil: func(c *Control) bool { return c.Text == nil }, payloadName: "text"},
+	TypeThinking:     {payloadIsNil: func(c *Control) bool { return c.Thinking == nil }, payloadName: "thinking"},
+	TypeToolUse:      {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse"},
+	TypeToolResult:   {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
+	TypeResult:       {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
+	TypeError:        {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
+	TypeProgress:     {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress", extraCheck: validateProgress},
+	TypeTodo:         {payloadIsNil: func(c *Control) bool { return c.Todo == nil }, payloadName: "todo", extraCheck: validateTodo},
+	TypeQuestion:     {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
+	TypePermission:   {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},
+	TypeNotice:       {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true, extraCheck: validateNotice},
+	TypeStatusReport: {payloadIsNil: func(c *Control) bool { return c.StatusReport == nil }, payloadName: "statusReport", extraCheck: validateStatusReport},
 }
 
 // Validate checks Control consistency:

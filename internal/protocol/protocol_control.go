@@ -9,34 +9,36 @@ type Control struct {
 	PromptID  string `json:"promptID,omitempty"`
 	ChatID    string `json:"chatID,omitempty"` // standalone-card controls (Question/Notice) require it
 
-	SessionInit *SessionInitPayload `json:"sessionInit,omitempty"`
-	Text        *TextPayload        `json:"text,omitempty"`
-	Thinking    *ThinkingPayload    `json:"thinking,omitempty"`
-	ToolUse     *ToolUsePayload     `json:"toolUse,omitempty"`
-	ToolResult  *ToolResultPayload  `json:"toolResult,omitempty"`
-	Result      *ResultPayload      `json:"result,omitempty"`
-	Error       *ErrorPayload       `json:"error,omitempty"`
-	Progress    *ProgressPayload    `json:"progress,omitempty"`
-	Todo        *TodoPayload        `json:"todo,omitempty"`
-	Question    *QuestionPayload    `json:"question,omitempty"`
-	Permission  *PermissionPayload  `json:"permission,omitempty"`
-	Notice      *NoticePayload      `json:"notice,omitempty"`
+	SessionInit  *SessionInitPayload  `json:"sessionInit,omitempty"`
+	Text         *TextPayload         `json:"text,omitempty"`
+	Thinking     *ThinkingPayload     `json:"thinking,omitempty"`
+	ToolUse      *ToolUsePayload      `json:"toolUse,omitempty"`
+	ToolResult   *ToolResultPayload   `json:"toolResult,omitempty"`
+	Result       *ResultPayload       `json:"result,omitempty"`
+	Error        *ErrorPayload        `json:"error,omitempty"`
+	Progress     *ProgressPayload     `json:"progress,omitempty"`
+	Todo         *TodoPayload         `json:"todo,omitempty"`
+	Question     *QuestionPayload     `json:"question,omitempty"`
+	Permission   *PermissionPayload   `json:"permission,omitempty"`
+	Notice       *NoticePayload       `json:"notice,omitempty"`
+	StatusReport *StatusReportPayload `json:"statusReport,omitempty"`
 }
 
 // Control type values.
 const (
-	TypeSessionInit = "session_init"
-	TypeText        = "text"
-	TypeThinking    = "thinking"
-	TypeToolUse     = "tool_use"
-	TypeToolResult  = "tool_result"
-	TypeResult      = "result"
-	TypeError       = "error"
-	TypeProgress    = "progress"
-	TypeTodo        = "todo"
-	TypeQuestion    = "question"
-	TypePermission  = "permission"
-	TypeNotice      = "notice"
+	TypeSessionInit  = "session_init"
+	TypeText         = "text"
+	TypeThinking     = "thinking"
+	TypeToolUse      = "tool_use"
+	TypeToolResult   = "tool_result"
+	TypeResult       = "result"
+	TypeError        = "error"
+	TypeProgress     = "progress"
+	TypeTodo         = "todo"
+	TypeQuestion     = "question"
+	TypePermission   = "permission"
+	TypeNotice       = "notice"
+	TypeStatusReport = "status_report"
 )
 
 // SessionInitPayload announces the session the backend bound for this prompt.
@@ -257,4 +259,24 @@ type NoticePayload struct {
 	Before          string `json:"before,omitempty"`
 	After           string `json:"after,omitempty"`
 	UpdateMessageID string `json:"updateMessageID,omitempty"`
+}
+
+// StatusReportPayload is sent periodically by the status-monitor backend to
+// refresh a standing "overview" card on every chat bound to it. The frontend
+// keys its messageID bookkeeping on (chatID, Key): present → PATCH in place,
+// absent (or PATCH returns isCardGone) → SendCard a new one. ChatID is set by
+// the frontend during broadcast (one card per bound chat), NOT by the backend.
+//
+// Data mirrors GET /v1/status's StatusSnapshot (the frontend is the source of
+// truth for in-flight turns), so the backend effectively forwards the snapshot
+// plus presentation metadata (Title/IntervalS/GeneratedAt). Turns reuses the
+// protocol.TurnInfo type so the wire shape matches /v1/status exactly.
+type StatusReportPayload struct {
+	Key         string     `json:"key"`                 // stable id (default = backendID); frontend keys messageID on chatID|key
+	GeneratedAt int64      `json:"generatedAt"`         // unix seconds, backend's clock at assembly time
+	IntervalS   int        `json:"intervalS,omitempty"` // refresh period, display-only
+	Title       string     `json:"title,omitempty"`     // card title
+	InFlight    int        `json:"inflight"`            // in-flight turn count
+	Backends    []string   `json:"backends,omitempty"`  // online backend IDs
+	Turns       []TurnInfo `json:"turns,omitempty"`     // per in-flight turn (reuses protocol.TurnInfo)
 }

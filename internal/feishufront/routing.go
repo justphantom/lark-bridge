@@ -156,6 +156,20 @@ func (r *Layer1Router) ChatsOf(backendID string) []string {
 	return out
 }
 
+// Touch refreshes a binding's lastAccess without changing its BackendID or
+// persisting — used by the status-monitor broadcast path (ChatsOf → SendCard)
+// so a chat whose only traffic is the periodic overview card is not pruned by
+// the 14-day sweeper (Resolve/Set are the only other lastAccess refreshers).
+// It is a no-op for an unbound chatID (nothing to keep alive).
+func (r *Layer1Router) Touch(chatID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.routes[chatID]; ok {
+		e.lastAccess = time.Now()
+		r.routes[chatID] = e
+	}
+}
+
 // layer1PruneInterval is how often StartPrune sweeps stale routes. The table
 // is small (one entry per bound chat), so a 10-minute scan is negligible;
 // mirrors usage.pruneInterval's cadence.
