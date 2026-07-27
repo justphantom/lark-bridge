@@ -21,8 +21,8 @@ import (
 // prepended to the body so the card confirms what was picked instead of going
 // silently grey. The footer status word is flipped from "待确认" to "处理中"
 // so the card reads as advancing past the pending state. Buttons may sit
-// directly in body.elements (permission) or nested inside a form container
-// (question), so the walk recurses into every "elements" list.
+// inside an action container (permission/picker) or nested inside a form
+// container (question), so the walk recurses into every "elements" list.
 func RenderInteractiveSubmitted(originalCard []byte, summary string) ([]byte, error) {
 	var card map[string]any
 	if err := json.Unmarshal(originalCard, &card); err != nil {
@@ -32,9 +32,7 @@ func RenderInteractiveSubmitted(originalCard []byte, summary string) ([]byte, er
 		prependMarkdown(card, summary)
 	}
 	rewriteFooterStatus(card, "处理中")
-	if body, _ := card["body"].(map[string]any); body != nil {
-		disableButtons(body)
-	}
+	disableButtons(card)
 	return json.Marshal(card)
 }
 
@@ -61,22 +59,16 @@ func RenderInteractiveFinalized(originalCard []byte) ([]byte, error) {
 		prependMarkdown(card, "✓ 本轮已完成，结果见上方卡片。")
 	}
 	rewriteFooterStatus(card, "已完成")
-	if body, _ := card["body"].(map[string]any); body != nil {
-		disableButtons(body)
-	}
+	disableButtons(card)
 	return json.Marshal(card)
 }
 
 // firstMarkdownStartsWith reports whether the first (top-most) markdown
-// element in the card body starts with prefix. Only the first markdown is
-// consulted so a stray "✓" deeper in the body cannot mask a missing top
+// element in the card starts with prefix. Only the first markdown is
+// consulted so a stray "✓" deeper in the card cannot mask a missing top
 // confirmation. Returns false when no markdown element exists.
 func firstMarkdownStartsWith(card map[string]any, prefix string) bool {
-	body, _ := card["body"].(map[string]any)
-	if body == nil {
-		return false
-	}
-	elements, _ := body["elements"].([]any)
+	elements, _ := card["elements"].([]any)
 	for _, el := range elements {
 		em, ok := el.(map[string]any)
 		if !ok {
@@ -100,26 +92,20 @@ func finalizeInteractiveCard(originalCard []byte, notice, footerStatus string) (
 	}
 	prependMarkdown(card, notice)
 	rewriteFooterStatus(card, footerStatus)
-	if body, _ := card["body"].(map[string]any); body != nil {
-		disableButtons(body)
-	}
+	disableButtons(card)
 	return json.Marshal(card)
 }
 
-// prependMarkdown inserts a markdown element at the top of the card body so a
-// status line (choice echo / expiry notice) reads above the original content.
+// prependMarkdown inserts a markdown element at the top of the card elements
+// so a status line (choice echo / expiry notice) reads above the original content.
 func prependMarkdown(card map[string]any, text string) {
-	body, _ := card["body"].(map[string]any)
-	if body == nil {
-		return
-	}
-	elements, _ := body["elements"].([]any)
+	elements, _ := card["elements"].([]any)
 	ahead := []any{map[string]any{"tag": "markdown", "content": text}}
-	body["elements"] = append(ahead, elements...)
+	card["elements"] = append(ahead, elements...)
 }
 
 // rewriteFooterStatus replaces the leading status word in the card's footer
-// line. The footer is the last body element (a div whose text content is
+// line. The footer is the last element (a div whose text content is
 // "<status> · backendType · …"). Only a footer still showing a NON-TERMINAL
 // status (待确认 = pending, 处理中 = submitted/processing) is rewritten, so a
 // footer already advanced to a terminal status (已完成/已失效/…) cannot be
@@ -127,11 +113,7 @@ func prependMarkdown(card map[string]any, text string) {
 // submitted card's footer reads "处理中 · …" and finalize advances it to
 // "已完成".
 func rewriteFooterStatus(card map[string]any, newStatus string) {
-	body, _ := card["body"].(map[string]any)
-	if body == nil {
-		return
-	}
-	elements, _ := body["elements"].([]any)
+	elements, _ := card["elements"].([]any)
 	if len(elements) == 0 {
 		return
 	}
@@ -152,8 +134,8 @@ func rewriteFooterStatus(card map[string]any, newStatus string) {
 	}
 }
 
-// disableButtons recursively walks node["elements"] (and the card root →
-// body) disabling every button it finds.
+// disableButtons recursively walks node["elements"] disabling every button
+// it finds. The card root itself carries elements (schema 1.0 layout).
 func disableButtons(node map[string]any) {
 	elements, _ := node["elements"].([]any)
 	for _, el := range elements {

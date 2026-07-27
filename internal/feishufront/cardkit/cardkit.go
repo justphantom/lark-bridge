@@ -3,11 +3,13 @@
 // constructors; no renderer may json.Marshal a top-level card object
 // directly (R7).
 //
-// Card schema follows the Feishu card v2 layout: the root holds only
-// schema + header + body. body.elements[] carries content, button rows
-// ({"tag":"action","actions":[]}), and the footer line as the last
-// element. All cards share the same header/footer structure (R1–R3) so
-// there is no visual drift across event types or backends.
+// Card schema is 1.0 (not 2.0): root holds schema + config + header +
+// elements. elements[] carries content, an action container wrapping any
+// buttons ({"tag":"action","actions":[]}), and the footer line as the last
+// element. v1 is used because PATCH持久化 on v2 cards is unreliable across
+// client versions (see Card doc for the full rationale). All cards share
+// the same header/footer structure (R1–R3) so there is no visual drift
+// across event types or backends.
 package cardkit
 
 import (
@@ -78,27 +80,31 @@ type Element map[string]any
 // Action is one button/select action inside an actions element.
 type Action map[string]any
 
-// Card builds the unified card: root holds only schema + header + body.
-// Buttons are placed directly in body.elements (card JSON 2.0 deprecated
-// the {"tag":"action"} interaction module); the footer line is appended
-// as the last body element.
+// Card builds the unified card. schema 1.0：button 必须包在
+// {"tag":"action","actions":[...]} 容器里，root 顶层用 elements（不是
+// body.elements）。退回 v1 的原因：飞书 PATCH 接口对 schemaV2 卡的持久化
+// 在某些客户端组合下不稳定——picker 点击后翻绿一瞬间又恢复旧卡（实测）。
+// schemaV2 卡不能改成 schemaV1（飞书 230099/200830），所以 SendCard 也必须
+// 用 v1 保持一致。代价：失去 v2 新特性（streaming_mode 等我们没用上）；
+// 收益：所有客户端版本一致渲染 + PATCH 链路可靠。footer 作为最后一个 element。
 func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action) ([]byte, error) {
 	if elements == nil {
 		elements = []Element{}
 	}
-	all := make([]Element, 0, len(elements)+len(actions)+1)
+	all := make([]Element, 0, len(elements)+2)
 	all = append(all, elements...)
-	for _, a := range actions {
-		all = append(all, Element(a))
+	if len(actions) > 0 {
+		all = append(all, Element{"tag": "action", "actions": actions})
 	}
 	all = append(all, Footer(footer))
 	if len(all) > MaxCardElements {
 		return nil, fmt.Errorf("cardkit: card has %d elements, exceeds Feishu hard limit %d", len(all), MaxCardElements)
 	}
 	card := map[string]any{
-		"schema": "2.0",
-		"header": Header(header),
-		"body":   map[string]any{"elements": all},
+		"schema":  "1.0",
+		"config":  map[string]any{"update_multi": true},
+		"header":  Header(header),
+		"elements": all,
 	}
 	return json.Marshal(card)
 }

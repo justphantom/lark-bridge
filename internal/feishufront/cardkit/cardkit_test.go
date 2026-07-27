@@ -34,15 +34,23 @@ func TestCard(t *testing.T) {
 	if header["template"] != "blue" {
 		t.Errorf("header.template = %v, want blue", header["template"])
 	}
-	// Root must only contain schema/header/body — no root-level footer/actions.
+	// Root must only contain schema/config/header/elements — no root-level footer/actions.
 	if _, ok := card["footer"]; ok {
 		t.Error("footer must not be a root-level key")
 	}
 	if _, ok := card["actions"]; ok {
 		t.Error("actions must not be a root-level key")
 	}
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
+	if _, ok := card["body"]; ok {
+		t.Error("body must not be present in schema 1.0")
+	}
+	// config.update_multi 必须显式为 true：飞书 PATCH 接口的硬性要求，
+	// 缺失会让卡片更新被静默回滚（实测 bug：picker 点击翻绿又恢复旧卡）。
+	cfg := card["config"].(map[string]any)
+	if cfg["update_multi"] != true {
+		t.Errorf("config.update_multi = %v, want true", cfg["update_multi"])
+	}
+	elements := card["elements"].([]any)
 	// 1 content element + 1 footer element = 2.
 	if len(elements) != 2 {
 		t.Fatalf("elements len = %d, want 2 (content + footer)", len(elements))
@@ -58,26 +66,29 @@ func TestCardWithActions(t *testing.T) {
 	}
 	b, err := Card(hdr, ftr, []Element{MarkdownElement("m")}, acts)
 	card := jsonOf(t, b, err)
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
-	// markdown + 2 buttons + footer = 4.
-	if len(elements) != 4 {
-		t.Fatalf("elements len = %d, want 4", len(elements))
+	elements := card["elements"].([]any)
+	// markdown + 1 action container + footer = 3 (buttons are inside action container).
+	if len(elements) != 3 {
+		t.Fatalf("elements len = %d, want 3 (markdown + action + footer)", len(elements))
 	}
-	// Buttons are individual elements directly in body.elements (v2 has no
-	// action wrapper).
+	// schema 1.0：buttons must be wrapped in {"tag":"action","actions":[...]}.
 	var buttons []map[string]any
 	for _, el := range elements {
 		elem, ok := el.(map[string]any)
 		if !ok {
 			continue
 		}
-		if tag, _ := elem["tag"].(string); tag == "button" {
-			buttons = append(buttons, elem)
+		if tag, _ := elem["tag"].(string); tag == "action" {
+			acts, _ := elem["actions"].([]any)
+			for _, a := range acts {
+				if btn, ok := a.(map[string]any); ok {
+					buttons = append(buttons, btn)
+				}
+			}
 		}
 	}
 	if len(buttons) != 2 {
-		t.Errorf("buttons len = %d, want 2", len(buttons))
+		t.Errorf("buttons len = %d, want 2 (inside action container)", len(buttons))
 	}
 }
 
@@ -213,8 +224,7 @@ func TestNoticeWithChangeTruncatesCombined(t *testing.T) {
 		t.Fatalf("Notice: %v", err)
 	}
 	card := jsonOf(t, b, nil)
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
+	elements := card["elements"].([]any)
 	content := elements[0].(map[string]any)["content"].(string)
 	if len([]rune(content)) > MaxBodyRunes+1 {
 		t.Errorf("content runes = %d, want ≤ %d", len([]rune(content)), MaxBodyRunes+1)

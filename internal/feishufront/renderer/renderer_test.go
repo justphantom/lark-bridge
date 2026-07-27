@@ -30,15 +30,11 @@ func parse(t *testing.T, b []byte, err error) map[string]any {
 }
 
 // firstMarkdownContent returns the content of the first markdown element in
-// body.elements, failing the test if none exists. Used by tests that assert on
+// elements, failing the test if none exists. Used by tests that assert on
 // real newline runes (JSON marshalling would otherwise escape them as "\n").
 func firstMarkdownContent(t *testing.T, card map[string]any) string {
 	t.Helper()
-	body, ok := card["body"].(map[string]any)
-	if !ok {
-		t.Fatal("missing body")
-	}
-	elements, _ := body["elements"].([]any)
+	elements, _ := card["elements"].([]any)
 	for _, el := range elements {
 		em, ok := el.(map[string]any)
 		if !ok {
@@ -50,7 +46,7 @@ func firstMarkdownContent(t *testing.T, card map[string]any) string {
 			}
 		}
 	}
-	t.Fatal("no markdown element in body")
+	t.Fatal("no markdown element in card")
 	return ""
 }
 
@@ -64,22 +60,27 @@ func mustMarshal(t *testing.T, v any) []byte {
 }
 
 // actionButtons collects all {"tag":"button"} elements anywhere under
-// body.elements, including buttons nested inside a form container. Returns
-// nil when no buttons exist.
+// card elements (including buttons nested inside action/form containers).
+// Returns nil when no buttons exist.
 func actionButtons(t *testing.T, card map[string]any) []any {
 	t.Helper()
-	body, ok := card["body"].(map[string]any)
-	if !ok {
-		t.Fatal("missing body")
-	}
 	var buttons []any
-	collectButtons(body, &buttons)
+	collectButtons(card, &buttons)
 	return buttons
 }
 
 // collectButtons recursively walks node["elements"] collecting buttons,
-// recursing into containers (form/column/...) that hold their own elements.
+// recursing into containers (action/form/column/...) that hold their own
+// elements or actions.
 func collectButtons(node map[string]any, out *[]any) {
+	// action container carries buttons in "actions" (schema 1.0 layout).
+	if acts, _ := node["actions"].([]any); acts != nil {
+		for _, a := range acts {
+			if btn, ok := a.(map[string]any); ok && btn["tag"] == "button" {
+				*out = append(*out, btn)
+			}
+		}
+	}
 	elements, _ := node["elements"].([]any)
 	for _, el := range elements {
 		elem, ok := el.(map[string]any)
@@ -101,8 +102,7 @@ func TestProgressRender(t *testing.T) {
 	s.AddProgress()
 	b, err := s.Render(hdr(), ftr())
 	card := parse(t, b, err)
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
+	elements := card["elements"].([]any)
 	all := string(mustMarshal(t, elements))
 	// "Bash" (name) and "ls" (desc) show; the completed tool's output
 	// "file.txt" does NOT — the progress card shows actions, not output.
@@ -132,9 +132,8 @@ func TestResultRender(t *testing.T) {
 	if !strings.Contains(title["content"].(string), "已完成") {
 		t.Errorf("title = %v, want 已完成", title["content"])
 	}
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
-	md := string(mustMarshal(t, elements))
+	body := card["elements"].([]any)
+	md := string(mustMarshal(t, body))
 	if !strings.Contains(md, "done") || !strings.Contains(md, "42 tokens") {
 		t.Errorf("result body missing text/stats: %s", md)
 	}
@@ -180,8 +179,7 @@ func TestQuestionRender(t *testing.T) {
 	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r2", Questions: []protocol.QuestionItem{{Label: "pick", Options: []string{"a", "b"}, Multiple: true, Custom: true}}}}
 	b, err := RenderQuestion(ctrl, hdr(), ftr())
 	card := parse(t, b, err)
-	body := card["body"].(map[string]any)
-	elements := body["elements"].([]any)
+	elements := card["elements"].([]any)
 	all := string(mustMarshal(t, elements))
 	if !strings.Contains(all, "multi_select_static") {
 		t.Errorf("question missing multi-select: %s", all)

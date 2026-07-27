@@ -196,8 +196,13 @@ func fallbackCardJSON() []byte {
 	// Built via json.Marshal rather than string concatenation so fallbackText
 	// is properly escaped if it ever grows to contain a quote or backslash
 	// (string concat would produce invalid JSON and break the Patch).
+	// Schema 1.0 + top-level elements matches cardkit.Card's layout so a
+	// fallback patch is the same shape as the original card.
 	card := struct {
 		Schema string `json:"schema"`
+		Config struct {
+			UpdateMulti bool `json:"update_multi"`
+		} `json:"config"`
 		Header struct {
 			Title struct {
 				Tag     string `json:"tag"`
@@ -205,19 +210,18 @@ func fallbackCardJSON() []byte {
 			} `json:"title"`
 			Template string `json:"template"`
 		} `json:"header"`
-		Body struct {
-			Elements []struct {
-				Tag     string `json:"tag"`
-				Content string `json:"content"`
-			} `json:"elements"`
-		} `json:"body"`
+		Elements []struct {
+			Tag     string `json:"tag"`
+			Content string `json:"content"`
+		} `json:"elements"`
 	}{
-		Schema: "2.0",
+		Schema: "1.0",
 	}
+	card.Config.UpdateMulti = true
 	card.Header.Title.Tag = "plain_text"
 	card.Header.Title.Content = "消息过长"
 	card.Header.Template = "grey"
-	card.Body.Elements = []struct {
+	card.Elements = []struct {
 		Tag     string `json:"tag"`
 		Content string `json:"content"`
 	}{{Tag: "markdown", Content: fallbackText}}

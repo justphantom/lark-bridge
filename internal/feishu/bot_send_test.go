@@ -174,23 +174,27 @@ func TestFallbackCardJSON_Valid(t *testing.T) {
 	b := fallbackCardJSON()
 	var got struct {
 		Schema string `json:"schema"`
-		Body   struct {
-			Elements []struct {
-				Tag     string `json:"tag"`
-				Content string `json:"content"`
-			} `json:"elements"`
-		} `json:"body"`
+		Config struct {
+			UpdateMulti bool `json:"update_multi"`
+		} `json:"config"`
+		Elements []struct {
+			Tag     string `json:"tag"`
+			Content string `json:"content"`
+		} `json:"elements"`
 	}
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("fallbackCardJSON produced invalid JSON: %v\n%s", err, b)
 	}
-	if got.Schema != "2.0" {
-		t.Errorf("schema = %q, want 2.0", got.Schema)
+	if got.Schema != "1.0" {
+		t.Errorf("schema = %q, want 1.0", got.Schema)
 	}
-	if len(got.Body.Elements) != 1 {
-		t.Fatalf("elements len = %d, want 1", len(got.Body.Elements))
+	if !got.Config.UpdateMulti {
+		t.Errorf("update_multi = false, want true")
 	}
-	el := got.Body.Elements[0]
+	if len(got.Elements) != 1 {
+		t.Fatalf("elements len = %d, want 1", len(got.Elements))
+	}
+	el := got.Elements[0]
 	if el.Tag != "markdown" {
 		t.Errorf("element tag = %q, want markdown", el.Tag)
 	}
