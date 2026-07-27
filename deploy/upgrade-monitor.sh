@@ -122,6 +122,30 @@ WantedBy=multi-user.target
 EOF
 }
 
+# ── 配置迁移：清理已部署 config 里残留的、代码侧已移除的字段 ──
+# DisallowUnknownFields 模式下，未知字段会让 monitor 反复 crash。init 路径
+# 从最新 config.example.json 派生，不会撞坑；但已部署的 /etc config 不会自动
+# 同步。升级路径在替换二进制前先迁移，避免每次升级都要人工编辑 config。
+#
+# 缩进约定与 init 路径一致：base 是 2 空格缩进、块闭合行 ^  }, 独占。
+# removed_blocks 增量维护：新增迁移目标在此追加。
+migrate_config() {
+    local cfg="$CONFIG_DIR/$CONFIG_NAME"
+    [[ -f "$cfg" ]] || return 0
+
+    local removed_blocks=("opencode_serve")
+    for block in "${removed_blocks[@]}"; do
+        sudo grep -q "^  \"$block\":" "$cfg" || continue
+        info "迁移：删除残留字段 $block"
+        sudo sed -i '/^  "'"$block"'":/,/^  },/d' "$cfg"
+        if sudo grep -q "\"$block\":" "$cfg"; then
+            fail "清理 $block 失败：$cfg 缩进可能不符 2 空格约定，请手工编辑后重跑"
+        fi
+        sudo chmod 600 "$cfg"
+        sudo chown "$RUN_USER":"$RUN_USER" "$cfg"
+    done
+}
+
 # ── 升级：替换二进制 + restart ────────────────────────
 upgrade_monitor() {
     # 前置检查：unit + config 必须已存在（否则提示先 --init）
@@ -132,6 +156,9 @@ upgrade_monitor() {
         || fail "$CONFIG_DIR/$CONFIG_NAME 不存在。首次部署请用：$0 --init"
 
     build_monitor
+
+    # 替换二进制前先迁移 config：迁移失败则 fail 退出，二进制和服务都不动。
+    migrate_config
 
     info "替换二进制（原子 rename）..."
     sudo cp "$BIN_DIR/$UNIT_NAME" "$DEPLOY_DIR/.${UNIT_NAME}.new"
