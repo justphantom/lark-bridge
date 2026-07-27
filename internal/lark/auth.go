@@ -33,6 +33,15 @@ type tokenManager struct {
 	mu       sync.Mutex
 	cached   string
 	expireAt time.Time
+
+	// inflight serialises refresh attempts WITHOUT holding mu across the HTTP
+	// call: the first caller that misses the cache does the fetch and closes
+	// the shared result channel; concurrent followers wait on it instead of
+	// each blocking on mu for the full 30s http.Client.Timeout. The single-
+	// flight result is stashed in inflightRes / inflightErr before reset.
+	inflight    chan struct{}
+	inflightTok string
+	inflightErr error
 }
 
 // tokenResponse is the body of POST /auth/v3/tenant_access_token/internal.
@@ -44,19 +53,53 @@ type tokenResponse struct {
 }
 
 // Token returns a non-expired tenant_access_token, refreshing on demand.
-// Concurrent callers serialise on mu so only one refresh runs at a time.
+// The cache check is short-locked; a refresh miss spawns the fetch under a
+// single-flight gate (inflight chan) so concurrent callers share one HTTP
+// request rather than each waiting mu for the full 30s client timeout.
 func (t *tokenManager) Token(ctx context.Context) (string, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.cached != "" && time.Now().Add(tokenRefreshLead).Before(t.expireAt) {
-		return t.cached, nil
+		tok := t.cached
+		t.mu.Unlock()
+		return tok, nil
 	}
+	// A refresh is already in flight: wait on its result, do not start another.
+	if t.inflight != nil {
+		ch := t.inflight
+		t.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.inflightErr != nil {
+			return "", t.inflightErr
+		}
+		return t.inflightTok, nil
+	}
+	// Leader: open the gate, then release mu for the duration of fetch.
+	t.inflight = make(chan struct{})
+	t.mu.Unlock()
+
 	resp, err := t.fetch(ctx)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.inflightTok = ""
+	t.inflightErr = nil
 	if err != nil {
+		t.inflightErr = err
+		close(t.inflight)
+		t.inflight = nil
 		return "", err
 	}
 	t.cached = resp.TenantAccessToken
 	t.expireAt = time.Now().Add(time.Duration(resp.Expire) * time.Second)
+	t.inflightTok = t.cached
+	close(t.inflight)
+	t.inflight = nil
 	return t.cached, nil
 }
 

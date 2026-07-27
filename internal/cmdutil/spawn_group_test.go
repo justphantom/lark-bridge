@@ -50,10 +50,28 @@ func TestApplyGroupCancel_KillsGrandchildren(t *testing.T) {
 		t.Fatal("Wait did not return within 5s of cancel; grandchild kept pipe open")
 	}
 
-	// The whole process group must be gone: signal 0 probes "exists".
-	if err := syscall.Kill(-pgid, 0); err == nil {
-		t.Fatal("process group still alive after Wait returned")
+	// The whole process group must be gone. cmd.Wait returning only reaps the
+	// main process; a SIGKILL'd grandchild briefly lingers as a zombie that
+	// still occupies its PID slot until init reaps it asynchronously, so a
+	// single kill(-pgid, 0) probe races that window and flakes. Poll until
+	// the group is really gone (or the bound elapses).
+	if !waitForGroupGone(pgid, 2*time.Second) {
+		t.Fatal("process group still alive 2s after Wait returned")
 	}
+}
+
+// waitForGroupGone polls kill(-pgid, 0) until it returns an error (ESRCH /
+// EPERM) meaning no process in the group is left, or timeout elapses. Used
+// instead of a one-shot probe to absorb the zombie-reap race.
+func waitForGroupGone(pgid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(-pgid, 0); err != nil {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return syscall.Kill(-pgid, 0) != nil
 }
 
 // TestApplyGroupCancel_CancelBeforeStart verifies Cancel returns

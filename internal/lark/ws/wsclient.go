@@ -143,7 +143,13 @@ func (c *Client) Start(ctx context.Context) error {
 			c.fireReady()
 			reconnects = 0 // healthy session resets the per-session budget
 			c.runSession(ctx, conn)
-			c.fireDisconnected()
+			// Only surface OnDisconnected when the connection actually broke.
+			// A ctx cancellation (graceful Stop) is an intentional close, not
+			// a flap — firing OnDisconnected there would mislead the watchdog
+			// and the OnBackendOnline recovery path.
+			if ctx.Err() == nil {
+				c.fireDisconnected()
+			}
 		}
 		if !c.reconnectStep(ctx, &reconnects) {
 			return ctx.Err()

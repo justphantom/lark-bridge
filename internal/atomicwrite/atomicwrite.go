@@ -30,7 +30,7 @@ import (
 // guarantees can layer their own check on top.
 func Write(path string, data []byte, mode os.FileMode) (retErr error) {
 	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	f, err := os.OpenFile(tmp, createFlags, mode)
 	if err != nil {
 		return err
 	}

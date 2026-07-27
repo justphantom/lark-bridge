@@ -239,18 +239,24 @@ func (c *Conn) readFrame() (op int, payload []byte, fin bool, err error) {
 // WriteMessage writes a single data message (final, masked). opcode is one of
 // OpcodeText / OpcodeBinary. Fragmentation is not needed by lark-bridge: the
 // largest outbound payload is a ping frame (empty) or an ACK (small JSON).
+//
+// closeMu is held across the closeSent check AND the write so that Close
+// cannot slip in between them, send its close frame, and tear down the conn
+// — leaving this write to land on a closed socket in violation of RFC 6455
+// §5.5 ("data frames must not be sent after closing"). Lock order is
+// closeMu → writeMu, the same order Close uses, so no deadlock.
 func (c *Conn) WriteMessage(opcode int, data []byte) error {
 	c.closeMu.Lock()
-	sent := c.closeSent
-	c.closeMu.Unlock()
-	if sent {
+	defer c.closeMu.Unlock()
+	if c.closeSent {
 		return ErrCloseSent
 	}
-	return c.writeData(opcode, data, true)
+	return c.writeDataLocked(opcode, data, true)
 }
 
-// writeData frames + masks a data frame. final controls the FIN bit.
-func (c *Conn) writeData(opcode int, data []byte, final bool) error {
+// writeDataLocked frames + masks a data frame; caller holds closeMu AND
+// writeMu.
+func (c *Conn) writeDataLocked(opcode int, data []byte, final bool) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	return c.writeFrameLocked(opcode, data, final, true)

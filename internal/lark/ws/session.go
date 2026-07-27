@@ -11,34 +11,66 @@ import (
 	"github.com/justphantom/lark-bridge/internal/lark/websocket"
 )
 
-// runSession drives the receive and ping loops for one connection. Blocks
-// until the conn breaks (read error / close) or ctx is done, then closes the
-// conn so both loops unblock and return.
+// runSession drives the receive, ping and chunk-sweep loops for one
+// connection. It blocks until EITHER a loop exits (conn broken / read
+// deadline fired) OR ctx is done, then force-closes the conn so the other
+// loops unblock and WaitGroup confirms every goroutine has returned before
+// runSession itself returns — no orphan goroutines accumulate across
+// reconnects. The reassembler is owned here (not in receiveLoop) so the
+// sweep loop can run independently of frame arrival (a silent peer would
+// otherwise leave partial chunks in memory until the next frame).
 func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	done := make(chan struct{})
+	reassembly := newReassembler()
+	sweepTicker := time.NewTicker(chunkTTL)
+	defer sweepTicker.Stop()
+
+	var wg sync.WaitGroup
+	firstExit := make(chan struct{})
 	var once sync.Once
-	finish := func() { once.Do(func() { close(done) }) }
+	signal := func() { once.Do(func() { close(firstExit) }) }
+
+	wg.Add(3)
 	go func() {
-		defer finish()
-		c.receiveLoop(ctx, conn)
+		defer wg.Done()
+		defer signal()
+		c.receiveLoop(ctx, conn, reassembly)
 	}()
 	go func() {
-		defer finish()
+		defer wg.Done()
+		defer signal()
 		c.pingLoop(ctx, conn)
 	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sweepTicker.C:
+				reassembly.sweep(chunkTTL)
+			}
+		}
+	}()
+
+	exitCh := make(chan struct{})
+	go func() { wg.Wait(); close(exitCh) }()
 	select {
-	case <-done:
+	case <-firstExit: // a loop exited → conn is broken or being torn down
 	case <-ctx.Done():
 	}
+	// Force-close so the other loops reading on this conn unblock, then wait
+	// for ALL three to return. Without the WaitGroup the surviving loops
+	// would outlive runSession as short-lived orphans piling up per reconnect.
 	_ = conn.Close()
-	<-done
+	<-exitCh
 }
 
 // receiveLoop reads frames until the conn errors or ctx is done. Each inbound
-// data frame is reassembled, routed, and ACK'd; each pong refreshes the config.
+// data frame is reassembled via the session-owned reassembler, routed, and
+// ACK'd; each pong refreshes the config.
 //
 // A read deadline is reset after every successfully read frame to 2× the
 // configured ping interval. The lark server replies to each ping with a pong
@@ -48,11 +80,8 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 // Without this the original SDK's gorilla SetReadDeadline analogue is gone and
 // a silent death would otherwise only surface via the 5-minute frontend
 // watchdog, dropping every event in between.
-func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn) {
-	reassembly := newReassembler()
+func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn, reassembly *reassembler) {
 	rt := &router{sink: c.snapshotSink()}
-	sweepTicker := time.NewTicker(chunkTTL)
-	defer sweepTicker.Stop()
 	c.refreshReadDeadline(conn)
 	for {
 		if ctx.Err() != nil {
@@ -78,11 +107,6 @@ func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn) {
 			c.handleControl(frame)
 		case MethodData:
 			c.handleData(ctx, frame, reassembly, rt, conn)
-		}
-		select {
-		case <-sweepTicker.C:
-			reassembly.sweep(chunkTTL)
-		default:
 		}
 	}
 }
@@ -177,31 +201,32 @@ func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int) {
 	}
 }
 
-// pingLoop sends a protobuf ping frame every PingInterval. A write error ends
-// the session (the receive loop will also surface the broken conn).
+// pingLoop sends a protobuf ping frame every PingInterval. The interval is
+// re-read on every tick (not latched at start) so a server-driven cadence
+// change delivered via a pong payload's ClientConfig takes effect without
+// reconnecting. A write error ends the session (the receive loop will also
+// surface the broken conn).
 func (c *Client) pingLoop(ctx context.Context, conn *websocket.Conn) {
-	c.mu.Lock()
-	interval := c.cfg.PingInterval
-	serviceID := c.serviceID
-	c.mu.Unlock()
-	if interval <= 0 {
-		interval = 90 * time.Second
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
+		c.mu.Lock()
+		interval := c.cfg.PingInterval
+		serviceID := c.serviceID
+		c.mu.Unlock()
+		if interval <= 0 {
+			interval = 90 * time.Second
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			frame := NewPingFrame(serviceID)
-			bs, err := frame.Marshal()
-			if err != nil {
-				continue
-			}
-			if err := conn.WriteMessage(websocket.OpcodeBinary, bs); err != nil {
-				return
-			}
+		case <-time.After(interval):
+		}
+		frame := NewPingFrame(serviceID)
+		bs, err := frame.Marshal()
+		if err != nil {
+			continue
+		}
+		if err := conn.WriteMessage(websocket.OpcodeBinary, bs); err != nil {
+			return
 		}
 	}
 }
