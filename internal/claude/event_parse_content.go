@@ -40,7 +40,12 @@ func parseContentBlocks(lineType, sessionID string, msgRaw json.RawMessage, rawL
 		case "text":
 			ev.Type = EventText
 			ev.Text = b.Text
-		case "tool_use":
+		// server_tool_use is a server-side tool invocation (e.g. webReader)
+		// carrying the same id/name/input shape as tool_use. Mapping it to
+		// EventToolUse lets the bridge record the id→name pair so the
+		// matching tool_result (echoed in an assistant message, not user)
+		// renders with the tool name instead of an empty row.
+		case "tool_use", "server_tool_use":
 			ev.Type = EventToolUse
 			ev.ToolID = b.ID
 			ev.ToolName = b.Name

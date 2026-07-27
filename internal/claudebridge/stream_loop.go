@@ -35,6 +35,12 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// unparseable path falls back to a standalone TypeToolResult — the
 		// renderer renders a no-prior-row result as its own row.
 		todoInputs = map[string]string{}
+
+		// taskKinds caches task_id→task_kind from task_started. Claude drops
+		// task_type on task_progress/task_notification lines, so without this
+		// the row name flips from "Shell" (local_bash at started) to "Agent"
+		// (kind missing at notification), breaking the row's visual continuity.
+		taskKinds = map[string]string{}
 	)
 
 	for ev := range events {
@@ -92,6 +98,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				})
 			}
 		case claude.EventTaskStarted:
+			// Cache task_kind by id: task_progress/task_notification drop
+			// task_type, so without this the row name flips on close.
+			if ev.TaskKind != "" && ev.TaskID != "" {
+				taskKinds[ev.TaskID] = ev.TaskKind
+			}
 			// A subagent (Task/Agent tool) spawned. Surface it as a fresh
 			// running tool row named after the subagent type. TaskID lets the
 			// frontend fold this row with its later progress/notification even
@@ -103,19 +114,27 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case claude.EventTaskProgress:
 			// Live subagent progress: re-emit as a ToolUse so the existing
 			// same-TaskID row updates its description while staying running.
+			kind := ev.TaskKind
+			if kind == "" {
+				kind = taskKinds[ev.TaskID]
+			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, ev.TaskKind), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.TaskID},
+				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, kind), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.TaskID},
 			})
 		case claude.EventTaskNotification:
 			// Subagent finished: close the running row by TaskID. The terminal
 			// summary (title + cumulative usage) rides on Input so it lands in
 			// the tool-row description; the progress card shows actions, not
 			// tool output, so Output is left empty.
+			kind := ev.TaskKind
+			if kind == "" {
+				kind = taskKinds[ev.TaskID]
+			}
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
-					Name:       taskToolName(ev.TaskType, ev.TaskKind),
+					Name:       taskToolName(ev.TaskType, kind),
 					Input:      taskProgressDesc(ev),
 					IsError:    ev.IsToolError,
 					IsSubagent: true,

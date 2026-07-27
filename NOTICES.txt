@@ -22,6 +22,11 @@ silently revert them):
   manual kill goroutine in stream.go was removed (ApplyGroupCancel's Cancel
   closure supersedes it). Fixes a `cmd.Wait()` hang when a tool grandchild
   escapes the SIGKILL but keeps holding the stdout pipe. To be proposed upstream.
+- `event_parse_content.go`: the content-block switch now maps `server_tool_use`
+  (server-side tools like webReader, same id/name/input shape as `tool_use`) to
+  `EventToolUse` instead of dropping it via the default branch. Without this the
+  tool call is invisible and the matching `tool_result` (echoed in an assistant
+  message) renders as an empty-name row. To be proposed upstream.
 
 Upstream fix / feature merges: diff against the pinned commit and apply
 manually; bump this notice's "Pinned upstream commit" line when syncing.

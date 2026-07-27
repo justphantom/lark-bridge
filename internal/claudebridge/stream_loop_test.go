@@ -432,3 +432,120 @@ func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
 			sawBashUse, sawBashResult, len(controls), controlTypes(controls))
 	}
 }
+
+// TestStreamRun_ServerToolUseResultCarriesName locks in server-side tool
+// surfacing: a server-side tool (e.g. webReader) emits a server_tool_use block
+// (name+id) followed by a tool_result block echoed inside an assistant message
+// (id only). The ToolResult Control must carry the tool name so the progress
+// card shows the call — without parser (server_tool_use→EventToolUse) + bridge
+// (toolNames id→name correlation) cooperation, the use is dropped and the
+// result renders as an empty-name row.
+func TestStreamRun_ServerToolUseResultCarriesName(t *testing.T) {
+	// Real shape from a glm-5.2 webReader turn: both server_tool_use and its
+	// matching tool_result arrive in assistant messages (not user).
+	useEvents, err := claude.ParseEvent(`{"type":"assistant","session_id":"s1","message":{"role":"assistant","content":[{"type":"server_tool_use","id":"call_web1","name":"webReader","input":{}}]}}`)
+	if err != nil {
+		t.Fatalf("parse server_tool_use: %v", err)
+	}
+	resultEvents, err := claude.ParseEvent(`{"type":"assistant","session_id":"s1","message":{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"call_web1","content":[{"type":"text","text":"# Page Title"}]}]}}`)
+	if err != nil {
+		t.Fatalf("parse tool_result: %v", err)
+	}
+	termEvents, err := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	events := append(append(append([]claude.Event{}, useEvents...), resultEvents...), termEvents...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-srv", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-srv",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-srv", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawUse, sawResult bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeToolUse && c.ToolUse.Name == "webReader" {
+			sawUse = true
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "webReader" {
+			sawResult = true
+			if !strings.Contains(c.ToolResult.Output, "# Page Title") {
+				t.Errorf("ToolResult Output = %q, want contains '# Page Title'", c.ToolResult.Output)
+			}
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.Name == "" {
+			t.Errorf("empty-name ToolResult row: server_tool_use was not correlated (regression)")
+		}
+	}
+	if !sawUse {
+		t.Errorf("missed webReader TypeToolUse (server_tool_use dropped); got %d controls: %v",
+			len(controls), controlTypes(controls))
+	}
+	if !sawResult {
+		t.Fatalf("missed webReader TypeToolResult; got %d controls: %v",
+			len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_TaskKindStableAcrossLifecycle locks in the task_kind cache:
+// task_started carries task_type:"local_bash" (renders "Shell") but
+// task_notification drops task_type entirely. Without caching the kind from
+// task_started, the row name flips from "Shell" at start to "Agent" at close.
+func TestStreamRun_TaskKindStableAcrossLifecycle(t *testing.T) {
+	// Real shape from captured streams: notification line lacks task_type.
+	started, _ := claude.ParseEvent(`{"type":"system","subtype":"task_started","task_id":"t-sh","tool_use_id":"tu_1","description":"Build the project to find compile errors","task_type":"local_bash","session_id":"s1"}`)
+	notify, _ := claude.ParseEvent(`{"type":"system","subtype":"task_notification","task_id":"t-sh","tool_use_id":"tu_1","status":"completed","output_file":"","summary":"Build the project to find compile errors","session_id":"s1"}`)
+	term, _ := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	events := append(append(append([]claude.Event{}, started...), notify...), term...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-shell", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-shell",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-shell", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawStart, sawClose bool
+	for _, c := range controls {
+		if c.Type == protocol.TypeToolUse && c.ToolUse.TaskID == "t-sh" {
+			sawStart = true
+			if c.ToolUse.Name != "Shell" {
+				t.Errorf("started Name = %q, want Shell", c.ToolUse.Name)
+			}
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.TaskID == "t-sh" {
+			sawClose = true
+			if c.ToolResult.Name != "Shell" {
+				t.Errorf("notification Name = %q, want Shell (task_kind leaked: regression)", c.ToolResult.Name)
+			}
+		}
+	}
+	if !sawStart || !sawClose {
+		t.Fatalf("missed subagent controls: start=%v close=%v (got %d controls: %v)",
+			sawStart, sawClose, len(controls), controlTypes(controls))
+	}
+}
