@@ -194,16 +194,18 @@ type frameWriter interface {
 
 // writeAck builds and sends the ACK frame. ackCode is the transport-level
 // status (200/500). businessResponse, when non-nil, is a JSON object carrying
-// the card.action.trigger business payload (toast/card) — it is placed under
-// the ACK's "data" field so Feishu applies it client-side instead of rolling
-// back to the pre-click state (Feishu treats {code:200} with no business
-// payload as an invalid card-action response and reverts within ~3s).
+// the card.action.trigger business payload (toast/card). Feishu expects these
+// fields at the TOP LEVEL of the ACK body (same shape as the webhook response
+// body), not nested under "data" — wrapping caused 300000 internal errors.
+// The "code" field is kept alongside so the transport ACK stays well-formed.
 func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int, businessResponse []byte) {
 	payload := map[string]any{"code": ackCode}
 	if len(businessResponse) > 0 {
 		var br map[string]any
 		if json.Unmarshal(businessResponse, &br) == nil {
-			payload["data"] = br
+			for k, v := range br {
+				payload[k] = v
+			}
 		}
 	}
 	payloadBytes, _ := json.Marshal(payload)
