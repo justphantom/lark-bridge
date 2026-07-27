@@ -98,10 +98,11 @@ type controlRule struct {
 // comment and the validator in one place. Empty Priority is valid (omitempty
 // field), so it is checked as "either empty or in the set" rather than in.
 var (
-	validTodoStatuses   = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
-	validTodoPriorities = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
-	validNoticeLevels   = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
-	validGateStates     = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
+	validTodoStatuses     = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
+	validTodoPriorities   = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
+	validNoticeLevels     = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
+	validGateStates       = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
+	validSubagentStatuses = map[string]struct{}{"running": {}, "completed": {}, "failed": {}}
 )
 
 // validateTodo enumerates each Todo's Status and Priority against the enum
@@ -157,6 +158,31 @@ func validateProgress(c *Control) error {
 	return nil
 }
 
+// validateSubagentStatus pins SubagentSummary.Status (on either ToolUse or
+// ToolResult) to the renderer's known set. The renderer's zone logic keys on
+// this value to pick the row icon and the folded-summary counter bucket, so a
+// typo here would mis-bucket the row rather than fail visibly. Nil Subagent
+// (legacy leaf-tool row) is always valid.
+func validateSubagentStatus(s *SubagentSummary) error {
+	if s == nil {
+		return nil
+	}
+	if _, ok := validSubagentStatuses[s.Status]; !ok {
+		return fmt.Errorf("subagent.status %q must be one of running/completed/failed", s.Status)
+	}
+	return nil
+}
+
+// validateToolUseSubagent wires validateSubagentStatus into the ToolUse rule.
+func validateToolUseSubagent(c *Control) error {
+	return validateSubagentStatus(c.ToolUse.Subagent)
+}
+
+// validateToolResultSubagent wires validateSubagentStatus into the ToolResult rule.
+func validateToolResultSubagent(c *Control) error {
+	return validateSubagentStatus(c.ToolResult.Subagent)
+}
+
 // controlRules maps every allowed control type to its validation rule.
 // Keeping the table next to the validator makes the requirements explicit
 // and avoids the long switch that was previously needed.
@@ -164,8 +190,8 @@ var controlRules = map[string]controlRule{
 	TypeSessionInit:  {payloadIsNil: func(c *Control) bool { return c.SessionInit == nil }, payloadName: "sessionInit"},
 	TypeText:         {payloadIsNil: func(c *Control) bool { return c.Text == nil }, payloadName: "text"},
 	TypeThinking:     {payloadIsNil: func(c *Control) bool { return c.Thinking == nil }, payloadName: "thinking"},
-	TypeToolUse:      {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse"},
-	TypeToolResult:   {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
+	TypeToolUse:      {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse", extraCheck: validateToolUseSubagent},
+	TypeToolResult:   {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult", extraCheck: validateToolResultSubagent},
 	TypeResult:       {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
 	TypeError:        {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
 	TypeProgress:     {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress", extraCheck: validateProgress},

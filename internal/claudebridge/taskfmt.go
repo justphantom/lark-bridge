@@ -1,12 +1,50 @@
 package claudebridge
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/claude"
 )
+
+// isLocalAgentKind reports whether kind is claude's true AI subagent class.
+// local_bash (background shell wrapped as a task) returns false so the
+// renderer keeps it as a leaf Bash row; only local_agent gets the dedicated
+// subagent zone (see docs/subagent-rendering-design.md §6.4).
+func isLocalAgentKind(kind string) bool { return kind == "local_agent" }
+
+// extractTaskLastToolName parses last_tool_name from a task_progress system
+// line's raw JSON. The vendored claude SDK (internal/claude, read-only) does
+// not surface this field on Event — only the usage triple — so the bridge
+// decodes it from Event.Raw, which is explicitly retained "for parsing
+// sub-fields by the caller". Returns "" for non-progress lines or absent
+// fields; the renderer omits an empty LastToolName segment.
+func extractTaskLastToolName(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var v struct {
+		LastToolName string `json:"last_tool_name"`
+	}
+	if json.Unmarshal([]byte(raw), &v) != nil {
+		return ""
+	}
+	return v.LastToolName
+}
+
+// taskRunningMeta caches the latest task_progress fields per task_id so
+// task_notification can carry the final cumulative usage/tool even though
+// claude's notification line itself drops usage. Zero value is valid (a
+// subagent that never sent progress).
+type taskRunningMeta struct {
+	desc        string
+	toolUses    int
+	durationMs  int64
+	totalTokens int
+	lastTool    string
+}
 
 // taskToolName renders the subagent as a tool-row name. taskKind discriminates
 // upstream's task classes: "local_bash" is a Bash subprocess (rendered "Shell",

@@ -41,6 +41,17 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// the row name flips from "Shell" (local_bash at started) to "Agent"
 		// (kind missing at notification), breaking the row's visual continuity.
 		taskKinds = map[string]string{}
+
+		// taskTitles caches task_id→title from task_started so the terminal
+		// notification (whose desc is the summary, not the title) can still
+		// render the stable title in the subagent zone. local_agent only.
+		taskTitles = map[string]string{}
+
+		// taskRunning caches task_id→latest progress meta so the terminal
+		// notification (which drops usage) can still report the final
+		// cumulative tool_uses / duration / tokens in the subagent zone.
+		// local_agent only.
+		taskRunning = map[string]taskRunningMeta{}
 	)
 
 	for ev := range events {
@@ -103,34 +114,145 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			if ev.TaskKind != "" && ev.TaskID != "" {
 				taskKinds[ev.TaskID] = ev.TaskKind
 			}
-			// A subagent (Task/Agent tool) spawned. Surface it as a fresh
-			// running tool row named after the subagent type. TaskID lets the
-			// frontend fold this row with its later progress/notification even
-			// though name/desc drift across the lifecycle.
+			if ev.TaskID != "" && ev.TaskDesc != "" {
+				taskTitles[ev.TaskID] = ev.TaskDesc
+			}
+			kind := ev.TaskKind
+			// local_agent (true AI subagent) routes to the dedicated subagent
+			// zone via SubagentSummary; local_bash keeps the legacy leaf row.
+			if isLocalAgentKind(kind) {
+				h.emitAsync(promptID, &protocol.Control{
+					Type: protocol.TypeToolUse,
+					ToolUse: &protocol.ToolUsePayload{
+						Name:       taskToolName(ev.TaskType, kind),
+						Input:      ev.TaskDesc,
+						IsSubagent: true,
+						TaskID:     ev.TaskID,
+						Subagent: &protocol.SubagentSummary{
+							Status:       "running",
+							TaskType:     kind,
+							Type:         ev.TaskType,
+							Title:        ev.TaskDesc,
+							ChildSession: ev.TaskID,
+						},
+					},
+				})
+				break
+			}
+			// local_bash (or legacy missing kind): leaf-tool row, unchanged.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
-				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, ev.TaskKind), Input: ev.TaskDesc, IsSubagent: true, TaskID: ev.TaskID},
+				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, kind), Input: ev.TaskDesc, IsSubagent: true, TaskID: ev.TaskID},
 			})
 		case claude.EventTaskProgress:
-			// Live subagent progress: re-emit as a ToolUse so the existing
-			// same-TaskID row updates its description while staying running.
+			// Live subagent progress. Cache the cumulative usage so the
+			// terminal notification can still report final stats.
 			kind := ev.TaskKind
 			if kind == "" {
 				kind = taskKinds[ev.TaskID]
 			}
+			lastTool := extractTaskLastToolName(ev.Raw)
+			if ev.TaskID != "" && isLocalAgentKind(kind) {
+				taskRunning[ev.TaskID] = taskRunningMeta{
+					desc:        ev.TaskDesc,
+					toolUses:    ev.TaskSteps,
+					durationMs:  ev.TaskMs,
+					totalTokens: ev.TaskTokens,
+					lastTool:    lastTool,
+				}
+				// True AI subagent: progressive update carries the live
+				// description + cumulative usage so the subagent zone can
+				// scroll the current action ("正在 Read internal/...").
+				h.emitAsync(promptID, &protocol.Control{
+					Type: protocol.TypeToolUse,
+					ToolUse: &protocol.ToolUsePayload{
+						Name:       taskToolName(ev.TaskType, kind),
+						Input:      taskProgressDesc(ev),
+						IsSubagent: true,
+						TaskID:     ev.TaskID,
+						Subagent: &protocol.SubagentSummary{
+							Status:       "running",
+							TaskType:     kind,
+							Type:         ev.TaskType,
+							Title:        taskTitles[ev.TaskID],
+							Description:  ev.TaskDesc,
+							ChildSession: ev.TaskID,
+							DurationMs:   ev.TaskMs,
+							ToolUses:     ev.TaskSteps,
+							TotalTokens:  ev.TaskTokens,
+							LastToolName: lastTool,
+						},
+					},
+				})
+				break
+			}
+			// local_bash: re-emit as a ToolUse so the existing same-TaskID
+			// row updates its description while staying running.
 			h.emitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, kind), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.TaskID},
 			})
 		case claude.EventTaskNotification:
-			// Subagent finished: close the running row by TaskID. The terminal
-			// summary (title + cumulative usage) rides on Input so it lands in
-			// the tool-row description; the progress card shows actions, not
-			// tool output, so Output is left empty.
+			// Subagent finished: close the running row by TaskID. The
+			// terminal summary (title + cumulative usage) rides on Input so
+			// it lands in the tool-row description on the legacy path.
 			kind := ev.TaskKind
 			if kind == "" {
 				kind = taskKinds[ev.TaskID]
 			}
+			if ev.TaskID != "" && isLocalAgentKind(kind) {
+				// True AI subagent: terminal SubagentSummary carries the
+				// preview (from task_notification.summary, which claude
+				// inlines verbatim) plus the final cumulative usage. Newer
+				// CLI lines carry usage on the notification itself; when
+				// absent (the common case in real streams), fall back to
+				// the last task_progress's cached usage.
+				preview := ev.TaskDesc
+				meta := taskRunning[ev.TaskID]
+				toolUses := ev.TaskSteps
+				if toolUses == 0 {
+					toolUses = meta.toolUses
+				}
+				durationMs := ev.TaskMs
+				if durationMs == 0 {
+					durationMs = meta.durationMs
+				}
+				totalTokens := ev.TaskTokens
+				if totalTokens == 0 {
+					totalTokens = meta.totalTokens
+				}
+				status := "completed"
+				if ev.IsToolError {
+					status = "failed"
+				}
+				h.emitAsync(promptID, &protocol.Control{
+					Type: protocol.TypeToolResult,
+					ToolResult: &protocol.ToolResultPayload{
+						Name:       taskToolName(ev.TaskType, kind),
+						Input:      taskProgressDesc(ev),
+						IsError:    ev.IsToolError,
+						IsSubagent: true,
+						TaskID:     ev.TaskID,
+						Subagent: &protocol.SubagentSummary{
+							Status:       status,
+							TaskType:     kind,
+							Type:         ev.TaskType,
+							Title:        taskTitles[ev.TaskID],
+							ChildSession: ev.TaskID,
+							DurationMs:   durationMs,
+							ToolUses:     toolUses,
+							TotalTokens:  totalTokens,
+							LastToolName: meta.lastTool,
+							Preview:      preview,
+							OutputBytes:  len(preview),
+						},
+					},
+				})
+				delete(taskTitles, ev.TaskID)
+				delete(taskRunning, ev.TaskID)
+				break
+			}
+			// local_bash: leaf-tool row, unchanged.
 			h.emitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{

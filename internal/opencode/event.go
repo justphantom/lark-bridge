@@ -71,6 +71,35 @@ type Event struct {
 
 	// raw is retained for debug logging and forward-compat parsing.
 	raw string
+
+	// subagent carries the structured fields of a "task" tool event (the
+	// opencode subagent delegation), flattened from the part's state.input
+	// (subagent_type) / state.metadata (sessionId/model/truncated) /
+	// state.time (start/end). nil for non-task tools; the bridge converts
+	// a non-nil value to protocol.SubagentSummary.
+	subagent *SubagentMeta
+}
+
+// SubagentMeta carries the structured fields of a "task" tool event (the
+// opencode subagent delegation), flattened from the part's state.input /
+// state.metadata / state.time. Zero-value fields are valid (a subagent may
+// report no model, or duration when start/end were absent); the bridge maps
+// non-nil SubagentMeta to a protocol.SubagentSummary and lets the renderer
+// omit empty segments. Returned by GetSubagentMeta; nil for non-task tools.
+type SubagentMeta struct {
+	// Type is input.subagent_type ("explore" / "general" / ...).
+	Type string
+	// ChildSession is metadata.sessionId (the subagent's own session id).
+	ChildSession string
+	// Model is metadata.model.modelID. Empty when the CLI omitted it.
+	Model string
+	// DurationMs is time.end - time.start. Zero when either is absent.
+	DurationMs int64
+	// OutputBytes is the byte length of the unwrapped output (the inner
+	// text of <task_result>...</task_result>). Drives the "产出 NKB" hint.
+	OutputBytes int
+	// Truncated is metadata.truncated.
+	Truncated bool
 }
 
 // GetType returns the event discriminator (one of the Event* constants).
@@ -116,3 +145,9 @@ func (e Event) GetCacheWrite() int { return e.cacheWrite }
 
 // GetCost returns the USD cost reported by opencode for this turn.
 func (e Event) GetCost() float64 { return e.cost }
+
+// GetSubagentMeta returns the structured fields of a "task" tool event, or
+// nil when the event is not a tool result from the "task" tool. The bridge
+// converts a non-nil result to protocol.SubagentSummary for the renderer's
+// dedicated subagent zone.
+func (e Event) GetSubagentMeta() *SubagentMeta { return e.subagent }

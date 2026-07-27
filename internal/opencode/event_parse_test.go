@@ -542,3 +542,90 @@ func TestStringifyJSON(t *testing.T) {
 		t.Errorf("empty = %q", got)
 	}
 }
+
+// TestParseEvent_TaskSubagentMeta verifies the "task" tool (opencode's
+// subagent delegation) is parsed into SubagentMeta carrying the fields the
+// renderer's dedicated subagent zone needs: subagent_type from input, child
+// session + model from metadata, duration from time.start/end, and
+// OutputBytes measured on the unwrapped <task_result> body. Fixture mirrors
+// the real shape recorded in /var/lib/lark-bridge/streams/opencode (single
+// completed event; claude's three-stage task_* lifecycle does not apply).
+func TestParseEvent_TaskSubagentMeta(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"ses_parent","part":{"type":"tool","tool":"task","callID":"call_1","state":{"status":"completed","input":{"description":"探索代码规范","prompt":"请非常彻底地探索 ...","subagent_type":"explore"},"output":"<task id=\"ses_child\" state=\"completed\">\n<task_result>\n调研已全部完成。以下是报告正文。\n</task_result>\n</task>","metadata":{"parentSessionId":"ses_parent","sessionId":"ses_child","model":{"modelID":"glm-5.2","providerID":"zhipuai-coding-plan"},"truncated":false,"title":"探索代码规范"},"title":"探索代码规范","time":{"start":1785157807387,"end":1785158469900}},"id":"prt_1","sessionID":"ses_parent","messageID":"msg_1"}}`
+	got, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	res := got[0]
+	if res.GetToolName() != "task" {
+		t.Fatalf("toolName = %q, want task", res.GetToolName())
+	}
+	meta := res.GetSubagentMeta()
+	if meta == nil {
+		t.Fatal("SubagentMeta is nil for task tool")
+	}
+	if meta.Type != "explore" {
+		t.Errorf("Type = %q, want explore", meta.Type)
+	}
+	if meta.ChildSession != "ses_child" {
+		t.Errorf("ChildSession = %q, want ses_child", meta.ChildSession)
+	}
+	if meta.Model != "glm-5.2" {
+		t.Errorf("Model = %q, want glm-5.2", meta.Model)
+	}
+	wantDur := int64(1785158469900 - 1785157807387)
+	if meta.DurationMs != wantDur {
+		t.Errorf("DurationMs = %d, want %d", meta.DurationMs, wantDur)
+	}
+	// OutputBytes counts the unwrapped body, not the <task>/<task_result> tags.
+	if meta.OutputBytes != len("调研已全部完成。以下是报告正文。") {
+		t.Errorf("OutputBytes = %d, want %d", meta.OutputBytes, len("调研已全部完成。以下是报告正文。"))
+	}
+	if meta.Truncated != false {
+		t.Errorf("Truncated = %v, want false", meta.Truncated)
+	}
+	// title flows through toolInput (parser prefers part.title).
+	if !strings.Contains(res.GetToolInput(), "探索代码规范") {
+		t.Errorf("toolInput = %q, want title 探索代码规范", res.GetToolInput())
+	}
+}
+
+// TestUnwrapTaskResult covers the XML stripping: standard wrapper, missing
+// wrapper (passthrough), and malformed wrapper (passthrough rather than empty).
+func TestUnwrapTaskResult(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"standard", "<task id=\"x\" state=\"completed\">\n<task_result>\nbody text\n</task_result>\n</task>", "body text"},
+		{"no wrapper", "plain output", "plain output"},
+		{"open only", "<task_result>no close", "<task_result>no close"},
+		{"close before open", "</task_result><task_result>", "</task_result><task_result>"},
+		{"empty body", "<task_result></task_result>", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := UnwrapTaskResult(tc.in); got != tc.want {
+				t.Errorf("UnwrapTaskResult(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseEvent_NonTaskToolHasNoSubagentMeta verifies the SubagentMeta path
+// is task-only: a regular tool (read/bash/edit) leaves it nil so the renderer
+// keeps the leaf-tool-row rendering.
+func TestParseEvent_NonTaskToolHasNoSubagentMeta(t *testing.T) {
+	line := `{"type":"tool_use","sessionID":"s1","part":{"type":"tool","tool":"read","callID":"c1","state":{"status":"completed","input":{"filePath":"/a.go"},"output":"ok"}}}`
+	got, _ := parseEvent(line)
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	if got[0].GetSubagentMeta() != nil {
+		t.Errorf("SubagentMeta should be nil for non-task tool, got %+v", got[0].GetSubagentMeta())
+	}
+}

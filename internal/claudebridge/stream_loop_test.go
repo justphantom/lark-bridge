@@ -549,3 +549,137 @@ func TestStreamRun_TaskKindStableAcrossLifecycle(t *testing.T) {
 			sawStart, sawClose, len(controls), controlTypes(controls))
 	}
 }
+
+// TestStreamRun_LocalAgentRoutesToSubagentSummary verifies that a local_agent
+// subagent (true AI delegation) is surfaced via the dedicated SubagentSummary
+// channel rather than the legacy leaf-tool row. task_started opens a running
+// SubagentSummary carrying Type/Title/ChildSession; task_progress updates it
+// with the live Description + cumulative usage + last_tool_name; the terminal
+// task_notification carries the inlined summary as Preview. Fixture mirrors
+// the real local_agent stream recorded at 20260727T141549...jsonl.
+func TestStreamRun_LocalAgentRoutesToSubagentSummary(t *testing.T) {
+	started, _ := claude.ParseEvent(`{"type":"system","subtype":"task_started","task_id":"a31","tool_use_id":"tu_1","description":"调查飞书接口调用","subagent_type":"general-purpose","task_type":"local_agent","prompt":"x","session_id":"s1"}`)
+	progress, _ := claude.ParseEvent(`{"type":"system","subtype":"task_progress","task_id":"a31","tool_use_id":"tu_1","description":"Reading internal/lark/ws/frame.go","subagent_type":"general-purpose","usage":{"total_tokens":0,"tool_uses":14,"duration_ms":33203},"last_tool_name":"Read","session_id":"s1"}`)
+	notify, _ := claude.ParseEvent(`{"type":"system","subtype":"task_notification","task_id":"a31","tool_use_id":"tu_1","status":"completed","output_file":"/tmp/x.output","summary":"我已经掌握了所需的所有信息。Feishu API 接口已完全映射。","session_id":"s1"}`)
+	term, _ := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	events := append(append(append(append([]claude.Event{}, started...), progress...), notify...), term...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-sub", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-sub",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-sub", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	controls := drainUntilTerminal(t, reg)
+	var sawStart, sawProgress, sawTerminal bool
+	for _, c := range controls {
+		switch c.Type {
+		case protocol.TypeToolUse:
+			if c.ToolUse.TaskID != "a31" || !c.ToolUse.IsSubagent {
+				continue
+			}
+			sub := c.ToolUse.Subagent
+			if sub == nil {
+				t.Fatalf("ToolUse.Subagent is nil for local_agent; payload=%+v", c.ToolUse)
+			}
+			if sub.TaskType != "local_agent" {
+				t.Errorf("Subagent.TaskType = %q, want local_agent", sub.TaskType)
+			}
+			if sub.Type != "general-purpose" {
+				t.Errorf("Subagent.Type = %q, want general-purpose", sub.Type)
+			}
+			if sub.ChildSession != "a31" {
+				t.Errorf("Subagent.ChildSession = %q, want a31", sub.ChildSession)
+			}
+			if sub.Status != "running" {
+				t.Errorf("Subagent.Status = %q, want running", sub.Status)
+			}
+			if strings.Contains(sub.Description, "Reading internal/lark/ws/frame.go") {
+				// progress tick: live description + cumulative usage.
+				if sub.ToolUses != 14 || sub.DurationMs != 33203 {
+					t.Errorf("progress usage = toolUses:%d durationMs:%d, want 14/33203", sub.ToolUses, sub.DurationMs)
+				}
+				if sub.LastToolName != "Read" {
+					t.Errorf("Subagent.LastToolName = %q, want Read", sub.LastToolName)
+				}
+				sawProgress = true
+			} else if sub.Title == "调查飞书接口调用" {
+				sawStart = true
+			}
+		case protocol.TypeToolResult:
+			if c.ToolResult.TaskID != "a31" || !c.ToolResult.IsSubagent {
+				continue
+			}
+			sub := c.ToolResult.Subagent
+			if sub == nil {
+				t.Fatalf("ToolResult.Subagent is nil for local_agent; payload=%+v", c.ToolResult)
+			}
+			if sub.Status != "completed" {
+				t.Errorf("terminal Status = %q, want completed", sub.Status)
+			}
+			if !strings.Contains(sub.Preview, "Feishu API 接口已完全映射") {
+				t.Errorf("Preview = %q, want contains the inlined summary", sub.Preview)
+			}
+			if sub.OutputBytes == 0 {
+				t.Errorf("OutputBytes = 0, want non-zero (preview byte length)")
+			}
+			// Notification lacks usage in real streams; cached progress usage must surface.
+			if sub.ToolUses != 14 || sub.DurationMs != 33203 {
+				t.Errorf("terminal cached usage = toolUses:%d durationMs:%d, want 14/33203 (from progress)", sub.ToolUses, sub.DurationMs)
+			}
+			sawTerminal = true
+		}
+	}
+	if !sawStart || !sawProgress || !sawTerminal {
+		t.Fatalf("missed local_agent subagent controls: start=%v progress=%v terminal=%v (got %d controls: %v)",
+			sawStart, sawProgress, sawTerminal, len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_LocalBashKeepsLeafRow verifies that local_bash (background
+// shell wrapped as a task) does NOT route to the SubagentSummary channel —
+// the renderer keeps it as a leaf Bash row. This locks the §6.4 decision:
+// only local_agent gets the dedicated subagent zone.
+func TestStreamRun_LocalBashKeepsLeafRow(t *testing.T) {
+	started, _ := claude.ParseEvent(`{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"tu_1","description":"make test","task_type":"local_bash","session_id":"s1"}`)
+	notify, _ := claude.ParseEvent(`{"type":"system","subtype":"task_notification","task_id":"b1","tool_use_id":"tu_1","status":"completed","output_file":"","summary":"make test","session_id":"s1"}`)
+	term, _ := claude.ParseEvent(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}`)
+	events := append(append(append([]claude.Event{}, started...), notify...), term...)
+
+	client, reg, cleanup := connectTestRPC(t)
+	defer cleanup()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
+		StateDir: t.TempDir(),
+	}, log.Nop())
+	r.Bind("c-bash", "", t.TempDir(), "", "", "")
+
+	if err := h.HandleEvent(context.Background(), &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "msg-bash",
+		Prompt:   &protocol.PromptPayload{ChatID: "c-bash", Text: "hi"},
+	}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	for _, c := range drainUntilTerminal(t, reg) {
+		if c.Type == protocol.TypeToolUse && c.ToolUse.IsSubagent && c.ToolUse.Subagent != nil {
+			t.Errorf("local_bash ToolUse should not carry Subagent, got %+v", c.ToolUse.Subagent)
+		}
+		if c.Type == protocol.TypeToolResult && c.ToolResult.IsSubagent && c.ToolResult.Subagent != nil {
+			t.Errorf("local_bash ToolResult should not carry Subagent, got %+v", c.ToolResult.Subagent)
+		}
+	}
+}

@@ -13,12 +13,14 @@ func (s *ProgressState) Clone() *ProgressState {
 	cp := &ProgressState{
 		stepCount: s.stepCount,
 		tools:     make([]toolRow, len(s.tools)),
+		subagents: make([]subagentRow, len(s.subagents)),
 		todos:     make([]TodoItem, len(s.todos)),
 		loading:   s.loading,
 		gate:      s.gate,
 		thinking:  s.thinking,
 	}
 	copy(cp.tools, s.tools)
+	copy(cp.subagents, s.subagents)
 	copy(cp.todos, s.todos)
 	return cp
 }

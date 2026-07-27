@@ -41,12 +41,22 @@ type partShape struct {
 		// so without this field the bridge sees an empty result and
 		// drops the actual cause ("File not found", "PermissionDenied").
 		Error string `json:"error"`
+		// Title carries the task tool's short title at the state level
+		// (also mirrored in metadata.title). Populated only for "task".
+		Title string `json:"title"`
+		// Time carries the task tool's start/end wallclock (ms epoch).
+		// Populated only for "task"; other tools leave both zero.
+		Time struct {
+			Start int64 `json:"start"`
+			End   int64 `json:"end"`
+		} `json:"time"`
 		// Metadata is populated by shell-style tools (bash): its exit
 		// field carries the command's exit code. status stays
 		// "completed" even on non-zero exit, so exit!=0 is the only
 		// signal that the underlying command failed. FileDiff is
 		// populated by edit and carries the additions/deletions count
-		// surfaced as a "+N -M" suffix on the tool row.
+		// surfaced as a "+N -M" suffix on the tool row. For "task"
+		// (subagent), Metadata carries sessionId/model/title instead.
 		Metadata struct {
 			Exit      int  `json:"exit"`
 			Truncated bool `json:"truncated"`
@@ -54,6 +64,12 @@ type partShape struct {
 				Additions int `json:"additions"`
 				Deletions int `json:"deletions"`
 			} `json:"filediff"`
+			// task-only fields below; zero for other tools.
+			SessionID string `json:"sessionId"`
+			Model     struct {
+				ModelID    string `json:"modelID"`
+				ProviderID string `json:"providerID"`
+			} `json:"model"`
 		} `json:"metadata"`
 	} `json:"state"`
 	// step-finish carries token/cost accounting.
@@ -242,7 +258,52 @@ func parseToolEvent(base Event, p partShape) []Event {
 			result.toolInput = fmt.Sprintf("%s (+%d -%d)", result.toolInput, fd.Additions, fd.Deletions)
 		}
 	}
+	// The "task" tool is opencode's subagent delegation. Unlike claude's
+	// three-stage task_* lifecycle, opencode collapses the whole subagent
+	// run into one completed event whose state.input carries subagent_type,
+	// state.metadata carries the child session/model, state.time carries
+	// start/end, and state.output carries the <task>...<task_result> XML.
+	// Flatten those into SubagentMeta so the bridge can render a dedicated
+	// subagent zone instead of a leaf-tool row.
+	if p.Tool == "task" {
+		var ti struct {
+			SubagentType string `json:"subagent_type"`
+		}
+		if len(p.State.Input) > 0 {
+			_ = json.Unmarshal(p.State.Input, &ti)
+		}
+		rawOutput := stringifyContent(p.State.Output)
+		inner := UnwrapTaskResult(rawOutput)
+		result.subagent = &SubagentMeta{
+			Type:         ti.SubagentType,
+			ChildSession: p.State.Metadata.SessionID,
+			Model:        p.State.Metadata.Model.ModelID,
+			DurationMs:   p.State.Time.End - p.State.Time.Start,
+			OutputBytes:  len([]byte(inner)),
+			Truncated:    p.State.Metadata.Truncated,
+		}
+	}
 	return []Event{result}
+}
+
+// UnwrapTaskResult strips the <task ...><task_result>...</task_result></task>
+// wrapper opencode emits around a subagent's output, returning the inner
+// text. Returns the input unchanged when the wrapper is absent (a future CLI
+// schema change, or a non-standard subagent) so the caller still shows
+// something instead of an empty preview. Exported so the bridge can derive a
+// preview from the same unwrapping the parser used to compute OutputBytes.
+func UnwrapTaskResult(s string) string {
+	const open = "<task_result>"
+	const closeTag = "</task_result>"
+	i := strings.Index(s, open)
+	if i < 0 {
+		return s
+	}
+	j := strings.LastIndex(s, closeTag)
+	if j < 0 || j <= i {
+		return s
+	}
+	return strings.TrimSpace(s[i+len(open) : j])
 }
 
 // extractToolInputField picks the most informative single string field from a

@@ -51,6 +51,7 @@ type toolRow struct {
 // progress update renders the whole card.
 type ProgressState struct {
 	tools     []toolRow
+	subagents []subagentRow
 	todos     []TodoItem
 	stepCount int
 	// loading is a transient grey banner (a picker's "loading…" notice),
@@ -282,6 +283,17 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	}
 	if len(runningLines) > 0 {
 		zones = append(zones, cardkit.MarkdownElement(strings.Join(runningLines, "\n")))
+	}
+
+	// Zone 2.5: subagent delegations. Sits between leaf-running and
+	// leaf-completed because a subagent is heavier than a single tool call
+	// (it is a self-contained sub-turn) but newer than this turn's settled
+	// leaf actions. Only local_agent / opencode task subagents land here
+	// (claude local_bash stays in the leaf zones via IsSubagent). When no
+	// subagents exist, the zone is omitted entirely rather than rendering
+	// an empty header. See docs/subagent-rendering-design.md §4.2/§4.6.1.
+	if body := renderSubagentZone(s.subagents); body != "" {
+		zones = append(zones, cardkit.MarkdownElement(body))
 	}
 
 	// Zone 3: completed. Show only the last N detail rows; group-summarise

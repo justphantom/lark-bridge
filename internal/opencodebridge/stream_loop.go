@@ -143,15 +143,40 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			//opencode's "task" tool IS the subagent delegation.
 			isSub := ev.GetToolName() == "task"
+			toolResult := &protocol.ToolResultPayload{
+				Name:       ev.GetToolName(),
+				Input:      bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput()),
+				Output:     ev.GetText(),
+				IsError:    ev.GetIsToolError(),
+				IsSubagent: isSub,
+			}
+			// When the parser extracted SubagentMeta (task tool only), lift it
+			// into the payload so the renderer routes the row to the dedicated
+			// subagent zone instead of the leaf-tool completed zone. Preview
+			// carries the unwrapped output verbatim; the renderer caps it.
+			if meta := ev.GetSubagentMeta(); isSub && meta != nil {
+				preview := opencode.UnwrapTaskResult(ev.GetText())
+				status := "completed"
+				if ev.GetIsToolError() {
+					status = "failed"
+				}
+				toolResult.TaskID = meta.ChildSession
+				toolResult.Subagent = &protocol.SubagentSummary{
+					Status:       status,
+					TaskType:     "agent",
+					Type:         meta.Type,
+					Title:        toolResult.Input,
+					ChildSession: meta.ChildSession,
+					Model:        meta.Model,
+					DurationMs:   meta.DurationMs,
+					Preview:      preview,
+					OutputBytes:  meta.OutputBytes,
+					Truncated:    meta.Truncated,
+				}
+			}
 			h.emitAsync(promptID, &protocol.Control{
-				Type: protocol.TypeToolResult,
-				ToolResult: &protocol.ToolResultPayload{
-					Name:       ev.GetToolName(),
-					Input:      bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput()),
-					Output:     ev.GetText(),
-					IsError:    ev.GetIsToolError(),
-					IsSubagent: isSub,
-				},
+				Type:       protocol.TypeToolResult,
+				ToolResult: toolResult,
 			})
 		case opencode.EventResult:
 			return h.finalizeResult(ev, text.String(), sessionID, modelSpec, chatID, stepCount, startTime,

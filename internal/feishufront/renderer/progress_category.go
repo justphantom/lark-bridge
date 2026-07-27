@@ -94,8 +94,16 @@ func groupedSummary(totals map[string]int) string {
 // category set covers the high-frequency tools observed in real streams
 // (Read/Bash/Edit/Write/MCP/subagent); low-frequency tools (WebSearch/Cron/…)
 // are omitted rather than reserved.
+//
+// "子代理 N" counts BOTH leaf subagents (claude local_bash rendered as a tool
+// row, counted via categoryTotals) AND dedicated-zone subagents (claude
+// local_agent + opencode task, counted via len(s.subagents)) so the digest
+// reflects every delegation regardless of which zone rendered it.
 func (s *ProgressState) Summary() string {
 	totals := categoryTotals(s.tools)
+	if n := len(s.subagents); n > 0 {
+		totals["sub"] += n
+	}
 	var parts []string
 	for _, cat := range []string{"read", "exec", "edit", "write", "mcp", "sub"} {
 		if lbl := categoryLabel(cat, totals[cat]); lbl != "" {

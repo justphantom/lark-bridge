@@ -99,9 +99,22 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 	case protocol.TypeSessionInit:
 		// No state mutation; just re-render so footer picks up session/model.
 	case protocol.TypeToolUse:
-		state.AddToolUse(ctrl.ToolUse.Name, ctrl.ToolUse.Input, ctrl.ToolUse.IsSubagent, ctrl.ToolUse.TaskID)
+		// A non-nil Subagent (claude local_agent task_started/task_progress;
+		// opencode has no running-phase event) routes to the dedicated
+		// subagent zone instead of the leaf-tool-row path. Nil Subagent
+		// keeps the legacy row (local_bash, or older backends) — the
+		// IsSubagent flag still marks it for category counting.
+		if ctrl.ToolUse.Subagent != nil {
+			state.AddSubagentUse(toRendererSubagent(ctrl.ToolUse.Subagent))
+		} else {
+			state.AddToolUse(ctrl.ToolUse.Name, ctrl.ToolUse.Input, ctrl.ToolUse.IsSubagent, ctrl.ToolUse.TaskID)
+		}
 	case protocol.TypeToolResult:
-		state.AddToolResult(ctrl.ToolResult.Name, ctrl.ToolResult.Input, ctrl.ToolResult.Output, ctrl.ToolResult.IsError, ctrl.ToolResult.IsSubagent, ctrl.ToolResult.TaskID)
+		if ctrl.ToolResult.Subagent != nil {
+			state.AddSubagentResult(toRendererSubagent(ctrl.ToolResult.Subagent))
+		} else {
+			state.AddToolResult(ctrl.ToolResult.Name, ctrl.ToolResult.Input, ctrl.ToolResult.Output, ctrl.ToolResult.IsError, ctrl.ToolResult.IsSubagent, ctrl.ToolResult.TaskID)
+		}
 	case protocol.TypeProgress:
 		state.AddProgress()
 		// Description/Gate render through the same banner slot. A gate
@@ -142,6 +155,29 @@ func toRendererTodos(items []protocol.TodoItem) []renderer.TodoItem {
 		out[i] = renderer.TodoItem{Content: it.Content, Status: it.Status, Priority: it.Priority}
 	}
 	return out
+}
+
+// toRendererSubagent converts protocol.SubagentSummary → renderer.SubagentInfo
+// at the package boundary, same convention as toRendererTodos. The renderer
+// keeps its own type so a protocol field rename or addition does not ripple
+// into the renderer package; conversion is the single touchpoint.
+func toRendererSubagent(s *protocol.SubagentSummary) renderer.SubagentInfo {
+	return renderer.SubagentInfo{
+		Status:       s.Status,
+		TaskType:     s.TaskType,
+		Type:         s.Type,
+		Title:        s.Title,
+		Description:  s.Description,
+		ChildSession: s.ChildSession,
+		Model:        s.Model,
+		DurationMs:   s.DurationMs,
+		ToolUses:     s.ToolUses,
+		LastToolName: s.LastToolName,
+		TotalTokens:  s.TotalTokens,
+		Preview:      s.Preview,
+		OutputBytes:  s.OutputBytes,
+		Truncated:    s.Truncated,
+	}
 }
 
 // sendTerminalCard ships a terminal card (result or notice) and unconditionally
