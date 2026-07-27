@@ -86,11 +86,11 @@ func (b *Bot) handleMessageReceive(ctx context.Context, ev *lark.MessageReceiveE
 // handleCardAction is the lark.Handler entry point for card callbacks.
 // Guard logic mirrors handleMessageReceive: drop events with no operator,
 // then fan out under a recover so a downstream panic cannot escape into the
-// WS goroutine. Returns the handler's business ACK payload (may be nil).
-func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) ([]byte, error) {
+// WS goroutine.
+func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) error {
 	if ev == nil {
 		b.logger.Warn("card action: nil event dropped")
-		return nil, nil
+		return nil
 	}
 	b.markHealthy() // any inbound event proves the WS is alive
 	// 入口 Info：诊断 ws→lark 链路是否把 card 事件投递到 Bot。
@@ -105,13 +105,13 @@ func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) ([
 	if h == nil {
 		b.logger.Warn("card action: no handler registered",
 			"event_id", ev.EventID, log.FieldChatID, ev.ChatID)
-		return nil, nil
+		return nil
 	}
 	if ev.Operator.OpenID == "" {
 		b.logger.Debug("drop card action: empty operator openid", "event_id", ev.EventID, log.FieldChatID, ev.ChatID)
-		return nil, nil
+		return nil
 	}
-	return func() (response []byte, outErr error) {
+	return func() (outErr error) {
 		defer func() {
 			if r := recover(); r != nil {
 				b.logger.Error("panic in card action handler",

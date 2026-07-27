@@ -229,6 +229,12 @@ type Timeouts struct {
 	// JSON cannot grow without bound over a long-running process.
 	// 0/absent → 7d. Consumed by every backend that wires a usage store.
 	UsageSessionTTL Duration `json:"usage_session_ttl,omitempty"`
+	// CardPatchDelay is how long the feishu-front dispatcher waits after a
+	// card click before PATCHing the new card state. Feishu reverts an
+	// immediate PATCH within its click-handling window (~3-5s); waiting
+	// past it lets the PATCH persist. 0/absent → 5s. Only consumed by
+	// feishu-front; backends ignore.
+	CardPatchDelay Duration `json:"card_patch_delay,omitempty"`
 }
 
 // DedupConfig configures the frontend's application-layer replay guard.

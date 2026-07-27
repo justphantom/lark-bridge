@@ -171,19 +171,15 @@ func (c *Client) handleData(ctx context.Context, frame Frame, r *reassembler, rt
 		return
 	}
 	if rt.sink == nil {
-		c.writeAck(conn, frame, http.StatusOK, nil)
+		c.writeAck(conn, frame, http.StatusOK)
 		return
 	}
 	ackCode := http.StatusOK
-	var businessResponse []byte
-	br, err := rt.dispatch(ctx, joined)
-	if err != nil {
+	if err := rt.dispatch(ctx, joined); err != nil {
 		c.fireError(fmt.Errorf("ws: dispatch %s: %w", hs.GetString(HeaderType), err))
 		ackCode = http.StatusInternalServerError
-	} else {
-		businessResponse = br
 	}
-	c.writeAck(conn, frame, ackCode, businessResponse)
+	c.writeAck(conn, frame, ackCode)
 }
 
 // frameWriter is the write seam of a websocket.Conn so handleData can be
@@ -192,24 +188,10 @@ type frameWriter interface {
 	WriteMessage(opcode int, data []byte) error
 }
 
-// writeAck builds and sends the ACK frame. ackCode is the transport-level
-// status (200/500). businessResponse, when non-nil, is a JSON object carrying
-// the card.action.trigger business payload (toast/card). Feishu expects these
-// fields at the TOP LEVEL of the ACK body (same shape as the webhook response
-// body), not nested under "data" — wrapping caused 300000 internal errors.
-// The "code" field is kept alongside so the transport ACK stays well-formed.
-func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int, businessResponse []byte) {
-	payload := map[string]any{"code": ackCode}
-	if len(businessResponse) > 0 {
-		var br map[string]any
-		if json.Unmarshal(businessResponse, &br) == nil {
-			for k, v := range br {
-				payload[k] = v
-			}
-		}
-	}
-	payloadBytes, _ := json.Marshal(payload)
-	ack := NewAckFrame(in, payloadBytes)
+// writeAck builds and sends the ACK frame carrying {code: ackCode} payload.
+func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int) {
+	payload, _ := json.Marshal(map[string]int{"code": ackCode})
+	ack := NewAckFrame(in, payload)
 	bs, err := ack.Marshal()
 	if err != nil {
 		return

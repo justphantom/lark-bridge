@@ -84,9 +84,9 @@ func (h *captureHandler) OnMessageReceive(_ context.Context, ev *MessageReceiveE
 	h.gotMsg = ev
 	return nil
 }
-func (h *captureHandler) OnCardAction(_ context.Context, ev *CardActionEvent) ([]byte, error) {
+func (h *captureHandler) OnCardAction(_ context.Context, ev *CardActionEvent) error {
 	h.gotCard = ev
-	return nil, nil
+	return nil
 }
 
 // TestHandlerSinkAdapter_ConvertsMessage verifies the ws.MessageReceive →
@@ -138,7 +138,7 @@ func TestHandlerSinkAdapter_ConvertsCard(t *testing.T) {
 			FormValue: map[string]any{"q": "a"},
 		},
 	}
-	if _, err := a.OnCard(context.Background(), in); err != nil {
+	if 	err := a.OnCard(context.Background(), in); err != nil {
 		t.Fatalf("OnCard: %v", err)
 	}
 	if h.gotCard == nil {

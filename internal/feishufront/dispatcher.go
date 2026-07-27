@@ -115,6 +115,12 @@ type Dispatcher struct {
 	// notice is sent. Defaults to the package const; overridable for tests.
 	offlineNoticeDebounce time.Duration
 
+	// cardPatchDelay is how long handleBackendChoice waits after a click
+	// before PATCHing the picker card (Feishu's click-handling window
+	// reverts an immediate PATCH). Defaults to cardPatchDelayDefault;
+	// overridable via SetCardPatchDelay from config.
+	cardPatchDelay time.Duration
+
 	// logger is stored atomically: SetLogger runs on the main goroutine while
 	// notifyBackendChat reads it from the IPCServer.fireCallback goroutine.
 	logger atomic.Pointer[log.Logger]
@@ -137,6 +143,7 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		pickerTimers:          make(map[string]*time.Timer),
 		flap:                  make(map[string]*flapState),
 		offlineNoticeDebounce: offlineNoticeDebounce,
+		cardPatchDelay:        cardPatchDelayDefault,
 	}
 	d.logger.Store(log.Nop())
 	return d
@@ -147,6 +154,15 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 func (d *Dispatcher) SetLogger(l *log.Logger) {
 	if l != nil {
 		d.logger.Store(l)
+	}
+}
+
+// SetCardPatchDelay overrides the post-click PATCH delay used by
+// handleBackendChoice. Called by main.go from config
+// (timeouts.card_patch_delay); non-positive values keep the default.
+func (d *Dispatcher) SetCardPatchDelay(delay time.Duration) {
+	if delay > 0 {
+		d.cardPatchDelay = delay
 	}
 }
 

@@ -132,6 +132,9 @@ func run(cfgPath, addr string) error {
 		time.Duration(cfg.Dedup.EventTTL),
 		cfg.Dedup.EventMaxEntries,
 	)
+	// Card click → PATCH delay (Feishu's click-handling window reverts an
+	// immediate PATCH). Default 5s; overridable via timeouts.card_patch_delay.
+	dispatcher.SetCardPatchDelay(time.Duration(cfg.Timeouts.CardPatchDelay))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

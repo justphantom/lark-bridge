@@ -16,6 +16,12 @@ import (
 // A stalled API call cannot wedge the notify goroutine indefinitely.
 const noticeSendTimeout = 10 * time.Second
 
+// cardPatchDelayDefault is how long handleBackendChoice waits after a click
+// before PATCHing the picker card. Feishu reverts an immediate PATCH within
+// its click-handling window (~3-5s); waiting past it lets the PATCH persist.
+// Overridable via config (timeouts.card_patch_delay) and SetCardPatchDelay.
+const cardPatchDelayDefault = 5 * time.Second
+
 // offlineNoticeDebounce delays an offline notice so a flapping backend (rapid
 // disconnect/reconnect) cannot spam every bound chat with offline→online card
 // pairs. An offline event arms a timer; a reconnect before it fires cancels
@@ -297,12 +303,16 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 }
 
 // handleBackendChoice is the frontend-side consumer of a backend-picker click:
-// it binds the chat to the chosen backend and returns the new card via the
-// ACK business payload so Feishu updates the picker in place (green success
-// or red failure), producing only one message. The previous separate
-// PatchMessage call was undone by Feishu's 3-second invalid-ACK rollback,
-// so the card must be carried in the ACK itself.
-func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.CardAction) ([]byte, error) {
+// it binds the chat to the chosen backend and patches the picker card to its
+// terminal state (green success / red failure) in place, so the whole switch
+// produces only one message.
+//
+// The PATCH is delayed via a background goroutine because Feishu's card.
+// action.trigger has a ~3-5s "click-handling window" during which any
+// PatchMessage is silently reverted. Sleeping past the window lets the
+// PATCH persist. The handler itself returns immediately so the WS ACK is
+// not delayed (a delayed ACK triggers Feishu's 3-second timeout).
+func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.CardAction) error {
 	// The user clicked; the picker can no longer expire. Cancel before any
 	// return path so a late TTL flip cannot overwrite the outcome card.
 	d.cancelPickerExpiry(action.MessageID)
@@ -319,9 +329,27 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 	}
 	card, err := d.renderBackendOutcome(action.ChatID, id, btype, level, title, body)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return wrapCardActionResponse(card)
+	// Delayed PATCH: the click-handling window reverts an immediate PATCH,
+	// so sleep past it before persisting the card. Background goroutine so
+	// the ACK is not delayed.
+	delay := d.cardPatchDelay
+	if delay <= 0 {
+		delay = cardPatchDelayDefault
+	}
+	msgID := action.MessageID
+	go func() {
+		time.Sleep(delay)
+		patchCtx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
+		defer cancel()
+		if err := d.bot.UpdateCard(patchCtx, msgID, card); err != nil {
+			d.logger.Load().Warn("delayed picker UpdateCard failed",
+				log.FieldMessageID, msgID,
+				log.FieldError, err.Error())
+		}
+	}()
+	return nil
 }
 
 // renderBackendOutcome builds the terminal-state backend picker card in one

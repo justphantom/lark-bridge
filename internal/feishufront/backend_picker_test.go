@@ -119,11 +119,13 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	rt := &pickerRouter{current: "claude-1"}
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
+	// Shrink the click-handling delay so the test does not wait 5s.
+	d.cardPatchDelay = 10 * time.Millisecond
 	// Pre-arm a picker TTL so the test can assert the click cancels it.
 	d.pickerCards["om_card"] = []byte("{}")
 	d.pickerTimers["om_card"] = time.AfterFunc(time.Hour, func() {})
 
-	if _, err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",
 		MessageID: "om_card",
 		Value:     map[string]any{"kind": "backend", "backendID": "opencode-1"},
@@ -139,11 +141,17 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 		t.Fatalf("backend received unexpected event %q", ev.Type)
 	default:
 	}
-	// Success path returns the green outcome card via the ACK business
-	// payload (no separate SendCard / UpdateCard — both are 0).
+	// Success path delays the PATCH past Feishu's click-handling window.
+	// Shrink the delay so the test does not wait 5s.
+	d.cardPatchDelay = 10 * time.Millisecond
+	// Wait for the goroutine to land the green outcome card.
+	waitFor(t, func() bool {
+		_, updates := sink.counts()
+		return updates == 1
+	})
 	sends, updates := sink.counts()
-	if sends != 0 || updates != 0 {
-		t.Errorf("want 0 sends + 0 updates (card via ACK), got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 1 {
+		t.Errorf("want 0 sends + 1 delayed update, got %d sends + %d updates", sends, updates)
 	}
 	// Click cancels the TTL flip so a late expiry cannot overwrite the result.
 	d.cardMu.Lock()
@@ -223,31 +231,49 @@ func TestDispatchCardAction_BackendPicker_OfflineRejected(t *testing.T) {
 	rt := &pickerRouter{current: "claude-1"}
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
+	d.cardPatchDelay = 10 * time.Millisecond
 
-	ack, err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",
 		MessageID: "om_card",
 		Value:     map[string]any{"kind": "backend", "backendID": "ghost"},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("DispatchCardAction: %v", err)
 	}
 	if rt.current != "claude-1" {
 		t.Errorf("current changed to %q on offline pick", rt.current)
 	}
-	// Offline path returns the red failure card via the ACK business payload
-	// (no SendCard / UpdateCard — both are 0).
+	// Wait for the delayed PATCH to land the red failure card in place.
+	waitFor(t, func() bool {
+		_, updates := sink.counts()
+		return updates == 1
+	})
 	sends, updates := sink.counts()
-	if sends != 0 || updates != 0 {
-		t.Errorf("want 0 sends + 0 updates (card via ACK), got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 1 {
+		t.Errorf("want 0 sends + 1 delayed update, got %d sends + %d updates", sends, updates)
 	}
-	s := string(ack)
+	s := string(sink.updates[0].card)
 	if !strings.Contains(s, "离线") {
 		t.Errorf("want failure card mentioning offline, got %s", s)
 	}
 	if !strings.Contains(s, `"template":"red"`) {
 		t.Errorf("want red header on failure card: %s", s)
 	}
+}
+
+// waitFor polls cond every 5ms for up to 1s. Used to synchronise with the
+// delayed-PATCH goroutine without sleeping a fixed duration (which would
+// make tests either flaky or slow).
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition never became true within 1s")
 }
 
 // TestExpirePicker verifies the TTL timer flips a cached picker card to its

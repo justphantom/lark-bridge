@@ -63,12 +63,8 @@ type CardAction struct {
 // IncomingHandler handles a normalized inbound message.
 type IncomingHandler func(context.Context, *IncomingMessage) error
 
-// CardActionHandler handles a normalized card-action callback. The returned
-// []byte is an optional business ACK payload (Feishu's card.action.trigger
-// expects toast/card JSON in the response body — returning nil signals
-// "keep card unchanged", which still avoids Feishu's invalid-ACK rollback
-// because the ACK frame itself is well-formed).
-type CardActionHandler func(context.Context, *CardAction) ([]byte, error)
+// CardActionHandler handles a normalized card-action callback.
+type CardActionHandler func(context.Context, *CardAction) error
 
 // Bot is the Feishu client wrapper. It dispatches inbound events to
 // registered handlers, surfaces send/update helpers via its methods, and
@@ -160,7 +156,7 @@ func (a larkHandlerAdapter) OnMessageReceive(ctx context.Context, ev *lark.Messa
 	return a.b.handleMessageReceive(ctx, ev)
 }
 
-func (a larkHandlerAdapter) OnCardAction(ctx context.Context, ev *lark.CardActionEvent) ([]byte, error) {
+func (a larkHandlerAdapter) OnCardAction(ctx context.Context, ev *lark.CardActionEvent) error {
 	return a.b.handleCardAction(ctx, ev)
 }
 

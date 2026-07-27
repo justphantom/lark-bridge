@@ -61,21 +61,16 @@ type MessageReceiveEvent struct {
 
 // Handler is the consumer of inbound WS events. Both methods must be safe to
 // call from the WS client's goroutines; the lark.Client serialises nothing.
-//
-// OnCardAction returns an optional business ACK payload ([]byte JSON). When
-// non-nil it is forwarded to the WS ACK so Feishu applies the response
-// client-side (toast / card update) — required for card.action.trigger to
-// avoid Feishu's "invalid ACK" rollback.
 type Handler interface {
 	OnMessageReceive(ctx context.Context, ev *MessageReceiveEvent) error
-	OnCardAction(ctx context.Context, ev *CardActionEvent) ([]byte, error)
+	OnCardAction(ctx context.Context, ev *CardActionEvent) error
 }
 
 // HandlerFunc is a convenience adapter letting a caller satisfy Handler with
 // closures. A nil field is a no-op (returns nil).
 type HandlerFunc struct {
 	OnMessageReceiveFn func(ctx context.Context, ev *MessageReceiveEvent) error
-	OnCardActionFn     func(ctx context.Context, ev *CardActionEvent) ([]byte, error)
+	OnCardActionFn     func(ctx context.Context, ev *CardActionEvent) error
 }
 
 // OnMessageReceive dispatches to OnMessageReceiveFn when set.
@@ -87,9 +82,9 @@ func (h HandlerFunc) OnMessageReceive(ctx context.Context, ev *MessageReceiveEve
 }
 
 // OnCardAction dispatches to OnCardActionFn when set.
-func (h HandlerFunc) OnCardAction(ctx context.Context, ev *CardActionEvent) ([]byte, error) {
+func (h HandlerFunc) OnCardAction(ctx context.Context, ev *CardActionEvent) error {
 	if h.OnCardActionFn == nil {
-		return nil, nil
+		return nil
 	}
 	return h.OnCardActionFn(ctx, ev)
 }

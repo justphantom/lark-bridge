@@ -55,7 +55,8 @@
 
   "timeouts": {
     "backend_health":     "90s",
-    "usage_session_ttl":  "168h"
+    "usage_session_ttl":  "168h",
+    "card_patch_delay":   "5s"
   },
 
   "dedup": {
