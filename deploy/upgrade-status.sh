@@ -50,7 +50,7 @@ init_status() {
 
     local stage
     stage="$(mktemp -d)"
-    trap 'rm -rf "$stage"' EXIT
+    trap 'rm -rf "${stage:-}"' EXIT
 
     # base 固定为 config.example.json（与 repo 同步演进）。status_monitor 块已在
     # base（interval=60s），无需注入；只删 status-monitor 不消费的业务子块。
@@ -67,8 +67,11 @@ init_status() {
         grep -q "\"$block\":" "$stage/$CONFIG_NAME" \
             && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"
     done
-    # status_monitor 块必须存活（它是本后端唯一的业务配置）。
-    grep -q '"status_monitor"[[:space:]]*:[[:space:]]*{"interval"' "$stage/$CONFIG_NAME" \
+    # status_monitor 块必须存活（它是本后端唯一的业务配置）。base 里该块是多行
+    # 格式（key 与 interval 不在同一行），不能像 upgrade-monitor 那样单行匹配，
+    # 因此用双 token 校验：key 与 interval 都在即视为块存活。
+    grep -q '"status_monitor"' "$stage/$CONFIG_NAME" \
+        && grep -q '"interval"' "$stage/$CONFIG_NAME" \
         || fail "status_monitor 块缺失：$PROJECT_ROOT/config.example.json 需含 status_monitor 段"
 
     sudo mkdir -p "$CONFIG_DIR"
