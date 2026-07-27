@@ -144,8 +144,8 @@ func TestCardActionIdempotent(t *testing.T) {
 
 	action := &feishu.CardAction{ChatID: chatID, MessageID: "msg-1",
 		Value: map[string]any{"requestID": "req-3", "choice": "allow", "kind": "permission"}}
-	disp.DispatchCardAction(context.Background(), action)
-	disp.DispatchCardAction(context.Background(), action) // duplicate
+	_, _ = disp.DispatchCardAction(context.Background(), action)
+	_, _ = disp.DispatchCardAction(context.Background(), action) // duplicate
 
 	// Only the first action forwards an Answer.
 	ev, err := client.RecvEvent()
@@ -207,7 +207,7 @@ func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 		Value:     map[string]any{"requestID": "req-q", "kind": "question"},
 		FormValue: map[string]any{"q_0": "选项A", "custom_0": "备注"},
 	}
-	if err := disp.DispatchCardAction(context.Background(), action); err != nil {
+	if _, err := disp.DispatchCardAction(context.Background(), action); err != nil {
 		t.Fatalf("DispatchCardAction: %v", err)
 	}
 
@@ -268,7 +268,7 @@ func TestPermissionCardAction_ButtonClick(t *testing.T) {
 		MessageID: "msg-perm",
 		Value:     map[string]any{"requestID": "req-perm", "kind": "permission", "choice": "allow"},
 	}
-	if err := disp.DispatchCardAction(context.Background(), action); err != nil {
+	if _, err := disp.DispatchCardAction(context.Background(), action); err != nil {
 		t.Fatalf("DispatchCardAction: %v", err)
 	}
 
@@ -508,7 +508,7 @@ func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 		t.Fatal("interactive card not bound")
 	}
 
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if _, err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID: chatID, MessageID: mid,
 		Value:     map[string]any{"requestID": "req-a", "kind": "question"},
 		FormValue: map[string]any{"q_0": "选项A"},
@@ -587,7 +587,7 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 	}
 
 	// Submit still works on the same card.
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if _, err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID: chatID, MessageID: progressMID,
 		Value:     map[string]any{"requestID": "req-tk", "kind": "question"},
 		FormValue: map[string]any{"q_0": "a"},
@@ -749,7 +749,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	}
 
 	// User clicks 允许 → submitted flip on the SAME card.
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if _, err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID: chatID, MessageID: mid,
 		Value: map[string]any{"requestID": "req-fin", "kind": "permission", "choice": "allow"},
 	}); err != nil {

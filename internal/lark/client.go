@@ -209,7 +209,7 @@ func (a handlerSinkAdapter) OnMessage(ctx context.Context, ev *ws.MessageReceive
 	})
 }
 
-func (a handlerSinkAdapter) OnCard(ctx context.Context, ev *ws.CardAction) error {
+func (a handlerSinkAdapter) OnCard(ctx context.Context, ev *ws.CardAction) ([]byte, error) {
 	return a.h.OnCardAction(ctx, &CardActionEvent{
 		EventID:   ev.EventID,
 		ChatID:    ev.ChatID,

@@ -218,11 +218,11 @@ func (h *recordingHandler) OnMessage(_ context.Context, ev *MessageReceive) erro
 	return nil
 }
 
-func (h *recordingHandler) OnCard(_ context.Context, ev *CardAction) error {
+func (h *recordingHandler) OnCard(_ context.Context, ev *CardAction) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.cards = append(h.cards, ev)
-	return nil
+	return nil, nil
 }
 
 func (h *recordingHandler) snapshot() ([]*MessageReceive, []*CardAction) {

@@ -14,9 +14,16 @@ import (
 // parsed wire-level types; the high-level lark package adapts them into its
 // public API types (breaking what would otherwise be an import cycle between
 // lark and lark/ws).
+//
+// OnCard returns an optional business response payload (the card/toast JSON
+// Feishu expects in the card.action.trigger ACK). A nil slice means "no
+// business payload" — the ACK carries only {code:200}. Non-nil slices are
+// placed under the ACK's "data" field so Feishu updates the card client-side
+// without needing a separate Patch call (and without Feishu's 3-second
+// rollback-of-invalid-ACK fallback biting us).
 type Sink interface {
 	OnMessage(ctx context.Context, ev *MessageReceive) error
-	OnCard(ctx context.Context, ev *CardAction) error
+	OnCard(ctx context.Context, ev *CardAction) ([]byte, error)
 }
 
 // MessageReceive is the ws-level parsed form of im.message.receive_v1.
@@ -156,29 +163,29 @@ type envelope struct {
 
 // dispatch parses payload and invokes the matching handler method. Errors are
 // returned so the transport can build a 500 ACK; nil error → 200 ACK.
-func (rt *router) dispatch(ctx context.Context, payload []byte) error {
+func (rt *router) dispatch(ctx context.Context, payload []byte) ([]byte, error) {
 	if rt.sink == nil {
-		return nil
+		return nil, nil
 	}
 	var env envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
-		return fmt.Errorf("ws: parse envelope: %w", err)
+		return nil, fmt.Errorf("ws: parse envelope: %w", err)
 	}
 	switch env.Header.EventType {
 	case "im.message.receive_v1":
 		ev, err := parseMessageReceive(env.Header.EventID, env.Event)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return rt.sink.OnMessage(ctx, ev)
+		return nil, rt.sink.OnMessage(ctx, ev)
 	case "card.action.trigger":
 		ev, err := parseCardAction(env.Header.EventID, env.Event)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		return rt.sink.OnCard(ctx, ev)
 	default:
-		return nil
+		return nil, nil
 	}
 }
 

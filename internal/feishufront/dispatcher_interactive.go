@@ -2,6 +2,8 @@ package feishufront
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -186,11 +188,18 @@ func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID str
 	}
 }
 
-// DispatchCardAction handles a Feishu interactive-card button click: flips the
-// card to its submitted state, then forwards the answer to the bound backend
-// as a TypeAnswer event. Idempotent per requestID (actionIDs dedup) so a
-// double-click does not double-send.
-func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.CardAction) error {
+// DispatchCardAction handles a Feishu interactive-card button click: flips
+// the card to its submitted/outcome state and forwards the answer to the
+// bound backend as a TypeAnswer event. Idempotent per requestID (actionIDs
+// dedup) so a double-click does not double-send.
+//
+// Returns an optional ACK business payload ([]byte JSON) — when non-nil,
+// the WS layer embeds it under the ACK's "data" field so Feishu applies the
+// new card client-side immediately. This is the only way to avoid Feishu's
+// 3-second "invalid ACK" rollback that reverts the card to its pre-click
+// state. Carrying the new card via ACK replaces the separate PatchMessage
+// call (which the rollback used to undo).
+func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.CardAction) ([]byte, error) {
 	// Audit the operator before routing. Card callbacks are not authenticated
 	// against the original turn's sender (group-chat collaboration model), so
 	// recording UserOpenID is the minimum trail for "who acted on whose card".
@@ -228,8 +237,9 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	}
 	requestID := requestIDFromValue(action.Value)
 	if requestID != "" && !d.actionIDs.Add(requestID) {
-		return nil
+		return nil, nil
 	}
+	var ackPayload []byte
 	if requestID != "" {
 		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
 			// Stop the TTL timer under the lock so expireInteractive cannot
@@ -248,26 +258,37 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			d.cardMu.Unlock()
 			if orig != nil {
 				if sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action)); err == nil {
-					_ = d.bot.UpdateCard(ctx, messageID, sub)
 					// Cache the SUBMITTED bytes (replacing the original) so a
 					// later finalize renders finalized-from-submitted and
 					// preserves the "✓ 已回答" echo (C5) — but ONLY if the
 					// binding still exists. If finalizeLinkedInteractive ran
-					// during the render+UpdateCard window above, it already
-					// deleted the cache and unbound; re-writing here would
-					// leak an orphan entry with no binding (SweepInteractive
-					// cleans by binding, so it would never reap it). Nesting
-					// turns.RLock under cardMu is safe: no code path acquires
-					// cardMu while holding turns's write lock.
+					// during the render window above, it already deleted the
+					// cache and unbound; re-writing here would leak an orphan
+					// entry with no binding (SweepInteractive cleans by
+					// binding, so it would never reap it).
 					d.cardMu.Lock()
+					bindingStillLive := false
 					if _, ok := d.turns.InteractiveMessageID(requestID); ok {
 						d.cards[requestID] = sub
+						bindingStillLive = true
 					}
 					d.cardMu.Unlock()
+					if bindingStillLive {
+						// PATCH the card so the change persists server-side
+						// (other clients that pull the message see the new
+						// state). The ACK payload below ALSO carries the new
+						// card; without it Feishu's 3-second invalid-ACK
+						// rollback reverts the PATCH.
+						_ = d.bot.UpdateCard(ctx, messageID, sub)
+						if wrapped, wErr := wrapCardActionResponse(sub); wErr == nil {
+							ackPayload = wrapped
+						}
+					}
 				}
 			}
 			// Deliberately NOT unbinding: keep requestID→messageID so the
 			// turn-completing result can finalize this card in place.
+			_ = messageID
 		}
 	}
 	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}
@@ -287,14 +308,14 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 	ev := &protocol.Event{Type: protocol.TypeAnswer, PromptID: action.MessageID, Answer: answer}
 	if d.router == nil {
 		d.logger.Load().Debug("card action: router is nil, skipping")
-		return nil
+		return ackPayload, nil
 	}
 	backendID, err := d.router.Resolve(action.ChatID)
 	if err != nil {
 		d.logger.Load().Debug("card action: failed to resolve backend",
 			"chat_id", action.ChatID,
 			log.FieldError, err)
-		return err
+		return ackPayload, err
 	}
 	d.logger.Load().Debug("card action: sending event to backend",
 		"chat_id", action.ChatID,
@@ -306,11 +327,28 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			"backend_id", backendID,
 			"request_id", requestID,
 			log.FieldError, err)
-		return err
+		return ackPayload, err
 	}
 	d.logger.Load().Debug("card action: event sent successfully",
 		"chat_id", action.ChatID,
 		"backend_id", backendID,
 		"request_id", requestID)
-	return nil
+	return ackPayload, nil
+}
+
+// wrapCardActionResponse wraps a rendered card JSON as the Feishu card.action.
+// trigger ACK business payload: {"card":{"type":"raw","data":<card>}}.
+// Returning this from the click handler makes Feishu apply the new card
+// client-side immediately, avoiding the 3-second "invalid ACK" rollback.
+func wrapCardActionResponse(cardJSON []byte) ([]byte, error) {
+	var card map[string]any
+	if err := json.Unmarshal(cardJSON, &card); err != nil {
+		return nil, fmt.Errorf("wrap card action response: %w", err)
+	}
+	return json.Marshal(map[string]any{
+		"card": map[string]any{
+			"type": "raw",
+			"data": card,
+		},
+	})
 }

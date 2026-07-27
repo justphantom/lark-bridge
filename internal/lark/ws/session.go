@@ -171,15 +171,19 @@ func (c *Client) handleData(ctx context.Context, frame Frame, r *reassembler, rt
 		return
 	}
 	if rt.sink == nil {
-		c.writeAck(conn, frame, http.StatusOK)
+		c.writeAck(conn, frame, http.StatusOK, nil)
 		return
 	}
 	ackCode := http.StatusOK
-	if err := rt.dispatch(ctx, joined); err != nil {
+	var businessResponse []byte
+	br, err := rt.dispatch(ctx, joined)
+	if err != nil {
 		c.fireError(fmt.Errorf("ws: dispatch %s: %w", hs.GetString(HeaderType), err))
 		ackCode = http.StatusInternalServerError
+	} else {
+		businessResponse = br
 	}
-	c.writeAck(conn, frame, ackCode)
+	c.writeAck(conn, frame, ackCode, businessResponse)
 }
 
 // frameWriter is the write seam of a websocket.Conn so handleData can be
@@ -188,10 +192,22 @@ type frameWriter interface {
 	WriteMessage(opcode int, data []byte) error
 }
 
-// writeAck builds and sends the ACK frame carrying {code: ackCode} payload.
-func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int) {
-	payload, _ := json.Marshal(map[string]int{"code": ackCode})
-	ack := NewAckFrame(in, payload)
+// writeAck builds and sends the ACK frame. ackCode is the transport-level
+// status (200/500). businessResponse, when non-nil, is a JSON object carrying
+// the card.action.trigger business payload (toast/card) — it is placed under
+// the ACK's "data" field so Feishu applies it client-side instead of rolling
+// back to the pre-click state (Feishu treats {code:200} with no business
+// payload as an invalid card-action response and reverts within ~3s).
+func (c *Client) writeAck(conn frameWriter, in Frame, ackCode int, businessResponse []byte) {
+	payload := map[string]any{"code": ackCode}
+	if len(businessResponse) > 0 {
+		var br map[string]any
+		if json.Unmarshal(businessResponse, &br) == nil {
+			payload["data"] = br
+		}
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	ack := NewAckFrame(in, payloadBytes)
 	bs, err := ack.Marshal()
 	if err != nil {
 		return

@@ -50,12 +50,12 @@ func TestBuildCardActionForwardsFormValue(t *testing.T) {
 func TestHandleCardAction_DropsEmptyOperator(t *testing.T) {
 	var called atomic.Bool
 	b := &Bot{logger: logNop()}
-	h := CardActionHandler(func(_ context.Context, _ *CardAction) error {
+	h := CardActionHandler(func(_ context.Context, _ *CardAction) ([]byte, error) {
 		called.Store(true)
-		return nil
+		return nil, nil
 	})
 	b.onCardAction.Store(&h)
-	err := b.handleCardAction(context.Background(), &lark.CardActionEvent{
+	_, err := b.handleCardAction(context.Background(), &lark.CardActionEvent{
 		EventID: "ev", Operator: lark.CardActionOperator{OpenID: ""},
 	})
 	if err != nil {

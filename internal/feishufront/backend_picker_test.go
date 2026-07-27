@@ -123,7 +123,7 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	d.pickerCards["om_card"] = []byte("{}")
 	d.pickerTimers["om_card"] = time.AfterFunc(time.Hour, func() {})
 
-	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+	if _, err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",
 		MessageID: "om_card",
 		Value:     map[string]any{"kind": "backend", "backendID": "opencode-1"},
@@ -139,11 +139,11 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 		t.Fatalf("backend received unexpected event %q", ev.Type)
 	default:
 	}
-	// Success path updates the original picker card to a green result card
-	// in place; no separate confirmation notice is sent.
+	// Success path returns the green outcome card via the ACK business
+	// payload (no separate SendCard / UpdateCard — both are 0).
 	sends, updates := sink.counts()
-	if sends != 0 || updates != 1 {
-		t.Errorf("want 0 sends + 1 update, got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 0 {
+		t.Errorf("want 0 sends + 0 updates (card via ACK), got %d sends + %d updates", sends, updates)
 	}
 	// Click cancels the TTL flip so a late expiry cannot overwrite the result.
 	d.cardMu.Lock()
@@ -224,22 +224,24 @@ func TestDispatchCardAction_BackendPicker_OfflineRejected(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
 
-	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+	ack, err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",
 		MessageID: "om_card",
 		Value:     map[string]any{"kind": "backend", "backendID": "ghost"},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("DispatchCardAction: %v", err)
 	}
 	if rt.current != "claude-1" {
 		t.Errorf("current changed to %q on offline pick", rt.current)
 	}
-	// Offline path patches the picker card in place — no extra notice send.
+	// Offline path returns the red failure card via the ACK business payload
+	// (no SendCard / UpdateCard — both are 0).
 	sends, updates := sink.counts()
-	if sends != 0 || updates != 1 {
-		t.Errorf("want 0 sends + 1 update (in-place flip), got %d sends + %d updates", sends, updates)
+	if sends != 0 || updates != 0 {
+		t.Errorf("want 0 sends + 0 updates (card via ACK), got %d sends + %d updates", sends, updates)
 	}
-	s := string(sink.updates[0].card)
+	s := string(ack)
 	if !strings.Contains(s, "离线") {
 		t.Errorf("want failure card mentioning offline, got %s", s)
 	}
