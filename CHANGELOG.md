@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+无。下一版起步请在此追加。
+
+## [1.5.0] - 2026-07-28
+
+v1.4.0 之后的增量完善。无协议层破坏性改动：`PromptPayload.CardMessageID` 为
+omitempty 新字段（非 frontend-override），`/v1/metrics/<id>` 与
+`/v1/deploy-preflight` 对旧组件静默降级。**发版顺序**：先 feishu-front 后
+各 backend（deploy.sh 顺序天然满足）。
+
 ### Added
 
 - **总览卡主机/进程监控（多机部署）**：status-monitor 总览卡新增「主机」
@@ -35,6 +44,53 @@
   - **发版顺序约束**：先部署 feishu-front 再部署各 backend（deploy.sh
     顺序天然满足；反序时 metrics 在旧 frontend 上 404，主机/进程 section
     空白至 frontend 升级完成，业务路径不受影响）。
+
+- **总览卡移动端分组布局**：飞书 markdown 用比例字体，原空格对齐的列布局
+  在手机上永远错位，~70 字符行会在数字中间折行。改为按主机/服务分块：粗体
+  身份行带版本漂移 / stale 标记，下面每指标一行缩进；版本号不再截断，
+  summary 拆为两行。
+
+- **deploy-monitor terminal notice 原地 patch 命令卡**：`/deploy` 会重启
+  feishu-front，内存中的 promptID→turn 映射被清空，terminal notice 此前
+  回退为独立卡，导致原 "⏳ 部署执行中…" 进度卡永久卡死。现在前端在 Prompt
+  事件里盖进度卡的 message_id（`PromptPayload.CardMessageID`，omitempty，
+  非 override），deploy-monitor 在每个 terminal notice 上原样回带
+  （`Notice.UpdateMessageID`），frontend 的 UpdateMessageID 快路径（裸
+  message_id 跨重启存活）即可原地 patch 原卡。同时补两个洞：快路径现在会
+  释放该 prompt 的 turn（否则 feishu-front 未重启场景如 `/pull` 会留下活
+  turn 污染 `/running`），引用卡被撤回时回退 `SendCard`（部署结果不再丢失）。
+
+### Changed
+
+- **deploy.sh 拆 `lib-common.sh` + preflight 冲突规则前置到 frontend**：
+  - A) deploy.sh（935 行多职责混杂）重构：共享样板（路径 / 颜色 / RUN_USER /
+    env+systemd helper / svc 映射表）移到 `deploy/lib-common.sh`，三个脚本
+    source 它；主流程改为 source guard 后面的具名 step 函数，helper 可单元
+    测试（`deploy/tests/smoke.sh`，19 条断言，接入 `make test`）。同时修复
+    长期存在的 shellcheck SC1073 解析错误，四个脚本 shellcheck-clean。
+  - B) 在途 preflight 规则离开 bash 的 sed/grep JSON 解析，改走前端新端点
+    `GET /v1/deploy-preflight?services=...`：200 安全 / 409 + 受影响
+    backends + 预渲染原因。deploy-monitor 自身的 turn 被排除，远端 `/deploy`
+    不会自死锁。deploy.sh 收敛为一次 curl + status-code 分支；前端老于该
+    端点时保守回退（任何 inflight 都阻断）。
+- **`idle_timeout` 示例改为 `600s`**：`config.example.json` 的
+  `timeouts.idle_timeout` 从零值默认（禁用）改为推荐的 `600s`，与 README
+  建议对齐；零值依然表示禁用，旧部署行为不变。
+
+### Fixed
+
+- **loopback frontend 探测回退 `PrimaryIPv4`**：与前端同机部署
+  （`frontend_url=localhost/127.0.0.1/[::1]`）时，`probeOutboundIP` 报出
+  loopback IP，永远匹配不上 feishu-front 自报的 `PrimaryIPv4` ——
+  `mergeHostByIP` 遂把一台物理机拆成两行（如 `10.0.2.15` vs `::1`）。
+  探测结果为 loopback 时回退 `PrimaryIPv4`；远端前端仍走真实路由 IP。
+
+## [1.4.0] - 2026-07-28
+
+file upload (pandoc) / post rich-text / opencode idle watchdog / deploy-monitor
+cgroup 内存回收。所有改动 opt-in：缺依赖 / 权限时降级通知，旧部署行为不变。
+
+### Added
 
 - **opencode-back 空闲看门狗（idle watchdog，opt-in）**：当 opencode
   子进程在 `idle_timeout` 内未吐出任何 stdout 事件时，判定为卡死（上游

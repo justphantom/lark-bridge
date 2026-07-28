@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 调查日期：2026-07-27 | 当前版本：v1.2.0（`[Unreleased]` 段在做飞书客户端自实现）
+> 调查日期：2026-07-28 | 当前版本：v1.5.0
 
 ---
 
@@ -12,7 +12,7 @@
 **lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code / opencode / miniagent 等 CLI agent 完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
 
 - 仓库：`github.com/justphantom/lark-bridge`
-- 当前版本：**v1.2.0**（git tag），`[Unreleased]` 段正在做飞书客户端自实现
+- 当前版本：**v1.5.0**（git tag）
 - 核心问题：飞书开放平台 ↔ 本地 CLI agent 之间没有原生通道；直接把 agent 暴露给飞书缺少鉴权、并发、流式渲染、会话路由等能力
 - 解决思路：采用 **1 前端 + N 后端** 的拆分架构（`README.md:3`、`CHANGELOG.md:131`）
 
@@ -31,8 +31,8 @@
 
 ### 1.3 规模
 
-- **241 个 Go 文件，42,286 行**，其中测试 **20,947 行（约 49.5%）**
-- `internal/` 下 **21 个子包**
+- **268 个 Go 文件，49,830 行**，其中测试 **24,238 行（约 48.6%）**
+- `internal/` 下 **24 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
 ---
@@ -55,7 +55,7 @@
 
 **历史依赖变迁**（`CHANGELOG.md:9-14, 44-47`）：原本依赖 `larksuite/oapi-sdk-go/v3` + `gorilla/websocket` + `gogo/protobuf` + `claude-go-sdk`，经两个版本演进：
 - v1.2.0：内联 `claude-go-sdk` → `internal/claude/`
-- Unreleased：自实现飞书客户端 → `internal/lark/`，最终实现"零外部依赖"
+- v1.3.0：自实现飞书客户端 → `internal/lark/`，最终实现"零外部依赖"
 
 ---
 
@@ -70,7 +70,7 @@ lark-bridge/
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
 │   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
 │   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
-├── internal/                 # 21 个内部包（详见第 5 节）
+├── internal/                 # 24 个内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
 │   ├── router/               # chatID ↔ 后端绑定持久化
 │   ├── config/               # JSON 配置加载/默认值/校验
@@ -103,7 +103,7 @@ lark-bridge/
 ├── config.example.json       # 配置模板
 ├── Makefile                  # build/test/vet/fmt/deploy/pack
 ├── go.mod / go.sum           # 仅 module 行 + go 1.25.0
-├── CHANGELOG.md              # 1.0.0 → 1.2.0 → Unreleased
+├── CHANGELOG.md              # 1.0.0 → 1.5.0
 ├── README.md                 # 项目速览
 ├── NOTICES.txt               # 上游依赖归属
 └── .golangci.yml             # lint 规则
@@ -114,7 +114,7 @@ lark-bridge/
 | 目录 | 职责 | 备注 |
 |---|---|---|
 | `cmd/` | 6 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
-| `internal/` | 全部业务代码，21 个包 | 不对外暴露 |
+| `internal/` | 全部业务代码，24 个包 | 不对外暴露 |
 | `deploy/` | `deploy.sh`（业务 4 服务）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `docs/` | 设计文档与代码审查记录（本地不入仓） | 决策溯源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
@@ -143,7 +143,7 @@ lark-bridge/
 
 ## 5. `internal/` 模块职责详述
 
-按规模（行数）降序，共 21 个包。
+按规模（行数）降序，共 24 个包。
 
 ### 5.1 `feishufront/`（9824 行，36 文件）——前端核心
 
@@ -576,11 +576,11 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 
 - **module**：`github.com/justphantom/lark-bridge`（go.mod:1）
 - **Go 版本**：1.25.0（go.mod:3）
-- **二进制数**：5（cmd/ 下 5 子目录）
+- **二进制数**：6（cmd/ 下 6 子目录）
 - **internal 包数**：21
 - **代码行**：42,286（测试 20,947，~49.5%）
 - **外部依赖**：0
-- **版本**：v1.2.0（Unreleased 正在做飞书客户端自实现）
+- **版本**：v1.5.0
 - **License**：MIT（LICENSE）
 - **构建**：`make build` / `make test` / `make deploy`
 - **入口**：`cmd/<binary>/main.go:main()`
