@@ -36,7 +36,7 @@
 ## 构建
 
 ```bash
-make build      # 产物在 bin/：5 个二进制，git 版本号注入
+make build      # 产物在 bin/：6 个二进制，git 版本号注入
 make test       # build-check + vet + go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -s -w .
@@ -74,7 +74,7 @@ systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](dep
 
 ## 目录约定
 
-- `cmd/`：5 个二进制的入口（feishu-front、claude-back、opencode-back、miniagent-back、deploy-monitor）。
+- `cmd/`：6 个二进制的入口（feishu-front、claude-back、opencode-back、miniagent-back、deploy-monitor、status-monitor）。
 - `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

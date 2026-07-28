@@ -5,18 +5,56 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-28
+
+飞书客户端完全自实现（移除 `oapi-sdk-go` 全部依赖），并新增 status-monitor 总览卡
+后端。同步落地 P0–P3 一轮代码评审加固（资源边界 / 鉴权 / 子进程组 / WS 健壮性 /
+systemd hardening）。所有改动向后兼容：对外协议字段不变；移除的内部 SDK 类型仅影响
+`internal/feishu/`。
+
+### Added
+
+- **status-monitor 后端**（`cmd/status-monitor` + `internal/statusmonitor/`）：
+  以 backendType `status-monitor` 注册到前端，按 `status_monitor.interval`（默认
+  60s）轮询 `GET /v1/status` 并发 `TypeStatusReport`；前端向每个绑定此后端的群推送
+  一张常驻总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。
+  push-only；与 deploy-monitor 同样解耦于 `deploy.sh` 之外，由 `make upgrade-status`
+  独立管理。设计见 `docs/status-monitor-design.md`。
+- **renderer subagent zone**：进度卡为 agent 委派（sub-agent delegation）新增专属
+  呈现区域，与主 turn 的工具行分离。设计见 `docs/subagent-rendering-design.md`。
+- **架构与规范文档**：新增 `ARCHITECTURE.md`（仓库级架构真源）与 `CODING_STANDARDS.md`；
+  补充飞书开放平台 API 参考文档。
+
 ### Changed
 
-- 飞书客户端完全自实现，移除 `github.com/larksuite/oapi-sdk-go/v3` 及其间接依赖
+- **飞书客户端完全自实现**：移除 `github.com/larksuite/oapi-sdk-go/v3` 及其间接依赖
   `gorilla/websocket`、`gogo/protobuf`。`go.mod` 现仅含标准库。新增 `internal/lark/`
   （RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + 鉴权/REST/重连/分片重组），
-  `internal/feishu/` 改为对 `*lark.Client` 的业务封装层。`docs/lark-client-rewrite.md`
-  为本次落地的方案文档。
-- `feishu.Bot.Restart` / `feishu.ErrTooManyRestarts` / `restartMax` 删除：新客户端
+  `internal/feishu/` 改为对 `*lark.Client` 的业务封装层。方案见
+  `docs/lark-client-rewrite.md`。
+- **`feishu.Bot.Restart` / `feishu.ErrTooManyRestarts` / `restartMax` 删除**：新客户端
   自管重连、无 goroutine 泄漏，软重启机制不再需要。`cmd/feishu-front` 看门狗
   简化为「超 fatalAfter 仍不健康 → 退出交 supervisor 拉起」。
-- `feishu.IncomingMessage.Mentions` 类型由 SDK 的 `sdktypes.Mention` 改为本包
-  `Mention`（字段集不变，下游 `internal/feishufront` 零改动）。
+- **`feishu.IncomingMessage.Mentions` 类型替换**：由 SDK 的 `sdktypes.Mention` 改为
+  本包 `Mention`（字段集不变，下游 `internal/feishufront` 零改动）。
+- **P1 资源/鉴权加固**：补全各类上界（buffer / 重连预算 / sweep）、IPC 鉴权强度提升、
+  子进程 env 收敛到白名单传递。
+- **P2 清理**：死代码删除、flap 状态机竞态修复、deploymonitor graceful drain、
+  wsclient 按职责拆分。
+- **P3 工程化**：build tags、systemd unit hardening、sudoers 指引、补测试。
+
+### Fixed
+
+- **WS `card.action.trigger` ACK 3 秒回滚**：ACK 现把业务字段置于顶层并携带 `card`，
+  阻止飞书侧 3 秒未应答导致的卡片状态回滚。
+- **picker 点击无更新**：卡片 schema 回退到 v1 让 PATCH 持久化，点击改为延迟 PATCH
+  （`context.WithoutCancel` 脱离请求生命周期），并删除失效的 ACK 死代码。
+- **claude `server_tool_use` 不再丢失**：服务端工具调用现正常呈现，`task_kind`
+  在整个 turn 生命周期内稳定。
+- **P0 修复**：飞书 mention bot 识别字段名修正、子进程漏接进程组 kill 致
+  `cmd.Wait()` 永久阻塞、WS receiveLoop 半开连接（新增读超时）。
+- **status-monitor 多行 `base` 配置校验**：`deploy.sh` 在多行 base 下不再误判。
+- **deploy.sh 配置字段迁移**：升级时在重启 monitor 前迁移已移除的 config 字段。
 
 ## [1.2.0] - 2026-07-26
 

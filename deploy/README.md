@@ -29,9 +29,9 @@
 
 ```bash
 make build
-# 产物（5 个二进制）：
+# 产物（6 个二进制）：
 #   bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#   bin/lark-miniagent-back, bin/lark-deploy-monitor.
+#   bin/lark-miniagent-back, bin/lark-deploy-monitor, bin/lark-status-monitor.
 # miniagent 是 miniagent-back fork 的子进程（独立项目，不在本仓库 make build 范围内）：
 # 每个 prompt fork 一次，跑完退出。类比 claude CLI 被 claude-back fork 的模式。
 ```
@@ -255,7 +255,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 6 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机

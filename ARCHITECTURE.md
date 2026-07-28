@@ -63,12 +63,13 @@
 
 ```
 lark-bridge/
-├── cmd/                      # 5 个二进制入口
+├── cmd/                      # 6 个二进制入口
 │   ├── feishu-front/         # 前端：飞书 WS Bot + IPC server + 调度器
 │   ├── claude-back/          # Claude CLI 后端
 │   ├── opencode-back/        # opencode CLI 后端
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
-│   └── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
+│   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
+│   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
 ├── internal/                 # 21 个内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
 │   ├── router/               # chatID ↔ 后端绑定持久化
@@ -112,18 +113,18 @@ lark-bridge/
 
 | 目录 | 职责 | 备注 |
 |---|---|---|
-| `cmd/` | 5 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
+| `cmd/` | 6 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
 | `internal/` | 全部业务代码，21 个包 | 不对外暴露 |
 | `deploy/` | `deploy.sh`（业务 4 服务）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `docs/` | 设计文档与代码审查记录（本地不入仓） | 决策溯源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
-| `bin/` | `make build` 产物（5 个二进制） | gitignore |
+| `bin/` | `make build` 产物（6 个二进制） | gitignore |
 
 ---
 
 ## 4. `cmd/` 入口点
 
-5 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+6 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
@@ -132,8 +133,9 @@ lark-bridge/
 | **opencode-back** | `cmd/opencode-back/main.go:31` | `lark-opencode-back` | 每 prompt fork 一次 `opencode run` | `opencode.New` (:66) + 其余同 claude-back（:97/:105/:127） |
 | **miniagent-back** | `cmd/miniagent-back/main.go:37` | `lark-miniagent-back` | 每 prompt fork 一次 `miniagent` 二进制（独立项目） | `miniclient.New` (:105) + `miniagent.New` (:113) + `backendrpc.Run` (:129) |
 | **deploy-monitor** | `cmd/deploy-monitor/main.go:33` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` (:72) + `backendrpc.Run` (:96) + 优雅 drain (:110) |
+| **status-monitor** | `cmd/status-monitor/main.go:29` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` (:66) + `backendrpc.Run` (:82)（独立部署） |
 
-> **注意**：`README.md:73` 与 `Makefile:43-49` 中"6 个二进制"是历史口径（含已移除的 `opencode-serve-back`）。实际自 v1.2.0 起 **5 个二进制**（`CHANGELOG.md:72-83` 记录了移除）。
+> **注意**：`cmd/` 下共 6 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 4 个业务服务（feishu / claude / opencode / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:32`），`git describe --tags --always --dirty`。
 
