@@ -371,14 +371,14 @@ const defaultMaxThinkingRunes = 50
 
 // renderThinkingZone returns the reasoning zone element, or nil when thinking
 // is empty. The body is grey-dimmed markdown under a "💭 思考中" header, capped
-// to the trailing max runes. Trailing (not leading) is kept because the most
-// recent reasoning is the most relevant to the model's next action.
-func renderThinkingZone(thinking string, max int) cardkit.Element {
+// to the trailing maxRunes runes. Trailing (not leading) is kept because the
+// most recent reasoning is the most relevant to the model's next action.
+func renderThinkingZone(thinking string, maxRunes int) cardkit.Element {
 	thinking = strings.TrimSpace(thinking)
 	if thinking == "" {
 		return nil
 	}
-	return cardkit.MarkdownElement("<font color=\"grey\">💭 **思考中**\n" + truncateThinkingTail(thinking, max) + "</font>")
+	return cardkit.MarkdownElement("<font color=\"grey\">💭 **思考中**\n" + truncateThinkingTail(thinking, maxRunes) + "</font>")
 }
 
 // truncateThinkingTail keeps the trailing maxRunes runes of s, prefixed with

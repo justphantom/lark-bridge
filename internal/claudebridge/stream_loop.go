@@ -5,9 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/claude"
-
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/strutil"
@@ -270,8 +269,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// the latest block instead of concatenating every step's trace into
 			// an unreadable wall.
 			h.emitAsync(promptID, &protocol.Control{
-				Type:     protocol.TypeThinking,
-				ChatID:   chatID,
+				Type:   protocol.TypeThinking,
+				ChatID: chatID,
 				Thinking: &protocol.ThinkingPayload{
 					Delta:   ev.Text,
 					Replace: true,
