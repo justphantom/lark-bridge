@@ -385,7 +385,7 @@ func TestWSClient_PingSent(t *testing.T) {
 	bsrv := bootstrapServerNoConfig(t, fs.URL())
 	defer bsrv.Close()
 	wc := newWSClient("a", "s", bsrv.URL, bsrv.Client(), Lifecycle{}, nil)
-	wc.cfg = clientConfig{PingInterval: 80 * time.Millisecond}
+	wc.cfg = clientConfig{PingInterval: 200 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = wc.Start(ctx) }()

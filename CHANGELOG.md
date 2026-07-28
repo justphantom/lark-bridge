@@ -71,7 +71,43 @@
   - 安全：inbox 目录 0700、文件 0600、路径元素白名单清洗（防 `..` 穿越），
     下载字节上限 30 MiB（可配），转换超时 60s（可配）。
 
-### Notes
+### Removed
+
+- **删除 `deploy/{claude,opencode,feishu}-config.json` 死模板**：这三个文件
+  是 init commit 带进来的早期方案，自 `2f23369` 起 deploy.sh 改为从
+  `config.example.json` 统一派生，再无任何 `.go`/`.sh` 消费它们（grep 验证）。
+  保留反而误导操作员以为编辑它们会影响 deploy.sh 流程（曾因 schema drift
+  触发 DisallowUnknownFields 反复 crash），且与 `Makefile:64` pack 行为
+  不一致（tarball 从不打包它们）。`config.example.json` 成为唯一真源。
+
+### Fixed
+
+- **deploy-monitor cgroup 内存回收（MemoryHigh/MemoryMax）**：观察到
+  `systemctl status` 报告的 idle Memory 长期 88M+ 不回落。根因是 `make deploy`
+  子进程读取的文件页（go-build 缓存、源码、docker 层）作为 `inactive_file`
+  留在 cgroup 内核记账里（进程本体 `anon` 仅 7M，`VmHWM` 仅 14M）。
+  - `upgrade-monitor.sh` 的 unit 模板加 `MemoryHigh=50M` / `MemoryMax=300M`，
+    新部署自动生效；已部署 unit 由新增的 `migrate_unit` 幂等注入。
+  - 实测：idle Memory 88.1M → 3.0M，进程 anon 无变化。
+  - `MemoryMax=300M` 是硬上限（实测 MemoryPeak ~207M，余量到 300M），
+    防一次失控 deploy 把整机吃满。
+
+- **upgrade-monitor EXIT trap 引用已出作用域的 local 变量**：`init_monitor`
+  中 `stage` 为 `local`，函数返回后 EXIT trap 访问它会触发 `unbound variable`，
+  临时目录泄漏。改用全局 `INIT_STAGE` 替代，trap 在任意路径都能正确清理。
+
+- **修 flaky 测试 `TestWSClient_PingSent`**：`PingInterval: 80ms` 在 `-race`
+  下调度抖动，约 10% 概率在 3s 窗口内抢不到时间片而失败（20 次跑出 2 次）。
+  interval 提升到 `200ms`（窗口内仍有 ~15 次 ping 机会），`-race -count=30`
+  全绿。
+
+- **ParsePost 支持 flat 形态的 post 富文本**：新版飞书客户端发的 post 是
+  flat 形态（`title`/`content`/`content_v2` 直接挂在顶层，无 `{"zh_cn":{...}}`
+  locale 包裹），旧解析器走 locale-wrapped 分支失败，整个 content 作为
+  fallback 文本下发——观察到的现象是 UserText 里塞了完整 content_v2 JSON。
+  `ParsePost` 改为顶层有 `content` 键即按 flat 解析，`content_v2` 一律忽略；
+  `bot_dispatch` 解析失败时日志补 `raw_content`（1024 rune 截断）便于排查。
+
 
 - **飞书权限**：使用本功能需在开发者后台为自建应用追加 `im:resource` 权限并
   经管理员审批；缺权限时下载返回 403，前端按 `下载失败` 通知用户。
