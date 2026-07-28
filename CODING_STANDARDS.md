@@ -394,7 +394,7 @@ type Core struct { ... }
 
 ### 7.1 函数长度
 - **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（claudebridge.streamRun, opencodebridge.streamRun），拆分反而降低可读性」。
-- **软目标**：单文件 ≤300 行（`docs/code-review-2026-07.md:41` 引用的项目惯例，源自历史 AGENTS.md/CLAUDE.md；该 md 已删除但约束仍在）。当前 14 个文件超 300 行，其中最大的 `internal/lark/ws/frame.go` 422 行、`internal/opencodebridge/commands_session_mgmt.go` 400 行被 review 标为「建议触及时拆分」。
+- **软目标**：单文件 ≤300 行（项目惯例，源自历史 AGENTS.md/CLAUDE.md）。当前 14 个文件超 300 行，其中最大的 `internal/lark/ws/frame.go` 422 行、`internal/opencodebridge/commands_session_mgmt.go` 400 行被 review 标为「建议触及时拆分」。
 
 ### 7.2 函数顺序
 **按语义关注点分组**（生命周期 / emit / state），**不**按可见性。`.golangci.yml:135-139` 禁用 `funcorder`，理由「按可见性重排会把相关方法打散」。
@@ -585,7 +585,7 @@ make upgrade-monitor         # ~2s 离线升级 deploy-monitor
 - 允许「补记」（`> 本段同时补记 v1.1.0 期间合入但当时未在 CHANGELOG 注明的两项`）。
 
 ### 10.5 .gitignore 约定（`.gitignore`）
-不入库的：`/bin/`、`/scripts/`、`/docs/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。**`/docs/` 被 gitignore**——设计文档本地保留、不入仓（`docs/code-review-2026-07.md:8` 注明）。
+不入库的：`/bin/`、`/scripts/`、`/docs/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。**`/docs/` 被 gitignore**——设计文档本地保留、不入仓。
 
 ---
 

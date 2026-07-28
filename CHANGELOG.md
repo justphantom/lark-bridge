@@ -19,9 +19,9 @@ systemd hardening）。所有改动向后兼容：对外协议字段不变；移
   60s）轮询 `GET /v1/status` 并发 `TypeStatusReport`；前端向每个绑定此后端的群推送
   一张常驻总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。
   push-only；与 deploy-monitor 同样解耦于 `deploy.sh` 之外，由 `make upgrade-status`
-  独立管理。设计见 `docs/status-monitor-design.md`。
+  独立管理。
 - **renderer subagent zone**：进度卡为 agent 委派（sub-agent delegation）新增专属
-  呈现区域，与主 turn 的工具行分离。设计见 `docs/subagent-rendering-design.md`。
+  呈现区域，与主 turn 的工具行分离。
 - **架构与规范文档**：新增 `ARCHITECTURE.md`（仓库级架构真源）与 `CODING_STANDARDS.md`；
   补充飞书开放平台 API 参考文档。
 - **renderer `max_thinking_runes` 配置项**：进度卡"思考中"区的 rune 上限从硬编码 50
@@ -33,8 +33,7 @@ systemd hardening）。所有改动向后兼容：对外协议字段不变；移
 - **飞书客户端完全自实现**：移除 `github.com/larksuite/oapi-sdk-go/v3` 及其间接依赖
   `gorilla/websocket`、`gogo/protobuf`。`go.mod` 现仅含标准库。新增 `internal/lark/`
   （RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + 鉴权/REST/重连/分片重组），
-  `internal/feishu/` 改为对 `*lark.Client` 的业务封装层。方案见
-  `docs/lark-client-rewrite.md`。
+  `internal/feishu/` 改为对 `*lark.Client` 的业务封装层。
 - **`feishu.Bot.Restart` / `feishu.ErrTooManyRestarts` / `restartMax` 删除**：新客户端
   自管重连、无 goroutine 泄漏，软重启机制不再需要。`cmd/feishu-front` 看门狗
   简化为「超 fatalAfter 仍不健康 → 退出交 supervisor 拉起」。
@@ -198,8 +197,7 @@ validate 与 enum 校验路径。
 
 ### 1.0.0 发布前审计修复
 
-发布前对照 [`docs/release-1.0-audit.md`](docs/release-1.0-audit.md) 完成全部 P0
-与 P1 阻断/严重项，以及 P2 大部分打磨项，主要落地：
+发布前完成全部 P0 与 P1 阻断/严重项，以及 P2 大部分打磨项，主要落地：
 
 - **稳定性**：abort 后子进程组 SIGKILL（`cmdutil.ApplyGroupCancel`/`RunCombinedBounded`）、
   关键路径 panic recover（control pump + 3 个 SDK 入口）、picker RPC 30s 超时、
@@ -213,7 +211,3 @@ validate 与 enum 校验路径。
   `log_level` 占位符 regex 容错、upgrade-monitor.sh SC2015 修正。
 - **文档**：Makefile/README/deploy 二进制与服务数真源统一（6 个二进制 / 5 个业务
   systemd 服务）、deploy/README 双重真源警示、补 LICENSE（MIT）与 CHANGELOG。
-
-### 已知限制
-
-详见 [`docs/release-1.0-audit.md`](docs/release-1.0-audit.md) 的 P2/P3 章节。

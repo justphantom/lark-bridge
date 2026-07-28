@@ -43,7 +43,7 @@
 |---|---|---|
 | 语言 | Go 1.25.0 | `go.mod:3` |
 | 外部依赖 | **无**（仅标准库） | `go.mod` 无 `require`；`go.sum` 0 字节 |
-| 飞书对接 | **自实现** RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + REST | `internal/lark/`，背景见 `docs/lark-client-rewrite.md` |
+| 飞书对接 | **自实现** RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + REST | `internal/lark/` |
 | 日志 | 标准库 `log/slog` 封装 | `internal/log/logger.go:29`（`type Logger = slog.Logger`） |
 | 配置 | JSON + `${VAR}` 环境变量展开 | `internal/config/config.go:263` |
 | HTTP/IPC | 标准库 `net/http`（SSE 长连接 + POST） | `internal/feishufront/ipcserver.go:277` |
@@ -170,7 +170,7 @@ lark-bridge/
 
 ### 5.2 `lark/`（4385 行，19 文件）——自实现飞书客户端
 
-Unreleased 版本的核心改动（`docs/lark-client-rewrite.md` 858 行方案文档）。
+v1.3.0 的核心改动。
 
 | 文件 | 职责 |
 |---|---|
@@ -534,7 +534,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 适配层 (claude / opencode / miniclient)              各 CLI 子进程封装
 ```
 
-`internal/feishu/` 是 `lark/`（协议）与 `feishufront`（业务）之间的刻意适配层（`docs/lark-client-rewrite.md §3.4`），下游零改动。
+`internal/feishu/` 是 `lark/`（协议）与 `feishufront`（业务）之间的刻意适配层，下游零改动。
 
 ### 9.2 协议优先（Protocol-First）
 
@@ -550,7 +550,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 
 ### 9.4 零外部依赖
 
-`go.mod` 仅 module 行 + `go 1.25.0`，`go.sum` 0 字节。飞书 WS/REST/protobuf/鉴权全部自实现（~4400 行），背景与方案见 `docs/lark-client-rewrite.md`。收益：消除 SDK 已知问题（goroutine 泄漏）、完全可控、交叉编译无依赖链。
+`go.mod` 仅 module 行 + `go 1.25.0`，`go.sum` 0 字节。飞书 WS/REST/protobuf/鉴权全部自实现（~4400 行）。收益：消除 SDK 已知问题（goroutine 泄漏）、完全可控、交叉编译无依赖链。
 
 ### 9.5 健壮性细节
 
@@ -569,15 +569,6 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 ### 9.7 测试文化
 
 测试占比 ~50%（20947/42286 行），`go test -race ./...` 全绿。模式：表驱动 + interface fake 注入（`feishuClient` interface、`Commander` interface、`claudeAPI` interface、`feishufront.NewLayer1Router` 等）。`cmd/*/main_test.go` 覆盖各入口错误路径。
-
-### 9.8 文档化决策
-
-`docs/` 6 篇文档记录关键设计与审查：
-- `lark-client-rewrite.md`（858 行）：飞书客户端自实现方案，含 milestone 拆分、降级路径、风险表
-- `release-1.0-audit.md`：发布前 P0/P1/P2 审查清单
-- `code-review-2026-07.md`（357 行）、`event-parsing-review-2026-07.md`：事件解析审查
-- `status-monitor-design.md`：/v1/status 设计
-- `opencode-cli-reference.md`/`opencode-run-streaming.md`：opencode CLI 对接参考
 
 ---
 
