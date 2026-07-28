@@ -118,6 +118,14 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
 User=$RUN_USER
+# cgroup 内存回收：make deploy 子进程读取的文件页（go-build 缓存、源码、
+# docker 层）作为 inactive_file 留在本 cgroup 的内核记账里，systemctl
+# 报告的 Memory 长期 80M+ 不回落（进程本体 anon 仅 7M）。MemoryHigh 让
+# 内核在超过阈值时主动 reclaim inactive 页，idle 回落到 ~10-15M；MemoryMax
+# 是硬上限，防一次失控 deploy 把整机吃满。MemoryPeak 实测 ~207M，留出
+# 余量到 300M。
+MemoryHigh=50M
+MemoryMax=300M
 
 [Install]
 WantedBy=multi-user.target
@@ -148,6 +156,23 @@ migrate_config() {
     done
 }
 
+# ── unit 迁移：给已部署 unit 注入 cgroup 内存回收 ──
+# 根因见 write_monitor_unit 的 MemoryHigh 注释：make deploy 后 80M+ 的
+# 文件页缓存留在本 cgroup 不回收（进程本体 anon 仅 7M）。仅在缺失时
+# 注入，保证可重入；插入到 User= 行之后，与 init 路径写出的 unit 同构。
+migrate_unit() {
+    local unit="/etc/systemd/system/$UNIT_NAME.service"
+    [[ -f "$unit" ]] || return 0
+    if sudo grep -q '^MemoryHigh=' "$unit"; then
+        return 0
+    fi
+    info "迁移：注入 MemoryHigh/MemoryMax 到 $unit..."
+    if ! sudo sed -i '/^User=/a MemoryHigh=50M\nMemoryMax=300M' "$unit"; then
+        fail "注入 MemoryHigh/MemoryMax 失败：请手工编辑 $unit 后重跑"
+    fi
+    sudo systemctl daemon-reload
+}
+
 # ── 升级：替换二进制 + restart ────────────────────────
 upgrade_monitor() {
     # 前置检查：unit + config 必须已存在（否则提示先 --init）
@@ -161,6 +186,10 @@ upgrade_monitor() {
 
     # 替换二进制前先迁移 config：迁移失败则 fail 退出，二进制和服务都不动。
     migrate_config
+
+    # 同步给已部署 unit 注入 MemoryHigh/MemoryMax（缺失才注入，可重入）。
+    # daemon-reload 在 migrate_unit 内部按需触发。
+    migrate_unit
 
     info "替换二进制（原子 rename）..."
     sudo cp "$BIN_DIR/$UNIT_NAME" "$DEPLOY_DIR/.${UNIT_NAME}.new"
