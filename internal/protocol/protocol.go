@@ -37,25 +37,34 @@ const (
 // PromptPayload carries a user prompt. Text has already been @-stripped.
 //
 // Frontend (feishu-front) constructs this only from a chat message via
-// internal/feishufront/dispatcher.go and MUST set just ChatID / Text / Skill.
-// The override fields below — Directory / ModelSpec / Agent / Permission /
-// Effort / SettingsFile — are reserved for trusted sources only (config,
-// slash-command handlers, in-backend binding mutation). They MUST NOT be set
-// by the frontend pipeline: validateSessionDirPath only checks IsAbs, so
-// accepting a frontend-supplied Directory would expose an arbitrary CWD
-// (claude/opencode running tools in /etc). Backends enforce this with
+// internal/feishufront/dispatcher.go and MUST set just ChatID / Text / Skill
+// / CardMessageID. The override fields below — Directory / ModelSpec / Agent /
+// Permission / Effort / SettingsFile — are reserved for trusted sources only
+// (config, slash-command handlers, in-backend binding mutation). They MUST
+// NOT be set by the frontend pipeline: validateSessionDirPath only checks
+// IsAbs, so accepting a frontend-supplied Directory would expose an arbitrary
+// CWD (claude/opencode running tools in /etc). Backends enforce this with
 // HasFrontendOverride at their handlePromptEvent entry.
 type PromptPayload struct {
-	ChatID       string `json:"chatID"`
-	SessionID    string `json:"sessionID,omitempty"`
-	Directory    string `json:"directory,omitempty"`
-	Text         string `json:"text"`                // @-stripped
-	Skill        bool   `json:"skill,omitempty"`     // true: bypass backend slash-command dispatch
-	ModelSpec    string `json:"modelSpec,omitempty"` // user model alias (e.g. "sonnet")
-	Agent        string `json:"agent,omitempty"`     // opencode
-	Permission   string `json:"permission,omitempty"`
-	Effort       string `json:"effort,omitempty"`
-	SettingsFile string `json:"settingsFile,omitempty"`
+	ChatID    string `json:"chatID"`
+	SessionID string `json:"sessionID,omitempty"`
+	Directory string `json:"directory,omitempty"`
+	Text      string `json:"text"`            // @-stripped
+	Skill     bool   `json:"skill,omitempty"` // true: bypass backend slash-command dispatch
+	// CardMessageID is the frontend's progress-card message_id for this
+	// prompt. Informational, NOT an override (HasFrontendOverride ignores
+	// it): a backend whose job outlives the frontend process
+	// (deploy-monitor's `make deploy` restarts feishu-front, wiping the
+	// in-memory turn map) echoes it back as NoticePayload.UpdateMessageID
+	// so the terminal notice patches the original progress card by raw
+	// message_id — which survives the restart — instead of falling back to
+	// a fresh standalone card.
+	CardMessageID string `json:"cardMessageID,omitempty"`
+	ModelSpec     string `json:"modelSpec,omitempty"` // user model alias (e.g. "sonnet")
+	Agent         string `json:"agent,omitempty"`     // opencode
+	Permission    string `json:"permission,omitempty"`
+	Effort        string `json:"effort,omitempty"`
+	SettingsFile  string `json:"settingsFile,omitempty"`
 }
 
 // HasFrontendOverride returns the name of the first override field present

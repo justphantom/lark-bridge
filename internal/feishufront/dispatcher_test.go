@@ -2,6 +2,7 @@ package feishufront
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -632,6 +633,72 @@ func TestSendNoticeUpdateMessageID(t *testing.T) {
 	}
 	if !strings.Contains(card, "~默认~ → **sonnet**") {
 		t.Errorf("result card missing before→after block: %s", card)
+	}
+}
+
+// TestSendNoticeUpdateMessageID_FinalizesLiveTurn verifies the
+// UpdateMessageID fast path also releases the prompt's turn: a backend that
+// echoes CardMessageID for EVERY terminal notice (deploy-monitor) would
+// otherwise leak the turn into /running whenever the frontend never
+// restarted (e.g. /pull).
+func TestSendNoticeUpdateMessageID_FinalizesLiveTurn(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	d.turns.Start("om_cmd", "oc_chat", "om_progress", "claude-1")
+
+	err := d.DispatchControl(context.Background(), RoutedControl{
+		BackendID: "claude-1",
+		Control: &protocol.Control{
+			Type:     protocol.TypeNotice,
+			PromptID: "om_cmd",
+			ChatID:   "oc_chat",
+			Notice: &protocol.NoticePayload{
+				Level: "success", Title: "拉取完成", Message: "Already up to date.",
+				UpdateMessageID: "om_progress",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+	if len(sink.updates) != 1 || sink.updates[0].messageID != "om_progress" {
+		t.Fatalf("want one UpdateCard on om_progress, got %+v", sink.updates)
+	}
+	if len(sink.sends) != 0 {
+		t.Errorf("expected no SendCard, got %d", len(sink.sends))
+	}
+	if _, ok := d.turns.Get("om_cmd"); ok {
+		t.Error("turn should be finished after the UpdateMessageID patch")
+	}
+}
+
+// TestSendNoticeUpdateMessageID_CardGoneFallsBack verifies that when the
+// referenced card was withdrawn (user deleted it), the notice is delivered as
+// a fresh card instead of vanishing — a deploy result must never be lost.
+func TestSendNoticeUpdateMessageID_CardGoneFallsBack(t *testing.T) {
+	sink := &fakeSink{updateErr: errors.New("feishu: code:230011, msg: The message was withdrawn.")}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+
+	err := d.DispatchControl(context.Background(), RoutedControl{
+		BackendID: "deploy-monitor",
+		Control: &protocol.Control{
+			Type:     protocol.TypeNotice,
+			PromptID: "om_deploy",
+			ChatID:   "oc_chat",
+			Notice: &protocol.NoticePayload{
+				Level: "success", Title: "部署完成", Message: "all services started",
+				UpdateMessageID: "om_withdrawn",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+	if len(sink.updates) != 1 {
+		t.Fatalf("want one UpdateCard attempt, got %d", len(sink.updates))
+	}
+	if len(sink.sends) != 1 || sink.sends[0].chatID != "oc_chat" {
+		t.Fatalf("want one SendCard fallback to oc_chat, got %+v", sink.sends)
 	}
 }
 

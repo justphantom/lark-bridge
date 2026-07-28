@@ -463,6 +463,10 @@ func (d *Dispatcher) dispatchPrompt(ctx context.Context, msg *feishu.IncomingMes
 			ChatID: msg.ChatID,
 			Text:   prompt,
 			Skill:  skill,
+			// Lets a long-running backend (deploy-monitor) patch THIS card
+			// for its terminal notice even if the frontend restarts
+			// mid-job and the turn map is gone.
+			CardMessageID: messageID,
 		},
 	}
 	if err := d.registry.SendEvent(backendID, ev); err != nil {

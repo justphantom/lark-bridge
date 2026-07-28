@@ -299,14 +299,32 @@ func (d *Dispatcher) sendResultTextFallback(ctx context.Context, chatID, reply s
 
 func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Control, backendType string) error {
 	// A notice carrying UpdateMessageID patches an existing standalone card
-	// (e.g. a submitted question card) instead of sending a new one.
+	// (e.g. a submitted question card, or a command's progress card echoed
+	// back by a backend whose job outlived a frontend restart) instead of
+	// sending a new one.
 	if n := ctrl.Notice; n != nil && n.UpdateMessageID != "" {
 		footer := cardkit.FooterInfo{BackendType: backendType, Status: noticeFooterStatus(n.Level, n.Title)}
 		card, err := cardkit.Notice(footer, n.Level, n.Title, n.Message, n.Field, n.Before, n.After)
 		if err != nil {
 			return err
 		}
-		return d.bot.UpdateCard(ctx, n.UpdateMessageID, card)
+		err = d.bot.UpdateCard(ctx, n.UpdateMessageID, card)
+		if err != nil && feishu.IsCardGone(err) {
+			// The referenced card was withdrawn: deliver the notice as a
+			// fresh card rather than dropping it on the floor (a deploy
+			// result must never vanish silently).
+			_, err = d.bot.SendCard(ctx, ctrl.ChatID, card, "")
+		}
+		if err == nil {
+			// A direct card patch IS this prompt's terminal frame (the
+			// promptID dedup above already consumed it): release the
+			// turn/progress slots so a live turn — e.g. /pull on
+			// deploy-monitor, where the frontend never restarted — does
+			// not leak into /running.
+			d.turns.Finish(ctrl.PromptID)
+			d.cleanupProgress(ctrl.PromptID, n.UpdateMessageID)
+		}
+		return err
 	}
 
 	d.cleanupProgress(ctrl.PromptID, "")

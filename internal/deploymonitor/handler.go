@@ -114,27 +114,32 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	chatID := ev.Prompt.ChatID
 	promptID := ev.PromptID
 	prompt := strings.TrimSpace(ev.Prompt.Text)
+	// cardMsgID is the frontend's progress-card message_id for this prompt.
+	// Echoing it back as Notice.UpdateMessageID lets the terminal notice
+	// patch that card even after `make deploy` restarts the frontend and
+	// wipes its turn map (the message_id itself is Feishu-side and survives).
+	cardMsgID := ev.Prompt.CardMessageID
 
 	switch prompt {
 	case "/deploy":
-		return h.acquireAndRun(ctx, chatID, promptID, "make", h.deployArgs(false), "部署")
+		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "make", h.deployArgs(false), "部署")
 	case "/deploy-force":
 		// /deploy-force passes ARGS=--force to deploy.sh, skipping safety
 		// checks — a one-click destructive deploy is too easy to fire by
 		// mistake, so gate it behind a confirm card.
-		return h.confirmAndDeployForce(ctx, chatID, promptID)
+		return h.confirmAndDeployForce(ctx, chatID, promptID, cardMsgID)
 	case "/pull":
 		// --ff-only: refuse to create a merge on divergence instead of
 		// leaving a conflicted working tree that would block later deploys.
-		return h.acquireAndRun(ctx, chatID, promptID, "git", []string{"pull", "--ff-only"}, "拉取")
+		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "git", []string{"pull", "--ff-only"}, "拉取")
 	case "/push":
-		return h.acquireAndRun(ctx, chatID, promptID, "git", []string{"push"}, "推送")
+		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "git", []string{"push"}, "推送")
 	case "/running":
 		// Read-only query; must NOT take the single-flight slot — a /running
 		// while a job is in progress should still answer.
-		return h.handleRunning(ctx, chatID, promptID)
+		return h.handleRunning(ctx, chatID, promptID, cardMsgID)
 	default:
-		return h.notify(ctx, chatID, promptID, "warning", "未知指令",
+		return h.notify(ctx, chatID, promptID, cardMsgID, "warning", "未知指令",
 			"本后端接受 /deploy、/deploy-force（需确认）、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
 	}
 }
@@ -157,14 +162,16 @@ func (h *Handler) deployArgs(force bool) []string {
 // promptID (so the job surfaces on the command's own progress card, no
 // separate "triggered" card); on busy it emits a terminal warning notice
 // bound to promptID (finalising the rejected command's card). The terminal
-// success/error notice fires from the goroutine, also bound to promptID.
-func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, name string, args []string, label string) error {
+// success/error notice fires from the goroutine, likewise bound — and
+// carrying cardMsgID as UpdateMessageID so it patches the progress card by
+// raw message_id even if the job restarted the frontend in between.
+func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, cardMsgID, name string, args []string, label string) error {
 	h.mu.Lock()
 	if h.running {
 		h.mu.Unlock()
 		h.logger.Info("job rejected: already running",
 			log.FieldChatID, chatID, "cmd", jobLabel(name, args))
-		return h.notify(ctx, chatID, promptID, "warning", label+"进行中",
+		return h.notify(ctx, chatID, promptID, cardMsgID, "warning", label+"进行中",
 			"已有一次操作正在执行，请等待其完成后再试。")
 	}
 	h.running = true
@@ -181,7 +188,7 @@ func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, name stri
 	h.jobWg.Add(1)
 	go func() {
 		defer h.jobWg.Done()
-		h.runJob(chatID, promptID, name, args, label)
+		h.runJob(chatID, promptID, cardMsgID, name, args, label)
 	}() //nolint:gosec // G118: job must outlive the triggering request's ctx
 	return nil
 }
@@ -204,10 +211,11 @@ func (h *Handler) Close(ctx context.Context) error {
 // runJob runs name args in ProjectRoot and emits the terminal notice. It runs
 // on its own goroutine so the SSE loop stays free. The single-flight flag is
 // always cleared on exit (including ctx cancel). The terminal notice is bound
-// to promptID so the frontend patches the command's progress card in place;
-// after a /deploy that restarts the frontend the turn is gone and the notice
-// gracefully falls back to a standalone card (sendTerminalCard fallback).
-func (h *Handler) runJob(chatID, promptID, name string, args []string, label string) {
+// to promptID AND carries cardMsgID as UpdateMessageID: after a /deploy that
+// restarts the frontend the turn is gone, but the message_id is Feishu-side
+// and survives, so the frontend patches the original progress card via the
+// UpdateMessageID fast path instead of stacking a standalone card.
+func (h *Handler) runJob(chatID, promptID, cardMsgID, name string, args []string, label string) {
 	defer func() {
 		h.mu.Lock()
 		h.running = false
@@ -225,13 +233,13 @@ func (h *Handler) runJob(chatID, promptID, name string, args []string, label str
 	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, name, args...)
 	if err != nil {
 		h.logger.Error("job failed", log.FieldChatID, chatID, "cmd", jobLabel(name, args), log.FieldError, err)
-		h.notifyWithRetry(chatID, promptID, "error", label+"失败",
+		h.notifyWithRetry(chatID, promptID, cardMsgID, "error", label+"失败",
 			tailOutput(out, 500)+"\n错误："+err.Error())
 		return
 	}
 
 	h.logger.Info("job done", log.FieldChatID, chatID, "cmd", jobLabel(name, args))
-	h.notifyWithRetry(chatID, promptID, "success", label+"完成", tailOutput(out, 500))
+	h.notifyWithRetry(chatID, promptID, cardMsgID, "success", label+"完成", tailOutput(out, 500))
 }
 
 // jobLabel lives in render.go alongside the other formatting helpers.
@@ -241,14 +249,12 @@ func (h *Handler) runJob(chatID, promptID, name string, args []string, label str
 // feishu-front restarts, and deploy-monitor's SSE reconnect lands a few
 // seconds later. Until the SSE is re-established, POST /v1/control returns
 // 503 because the backend is not in the frontend's registry. We poll the
-// reconnect with 2s intervals up to 30s total. promptID binds the notice to
-// the command's card so the frontend patches it in place when the turn still
-// exists; after a restart the turn is gone and the notice falls back to a
-// standalone card (sendTerminalCard's existing fallback).
-func (h *Handler) notifyWithRetry(chatID, promptID, level, title, message string) {
+// reconnect with 2s intervals up to 30s total. promptID + cardMsgID bind the
+// notice to the command's card (see runJob).
+func (h *Handler) notifyWithRetry(chatID, promptID, cardMsgID, level, title, message string) {
 	for attempt := range 15 {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := h.notify(ctx, chatID, promptID, level, title, message)
+		err := h.notify(ctx, chatID, promptID, cardMsgID, level, title, message)
 		cancel()
 		if err == nil {
 			return
@@ -260,11 +266,12 @@ func (h *Handler) notifyWithRetry(chatID, promptID, level, title, message string
 	h.logger.Error("deploy notify gave up after retries", log.FieldChatID, chatID)
 }
 
-// notify emits a Notice Control to chatID, bound to promptID so the frontend
-// can patch the command's progress card in place. ChatID is required by the
-// frontend validator for TypeNotice, so an empty chatID is rejected up front
-// rather than letting SendControl's Validate fail with an opaque message.
-func (h *Handler) notify(ctx context.Context, chatID, promptID, level, title, message string) error {
+// notify emits a Notice Control to chatID, bound to promptID and carrying
+// cardMsgID as UpdateMessageID (empty tolerated — the frontend then falls
+// back to its promptID turn lookup). ChatID is required by the frontend
+// validator for TypeNotice, so an empty chatID is rejected up front rather
+// than letting SendControl's Validate fail with an opaque message.
+func (h *Handler) notify(ctx context.Context, chatID, promptID, cardMsgID, level, title, message string) error {
 	if chatID == "" {
 		return fmt.Errorf("notify: chatID is empty")
 	}
@@ -272,7 +279,12 @@ func (h *Handler) notify(ctx context.Context, chatID, promptID, level, title, me
 		Type:     protocol.TypeNotice,
 		PromptID: promptID,
 		ChatID:   chatID,
-		Notice:   &protocol.NoticePayload{Level: level, Title: title, Message: message},
+		Notice: &protocol.NoticePayload{
+			Level:           level,
+			Title:           title,
+			Message:         message,
+			UpdateMessageID: cardMsgID,
+		},
 	})
 }
 
@@ -297,10 +309,10 @@ func (h *Handler) notifyProgress(ctx context.Context, chatID, promptID, descript
 // command's card is finalised). It runs inline (not on a goroutine) — the GET
 // is bounded by statusQueryTimeout and is user-paced, so blocking the SSE
 // loop briefly is acceptable, unlike a multi-minute `make deploy`.
-func (h *Handler) handleRunning(ctx context.Context, chatID, promptID string) error {
+func (h *Handler) handleRunning(ctx context.Context, chatID, promptID, cardMsgID string) error {
 	snap, err := h.status.Status(ctx)
 	if err != nil {
-		return h.notify(ctx, chatID, promptID, "error", "查询失败", "读取运行中会话失败："+err.Error())
+		return h.notify(ctx, chatID, promptID, cardMsgID, "error", "查询失败", "读取运行中会话失败："+err.Error())
 	}
-	return h.notify(ctx, chatID, promptID, "info", "运行中会话", renderTurns(snap))
+	return h.notify(ctx, chatID, promptID, cardMsgID, "info", "运行中会话", renderTurns(snap))
 }

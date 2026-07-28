@@ -23,6 +23,7 @@ type fakeSink struct {
 	updates   []updatedCard
 	nextID    int
 	cardErr   error // if set, SendCard returns it (simulates a Feishu rejection)
+	updateErr error // if set, UpdateCard returns it (simulates a withdrawn card)
 }
 
 type sentCard struct {
@@ -55,7 +56,7 @@ func (f *fakeSink) UpdateCard(_ context.Context, messageID string, card []byte) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, updatedCard{messageID: messageID, card: card})
-	return nil
+	return f.updateErr
 }
 
 // SendText records a plain-text fallback send so tests can assert the

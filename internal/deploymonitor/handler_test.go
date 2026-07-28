@@ -120,6 +120,48 @@ func promptEvent(chatID, text string) *protocol.Event {
 	}
 }
 
+// promptEventWithCard attaches the frontend's progress-card message_id, as a
+// production event from feishu-front does (dispatcher.go).
+func promptEventWithCard(chatID, text, cardMsgID string) *protocol.Event {
+	ev := promptEvent(chatID, text)
+	ev.Prompt.CardMessageID = cardMsgID
+	return ev
+}
+
+// TestHandleEvent_TerminalNoticeCarriesCardMessageID pins the deploy-card
+// mechanism: the terminal notice must echo the progress card's message_id as
+// UpdateMessageID so the frontend can patch THAT card even after a /deploy
+// restarted it (wiping the promptID→turn map).
+func TestHandleEvent_TerminalNoticeCarriesCardMessageID(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEventWithCard("cc", "/deploy", "om_progress")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	for range 100 {
+		if len(rpc.snapshot()) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	all := rpc.snapshot()
+	if len(all) < 2 {
+		t.Fatalf("want banner + terminal notice, got %d controls", len(all))
+	}
+	terminal := all[len(all)-1]
+	if terminal.Type != protocol.TypeNotice || terminal.Notice == nil {
+		t.Fatalf("terminal control is not a notice: %+v", terminal)
+	}
+	if terminal.Notice.UpdateMessageID != "om_progress" {
+		t.Errorf("UpdateMessageID = %q, want om_progress", terminal.Notice.UpdateMessageID)
+	}
+	if terminal.Notice.Level != "success" {
+		t.Errorf("level = %q, want success", terminal.Notice.Level)
+	}
+}
+
 func TestHandleEvent_DeployTriggersAndNotices(t *testing.T) {
 	rpc := &fakeSender{}
 	cmd := &fakeCommander{out: []byte("build ok\nall services started")}
