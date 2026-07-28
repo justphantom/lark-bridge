@@ -47,7 +47,7 @@ Go 1.25+。**直接依赖仅 Go 标准库**——飞书 WebSocket 长连接、RE
 
 ## 配置
 
-JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出）。可单文件共享或分文件（`deploy/` 下有 `feishu-config.json` / `claude-config.json` / `opencode-config.json` 示例）。机密用环境变量，不写进 JSON。
+JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出）。多服务可共享单文件（`config.example.json` 是唯一真源，各进程只读自己需要的字段），也可复制成每服务一份按需裁剪。机密用环境变量，不写进 JSON。
 
 完整字段与默认值见 `config.example.json` 与 `internal/config/config_defaults.go`。
 

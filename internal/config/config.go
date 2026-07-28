@@ -332,7 +332,7 @@ type FileConvert struct {
 	// the agent backend receives when a file is uploaded. Required when
 	// Enabled is true; absent/empty makes Load fail so an operator can never
 	// silently ship a deployment with no instruction to the agent (the
-	// default template lives in config.example.json / deploy/*.json so the
+	// default template lives in config.example.json so the
 	// canonical wording stays operator-editable, never compiled in).
 	//
 	// Variables:

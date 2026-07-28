@@ -144,7 +144,7 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("file_convert.retention must be >= 1h when set, got %s", d)
 		}
 		// PromptTemplate is required: no compiled-in default exists (the
-		// canonical wording ships in config.example.json / deploy/*.json
+		// canonical wording ships in config.example.json
 		// so operators can edit it). Refuse to start so a half-configured
 		// deployment cannot ship silent file uploads.
 		if strings.TrimSpace(cfg.FileConvert.PromptTemplate) == "" {

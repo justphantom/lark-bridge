@@ -58,7 +58,7 @@ pandoc --version
 
 `file_convert.prompt_template` 是发送给 agent 的 prompt 文本模板（Go
 `text/template` 语法），**必填**。代码层不内置默认文案，默认模板写在
-`config.example.json` / `deploy/feishu-config.json` 里，操作员可直接编辑。
+`config.example.json` 里，操作员可直接编辑。
 
 可用变量：
 
@@ -93,8 +93,7 @@ prompt 模板。**可选**：留空时 post 消息降级为纯 Markdown 文本�
 `@bot` / `@all` 在解析阶段被剔除（与文本消息的 `StripMentionPlaceholders`
 语义一致），普通 `@用户` 保留为 `@<name>`。
 
-默认模板见 `config.example.json` / `deploy/feishu-config.json`，操作员可直接
-编辑换语言、改措辞。
+默认模板见 `config.example.json`，操作员可直接编辑换语言、改措辞。
 
 ## 1. 构建
 
@@ -115,20 +114,12 @@ cp deploy/env.example .env
 # 编辑 .env，填入真实凭证
 # 生成 IPC_SECRET：openssl rand -hex 32
 
-# 方式 A：单文件（进程共享，各自只读需要的字段）
+# 单文件派生：config.example.json 是唯一真源（deploy.sh / upgrade-*.sh
+# 均从此派生运行时 config）。手动启动也可直接共用 config.example.json，
+# 或复制成每服务一份按需裁剪。
 cp config.example.json claude-config.json
 # 编辑 backend_id / frontend_url / state_dir
-# feishu/opencode 各自再复制一份（或直接共用 claude-config.json）
-
-# 方式 B：分文件（deploy/ 下的示例模板）
-# deploy/feishu-config.json         — 飞书凭证 + ipc_secret + state_dir
-# deploy/claude-config.json         — backend_id + frontend_url + claude 配置
-# deploy/opencode-config.json       — backend_id + frontend_url + opencode 配置
-#
-# ⚠️ 重要：deploy/*.json 仅用于手动启动模式（./bin/lark-xxx -config deploy/xxx.json）。
-# deploy.sh 流程不读取这些文件——配置真源优先级为：repo 根 <service>-config.json
-# → config.example.json → tarball 解包的 example，再派生 STAGE 副本。
-# 在 deploy/*.json 上做修改期望 deploy.sh 流程生效，会导致「已改未生效」陷阱。
+# feishu/opencode/miniagent 各自再复制一份（或直接共用 claude-config.json）
 ```
 
 ## 3. 创建 state 目录
