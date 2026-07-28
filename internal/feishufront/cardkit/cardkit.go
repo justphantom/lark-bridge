@@ -101,9 +101,9 @@ func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Ac
 		return nil, fmt.Errorf("cardkit: card has %d elements, exceeds Feishu hard limit %d", len(all), MaxCardElements)
 	}
 	card := map[string]any{
-		"schema":  "1.0",
-		"config":  map[string]any{"update_multi": true},
-		"header":  Header(header),
+		"schema":   "1.0",
+		"config":   map[string]any{"update_multi": true},
+		"header":   Header(header),
 		"elements": all,
 	}
 	return json.Marshal(card)

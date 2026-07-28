@@ -138,7 +138,7 @@ func TestHandlerSinkAdapter_ConvertsCard(t *testing.T) {
 			FormValue: map[string]any{"q": "a"},
 		},
 	}
-	if 	err := a.OnCard(context.Background(), in); err != nil {
+	if err := a.OnCard(context.Background(), in); err != nil {
 		t.Fatalf("OnCard: %v", err)
 	}
 	if h.gotCard == nil {
