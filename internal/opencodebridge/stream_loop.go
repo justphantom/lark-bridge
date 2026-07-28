@@ -74,6 +74,13 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		switch ev.GetType() {
 		case opencode.EventStepStart:
 			stepCount++
+			// A new agent step begins: discard any text accumulated in the
+			// previous step. opencode emits one assistant text part per step
+			// (the preamble before a tool call in step N, the final answer
+			// after the last tool call in step N+1); the reply must be only
+			// the terminal step's text. Without this reset the step-N
+			// preamble gets concatenated onto the final answer.
+			text.Reset()
 			if startTime.IsZero() {
 				startTime = time.Now()
 			}

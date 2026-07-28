@@ -17,7 +17,16 @@ import (
 // to a promptResult.
 func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan claude.Event, modelSpec string) promptResult {
 	var (
-		text      strings.Builder
+		// lastMsgID/lastText track only the most recent assistant message's
+		// text. The result envelope carries the final answer in its
+		// "result" field, but in multi-turn runs (subagents, tool rounds)
+		// that field can hold an early turn's text rather than the last.
+		// Segmenting by message id keeps the reply tied to the actual final
+		// assistant message; the result field is kept only as a fallback
+		// when no assistant text arrived (e.g. an error result).
+		lastMsgID string
+		lastText  strings.Builder
+
 		sessionID string
 		model     string
 
@@ -277,7 +286,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case claude.EventText:
-			text.WriteString(ev.Text)
+			if ev.MessageID != "" && ev.MessageID != lastMsgID {
+				lastMsgID = ev.MessageID
+				lastText.Reset()
+			}
+			lastText.WriteString(ev.Text)
 		case claude.EventToolUse:
 			if id := ev.ToolID; id != "" {
 				toolNames[id] = ev.ToolName
@@ -326,7 +339,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case claude.EventResult:
-			return h.finalizeResult(ev, text.String(), sessionID, model, modelSpec, chatID)
+			return h.finalizeResult(ev, lastText.String(), sessionID, model, modelSpec, chatID)
 		case claude.EventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
@@ -366,17 +379,20 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	}
 }
 
-// finalizeResult builds the promptResult from a result event. The reply
-// comes from the result event's result field (the protocol truth), falling
-// back to accumulated text blocks.
-func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, modelSpec, chatID string) promptResult {
+// finalizeResult builds the promptResult from a result event. The reply is
+// the last assistant message's accumulated text (lastReply), which is the
+// real final answer; the result envelope's "result" field is only a fallback
+// when no assistant text arrived (e.g. an error result), because in
+// multi-turn runs that field can carry an early turn's text.
+func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, modelSpec, chatID string) promptResult {
 	h.Logger.Debug("bridge: result event",
 		log.FieldChatID, chatID,
 		"is_error", ev.IsError,
 		"cost_usd", ev.CostUSD,
 		log.FieldDuration, ev.DurationMs,
 		log.FieldModel, firstNonEmpty(model, modelSpec),
-		"result_preview", truncateForDebug(ev.Result, h.debugRedact()))
+		"result_preview", truncateForDebug(ev.Result, h.debugRedact()),
+		"reply_preview", truncateForDebug(lastReply, h.debugRedact()))
 
 	result := promptResult{
 		model:         firstNonEmpty(model, modelSpec),
@@ -401,13 +417,11 @@ func (h *Handler) finalizeResult(ev claude.Event, accText, sessionID, model, mod
 		return result
 	}
 
-	reply := ev.Result
-	if reply == "" {
-		reply = bridgebase.StripThinking(accText, "> 💭 ")
-	} else {
-		reply = bridgebase.StripThinking(reply, "> 💭 ")
+	reply := lastReply
+	if strings.TrimSpace(reply) == "" {
+		reply = ev.Result
 	}
-	result.reply = reply
+	result.reply = bridgebase.StripThinking(reply, "> 💭 ")
 	return result
 }
 

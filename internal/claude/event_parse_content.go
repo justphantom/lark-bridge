@@ -17,6 +17,7 @@ func parseContentBlocks(lineType, sessionID string, msgRaw json.RawMessage, rawL
 		return nil, nil
 	}
 	var msg struct {
+		ID      string `json:"id"`
 		Content []struct {
 			Type      string          `json:"type"`
 			Text      string          `json:"text"`
@@ -35,7 +36,7 @@ func parseContentBlocks(lineType, sessionID string, msgRaw json.RawMessage, rawL
 
 	var out []Event
 	for _, b := range msg.Content {
-		ev := Event{SessionID: sessionID, Raw: rawLine}
+		ev := Event{SessionID: sessionID, MessageID: msg.ID, Raw: rawLine}
 		switch b.Type {
 		case "text":
 			ev.Type = EventText

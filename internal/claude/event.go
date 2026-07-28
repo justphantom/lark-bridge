@@ -49,6 +49,13 @@ type Event struct {
 	Type      string // one of the Event* constants
 	Subtype   string
 	SessionID string
+	// MessageID is the assistant/user message id from the stream-json
+	// "message.id" field, populated only on content-block events. The
+	// bridge segments accumulated text by it so the final reply is taken
+	// from the last assistant message, not the result envelope — whose
+	// "result" field is unreliable in multi-turn runs (it can hold an
+	// early turn's text rather than the actual final answer).
+	MessageID string
 	Model     string
 	Text      string
 

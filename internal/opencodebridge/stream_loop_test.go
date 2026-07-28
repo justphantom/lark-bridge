@@ -170,6 +170,61 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 	}
 }
 
+// TestStreamRun_OnlyTerminalStepTextBecomesReply pins the multi-step reply
+// semantics: opencode emits a separate assistant text part per step — the
+// step-N text is the model's preamble before a tool call, the step-(N+1) text
+// is the final answer after the tool returns. The reply must carry ONLY the
+// terminal step's text. Previously the text accumulator was never reset, so the
+// step-N preamble was concatenated onto the final answer (observed on a real
+// turn where step-1 explained a task delegation and step-2 delivered the report
+// — the user got both glued together).
+func TestStreamRun_OnlyTerminalStepTextBecomesReply(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"s1","part":{"type":"step-start"}}`
+	const preamble = `{"type":"text","sessionID":"s1","part":{"type":"text","text":"PREAMBLE_BEFORE_TOOL"}}`
+	const toolStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"tool-calls","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+	const finalAnswer = `{"type":"text","sessionID":"s1","part":{"type":"text","text":"FINAL_ANSWER_AFTER_TOOL"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, stepStart, preamble, toolStep, stepStart, finalAnswer, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	if res.err != nil {
+		t.Fatalf("streamRun: %v", res.err)
+	}
+	if !strings.Contains(res.reply, "FINAL_ANSWER_AFTER_TOOL") {
+		t.Errorf("reply = %q, want contains 'FINAL_ANSWER_AFTER_TOOL'", res.reply)
+	}
+	if strings.Contains(res.reply, "PREAMBLE_BEFORE_TOOL") {
+		t.Errorf("reply leaked non-terminal step text: %q", res.reply)
+	}
+}
+
+// TestStreamRun_SingleStepTextSurvives verifies the reset does not harm a
+// single-step turn: the sole step's text must still become the reply (the
+// reset fires once on the only step_start against an empty builder, so nothing
+// is lost).
+func TestStreamRun_SingleStepTextSurvives(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"s1","part":{"type":"step-start"}}`
+	const textEv = `{"type":"text","sessionID":"s1","part":{"type":"text","text":"ONLY_ANSWER"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0}}`
+
+	events := parseLines(t, stepStart, textEv, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	if res.err != nil {
+		t.Fatalf("streamRun: %v", res.err)
+	}
+	if !strings.Contains(res.reply, "ONLY_ANSWER") {
+		t.Errorf("reply = %q, want contains 'ONLY_ANSWER'", res.reply)
+	}
+}
+
 // TestStreamRun_ThinkingDoesNotPolluteReply verifies the EventThinking case
 // fires (no default-branch drop) and the reasoning text stays out of the
 // final reply. opencode emits reasoning as a separate part preceding text in
