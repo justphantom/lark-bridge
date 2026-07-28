@@ -107,6 +107,7 @@ func run(cfgPath string) error {
 		StateDir:         cfg.StateDir,
 		StreamHistory:    cfg.Opencode.StreamHistory,
 		PromptTimeout:    time.Duration(cfg.Timeouts.PromptTimeout),
+		IdleTimeout:      time.Duration(cfg.Timeouts.IdleTimeout),
 		DebugRedact:      cfg.LogDebugRedact,
 		WorkspaceRoot:    os.Getenv("WORKSPACE_ROOT"),
 	}, bridgeLogger)

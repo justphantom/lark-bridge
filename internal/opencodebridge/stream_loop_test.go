@@ -137,7 +137,7 @@ func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 
 	// cost: 0.01 + 0.01 + 0.02 = 0.04 (would be 0.02 if only the terminal step counted).
 	if res.costUSD != 0.04 {
@@ -164,7 +164,7 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 	if res.costUSD != 0.02 {
 		t.Errorf("costUSD = %v, want 0.02", res.costUSD)
 	}
@@ -190,7 +190,7 @@ func TestStreamRun_OnlyTerminalStepTextBecomesReply(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 	if res.err != nil {
 		t.Fatalf("streamRun: %v", res.err)
 	}
@@ -216,7 +216,7 @@ func TestStreamRun_SingleStepTextSurvives(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 	if res.err != nil {
 		t.Fatalf("streamRun: %v", res.err)
 	}
@@ -240,7 +240,7 @@ func TestStreamRun_ThinkingDoesNotPolluteReply(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 	if res.err != nil {
 		t.Fatalf("streamRun: %v", res.err)
 	}
@@ -267,7 +267,7 @@ func TestStreamRun_SessionIDPropagatedToResult(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "glm-5")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "glm-5", nil)
 	if res.sessionID != "ses_test_123" {
 		t.Errorf("sessionID = %q, want ses_test_123", res.sessionID)
 	}
@@ -289,7 +289,7 @@ func TestStreamRun_StepStartDoesNotPanicOnEmptyProgress(t *testing.T) {
 	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "")
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 	if res.err != nil {
 		t.Fatalf("streamRun: %v", res.err)
 	}
@@ -438,5 +438,65 @@ func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
 	}
 	if !sawBashResult {
 		t.Fatalf("no TypeToolResult for bash; got %d controls: %v", len(controls), controlTypes(controls))
+	}
+}
+
+// TestStreamRun_IdleTimeoutMarked pins the idle-watchdog discrimination:
+// when ctx is cancelled with the errIdleTimeout cause (set by runPrompt's
+// idle timer), streamRun must return isIdleTimeout=true and isCancelled=
+// false, so emitTerminal shows "响应超时" rather than the generic "已取消".
+// The channel is closed after cancel to mirror the real pump, which closes
+// its event channel once the SIGKILLed subprocess is reaped.
+func TestStreamRun_IdleTimeoutMarked(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"s1","part":{"type":"step-start"}}`
+	events := make(chan opencode.Event, 1)
+	events <- parseLines(t, stepStart)[0]
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func() {
+		cancel(errIdleTimeout)
+		close(events)
+	}()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(ctx, "c1", "p1", events, "", func() {})
+	if !res.isIdleTimeout {
+		t.Errorf("isIdleTimeout = false, want true (idle watchdog cause)")
+	}
+	if res.isCancelled {
+		t.Errorf("isCancelled = true, want false; idle must not masquerade as user-cancel")
+	}
+	if res.err == nil {
+		t.Errorf("err = nil, want the cancelled ctx error")
+	}
+}
+
+// TestStreamRun_UserCancelNotIdle is the inverse: a plain /session-abort
+// (context.Canceled cause, NOT errIdleTimeout) must surface as isCancelled,
+// never as isIdleTimeout, so the two terminal notices stay distinct.
+func TestStreamRun_UserCancelNotIdle(t *testing.T) {
+	const stepStart = `{"type":"step_start","sessionID":"s1","part":{"type":"step-start"}}`
+	events := make(chan opencode.Event, 1)
+	events <- parseLines(t, stepStart)[0]
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func() {
+		cancel(context.Canceled)
+		close(events)
+	}()
+
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(ctx, "c1", "p1", events, "", func() {})
+	if !res.isCancelled {
+		t.Errorf("isCancelled = false, want true (user abort)")
+	}
+	if res.isIdleTimeout {
+		t.Errorf("isIdleTimeout = true, want false; a plain cancel must not look idle")
 	}
 }

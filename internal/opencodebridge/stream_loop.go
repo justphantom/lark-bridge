@@ -13,10 +13,17 @@ import (
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
+// errIdleTimeout is the cancel-cause set by the idle watchdog (see
+// runPrompt) when no stdout event arrives within IdleTimeout. streamRun
+// checks it via context.Cause to tell an idle kill apart from a user
+// /session-abort, so emitTerminal can show "响应超时" vs "已取消".
+var errIdleTimeout = errors.New("opencode idle: no stdout event within idle_timeout")
+
 // streamRun consumes an opencode event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
-// to a promptResult.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan opencode.Event, modelSpec string) promptResult {
+// to a promptResult. onActivity (nil disables the watchdog) is invoked once
+// per received event so runPrompt can reset its idle timer.
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan opencode.Event, modelSpec string, onActivity func()) promptResult {
 	var (
 		text      strings.Builder
 		sessionID string
@@ -32,6 +39,9 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	)
 
 	for ev := range events {
+		if onActivity != nil {
+			onActivity()
+		}
 		h.Logger.Debug("bridge received opencode event",
 			log.FieldChatID, chatID,
 			log.FieldEventType, ev.GetType(),
@@ -40,11 +50,13 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			log.FieldToolName, ev.GetToolName())
 
 		if ctx.Err() != nil {
+			idle := errors.Is(context.Cause(ctx), errIdleTimeout)
 			return promptResult{
-				err:         ctx.Err(),
-				isCancelled: true,
-				model:       resolveModel("", modelSpec),
-				sessionID:   sessionID,
+				err:           ctx.Err(),
+				isCancelled:   !idle,
+				isIdleTimeout: idle,
+				model:         resolveModel("", modelSpec),
+				sessionID:     sessionID,
 			}
 		}
 
@@ -212,11 +224,13 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	// (user abort or prompt timeout), surface it as a cancellation rather
 	// than a generic error so emitTerminal shows the right notice.
 	if ctx.Err() != nil {
+		idle := errors.Is(context.Cause(ctx), errIdleTimeout)
 		return promptResult{
-			err:         ctx.Err(),
-			isCancelled: true,
-			model:       resolveModel("", modelSpec),
-			sessionID:   sessionID,
+			err:           ctx.Err(),
+			isCancelled:   !idle,
+			isIdleTimeout: idle,
+			model:         resolveModel("", modelSpec),
+			sessionID:     sessionID,
 		}
 	}
 	return promptResult{

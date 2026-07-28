@@ -485,6 +485,28 @@ func TestLoad_PromptTimeout(t *testing.T) {
 	}
 }
 
+// TestLoad_IdleTimeout verifies IdleTimeout (the per-prompt idle watchdog)
+// is parsed from config and defaults to 0 (disabled) when omitted.
+func TestLoad_IdleTimeout(t *testing.T) {
+	// Omitted → 0 (disabled).
+	cfg, err := Load(writeConfig(t, `{}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Timeouts.IdleTimeout != 0 {
+		t.Errorf("default idle_timeout = %v, want 0 (disabled)", cfg.Timeouts.IdleTimeout)
+	}
+
+	// Explicit value is preserved.
+	cfg2, err := Load(writeConfig(t, `{"timeouts": {"idle_timeout": "120s"}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := Duration(120 * time.Second); cfg2.Timeouts.IdleTimeout != want {
+		t.Errorf("idle_timeout = %v, want %v", cfg2.Timeouts.IdleTimeout, want)
+	}
+}
+
 // TestLoad_PromptTimeoutMinDuration verifies a sub-second prompt_timeout is
 // rejected so a misconfigured value cannot kill prompts instantly.
 func TestLoad_PromptTimeoutMinDuration(t *testing.T) {

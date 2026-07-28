@@ -76,6 +76,29 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		})
 		defer timer.Stop()
 	}
+	// Idle watchdog: the timer is reset on every stdout event via onActivity
+	// (wired through runOpencode→streamRun). If the CLI goes silent for
+	// IdleTimeout the timer fires cancel(errIdleTimeout), which SIGKILLs the
+	// process group (ApplyGroupCancel) so streamRun unblocks and returns
+	// isIdleTimeout — the user sees a "响应超时" notice instead of waiting
+	// forever on a stuck subprocess (observed: glm-5.2 build agent hangs
+	// mid-step on upstream LLM stalls). 0 disables it.
+	var idleTimer *time.Timer
+	if h.IdleTimeout > 0 {
+		idleTimer = time.AfterFunc(h.IdleTimeout, func() {
+			cancel(errIdleTimeout)
+		})
+	}
+	defer func() {
+		if idleTimer != nil {
+			idleTimer.Stop()
+		}
+	}()
+	onActivity := func() {
+		if idleTimer != nil {
+			idleTimer.Reset(h.IdleTimeout)
+		}
+	}
 	defer cancel(nil)
 
 	modelSpec := binding.ModelSpec
@@ -87,7 +110,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		Agent:     binding.Agent,
 	}
 
-	result := h.runOpencode(ctx, chatID, replyToID, opts, modelSpec)
+	result := h.runOpencode(ctx, chatID, replyToID, opts, modelSpec, onActivity)
 
 	// recordUsage before emitTerminal: emitTerminal reads the store to fill
 	// the cumulative TotalTokens on the result card, so this turn must be
@@ -118,8 +141,9 @@ func (h *Handler) recordUsage(chatID string, result promptResult) {
 }
 
 // runOpencode starts one opencode subprocess, streams its events into
-// Controls, and reduces the stream to a promptResult.
-func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts opencode.RunOptions, modelSpec string) promptResult {
+// Controls, and reduces the stream to a promptResult. onActivity is wired
+// through to streamRun so the idle watchdog in runPrompt resets per event.
+func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts opencode.RunOptions, modelSpec string, onActivity func()) promptResult {
 	// Archive the raw stream for this run before launching the subprocess so
 	// the sink is wired for the whole lifetime. Best-effort: nil sink = off.
 	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "opencode", chatID, promptID, h.StreamHistory)
@@ -135,7 +159,7 @@ func (h *Handler) runOpencode(ctx context.Context, chatID, promptID string, opts
 			model: resolveModel("", modelSpec),
 		}
 	}
-	return h.streamRun(ctx, chatID, promptID, events, modelSpec)
+	return h.streamRun(ctx, chatID, promptID, events, modelSpec, onActivity)
 }
 
 // emitTerminal renders the terminal control for a finished turn: cancelled
@@ -149,6 +173,16 @@ func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, re
 	defer cancel()
 
 	switch {
+	case result.isIdleTimeout:
+		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
+			Type:   protocol.TypeNotice,
+			ChatID: chatID,
+			Notice: &protocol.NoticePayload{
+				Level:   "warning",
+				Title:   "响应超时",
+				Message: fmt.Sprintf("opencode 已 %d 秒无输出，已终止", int(h.IdleTimeout.Seconds())),
+			},
+		})
 	case result.isCancelled:
 		title := "已取消"
 		msg := "本次请求已中止"

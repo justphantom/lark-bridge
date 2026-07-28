@@ -49,6 +49,9 @@ type CoreConfig struct {
 	StreamHistory int
 	// PromptTimeout is the per-prompt safety net. 0 disables it.
 	PromptTimeout time.Duration
+	// IdleTimeout is the idle watchdog: cancel the subprocess when no
+	// stdout event arrives for this duration. 0 disables it.
+	IdleTimeout time.Duration
 	// DebugRedact controls whether prompt/error text in debug logs is
 	// replaced wholesale with <redacted>. Mirrors the top-level config field
 	// log_debug_redact.
@@ -96,6 +99,15 @@ type Core struct {
 	// exits on its own). When >0, a prompt exceeding this duration is
 	// cancelled so a stuck CLI cannot occupy a slot forever.
 	PromptTimeout time.Duration
+
+	// IdleTimeout is the per-prompt idle watchdog. 0 disables it. When >0,
+	// a prompt whose subprocess emits no stdout event for this duration is
+	// cancelled (SIGKILL on the group) so a stuck CLI — hung on an upstream
+	// LLM call, internal deadlock, a tool waiting on stdin — cannot leave
+	// the user waiting forever. Distinct from PromptTimeout (total
+	// wall-clock): IdleTimeout resets on every received event, so a long
+	// but active turn is never cut short. Currently consumed by opencode-back.
+	IdleTimeout time.Duration
 
 	// CancelByChat maps chatID to the cancel entry of the runPrompt goroutine
 	// currently working on it. Busy-then-drop: a chat with an entry is busy
@@ -145,6 +157,7 @@ func NewCore(r *router.Router, rpc *backendrpc.Client, cfg CoreConfig, logger *l
 		StateDir:          cfg.StateDir,
 		StreamHistory:     cfg.StreamHistory,
 		PromptTimeout:     cfg.PromptTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 		DirCache:          NewDirCache(cfg.WorkspaceRoot),
 		CancelByChat:      make(map[string]*PromptCancel),
 		Answers:           NewAnswerBroker(),

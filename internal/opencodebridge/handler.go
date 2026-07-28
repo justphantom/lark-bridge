@@ -37,6 +37,10 @@ type HandlerConfig struct {
 	StreamHistory int
 	// PromptTimeout is the per-prompt safety net. 0 disables it.
 	PromptTimeout time.Duration
+	// IdleTimeout is the per-prompt idle watchdog: cancel the subprocess
+	// (SIGKILL the group) when no stdout event arrives for this duration.
+	// 0 disables it. Wired from config Timeouts.IdleTimeout.
+	IdleTimeout time.Duration
 	// DebugRedact controls whether prompt/error text in debug logs is
 	// replaced wholesale with <redacted>. Mirrors the top-level config field
 	// log_debug_redact.
@@ -56,6 +60,7 @@ func NewWithLogger(r *router.Router, api opencodeAPI, rpc *backendrpc.Client, cf
 			StateDir:         cfg.StateDir,
 			StreamHistory:    cfg.StreamHistory,
 			PromptTimeout:    cfg.PromptTimeout,
+			IdleTimeout:      cfg.IdleTimeout,
 			DebugRedact:      cfg.DebugRedact,
 			WorkspaceRoot:    cfg.WorkspaceRoot,
 		}, logger),

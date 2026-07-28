@@ -7,6 +7,22 @@
 
 ### Added
 
+- **opencode-back 空闲看门狗（idle watchdog，opt-in）**：当 opencode
+  子进程在 `idle_timeout` 内未吐出任何 stdout 事件时，判定为卡死（上游
+  LLM 卡顿 / 内部死锁 / tool 等待 stdin），SIGKILL 整个进程组并向飞书
+  发"响应超时"通知，避免用户永久等待却收不到回复（根因：观察到的
+  glm-5.2 build agent 偶发于某个 step 中途停滞，`streamRun` 永久阻塞在
+  `for ev := range events`，永不 `emitTerminal`）。
+  - 与 `prompt_timeout`（总墙钟）互补：`idle_timeout` 每收到一个事件就
+    重置，长但活跃的 turn 不会被误杀。
+  - 配置：`timeouts.idle_timeout`（0 = 禁用，默认；建议 `120s`）。
+  - 实现：`runPrompt` 起一个 `time.AfterFunc`，经 `onActivity` 回调由
+    `streamRun` 每事件 reset；触发时 `cancel(errIdleTimeout)` → 进程组被
+    `ApplyGroupCancel` SIGKILL → `streamRun` 检测 `context.Cause` 返回
+    `isIdleTimeout`，`emitTerminal` 据此发"响应超时"而非"已取消"。
+  - 回归测试：`TestStreamRun_IdleTimeoutMarked` /
+    `TestStreamRun_UserCancelNotIdle` / `TestLoad_IdleTimeout`。
+
 - **飞书富文本消息（post）支持 + 内联图片下载（opt-in）**：feishu-front
   现可接收 `MsgType=post` 的富文本消息，转换成 Markdown 物化到 inbox。
   设计文档见 `docs/post-rich-text-design.md`（方案 C，已按推荐定档全部

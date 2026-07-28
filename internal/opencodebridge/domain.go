@@ -14,6 +14,10 @@ type promptResult struct {
 	costUSD       float64 // from step_finish's cost field
 	steps         int     // number of step_start events (= agent rounds)
 	isCancelled   bool    // true if the turn was cancelled via /session-abort
+	// isIdleTimeout is true when the turn was aborted by the idle watchdog
+	// (no stdout event for IdleTimeout). Distinct from isCancelled so
+	// emitTerminal can show "响应超时" instead of the generic "已取消".
+	isIdleTimeout bool
 
 	// Token breakdown accumulated across every step_finish (both tool-calls
 	// steps and the terminal stop step). contextTokens above stays input+

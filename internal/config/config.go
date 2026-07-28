@@ -241,6 +241,15 @@ type Timeouts struct {
 	// on the process group) and the user sees a "请求超时" notice. Consumed
 	// by claude-back and opencode-back.
 	PromptTimeout Duration `json:"prompt_timeout,omitempty"`
+	// IdleTimeout is the per-prompt idle watchdog: if the opencode CLI
+	// emits no stdout event for this duration, the subprocess is deemed
+	// stuck (hung on an upstream LLM call, internal deadlock, a tool
+	// waiting on stdin) and is SIGKILLed so the user is not left staring
+	// at a progress card that never resolves. 0 (default) disables it.
+	// Unlike PromptTimeout (total wall-clock), IdleTimeout resets on every
+	// received event, so a long but active turn is never cut short.
+	// Consumed by opencode-back.
+	IdleTimeout Duration `json:"idle_timeout,omitempty"`
 	// UsageSessionTTL bounds how long a per-session usage entry stays in
 	// memory (and on disk). Entries whose LastUpdate is older than this are
 	// pruned by a background sweep so the in-memory map and the persisted
