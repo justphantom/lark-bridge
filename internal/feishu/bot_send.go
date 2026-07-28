@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -106,6 +107,30 @@ func (b *Bot) SendText(ctx context.Context, chatID, text, replyToID string) (str
 		return "", errors.New("feishu: send text returned no result")
 	}
 	return res.MessageID, nil
+}
+
+// SendFile uploads a binary to Feishu and sends it as a file message to
+// chatID (send-file-design.md §3.4). Used by the frontend's handleFileControl
+// to materialise a TypeFile control a backend emitted. The upload (file_key)
+// and the send (msg_type=file) are two REST round-trips; both must succeed.
+// fileName is the display name the recipient sees; r carries the raw bytes.
+func (b *Bot) SendFile(ctx context.Context, chatID, fileName string, r io.Reader) error {
+	if fileName == "" {
+		return errors.New("feishu: empty file name")
+	}
+	if r == nil {
+		return errors.New("feishu: nil file reader")
+	}
+	fileKey, err := b.client.UploadFile(ctx, fileName, "stream", r)
+	if err != nil {
+		return fmt.Errorf("feishu: upload file: %w", err)
+	}
+	if _, err := b.client.Send(ctx, &lark.SendInput{ChatID: chatID, FileKey: fileKey}); err != nil {
+		return fmt.Errorf("feishu: send file message: %w", err)
+	}
+	b.markHealthy() // outbound success refreshes the watchdog
+	b.logger.Debug("file sent", log.FieldChatID, chatID, "file_name", fileName)
+	return nil
 }
 
 // UpdateCard updates an existing card message with new content.

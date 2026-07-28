@@ -21,6 +21,7 @@ type Control struct {
 	Question     *QuestionPayload     `json:"question,omitempty"`
 	Permission   *PermissionPayload   `json:"permission,omitempty"`
 	Notice       *NoticePayload       `json:"notice,omitempty"`
+	File         *FilePayload         `json:"file,omitempty"`
 	StatusReport *StatusReportPayload `json:"statusReport,omitempty"`
 }
 
@@ -38,6 +39,7 @@ const (
 	TypeQuestion     = "question"
 	TypePermission   = "permission"
 	TypeNotice       = "notice"
+	TypeFile         = "file"
 	TypeStatusReport = "status_report"
 )
 
@@ -350,6 +352,34 @@ type NoticePayload struct {
 	Field           string `json:"field,omitempty"`
 	Before          string `json:"before,omitempty"`
 	After           string `json:"after,omitempty"`
+	UpdateMessageID string `json:"updateMessageID,omitempty"`
+}
+
+// FilePayload carries a file from a backend to the frontend so the frontend
+// can upload it to Feishu and send it to the chat (send-file-design.md §3.1).
+// The backend owns reading the file out of the bound working directory; the
+// frontend owns the Feishu credentials and network egress, so the backend
+// never calls the IM API directly. Content is the raw bytes base64-encoded,
+// which keeps the existing JSON-over-POST/SSE protocol binary-free without a
+// new streaming channel (the 30 MiB Feishu cap → ~40 MiB base64, within IPC
+// budgets for the rare large-file case).
+//
+// UpdateMessageID, when set, tells the frontend to PATCH the picker card the
+// user just clicked (the card whose answer carried this messageID) with the
+// send outcome instead of posting a separate result notice.
+type FilePayload struct {
+	// ChatID is the destination chat. Mirrors Control.ChatID (the validator
+	// checks the top-level field); kept on the payload so a self-contained
+	// FilePayload is usable without the envelope.
+	ChatID string `json:"chatID"`
+	// FileName is the display name and the Feishu upload file_name.
+	FileName string `json:"fileName"`
+	// MIMEType is optional; the frontend infers from the extension when empty.
+	MIMEType string `json:"mimeType,omitempty"`
+	// Content is the file's raw bytes, base64 (StdEncoding) encoded.
+	Content string `json:"content"`
+	// UpdateMessageID optionally targets an existing card to PATCH with the
+	// outcome; empty → the frontend sends a standalone result notice.
 	UpdateMessageID string `json:"updateMessageID,omitempty"`
 }
 

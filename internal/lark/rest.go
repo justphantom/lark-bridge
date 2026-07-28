@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -86,11 +87,24 @@ func (r *restClient) PatchMessage(ctx context.Context, messageID, content string
 }
 
 // encodeSendContent picks msg_type and builds the inner-JSON content string
-// for a SendInput. Text → {"text":"..."}; Card → the card string verbatim.
+// for a SendInput. Text → {"text":"..."}; Card → the card string verbatim;
+// FileKey → {"file_key":"..."} for a msg_type=file message. Exactly one of the
+// three may be set.
 func encodeSendContent(in *SendInput) (string, string, error) {
+	set := 0
+	if in.Text != "" {
+		set++
+	}
+	if in.Card != "" {
+		set++
+	}
+	if in.FileKey != "" {
+		set++
+	}
+	if set != 1 {
+		return "", "", fmt.Errorf("lark: SendInput must set exactly one of Text/Card/FileKey")
+	}
 	switch {
-	case in.Text != "" && in.Card != "":
-		return "", "", fmt.Errorf("lark: SendInput.Text and Card are mutually exclusive")
 	case in.Text != "":
 		b, err := json.Marshal(map[string]string{"text": in.Text})
 		if err != nil {
@@ -100,7 +114,11 @@ func encodeSendContent(in *SendInput) (string, string, error) {
 	case in.Card != "":
 		return "interactive", in.Card, nil
 	default:
-		return "", "", fmt.Errorf("lark: SendInput has neither Text nor Card")
+		b, err := json.Marshal(map[string]string{"file_key": in.FileKey})
+		if err != nil {
+			return "", "", fmt.Errorf("lark: encode file: %w", err)
+		}
+		return "file", string(b), nil
 	}
 }
 
@@ -226,6 +244,83 @@ func (l *limitedReadCloser) Close() error               { return l.closer.Close(
 
 // Header exposes the underlying HTTP response headers (Content-Type etc.).
 func (l *limitedReadCloser) Header() http.Header { return l.header }
+
+// uploadFileResponse is the data payload of POST /open-apis/im/v1/files.
+type uploadFileResponse struct {
+	FileKey string `json:"file_key"`
+}
+
+// UploadFile uploads one binary as a Feishu file resource (msg_type=file
+// backing) and returns its file_key. fileType is the IM file category
+// ("stream" as a generic default; "pdf"/"doc"/"xls"/"ppt"/... are also
+// accepted by the API). fileName is the display name the recipient sees.
+//
+// The request is multipart/form-data (the API rejects JSON for binary
+// uploads), so it cannot reuse doJSON: it builds its own token-authenticated
+// request. The body is streamed from rd into the multipart writer, so a 30 MiB
+// upload only ever holds one copy in memory alongside the multipart envelope.
+func (r *restClient) UploadFile(ctx context.Context, fileName, fileType string, rd io.Reader) (string, error) {
+	if fileName == "" {
+		return "", fmt.Errorf("lark: fileName required")
+	}
+	if fileType == "" {
+		fileType = "stream"
+	}
+	tok, err := r.tokens.Token(ctx)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	// multipart.Writer over a bytes.Buffer cannot fail its writes; the
+	// discarded errors satisfy errcheck without papering over a real fault.
+	_ = mw.WriteField("file_type", fileType) //nolint:errcheck // bytes.Buffer is infallible
+	_ = mw.WriteField("file_name", fileName) //nolint:errcheck // bytes.Buffer is infallible
+	part, err := mw.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("lark: create upload form: %w", err)
+	}
+	if _, err := io.Copy(part, rd); err != nil {
+		return "", fmt.Errorf("lark: read upload content: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return "", fmt.Errorf("lark: close multipart: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/open-apis/im/v1/files", &buf)
+	if err != nil {
+		return "", fmt.Errorf("lark: build upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("lark: upload file: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("lark: read upload response: %w", err)
+	}
+	if resp.StatusCode >= 500 {
+		return "", fmt.Errorf("lark: upload http %d: %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+	var env imResponse
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", fmt.Errorf("lark: decode upload response: %w (body: %s)", err, truncate(string(raw), 200))
+	}
+	if env.Code != 0 {
+		return "", &APIError{Code: env.Code, Msg: env.Msg}
+	}
+	var data uploadFileResponse
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		return "", fmt.Errorf("lark: decode upload data: %w", err)
+	}
+	if data.FileKey == "" {
+		return "", fmt.Errorf("lark: upload returned no file_key")
+	}
+	return data.FileKey, nil
+}
 
 // newHTTPClient returns the default *http.Client used when none is provided.
 // A bounded Timeout prevents a stalled Feishu API from wedging dispatcher

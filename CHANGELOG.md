@@ -36,7 +36,36 @@
     numFmt / merge / 公式缓存，自研即重复造轮子；纯 Go、无 cgo、单二进制
     部署形态不变），接口面收敛在 `convert_xlsx.go` 单文件。
 
+- **`/send` 指令：从绑定工作目录发送文件到飞书群**：三个业务后端
+  （claude-back / opencode-back / miniagent-back）现支持 `/send` 与
+  `/send <relative-path>`。后端读文件并 emit `TypeFile` Control，**前端**完成
+  飞书上传 + 发送（凭证与网络出口集中在前端，后端不持飞书凭证）；**不经过
+  agent LLM**。设计见 `docs/send-file-design.md`。
+  - 协议新增 `TypeFile` Control + `FilePayload`（base64 内容，30 MiB 上限），
+    validate 要求 payload + chatID。
+  - `internal/lark`：新增 `Client.UploadFile`（multipart POST `/im/v1/files`）；
+    `SendInput.FileKey` 支持 `msg_type=file`。
+  - `internal/feishu`：新增 `Bot.SendFile`（upload + send 两段式）；
+    `feishuClient` 接口加 `UploadFile`。
+  - `internal/bridgebase`：`commands_send.go` 提供 `CmdSend`（Core 版，claude/
+    opencode 共用）+ 导出纯函数 `SafeJoin` / `BuildSendOptions` /
+    `ParseSendOption` / `ReadFilePayload`（miniagent 复用，因它无 Core 且命令
+    系统独立）。目录浏览器复用 `AskAndWait` 多轮导航，隐藏 dotfile，>100 项截断。
+  - 前端 `dispatcher`：新增 `FileSender` 接口 + `SetFileSender` +
+    `handleFileControl`（成功 PATCH 选择卡 / 失败独立 notice）；`DispatchControl`
+    加 `TypeFile` 分支。
+  - 安全：后端 `SafeJoin` 强制目标在 `Binding.Directory` 内（Abs/Clean +
+    EvalSymlinks + Rel 越界检查），单文件 30 MiB 上限。
+
 ### Notes
+
+- /send：miniagent 因无 `bridgebase.Core` 且命令系统独立（map + 不同 emit/
+  answer 机制），不复用 `CmdSend`，而是复用导出的纯函数 + 自有的 `askAndWait`/
+  `sendCtrl`（与 `/cd`、`/model` 同模式）。`/send` 的两段浏览器/直发均跑在
+  `context.Background` 的 goroutine 中（用户点击/大文件读取可能远超命令 15s 超时）。
+- `nilerr` 约束：`handleFileControl` 把 decode/send 错误处理放进无返回值的
+  `deliverFile`，避免 `if err != nil { return nil }` 模式触发 nilerr——失败已作为
+  notice 反馈，返回 nil 表示 TypeFile 已"handled"。
 
 - chart 检测：excelize v2 无 chart 读取 API（设计 §5.4 所述 `GetCharts()`
   实际不存在），改用 `archive/zip` 扫描 `xl/` 关系链（workbook→worksheet→

@@ -54,6 +54,15 @@ type CardSink interface {
 	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }
 
+// FileSender is the subset of the Feishu bot needed to materialise a TypeFile
+// control: upload bytes as a Feishu file resource and send it to the chat
+// (send-file-design.md §3.3/§3.4). Declared as an interface so the dispatcher
+// stays testable; production wires *feishu.Bot, whose SendFile uploads then
+// sends in two REST round-trips.
+type FileSender interface {
+	SendFile(ctx context.Context, chatID, fileName string, r io.Reader) error
+}
+
 // ChatRouter maps a Feishu chatID to its bound backendID.
 type ChatRouter interface {
 	Resolve(chatID string) (string, error)
@@ -154,6 +163,12 @@ type Dispatcher struct {
 	xlsxPromptTemplate *template.Template
 	inboxDir           string
 	inboxMaxSize       int64
+
+	// fileSender uploads+sends a TypeFile control's bytes to Feishu. nil until
+	// SetFileSender wires *feishu.Bot (production); tests that exercise the
+	// file-control path inject a stub. A TypeFile arriving with no fileSender
+	// is surfaced as an error notice rather than dropped silently.
+	fileSender FileSender
 }
 
 // FileDownloader is the subset of the Feishu bot needed to pull a binary
@@ -192,6 +207,14 @@ func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *filec
 // back to the generic promptTemplate (path only, no per-sheet schema).
 func (d *Dispatcher) SetXlsxPromptTemplate(tmpl *template.Template) {
 	d.xlsxPromptTemplate = tmpl
+}
+
+// SetFileSender wires the bot's file-send capability used by handleFileControl
+// to materialise a TypeFile control (send-file-design.md). Separate setter so
+// the dispatcher can be constructed without it for tests that do not exercise
+// the send path; a nil fileSender makes every TypeFile an error notice.
+func (d *Dispatcher) SetFileSender(fs FileSender) {
+	d.fileSender = fs
 }
 
 // filePipelineEnabled reports whether the file pipeline is wired for

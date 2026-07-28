@@ -46,6 +46,8 @@ func init() {
 			Level: "info"}, Handler: (*Handler).cmdPull},
 		{Spec: cmdutil.Spec{Name: "/push", Summary: "在当前工作目录执行 git push",
 			Level: "info"}, Handler: (*Handler).cmdPush},
+		{Spec: cmdutil.Spec{Name: "/send", Summary: "发送工作目录中的文件到本群；不带参数弹出目录选择",
+			Args: "[relative-path]", Level: "info"}, Handler: (*Handler).cmdSend},
 		{Spec: cmdutil.Spec{Name: "/help", Summary: "显示本帮助",
 			Level: "info"}, Handler: (*Handler).cmdHelp},
 	})

@@ -62,6 +62,9 @@ func (f *fakeClient) DownloadResource(_ context.Context, _, _, _ string) (io.Rea
 	}
 	return io.NopCloser(strings.NewReader(f.downloadBody)), nil
 }
+func (f *fakeClient) UploadFile(_ context.Context, _, _ string, _ io.Reader) (string, error) {
+	return "fk_fake", nil
+}
 func (f *fakeClient) SetHandler(lark.Handler)     { f.setHandlerCalled.Store(true) }
 func (f *fakeClient) SetLifecycle(lark.Lifecycle) {}
 func (f *fakeClient) Start(context.Context) error { f.started.Add(1); return f.startErr }

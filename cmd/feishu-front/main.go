@@ -154,6 +154,13 @@ func run(cfgPath, addr string) error {
 		}
 	}
 
+	// /send file delivery: a backend's TypeFile control asks the frontend to
+	// upload+send a file into the chat (send-file-design.md). Wired
+	// unconditionally — it is independent of the inbound file_convert upload
+	// pipeline — so any bound backend can /send files regardless of whether
+	// inbound uploads are enabled. *feishu.Bot implements FileSender.
+	dispatcher.SetFileSender(bot)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

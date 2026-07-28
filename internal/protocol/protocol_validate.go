@@ -24,6 +24,7 @@ var allowedControlTypes = map[string]struct{}{
 	TypeQuestion:     {},
 	TypePermission:   {},
 	TypeNotice:       {},
+	TypeFile:         {},
 	TypeStatusReport: {},
 }
 
@@ -183,6 +184,21 @@ func validateToolResultSubagent(c *Control) error {
 	return validateSubagentStatus(c.ToolResult.Subagent)
 }
 
+// validateFile requires a non-empty FileName and base64 Content. ChatID is
+// covered by the rule's needsChatID on the envelope field. The Content cap
+// (30 MiB raw → ~40 MiB base64) is enforced at the producer (bridgebase) before
+// emit, not here, so a violation surfaces as a friendly notice rather than a
+// protocol rejection mid-flight.
+func validateFile(c *Control) error {
+	if c.File.FileName == "" {
+		return fmt.Errorf("file.fileName is required")
+	}
+	if c.File.Content == "" {
+		return fmt.Errorf("file.content is required")
+	}
+	return nil
+}
+
 // controlRules maps every allowed control type to its validation rule.
 // Keeping the table next to the validator makes the requirements explicit
 // and avoids the long switch that was previously needed.
@@ -199,6 +215,7 @@ var controlRules = map[string]controlRule{
 	TypeQuestion:     {payloadIsNil: func(c *Control) bool { return c.Question == nil }, payloadName: "question", needsChatID: true},
 	TypePermission:   {payloadIsNil: func(c *Control) bool { return c.Permission == nil }, payloadName: "permission", needsChatID: true},
 	TypeNotice:       {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true, extraCheck: validateNotice},
+	TypeFile:         {payloadIsNil: func(c *Control) bool { return c.File == nil }, payloadName: "file", needsChatID: true, extraCheck: validateFile},
 	TypeStatusReport: {payloadIsNil: func(c *Control) bool { return c.StatusReport == nil }, payloadName: "statusReport", extraCheck: validateStatusReport},
 }
 

@@ -27,6 +27,7 @@ var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg s
 	"/model":   (*Handler).cmdModel,
 	"/models":  (*Handler).cmdModels,
 	"/cd":      (*Handler).cmdDirectory,
+	"/send":    (*Handler).cmdSend,
 	"/pull":    (*Handler).cmdPull,
 	"/push":    (*Handler).cmdPush,
 	"/help":    (*Handler).cmdHelp,

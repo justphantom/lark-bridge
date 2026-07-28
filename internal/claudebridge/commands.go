@@ -40,6 +40,8 @@ func init() {
 			Level: "info"}, Handler: (*Handler).cmdPull},
 		{Spec: cmdutil.Spec{Name: "/push", Summary: "在当前工作目录执行 git push",
 			Level: "info"}, Handler: (*Handler).cmdPush},
+		{Spec: cmdutil.Spec{Name: "/send", Summary: "发送工作目录中的文件到本群；不带参数弹出目录选择",
+			Args: "[relative-path]", Level: "info"}, Handler: (*Handler).cmdSend},
 		{Spec: cmdutil.Spec{Name: "/settings", Summary: "设置 --settings 文件；不带参数弹出选择（仅限列表内文件）；传 clear 清除",
 			Args: "[clear]", Title: "已设置 settings", Level: "success"}, Handler: (*Handler).cmdSettings},
 		{Spec: cmdutil.Spec{Name: "/perm", Summary: "设置权限模式；不带参数弹出选择；传 clear 清除",

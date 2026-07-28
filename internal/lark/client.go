@@ -150,6 +150,13 @@ func (c *Client) DownloadResource(ctx context.Context, messageID, fileKey, fileT
 	return c.rest.DownloadResource(ctx, messageID, fileKey, fileType)
 }
 
+// UploadFile uploads a binary as a Feishu file resource and returns its
+// file_key (send-file-design.md §3.4). The caller sends the file_key via a
+// subsequent Send with SendInput.FileKey. Independent of the WS connection.
+func (c *Client) UploadFile(ctx context.Context, fileName, fileType string, r io.Reader) (string, error) {
+	return c.rest.UploadFile(ctx, fileName, fileType, r)
+}
+
 // SetHandler wires the inbound-event consumer. Must be called before Start;
 // the bridge calls it immediately after NewClient.
 func (c *Client) SetHandler(h Handler) {

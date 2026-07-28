@@ -58,6 +58,11 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		return d.sendStatusReport(ctx, rc)
 	case protocol.TypeQuestion, protocol.TypePermission:
 		return d.sendInteractive(ctx, ctrl, backendType)
+	case protocol.TypeFile:
+		// A backend asking the frontend to send a file into the chat. NOT a
+		// terminal frame (the turn's picker/result lifecycle is independent),
+		// so it skips the terminals dedup and the result/notice rendering path.
+		return d.handleFileControl(ctx, ctrl, backendType)
 	default:
 		return fmt.Errorf("dispatcher: unknown control type %q", ctrl.Type)
 	}

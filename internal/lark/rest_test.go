@@ -136,8 +136,10 @@ func TestEncodeSendContent(t *testing.T) {
 	}{
 		{"text", &SendInput{Text: "hi"}, "text", `"text":"hi"`, false},
 		{"card", &SendInput{Card: `{"schema":"2.0"}`}, "interactive", `{"schema":"2.0"}`, false},
+		{"file", &SendInput{FileKey: "fk_123"}, "file", `"file_key":"fk_123"`, false},
 		{"empty", &SendInput{}, "", "", true},
 		{"both", &SendInput{Text: "x", Card: "y"}, "", "", true},
+		{"text+file", &SendInput{Text: "x", FileKey: "fk"}, "", "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
