@@ -52,7 +52,9 @@ init_monitor() {
     # config：从 repo 的基础 config 派生，设独立 backend_id + 注入 deploy_monitor 块。
     local stage
     stage="$(mktemp -d)"
-    trap 'rm -rf "$stage"' EXIT
+    # 用全局变量，确保 EXIT trap 能访问（local 在函数返回后出作用域 → unbound variable）
+    trap 'rm -rf "$INIT_STAGE"' EXIT
+    INIT_STAGE="$stage"
 
     # base 固定为 config.example.json（与 repo 同步演进）。不用 repo root 的
     # claude-config.json——它不在 git 里，schema 可能滞后（曾导致 memory_enabled
