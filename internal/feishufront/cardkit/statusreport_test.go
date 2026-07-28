@@ -141,10 +141,11 @@ func TestStatusReport_HostAndServiceSections(t *testing.T) {
 	md, m := cardBody(t, card)
 	for _, want := range []string{
 		"▸ 主机", "▸ 进程",
-		"192.168.1.5", "192.168.1.10",
-		"load 0.95/0.38/0.33",
-		"2G/8G (25%)", "12G/50G (24%)",
-		"v1.5.0", "14M",
+		"**192.168.1.5**", "**192.168.1.10**",
+		"load  0.95 / 0.38 / 0.33",
+		"2G / 8G (25%)", "12G / 50G (24%)",
+		"**claude-1** · 14M",
+		"192.168.1.10 · v1.5.0",
 		"—",       // miniagent cgroup 0
 		"🔴 版本漂移",  // status-1 behind the dominant v1.5.0
 		"(stale)", // 192.168.1.5 host row
@@ -161,6 +162,30 @@ func TestStatusReport_HostAndServiceSections(t *testing.T) {
 	// Hosts sorted by IP lexicographically: ".10" precedes ".5" (per design).
 	if strings.Index(md, "192.168.1.10") > strings.Index(md, "192.168.1.5") {
 		t.Errorf("hosts not sorted by IP; body=%q", md)
+	}
+	// Grouped layout: stale mark stays on the host identity line (no wrap
+	// ambiguity), and each metric sits on its own indented line.
+	if !strings.Contains(md, "**192.168.1.5**  (stale)\n　　load") {
+		t.Errorf("host group layout broken; body=%q", md)
+	}
+}
+
+func TestStatusReport_ServiceGroupLayout(t *testing.T) {
+	const now = 1700000000
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: now, IntervalS: 60,
+		Backends: []string{"a"},
+		Services: []ServiceRow{
+			{BackendID: "a", IP: "10.0.0.1", Version: "v1.4.0-2-g5fcc235", CgroupMemBytes: 12 << 20, ReportedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StatusReport: %v", err)
+	}
+	md, _ := cardBody(t, card)
+	// Full (unclipped) version on the detail line, mem on the identity line.
+	if !strings.Contains(md, "**a** · 12M\n　　10.0.0.1 · v1.4.0-2-g5fcc235") {
+		t.Errorf("service group layout broken; body=%q", md)
 	}
 }
 
@@ -235,14 +260,5 @@ func TestFormatBytes(t *testing.T) {
 		if got := formatBytes(in); got != want {
 			t.Errorf("formatBytes(%d) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestClip(t *testing.T) {
-	if got := clip("abcdefghijklmnopqrst", 15); got != "abcdefghijklmno" {
-		t.Errorf("clip = %q", got)
-	}
-	if got := clip("short", 15); got != "short" {
-		t.Errorf("clip short = %q", got)
 	}
 }

@@ -81,11 +81,13 @@ func ShortID(id string) string {
 }
 
 // StatusReport builds the standing overview card pushed by the status-monitor
-// backend: a summary line (updated time · period · online backends · in-flight
-// count), optional 主机/进程 sections (host load, per-service version and
-// cgroup memory), then per-backend turn groups. A version drift (one backend
-// behind the dominant version) marks the row and flips the header template
-// from blue to orange. schema 1.0 via Card, same as every other card.
+// backend: a two-line summary (updated time · period / online backends ·
+// in-flight count), optional 主机/进程 sections (grouped layout — one bold
+// identity line per host/service plus indented metric lines, so nothing
+// wraps mid-token on mobile), then per-backend turn groups. A version drift
+// (one backend behind the dominant version) marks the group and flips the
+// header template from blue to orange. schema 1.0 via Card, same as every
+// other card.
 func StatusReport(in StatusReportInput) ([]byte, error) {
 	_, drifted := versionDrift(in.Services)
 	template := "blue"
@@ -98,12 +100,13 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 	}
 
 	var b strings.Builder
-	// Summary line.
+	// Summary: two short lines — the one-line form (~30 chars) already hugs
+	// the right edge on a phone, so 在线/会话 gets its own line.
 	fmt.Fprintf(&b, "更新 %s", time.Unix(in.GeneratedAt, 0).Format("15:04:05"))
 	if in.IntervalS > 0 {
 		fmt.Fprintf(&b, " · 周期 %s", formatPeriod(in.IntervalS))
 	}
-	fmt.Fprintf(&b, " · 在线后端 %d · 会话 %d", len(in.Backends), in.InFlight)
+	fmt.Fprintf(&b, "\n在线后端 %d · 会话 %d", len(in.Backends), in.InFlight)
 
 	writeHostSection(&b, in.Hosts, in.GeneratedAt, in.IntervalS)
 	writeServiceSection(&b, in.Services, drifted, in.GeneratedAt, in.IntervalS)
@@ -116,7 +119,7 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 	} else {
 		groups := groupTurns(in.Backends, in.Turns)
 		for _, g := range groups {
-			fmt.Fprintf(&b, "\n\n▸ %s  %d 个会话", g.backendID, len(g.rows))
+			fmt.Fprintf(&b, "\n\n▸ %s · %d 个会话", g.backendID, len(g.rows))
 			shown := g.rows
 			tail := 0
 			if len(shown) > maxTurnsPerBackend {
@@ -124,10 +127,10 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 				tail = len(g.rows) - maxTurnsPerBackend
 			}
 			for _, r := range shown {
-				fmt.Fprintf(&b, "\n　　· %s  已运行 %s", ShortID(r.ChatID), FormatElapsed(time.Duration(r.ElapsedS)*time.Second))
+				fmt.Fprintf(&b, "\n　　%s  已运行 %s", ShortID(r.ChatID), FormatElapsed(time.Duration(r.ElapsedS)*time.Second))
 			}
 			if tail > 0 {
-				fmt.Fprintf(&b, "\n　　· …另 %d 条", tail)
+				fmt.Fprintf(&b, "\n　　…另 %d 条", tail)
 			}
 		}
 	}
@@ -137,9 +140,13 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 	return Card(info, in.Footer, elements, nil)
 }
 
-// writeHostSection renders the ▸ 主机 block: one row per host, sorted by IP
-// for deterministic output. Empty IP renders "?" — a missing probe is
-// display-only and must not blank the row.
+// writeHostSection renders the ▸ 主机 block: one group per host, sorted by
+// IP for deterministic output. Layout is grouped + one-metric-per-line (an
+// identity line in bold carrying the stale mark, then load/mem/disk each on
+// its own indented line) because Feishu markdown uses a proportional font —
+// space-padded columns never align, and a ~70-char single line wraps at
+// arbitrary points on mobile, splitting numbers mid-token. Empty IP renders
+// "?" — a missing probe is display-only and must not blank the group.
 func writeHostSection(b *strings.Builder, hosts []HostRow, now int64, intervalS int) {
 	if len(hosts) == 0 {
 		return
@@ -160,17 +167,20 @@ func writeHostSection(b *strings.Builder, hosts []HostRow, now int64, intervalS 
 		if h.DiskTotalBytes > 0 {
 			diskPct = int(h.DiskUsedBytes * 100 / h.DiskTotalBytes) //nolint:gosec // G115: 比值 ∈ [0,100]
 		}
-		fmt.Fprintf(b, "\n　· %s  load %.2f/%.2f/%.2f  内存 %s/%s (%d%%)  盘 %s/%s (%d%%)%s",
-			clip(ip, 15),
-			h.Load1, h.Load5, h.Load15,
-			formatBytes(h.MemTotalBytes-h.MemAvailBytes), formatBytes(h.MemTotalBytes), memPct,
-			formatBytes(h.DiskUsedBytes), formatBytes(h.DiskTotalBytes), diskPct,
-			staleMark(h.ReportedAt, now, intervalS))
+		fmt.Fprintf(b, "\n\n　**%s**%s", ip, staleMark(h.ReportedAt, now, intervalS))
+		fmt.Fprintf(b, "\n　　load  %.2f / %.2f / %.2f", h.Load1, h.Load5, h.Load15)
+		fmt.Fprintf(b, "\n　　内存  %s / %s (%d%%)",
+			formatBytes(h.MemTotalBytes-h.MemAvailBytes), formatBytes(h.MemTotalBytes), memPct)
+		fmt.Fprintf(b, "\n　　磁盘  %s / %s (%d%%)",
+			formatBytes(h.DiskUsedBytes), formatBytes(h.DiskTotalBytes), diskPct)
 	}
 }
 
-// writeServiceSection renders the ▸ 进程 block: one row per backend, sorted
-// by backendID. Drifted rows (version != dominant) carry the 🔴 marker.
+// writeServiceSection renders the ▸ 进程 block: one group per backend,
+// sorted by backendID. The identity line (bold backendID + cgroup memory)
+// carries the drift/stale marks so they can never wrap away from their
+// owner; IP and the full (unclipped) version share the indented detail
+// line. Drifted rows (version != dominant) carry the 🔴 marker.
 func writeServiceSection(b *strings.Builder, services []ServiceRow, drifted map[string]bool, now int64, intervalS int) {
 	if len(services) == 0 {
 		return
@@ -192,11 +202,12 @@ func writeServiceSection(b *strings.Builder, services []ServiceRow, drifted map[
 		if s.CgroupMemBytes > 0 {
 			mem = formatBytes(s.CgroupMemBytes)
 		}
-		fmt.Fprintf(b, "\n　· %s  %s  %s  %s", clip(s.BackendID, 15), clip(ip, 15), clip(version, 12), mem)
+		fmt.Fprintf(b, "\n\n　**%s** · %s", s.BackendID, mem)
 		if drifted[s.BackendID] {
 			b.WriteString("  🔴 版本漂移")
 		}
 		b.WriteString(staleMark(s.ReportedAt, now, intervalS))
+		fmt.Fprintf(b, "\n　　%s · %s", ip, version)
 	}
 }
 
@@ -249,16 +260,6 @@ func staleMark(reportedAt, now int64, intervalS int) string {
 		return "  (stale)"
 	}
 	return ""
-}
-
-// clip truncates s to at most n runes (no ellipsis — column alignment matters
-// more than the lost tail on these fixed-width fields).
-func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }
 
 // formatBytes renders a byte count as "1.7G" / "14M" / "512K": one decimal,
