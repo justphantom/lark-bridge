@@ -151,6 +151,8 @@ func buildIncomingMessage(ev *lark.MessageReceiveEvent, logger *log.Logger) (*In
 		MsgType:      ev.MsgType,
 		Mentions:     convertLarkMentions(ev.Mentions),
 		CreateTimeMs: ev.CreateTimeMs,
+		FileKey:      ev.FileKey,
+		FileName:     ev.FileName,
 	}, nil
 }
 

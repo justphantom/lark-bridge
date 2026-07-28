@@ -8,5 +8,13 @@
   "log_debug_redact":  true,
   "timeouts": {
     "backend_health": "90s"
+  },
+  "file_convert": {
+    "enabled":         true,
+    "pandoc_path":     "pandoc",
+    "inbox_dir":       "${STATE_DIR}/inbox",
+    "max_file_size":   31457280,
+    "convert_timeout": "60s",
+    "retention":       "168h"
   }
 }

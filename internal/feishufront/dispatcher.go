@@ -2,6 +2,7 @@ package feishufront
 
 import (
 	"context"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/feishufront/renderer"
+	"github.com/justphantom/lark-bridge/internal/fileconvert"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -138,6 +140,41 @@ type Dispatcher struct {
 	// logger is stored atomically: SetLogger runs on the main goroutine while
 	// notifyBackendChat reads it from the IPCServer.fireCallback goroutine.
 	logger atomic.Pointer[log.Logger]
+
+	// —— 文件上传管线（可选）：仅当 SetFilePipeline 装配后启用 ——
+	// fileDownloader 抓取飞书消息资源；fileConverter 把 docx/md/txt 转成 .md。
+	// 两者任一为 nil 时，file-type 消息照旧被拒，保持向后兼容。
+	fileDownloader FileDownloader
+	fileConverter  *fileconvert.Converter
+	inboxDir       string
+	inboxMaxSize   int64
+}
+
+// FileDownloader is the subset of the Feishu bot needed to pull a binary
+// resource attached to a message. Declared as an interface so the dispatcher
+// stays testable with a stub; production wires *feishu.Bot, which already
+// implements DownloadFile.
+type FileDownloader interface {
+	DownloadFile(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error)
+}
+
+// SetFilePipeline enables the inbound file-message pipeline. Pass a non-nil
+// downloader + converter + a writable inboxDir to accept file-type Feishu
+// messages; before this is called (or with nil downloader) the dispatcher
+// keeps the legacy "reject non-text" behaviour so existing tests/configs are
+// unaffected. maxSize<=0 keeps the fileconvert default; converter nil keeps
+// the pipeline disabled.
+func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *fileconvert.Converter, inboxDir string, maxSize int64) {
+	d.fileDownloader = downloader
+	d.fileConverter = converter
+	d.inboxDir = inboxDir
+	d.inboxMaxSize = maxSize
+}
+
+// filePipelineEnabled reports whether the file pipeline is wired and ready.
+// Kept as a method so the gating logic stays next to the field it reads.
+func (d *Dispatcher) filePipelineEnabled() bool {
+	return d.fileDownloader != nil && d.fileConverter != nil && d.inboxDir != ""
 }
 
 func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, router ChatRouter) *Dispatcher {
@@ -276,14 +313,27 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 	if !d.eventIDs.Add(msg.EventID) {
 		return nil
 	}
-	// Reject non-text messages before any prompt processing: image/file/post/
-	// forwarded content arrives as raw JSON in Content, which would otherwise
-	// be forwarded to the backend as a prompt (leaking metadata, confusing the
-	// model). Only plain text is supported.
-	if msg.MsgType != "" && msg.MsgType != "text" {
+	switch msg.MsgType {
+	case "", "text":
+		return d.handleTextMessage(ctx, msg)
+	case "file":
+		if !d.filePipelineEnabled() {
+			return d.notice(ctx, msg.ChatID, "info", "不支持的消息类型",
+				"暂仅支持文本消息。如需处理上传的文件，请在配置中启用 file_convert。")
+		}
+		return d.handleFileMessage(ctx, msg)
+	default:
+		// image/post/share/... content arrives as raw JSON; forwarding it as
+		// a prompt would leak metadata and confuse the model. Keep rejected.
 		return d.notice(ctx, msg.ChatID, "info", "不支持的消息类型",
-			"暂仅支持文本消息，图片/文件/富文本/转发消息暂无法处理")
+			"暂仅支持文本消息与文件（docx/md/txt），图片/富文本/转发消息暂无法处理")
 	}
+}
+
+// handleTextMessage handles the legacy text-prompt path: @-strip → /backend or
+// /skill resolution → dispatchPrompt. Extracted from DispatchIncoming when
+// file-type support was added; behaviour is unchanged.
+func (d *Dispatcher) handleTextMessage(ctx context.Context, msg *feishu.IncomingMessage) error {
 	prompt := strings.TrimSpace(feishu.StripMentionPlaceholders(msg.Content, msg.Mentions))
 	if prompt == "" {
 		return nil
@@ -306,7 +356,16 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 			return d.notice(ctx, msg.ChatID, "warning", "用法", "/skill <完整指令>")
 		}
 	}
+	return d.dispatchPrompt(ctx, msg, prompt, skill)
+}
 
+// dispatchPrompt resolves the bound backend, sends the placeholder progress
+// card, and forwards the prompt as a Prompt Event. Shared by the text path
+// and the file pipeline so they emit identical turn state + IPC framing for
+// the backend to consume.
+//
+// prompt must already be @-stripped and length-checked by the caller.
+func (d *Dispatcher) dispatchPrompt(ctx context.Context, msg *feishu.IncomingMessage, prompt string, skill bool) error {
 	if d.router == nil {
 		return d.notice(ctx, msg.ChatID, "error", "路由未就绪", "前端路由尚未初始化")
 	}

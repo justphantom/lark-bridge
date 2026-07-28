@@ -2,6 +2,8 @@ package feishu
 
 import (
 	"context"
+	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -33,6 +35,10 @@ type fakeClient struct {
 	started          atomic.Int32
 	stopped          atomic.Int32
 	setHandlerCalled atomic.Bool
+	// download result + call capture (file pipeline tests).
+	downloadBody   string
+	downloadErr    error
+	downloadCalled atomic.Int32
 }
 
 func (f *fakeClient) Send(context.Context, *lark.SendInput) (*lark.SendResult, error) {
@@ -48,6 +54,13 @@ func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
 		return f.patchErr
 	}
 	return nil
+}
+func (f *fakeClient) DownloadResource(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
+	f.downloadCalled.Add(1)
+	if f.downloadErr != nil {
+		return nil, f.downloadErr
+	}
+	return io.NopCloser(strings.NewReader(f.downloadBody)), nil
 }
 func (f *fakeClient) SetHandler(lark.Handler)     { f.setHandlerCalled.Store(true) }
 func (f *fakeClient) SetLifecycle(lark.Lifecycle) {}

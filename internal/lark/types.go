@@ -57,6 +57,12 @@ type MessageReceiveEvent struct {
 	CreateTimeMs int64
 	SenderOpenID string
 	Mentions     []Mention
+	// FileKey is set for file/image-type messages: the resource id needed to
+	// download the binary via Client.DownloadResource. Empty otherwise.
+	FileKey string
+	// FileName is the original upload name for file-type messages. Empty for
+	// other types or when Feishu omits it (rare).
+	FileName string
 }
 
 // Handler is the consumer of inbound WS events. Both methods must be safe to

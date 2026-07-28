@@ -30,6 +30,12 @@ type MessageReceive struct {
 	CreateTimeMs int64
 	SenderOpenID string
 	Mentions     []Mention
+	// FileKey is the resource identifier for file/image-type messages,
+	// extracted from Content. Empty for non-file types.
+	FileKey string
+	// FileName is the original upload name from a file-type message's
+	// Content. Empty for non-file types or when Feishu omits it.
+	FileName string
 }
 
 // CardAction is the ws-level parsed form of card.action.trigger.
@@ -235,6 +241,27 @@ func parseMessageReceive(eventID string, raw json.RawMessage) (*MessageReceive, 
 		}
 		mentions = append(mentions, mm)
 	}
+	// For file/image messages, Content is a JSON wrapper carrying the
+	// resource id and (for files) the original name. Parse both out so
+	// downstream layers do not need to re-parse Content per type.
+	var fileKey, fileName string
+	switch re.Message.MessageType {
+	case "file":
+		var c struct {
+			FileKey  string `json:"file_key"`
+			FileName string `json:"file_name"`
+		}
+		if err := json.Unmarshal([]byte(re.Message.Content), &c); err == nil {
+			fileKey, fileName = c.FileKey, c.FileName
+		}
+	case "image":
+		var c struct {
+			ImageKey string `json:"image_key"`
+		}
+		if err := json.Unmarshal([]byte(re.Message.Content), &c); err == nil {
+			fileKey = c.ImageKey
+		}
+	}
 	return &MessageReceive{
 		EventID:      eventID,
 		MessageID:    re.Message.MessageID,
@@ -245,6 +272,8 @@ func parseMessageReceive(eventID string, raw json.RawMessage) (*MessageReceive, 
 		CreateTimeMs: createMs,
 		SenderOpenID: re.Sender.SenderID.OpenID,
 		Mentions:     mentions,
+		FileKey:      fileKey,
+		FileName:     fileName,
 	}, nil
 }
 

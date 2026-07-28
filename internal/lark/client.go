@@ -3,6 +3,7 @@ package lark
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 
@@ -142,6 +143,13 @@ func (c *Client) PatchMessage(ctx context.Context, messageID, content string) er
 	return c.rest.PatchMessage(ctx, messageID, content)
 }
 
+// DownloadResource fetches a binary resource (file/image) attached to a
+// message. The returned reader MUST be closed by the caller. Independent of
+// the WS connection state; uses the REST client under the hood.
+func (c *Client) DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error) {
+	return c.rest.DownloadResource(ctx, messageID, fileKey, fileType)
+}
+
 // SetHandler wires the inbound-event consumer. Must be called before Start;
 // the bridge calls it immediately after NewClient.
 func (c *Client) SetHandler(h Handler) {
@@ -206,6 +214,8 @@ func (a handlerSinkAdapter) OnMessage(ctx context.Context, ev *ws.MessageReceive
 		CreateTimeMs: ev.CreateTimeMs,
 		SenderOpenID: ev.SenderOpenID,
 		Mentions:     convertMentions(ev.Mentions),
+		FileKey:      ev.FileKey,
+		FileName:     ev.FileName,
 	})
 }
 

@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **飞书文件上传 → pandoc → markdown 管线（opt-in）**：feishu-front 现可接收
+  群聊中上传的 `file` 类型消息（docx/md/markdown/txt），通过自实现的 IM resources
+  端点下载二进制，pandoc 转换为 GitHub-flavoured Markdown，落地到
+  `{inbox_dir}/{chatID}/{promptID}/{base}.md`，并把绝对路径以指令形式塞进
+  prompt 文本发送给绑定的后端 agent（agent 用 Read 工具读取）。
+  - 新增 `internal/fileconvert/` 包：docx 走外部 pandoc 子进程
+    （`cmdutil.ApplyGroupCancel` 同款进程组 + SIGKILL 超时保护），md/txt 直拷。
+  - 新增 `lark.Client.DownloadResource` 与 `feishu.Bot.DownloadFile`。
+  - 新增 `config.FileConvert` 段（`enabled` / `pandoc_path` / `inbox_dir` /
+    `max_file_size` / `convert_timeout` / `retention`），默认全部关闭，旧部署
+    行为不变。
+  - dispatcher 新增 `SetFilePipeline` + `PruneInbox`；inbox 启动时按 retention
+    一次性裁剪。
+  - 部署侧 `deploy.sh` 加 pandoc 软预检（warn 不 fail），feishu-front 启动时
+    硬预检 `pandoc --version`，缺失且启用时拒绝启动。
+  - 安全：inbox 目录 0700、文件 0600、路径元素白名单清洗（防 `..` 穿越），
+    下载字节上限 30 MiB（可配），转换超时 60s（可配）。
+
+### Notes
+
+- **飞书权限**：使用本功能需在开发者后台为自建应用追加 `im:resource` 权限并
+  经管理员审批；缺权限时下载返回 403，前端按 `下载失败` 通知用户。
+- **协议层未变**：file 消息最终仍以纯文本 prompt 的形式抵达后端（文本里包含
+  绝对路径 + 强指令），`PromptPayload` 结构未改，三个 agent 后端零改动。
+
 ## [1.3.0] - 2026-07-28
 
 飞书客户端完全自实现（移除 `oapi-sdk-go` 全部依赖），并新增 status-monitor 总览卡

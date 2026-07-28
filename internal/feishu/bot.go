@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 type feishuClient interface {
 	Send(ctx context.Context, in *lark.SendInput) (*lark.SendResult, error)
 	PatchMessage(ctx context.Context, messageID, content string) error
+	DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error)
 	SetHandler(h lark.Handler)
 	SetLifecycle(lc lark.Lifecycle)
 	Start(ctx context.Context) error
@@ -32,8 +34,8 @@ type IncomingMessage struct {
 	SenderOpenID string
 	Content      string
 	// MsgType is the Feishu message type ("text", "image", "file", "post", …).
-	// The dispatcher rejects anything but "text" so a non-text payload never
-	// reaches the backend as a prompt.
+	// The dispatcher rejects unsupported types explicitly so a non-text payload
+	// never reaches the backend as a prompt.
 	MsgType string
 	// Mentions carries the parsed user mentions in the message. text-type
 	// messages embed "@_user_N" placeholders in Content; callers must run
@@ -44,6 +46,12 @@ type IncomingMessage struct {
 	// the field was absent or unparseable; the dispatcher's stale check
 	// lets such messages through (de-dup alone guards them).
 	CreateTimeMs int64
+	// FileKey is set for file/image-type messages: the resource id used with
+	// Bot.DownloadFile to fetch the binary. Empty for text/post/etc.
+	FileKey string
+	// FileName is the original upload name on a file-type message. Empty for
+	// other types or when Feishu omits it.
+	FileName string
 }
 
 // CardAction is the normalized payload for one interactive card
@@ -219,6 +227,24 @@ func (b *Bot) Start(ctx context.Context) error {
 // Stop gracefully shuts down the underlying client.
 func (b *Bot) Stop(ctx context.Context) error {
 	return b.client.Stop(ctx)
+}
+
+// DownloadFile fetches a binary resource attached to a Feishu message. The
+// returned reader MUST be closed by the caller. fileType selects the IM
+// resources endpoint's `type` query parameter ("file" or "image"); empty
+// defaults to "file". Used by the frontend dispatcher to materialise an
+// uploaded file for pandoc conversion.
+
+// DownloadFile fetches a binary resource attached to a Feishu message. The
+// returned reader MUST be closed by the caller. fileType selects the IM
+// resources endpoint's `type` query parameter ("file" or "image"); empty
+// defaults to "file". Used by the frontend dispatcher to materialise an
+// uploaded file for pandoc conversion.
+func (b *Bot) DownloadFile(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error) {
+	if fileType == "" {
+		fileType = "file"
+	}
+	return b.client.DownloadResource(ctx, messageID, fileKey, fileType)
 }
 
 // LastHealthy returns the time of the most recent OnReady/OnReconnected/

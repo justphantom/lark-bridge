@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -21,6 +22,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/fileconvert"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -138,6 +140,15 @@ func run(cfgPath, addr string) error {
 	// Progress card "思考中" zone: cap the live reasoning shown. Default 50
 	// runes; overridable via renderer.max_thinking_runes.
 	dispatcher.SetMaxThinkingRunes(cfg.Renderer.MaxThinkingRunes)
+
+	// File-message pipeline: opt-in via file_convert.enabled. When the
+	// operator has not enabled it, file-type messages keep the legacy
+	// "不支持的消息类型" rejection, so existing deployments are unaffected.
+	if cfg.FileConvert.Enabled {
+		if err := wireFilePipeline(cfg, bot, dispatcher, logger); err != nil {
+			return err
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -268,4 +279,54 @@ func run(cfgPath, addr string) error {
 // buildLogger builds the component logger from cfg.
 func buildLogger(cfg *config.Config) (*log.Logger, error) {
 	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "feishu-front")
+}
+
+// wireFilePipeline configures the dispatcher with the file-message pipeline:
+//   - resolves the inbox directory (defaulting to {state_dir}/inbox) and
+//     pre-creates it with 0700 perms;
+//   - constructs a fileconvert.Converter carrying the operator's pandoc path
+//     and convert_timeout;
+//   - hands both to the dispatcher alongside the bot's DownloadFile method;
+//   - runs a one-shot retention sweep so a long-lived deployment does not
+//     accumulate stale uploads.
+//
+// Returns an error only on unrecoverable setup (pandoc missing in PATH when
+// no explicit path was configured, inbox dir not creatable). A missing
+// default pandoc is treated as fatal because silent acceptance of file
+// messages followed by per-upload conversion failures would surprise users;
+// the operator must either install pandoc or set an explicit path.
+func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufront.Dispatcher, logger *log.Logger) error {
+	inbox := cfg.FileConvert.InboxDir
+	if inbox == "" {
+		inbox = filepath.Join(cfg.StateDir, "inbox")
+	}
+	if err := os.MkdirAll(inbox, 0o700); err != nil {
+		return fmt.Errorf("file_convert: create inbox %s: %w", inbox, err)
+	}
+
+	pandocPath := cfg.FileConvert.PandocPath
+	if pandocPath == "" {
+		pandocPath = "pandoc"
+	}
+	// Preflight: pandoc must be invocable. The dispatcher still surfaces
+	// per-upload failures as notices, but a missing pandoc at startup is a
+	// deployment problem the operator should fix before flipping enabled.
+	if _, err := exec.LookPath(pandocPath); err != nil {
+		return fmt.Errorf("file_convert: pandoc not found in PATH (%s); install it or set file_convert.pandoc_path: %w", pandocPath, err)
+	}
+
+	converter := fileconvert.New(fileconvert.Options{
+		PandocPath: pandocPath,
+		Timeout:    time.Duration(cfg.FileConvert.ConvertTimeout),
+		Logger:     logger,
+	})
+	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize)
+	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
+	logger.Info("file pipeline enabled",
+		"inbox", inbox,
+		"pandoc", pandocPath,
+		"max_file_size", cfg.FileConvert.MaxFileSize,
+		"convert_timeout", time.Duration(cfg.FileConvert.ConvertTimeout),
+		"retention", time.Duration(cfg.FileConvert.Retention))
+	return nil
 }

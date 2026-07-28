@@ -153,6 +153,80 @@ func (r *restClient) doJSON(ctx context.Context, method, path, query string, bod
 	return nil
 }
 
+// downloadMaxBytes caps a single resource download. Feishu file messages
+// include documents users explicitly attached, which can be large; we keep a
+// 30 MiB ceiling so a malicious or accidental huge upload cannot exhaust
+// memory or stall the dispatcher goroutine. The dispatcher's FileConvert
+// layer enforces its own MaxFileSize earlier (a friendly notice), this is the
+// hard backstop for raw byte accounting.
+const downloadMaxBytes = 30 << 20
+
+// DownloadResource fetches a binary resource attached to a message (file,
+// image). It opens a streaming GET against the IM resources endpoint and
+// returns the body for the caller to copy; the caller MUST close the reader.
+//
+// The query parameter type carries the resource kind ("file" or "image");
+// only "file" is used by the bridge today, but the parameter is kept explicit
+// so future callers do not need an API change.
+//
+// Conventions mirror doJSON: token-authenticated, error envelope parsed for
+// business codes. Unlike doJSON, the success body is binary and not bounded
+// by the 1 MiB JSON cap — a wrapping io.LimitReader enforces downloadMaxBytes
+// instead so the response stream cannot exhaust memory if the server misbehaves.
+func (r *restClient) DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error) {
+	if messageID == "" || fileKey == "" {
+		return nil, fmt.Errorf("lark: messageID and fileKey required")
+	}
+	if fileType == "" {
+		fileType = "file"
+	}
+	tok, err := r.tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID) +
+		"/resources/" + url.PathEscape(fileKey)
+	u := r.baseURL + path + "?type=" + url.QueryEscape(fileType)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("lark: build download request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("lark: download %s: %w", path, err)
+	}
+	// On a non-success status the body is a JSON error envelope: read it
+	// fully (capped), parse for the business code, and surface an APIError
+	// matching doJSON's contract. On success the body stays streaming with a
+	// byte-ceiling reader so callers can copy it incrementally.
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		var env imResponse
+		if err := json.Unmarshal(raw, &env); err == nil && env.Code != 0 {
+			return nil, &APIError{Code: env.Code, Msg: env.Msg}
+		}
+		return nil, fmt.Errorf("lark: download %s http %d: %s", path, resp.StatusCode, truncate(string(raw), 200))
+	}
+	return &limitedReadCloser{header: resp.Header, body: io.LimitReader(resp.Body, downloadMaxBytes+1), closer: resp.Body}, nil
+}
+
+// limitedReadCloser preserves the original response headers (Content-Type,
+// Content-Disposition carry the file name and mime the dispatcher may want)
+// while bounding bytes read and forwarding Close to the underlying body.
+type limitedReadCloser struct {
+	header http.Header
+	body   io.Reader
+	closer io.Closer
+}
+
+func (l *limitedReadCloser) Read(p []byte) (int, error) { return l.body.Read(p) }
+func (l *limitedReadCloser) Close() error               { return l.closer.Close() }
+
+// Header exposes the underlying HTTP response headers (Content-Type etc.).
+func (l *limitedReadCloser) Header() http.Header { return l.header }
+
 // newHTTPClient returns the default *http.Client used when none is provided.
 // A bounded Timeout prevents a stalled Feishu API from wedging dispatcher
 // goroutines forever (the SDK left ReqTimeout==0 → http.DefaultClient with no

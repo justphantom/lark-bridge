@@ -63,6 +63,10 @@ type Config struct {
 
 	// —— 渲染：feishu-front 用，后端忽略 ——
 	Renderer Renderer `json:"renderer,omitempty"`
+
+	// —— 文件上传：feishu-front 用，后端忽略 ——
+	// 仅有该段时才放开 file-type 消息；未配置 → 文件消息照旧被拒。
+	FileConvert FileConvert `json:"file_convert,omitempty"`
 }
 
 // Claude holds settings for the local Claude Code CLI subprocess that
@@ -278,6 +282,43 @@ type Renderer struct {
 	// right now" hint; the full trace stays in the session archive for later
 	// review. <=0/absent → 50.
 	MaxThinkingRunes int `json:"max_thinking_runes,omitempty"`
+}
+
+// FileConvert enables and tunes the inbound file-message pipeline in
+// feishu-front. When this section is present (even with all fields at their
+// defaults), the dispatcher accepts file-type Feishu messages, downloads the
+// binary via the IM resources API, converts docx→md via pandoc, and exposes
+// the resulting .md path in the prompt text so the bound backend can Read it.
+// When the section is absent, file-type messages are still rejected with the
+// legacy "不支持的消息类型" notice — keeping the feature opt-in per deployment.
+//
+// Only consumed by feishu-front; backends ignore.
+type FileConvert struct {
+	// Enabled is the master switch. False by default; the dispatcher keys the
+	// "accept file-type messages?" decision on Enabled rather than on the
+	// section's mere presence so an operator can stage config (write the
+	// block with enabled:false) without flipping the feature on.
+	Enabled bool `json:"enabled,omitempty"`
+	// PandocPath is the pandoc binary invoked for .docx conversions. Empty
+	// → "pandoc" (PATH lookup). The deploy preflight must guarantee this is
+	// invocable, or conversions will fail with a friendly per-upload notice.
+	PandocPath string `json:"pandoc_path,omitempty"`
+	// InboxDir is the root directory the dispatcher writes uploaded files
+	// and converted .md into. Layout: {InboxDir}/{chatID}/{promptID}/… .
+	// Empty → {state_dir}/inbox. Created on startup with 0700 perms.
+	InboxDir string `json:"inbox_dir,omitempty"`
+	// MaxFileSize bounds the size of one accepted upload, in bytes. An
+	// upload larger than this is rejected with a notice before any download
+	// attempt, so a 1 GiB accidental attachment cannot exhaust memory.
+	// <=0 → 30 MiB.
+	MaxFileSize int64 `json:"max_file_size,omitempty"`
+	// ConvertTimeout bounds one pandoc invocation. <=0 → 60s. A conversion
+	// exceeding this is SIGKILLed (process-group) and surfaced as a notice.
+	ConvertTimeout Duration `json:"convert_timeout,omitempty"`
+	// Retention bounds how long an inbox entry stays on disk after the turn
+	// that produced it completed. <=0 → 7d. A background sweep at startup
+	// prunes older directories so the inbox cannot grow without bound.
+	Retention Duration `json:"retention,omitempty"`
 }
 
 // expandEnvVars replaces ${VAR} patterns in raw config bytes with env

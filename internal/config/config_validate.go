@@ -115,6 +115,19 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("renderer.max_thinking_runes must be >= 0, got %d", cfg.Renderer.MaxThinkingRunes)
 	}
 
+	// FileConvert. Only enforce when Enabled; disabled sections are inert.
+	if cfg.FileConvert.Enabled {
+		if cfg.FileConvert.MaxFileSize < 1<<20 {
+			return fmt.Errorf("file_convert.max_file_size must be >= 1MiB, got %d bytes", cfg.FileConvert.MaxFileSize)
+		}
+		if d := time.Duration(cfg.FileConvert.ConvertTimeout); d > 0 && d < time.Second {
+			return fmt.Errorf("file_convert.convert_timeout must be >= %s when set, got %s", time.Second, d)
+		}
+		if d := time.Duration(cfg.FileConvert.Retention); d > 0 && d < time.Hour {
+			return fmt.Errorf("file_convert.retention must be >= 1h when set, got %s", d)
+		}
+	}
+
 	return nil
 }
 
