@@ -154,10 +154,26 @@ func (d *Dispatcher) handleFileMessage(ctx context.Context, msg *feishu.Incoming
 	if err != nil {
 		absDst = dstPath
 	}
-	promptText := buildFilePromptText(fileName, absDst, msg)
+	promptText, err := d.executeFilePromptTemplate(fileName, absDst, msg)
+	if err != nil {
+		// The template already parsed at config Load; reaching here means a
+		// runtime execution failure (e.g. a custom FuncMap entry panicking).
+		// Log loudly and surface as a notice so the user knows the upload
+		// reached disk but never made it to the agent.
+		l := d.logger.Load()
+		if l != nil {
+			l.Error("file prompt template execute failed",
+				log.FieldChatID, msg.ChatID,
+				log.FieldMessageID, msg.MessageID,
+				log.FieldError, err.Error())
+		}
+		return d.notice(ctx, msg.ChatID, "error", "渲染失败",
+			"提示词模板渲染失败，请联系管理员检查 file_convert.prompt_template："+err.Error())
+	}
 	if len(promptText) > maxPromptBytes {
 		// The prompt body itself stays tiny (a path + a directive), but cap
-		// defensively: a hostile FileName could in theory blow past the
+		// defensively: a hostile FileName or an operator-supplied template
+		// repeating over a long UserText could in theory blow past the
 		// 64 KiB prompt limit.
 		promptText = promptText[:maxPromptBytes]
 	}
@@ -207,21 +223,34 @@ func parseFileNameFromContent(content string) string {
 	return c.FileName
 }
 
-// buildFilePromptText composes the prompt body the agent backend receives.
-// The structure is intentionally explicit so the model can parse it: an
-// instruction line, the file path on its own line, and any text the user
-// attached (e.g. replied-to context). The path is the only piece the agent
-// strictly needs; the rest disambiguates intent.
-func buildFilePromptText(fileName, absPath string, msg *feishu.IncomingMessage) string {
-	var b strings.Builder
-	b.WriteString("用户上传了一份文件并希望基于其内容进行处理。\n")
-	fmt.Fprintf(&b, "文件名：%s\n", fileName)
-	fmt.Fprintf(&b, "已转换为 Markdown，路径：%s\n", absPath)
-	b.WriteString("请先用 Read 工具读取该文件，再按用户的进一步指示处理。\n")
-	if extra := userTextFromFileMessage(msg); extra != "" {
-		fmt.Fprintf(&b, "\n用户的附加说明：%s", extra)
+// filePromptVars is the variable bag handed to file_convert.prompt_template.
+// Kept as a struct (not a map) so the field names are the single source of
+// truth for template variable spelling — a typo'd {{.Filename}} surfaces at
+// render time as a clear "map has no entry for key" error rather than
+// silently rendering empty.
+type filePromptVars struct {
+	FileName string
+	Path     string
+	UserText string
+}
+
+// executeFilePromptTemplate renders the dispatcher's promptTemplate with one
+// upload's variables. The template is parsed once at config Load time, so a
+// failure here is a runtime execution error (custom FuncMap panic or an IO
+// error inside the template's writer), not a syntax error. The caller is
+// expected to surface a notice on error; the dispatcher never falls back to
+// a compiled-in template because no such template exists by design.
+func (d *Dispatcher) executeFilePromptTemplate(fileName, absPath string, msg *feishu.IncomingMessage) (string, error) {
+	vars := filePromptVars{
+		FileName: fileName,
+		Path:     absPath,
+		UserText: userTextFromFileMessage(msg),
 	}
-	return b.String()
+	var b strings.Builder
+	if err := d.promptTemplate.Execute(&b, vars); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // userTextFromFileMessage returns any user-authored text that accompanied the

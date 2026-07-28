@@ -319,6 +319,20 @@ type FileConvert struct {
 	// that produced it completed. <=0 → 7d. A background sweep at startup
 	// prunes older directories so the inbox cannot grow without bound.
 	Retention Duration `json:"retention,omitempty"`
+	// PromptTemplate is the Go text/template rendered into the prompt body
+	// the agent backend receives when a file is uploaded. Required when
+	// Enabled is true; absent/empty makes Load fail so an operator can never
+	// silently ship a deployment with no instruction to the agent (the
+	// default template lives in config.example.json / deploy/*.json so the
+	// canonical wording stays operator-editable, never compiled in).
+	//
+	// Variables:
+	//   {{.FileName}}  original upload name (e.g. "notes.md")
+	//   {{.Path}}      absolute path of the converted .md on disk
+	//   {{.UserText}}  accompanying text from the upload message (""
+	//                  when the user uploaded bare); use {{if .UserText}}
+	//                  ... {{end}} to omit the section entirely
+	PromptTemplate string `json:"prompt_template,omitempty"`
 }
 
 // expandEnvVars replaces ${VAR} patterns in raw config bytes with env

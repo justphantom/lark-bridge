@@ -79,6 +79,7 @@
     "inbox_dir":        "${STATE_DIR}/inbox",
     "max_file_size":    31457280,
     "convert_timeout":  "60s",
-    "retention":        "168h"
+    "retention":        "168h",
+    "prompt_template":  "用户上传了一份文件并希望基于其内容进行处理。\n文件名：{{.FileName}}\n已转换为 Markdown，路径：{{.Path}}\n请先用 Read 工具读取该文件，再按用户的进一步指示处理。{{if .UserText}}\n\n用户的附加说明：{{.UserText}}{{end}}"
   }
 }

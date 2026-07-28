@@ -7,12 +7,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/fileconvert"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
+
+// testPromptTemplate is the canonical wording copied from config.example.json.
+// Kept inline (rather than reached for via config.Load) so a config regression
+// does not cascade into dispatcher tests; the config_validate tests cover the
+// on-disk template.
+const testPromptTemplate = `用户上传了一份文件并希望基于其内容进行处理。
+文件名：{{.FileName}}
+已转换为 Markdown，路径：{{.Path}}
+请先用 Read 工具读取该文件，再按用户的进一步指示处理。{{if .UserText}}
+
+用户的附加说明：{{.UserText}}{{end}}`
+
+// mustParseTestTemplate parses the canonical test template, failing the test
+// if it cannot parse. Used in every dispatcher file test so a syntax error
+// surfaces immediately rather than as a nil-deref later.
+func mustParseTestTemplate(t *testing.T) *template.Template {
+	t.Helper()
+	tmpl, err := template.New("test").Parse(testPromptTemplate)
+	if err != nil {
+		t.Fatalf("parse test template: %v", err)
+	}
+	return tmpl
+}
 
 // fakeDownloader serves a fixed byte body for any DownloadFile call.
 type fakeDownloader struct {
@@ -42,7 +66,7 @@ func wireFileDispatcher(t *testing.T, body []byte, inbox string, maxSize int64) 
 	conn, _ := reg.Get(backendID)
 	dl := &fakeDownloader{body: body}
 	d := NewDispatcher(sink, reg, NewTurnManager(), boundRouter{backendID: backendID})
-	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), inbox, maxSize)
+	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), inbox, maxSize, mustParseTestTemplate(t))
 	return d, conn, dl, sink
 }
 
@@ -206,7 +230,7 @@ func TestDispatchIncoming_DownloadErrorNotice(t *testing.T) {
 	conn, _ := reg.Get(backendID)
 	dl := &fakeDownloader{err: errFake()}
 	d := NewDispatcher(sink, reg, NewTurnManager(), boundRouter{backendID: backendID})
-	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20)
+	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t))
 
 	err := d.DispatchIncoming(context.Background(), &feishu.IncomingMessage{
 		EventID:   "evt_dl",
@@ -237,6 +261,115 @@ type fakeError struct{ msg string }
 
 func (e *fakeError) Error() string { return e.msg }
 func errFake() error               { return &fakeError{msg: "simulated 403"} }
+
+// TestExecuteFilePromptTemplate_DefaultWording verifies the canonical
+// template (the one shipped in config.example.json) renders the expected
+// structured body: header, file name, path, instruction, and a conditional
+// user-text line that disappears when the upload carried no body.
+func TestExecuteFilePromptTemplate_DefaultWording(t *testing.T) {
+	cases := []struct {
+		name     string
+		userText string
+		wantHas  []string
+		wantDrop []string
+	}{
+		{
+			name:     "with user text",
+			userText: "请总结要点",
+			wantHas:  []string{"notes.md", "/abs/path/notes.md", "请先用 Read", "用户的附加说明：请总结要点"},
+			wantDrop: nil,
+		},
+		{
+			name:     "without user text",
+			userText: "",
+			wantHas:  []string{"notes.md", "请先用 Read"},
+			wantDrop: []string{"用户的附加说明"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
+			d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t))
+
+			msg := &feishu.IncomingMessage{Content: c.userText}
+			got, err := d.executeFilePromptTemplate("notes.md", "/abs/path/notes.md", msg)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			for _, want := range c.wantHas {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in rendered prompt:\n%s", want, got)
+				}
+			}
+			for _, drop := range c.wantDrop {
+				if strings.Contains(got, drop) {
+					t.Errorf("expected %q to be omitted, but found in:\n%s", drop, got)
+				}
+			}
+		})
+	}
+}
+
+// TestExecuteFilePromptTemplate_CustomTemplate verifies the dispatcher
+// honours an operator-supplied template verbatim — including non-default
+// wording, English text, and alternative variable order. This pins the
+// "code never ships a compiled-in template" contract.
+func TestExecuteFilePromptTemplate_CustomTemplate(t *testing.T) {
+	custom := `Read {{.Path}} (uploaded as {{.FileName}}) and follow the user's instructions.`
+	tmpl, err := template.New("custom").Parse(custom)
+	if err != nil {
+		t.Fatalf("parse custom: %v", err)
+	}
+	d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
+	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, tmpl)
+
+	got, err := d.executeFilePromptTemplate("report.docx", "/inbox/oc/p/report.md", &feishu.IncomingMessage{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	want := "Read /inbox/oc/p/report.md (uploaded as report.docx) and follow the user's instructions."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExecuteFilePromptTemplate_BadTemplateFailsGracefully verifies a
+// template that parses but fails at execute (referencing a missing field)
+// surfaces as an error the dispatcher will turn into a user-facing notice
+// rather than a panic. Goes through DispatchIncoming end-to-end so the
+// notice path is exercised too.
+func TestExecuteFilePromptTemplate_BadTemplateFailsGracefully(t *testing.T) {
+	// {{.Missing}} references an undefined struct field → execute error.
+	tmpl, err := template.New("bad").Parse("path={{.Missing}}")
+	if err != nil {
+		t.Fatalf("parse: %v — unexpected, Missing is a runtime not parse error", err)
+	}
+	d, conn, _, sink := wireFileDispatcher(t, []byte("body"), t.TempDir(), 5<<20)
+	d.promptTemplate = tmpl // override with the broken one
+
+	err = d.DispatchIncoming(context.Background(), &feishu.IncomingMessage{
+		EventID:   "evt_bad",
+		MessageID: "om_bad",
+		ChatID:    "oc_chat",
+		MsgType:   "file",
+		FileKey:   "fk1",
+		FileName:  "x.md",
+	})
+	if err != nil {
+		t.Fatalf("DispatchIncoming: %v", err)
+	}
+	if len(sink.sends) != 1 {
+		t.Fatalf("want 1 notice, got %d", len(sink.sends))
+	}
+	if !strings.Contains(string(sink.sends[0].card), "渲染失败") {
+		t.Errorf("expected 渲染失败 notice, got: %s", sink.sends[0].card)
+	}
+	select {
+	case ev := <-conn.eventCh:
+		t.Fatalf("no prompt expected on template failure, got %+v", ev)
+	default:
+	}
+}
 
 // TestSanitizePathElement verifies the inbox path element reject-list: only
 // alnum/-/_/. survive, and any ".." is collapsed.
@@ -296,7 +429,7 @@ func TestPruneInbox_RemovesOldEntries(t *testing.T) {
 	}
 
 	d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), inbox, 5<<20)
+	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), inbox, 5<<20, mustParseTestTemplate(t))
 	d.PruneInbox(7 * 24 * time.Hour)
 
 	if _, err := os.Stat(filepath.Join(inbox, "oc_old")); !os.IsNotExist(err) {

@@ -581,3 +581,73 @@ func TestLoad_DedupValidationFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadFileConvertPromptTemplateRequired verifies the
+// "no compiled-in default" contract: when file_convert.enabled is true but
+// prompt_template is absent/empty, Load must refuse to start so an operator
+// cannot ship a deployment whose file uploads produce an empty prompt.
+func TestLoadFileConvertPromptTemplateRequired(t *testing.T) {
+	path := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "   "
+		}
+	}`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load succeeded with empty prompt_template; want required-field error")
+	}
+	if !strings.Contains(err.Error(), "prompt_template is required") {
+		t.Errorf("error %q does not name prompt_template", err)
+	}
+}
+
+// TestLoadFileConvertPromptTemplateSyntaxChecked verifies a template that
+// fails to parse is rejected at Load time rather than at first upload. The
+// operator's typo must surface on `feishu-front` start, not 30 minutes later
+// when a user actually drops a file.
+func TestLoadFileConvertPromptTemplateSyntaxChecked(t *testing.T) {
+	good := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "path={{.FileName}}"
+		}
+	}`)
+	if _, err := Load(good); err != nil {
+		t.Fatalf("well-formed template should Load fine, got: %v", err)
+	}
+
+	bad := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "path={{.FileName"
+		}
+	}`)
+	_, err := Load(bad)
+	if err == nil {
+		t.Fatal("Load succeeded with unclosed template action; want parse error")
+	}
+	if !strings.Contains(err.Error(), "prompt_template") {
+		t.Errorf("error %q does not name prompt_template", err)
+	}
+}
+
+// TestLoadFileConvertDisabledSkipsTemplateCheck verifies that a disabled
+// file_convert section ignores the template validation: a config that turns
+// the feature off must not be forced to carry a template too.
+func TestLoadFileConvertDisabledSkipsTemplateCheck(t *testing.T) {
+	path := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {"enabled": false}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FileConvert.PromptTemplate != "" {
+		t.Errorf("disabled section should leave template empty, got %q", cfg.FileConvert.PromptTemplate)
+	}
+}

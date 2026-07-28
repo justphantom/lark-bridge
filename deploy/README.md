@@ -54,6 +54,23 @@ pandoc --version
 启动时会执行 `pandoc --version` 预检；缺失则 feishu-front 拒绝启动并在日志
 中提示安装命令。
 
+### 提示词模板（启用文件上传时）
+
+`file_convert.prompt_template` 是发送给 agent 的 prompt 文本模板（Go
+`text/template` 语法），**必填**。代码层不内置默认文案，默认模板写在
+`config.example.json` / `deploy/feishu-config.json` 里，操作员可直接编辑。
+
+可用变量：
+
+| 变量 | 含义 |
+|------|------|
+| `{{.FileName}}` | 用户上传的原始文件名（如 `notes.md`） |
+| `{{.Path}}` | 转换后的 `.md` 在主机上的绝对路径 |
+| `{{.UserText}}` | 上传消息附带的文本（无则为空字符串） |
+
+需要"无附加说明时不渲染该段"，用 `{{if .UserText}}…{{end}}`。模板语法错误会在
+`feishu-front` 启动时立即报错（fail-fast）。
+
 ## 1. 构建
 
 ```bash

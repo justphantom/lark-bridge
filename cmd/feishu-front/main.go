@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/config"
@@ -320,7 +321,18 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		Timeout:    time.Duration(cfg.FileConvert.ConvertTimeout),
 		Logger:     logger,
 	})
-	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize)
+
+	// Parse the operator-supplied prompt template once at startup. config.
+	// validate already syntax-checked it, so a parse failure here is a
+	// process-level invariant violation (e.g. the FuncMap was changed
+	// without re-validating) rather than an operator typo; surface it as
+	// a fatal so the process never starts with a broken template wired in.
+	tmpl, err := template.New("file_convert.prompt_template").Funcs(config.PromptTemplateFuncs()).Parse(cfg.FileConvert.PromptTemplate)
+	if err != nil {
+		return fmt.Errorf("file_convert: parse prompt_template: %w", err)
+	}
+
+	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize, tmpl)
 	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
 	logger.Info("file pipeline enabled",
 		"inbox", inbox,

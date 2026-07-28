@@ -16,8 +16,11 @@
     （`cmdutil.ApplyGroupCancel` 同款进程组 + SIGKILL 超时保护），md/txt 直拷。
   - 新增 `lark.Client.DownloadResource` 与 `feishu.Bot.DownloadFile`。
   - 新增 `config.FileConvert` 段（`enabled` / `pandoc_path` / `inbox_dir` /
-    `max_file_size` / `convert_timeout` / `retention`），默认全部关闭，旧部署
-    行为不变。
+    `max_file_size` / `convert_timeout` / `retention` / `prompt_template`），
+    默认全部关闭，旧部署行为不变。`prompt_template` 为 Go `text/template`
+    字符串（变量 `{{.FileName}}`/`{{.Path}}`/`{{.UserText}}`），启用时必填、
+    启动时语法预检；代码层不内置默认文案，默认模板写在示例配置里供操作员
+    直接编辑。
   - dispatcher 新增 `SetFilePipeline` + `PruneInbox`；inbox 启动时按 retention
     一次性裁剪。
   - 部署侧 `deploy.sh` 加 pandoc 软预检（warn 不 fail），feishu-front 启动时

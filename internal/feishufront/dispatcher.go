@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"text/template"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
@@ -143,9 +144,12 @@ type Dispatcher struct {
 
 	// —— 文件上传管线（可选）：仅当 SetFilePipeline 装配后启用 ——
 	// fileDownloader 抓取飞书消息资源；fileConverter 把 docx/md/txt 转成 .md。
-	// 两者任一为 nil 时，file-type 消息照旧被拒，保持向后兼容。
+	// promptTemplate 把上传事件渲染成发给 agent 的 prompt 文本（变量：
+	// FileName/Path/UserText）。三者任一为零值时，file-type 消息照旧被拒，
+	// 保持向后兼容。
 	fileDownloader FileDownloader
 	fileConverter  *fileconvert.Converter
+	promptTemplate *template.Template
 	inboxDir       string
 	inboxMaxSize   int64
 }
@@ -159,22 +163,24 @@ type FileDownloader interface {
 }
 
 // SetFilePipeline enables the inbound file-message pipeline. Pass a non-nil
-// downloader + converter + a writable inboxDir to accept file-type Feishu
-// messages; before this is called (or with nil downloader) the dispatcher
-// keeps the legacy "reject non-text" behaviour so existing tests/configs are
-// unaffected. maxSize<=0 keeps the fileconvert default; converter nil keeps
-// the pipeline disabled.
-func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *fileconvert.Converter, inboxDir string, maxSize int64) {
+// downloader + converter + a writable inboxDir + a parsed prompt template to
+// accept file-type Feishu messages; before this is called (or with nil
+// downloader) the dispatcher keeps the legacy "reject non-text" behaviour so
+// existing tests/configs are unaffected. maxSize<=0 keeps the fileconvert
+// default. The caller owns template parsing (config.Validate already syntax-
+// checked it at Load time).
+func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *fileconvert.Converter, inboxDir string, maxSize int64, promptTemplate *template.Template) {
 	d.fileDownloader = downloader
 	d.fileConverter = converter
 	d.inboxDir = inboxDir
 	d.inboxMaxSize = maxSize
+	d.promptTemplate = promptTemplate
 }
 
 // filePipelineEnabled reports whether the file pipeline is wired and ready.
 // Kept as a method so the gating logic stays next to the field it reads.
 func (d *Dispatcher) filePipelineEnabled() bool {
-	return d.fileDownloader != nil && d.fileConverter != nil && d.inboxDir != ""
+	return d.fileDownloader != nil && d.fileConverter != nil && d.inboxDir != "" && d.promptTemplate != nil
 }
 
 func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, router ChatRouter) *Dispatcher {

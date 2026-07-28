@@ -4,8 +4,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"text/template"
 	"time"
 )
+
+// promptTemplateFuncs whitelists the template functions exposed to
+// file_convert.prompt_template. Kept empty for now; declaring the map
+// explicitly means a future addition (e.g. a `truncate` filter) is a
+// single-point edit, and the validation parse uses the same surface the
+// runtime renderer will use.
+var promptTemplateFuncs = template.FuncMap{}
+
+// PromptTemplateFuncs returns the FuncMap used when parsing and rendering
+// file_convert.prompt_template. Declared as a public accessor (rather than
+// letting callers redeclare the map) so the validation parse in config and
+// the runtime parse in cmd/feishu-front cannot drift apart.
+func PromptTemplateFuncs() template.FuncMap {
+	return promptTemplateFuncs
+}
 
 // validate performs semantic validation on a loaded config.
 // Called after applyDefaults.
@@ -126,6 +143,19 @@ func validate(cfg *Config) error {
 		if d := time.Duration(cfg.FileConvert.Retention); d > 0 && d < time.Hour {
 			return fmt.Errorf("file_convert.retention must be >= 1h when set, got %s", d)
 		}
+		// PromptTemplate is required: no compiled-in default exists (the
+		// canonical wording ships in config.example.json / deploy/*.json
+		// so operators can edit it). Refuse to start so a half-configured
+		// deployment cannot ship silent file uploads.
+		if strings.TrimSpace(cfg.FileConvert.PromptTemplate) == "" {
+			return fmt.Errorf("file_convert.prompt_template is required when file_convert.enabled is true (copy the default from config.example.json)")
+		}
+		// Syntax-check at config load so a typo'd template fails fast at
+		// startup, not on the first upload. Variable substitution happens at
+		// render time; here we only assert the template parses.
+		if err := validatePromptTemplate(cfg.FileConvert.PromptTemplate); err != nil {
+			return fmt.Errorf("file_convert.prompt_template: %w", err)
+		}
 	}
 
 	return nil
@@ -150,6 +180,17 @@ func ensureDir(label, abs string, create bool) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s: path is not a directory: %s", label, abs)
+	}
+	return nil
+}
+
+// validatePromptTemplate parses t with the same FuncMap the runtime renderer
+// will use, without executing it. Returns the parse error verbatim so the
+// operator sees the exact line/column. Called once at config Load time so a
+// broken template fails fast at startup instead of on the first upload.
+func validatePromptTemplate(t string) error {
+	if _, err := template.New("file_convert.prompt_template").Funcs(promptTemplateFuncs).Parse(t); err != nil {
+		return err
 	}
 	return nil
 }
