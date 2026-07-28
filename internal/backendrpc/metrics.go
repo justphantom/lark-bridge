@@ -2,6 +2,7 @@ package backendrpc
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"time"
 
@@ -87,8 +88,12 @@ func collectMetrics(opts MetricsOptions, ip string) *protocol.MetricsReport {
 }
 
 // probeOutboundIP resolves the frontend's host:port and dials (UDP route
-// lookup only) to learn which local IP the frontend sees. Best-effort: ""
-// when unresolvable — the IP is display-only.
+// lookup only) to learn which local IP the frontend sees. A loopback result
+// means the frontend is co-located with this process; the loopback address is
+// useless as a card identity (it would never match the frontend's own
+// PrimaryIPv4 self-report and split one host into two rows), so fall back to
+// the host's primary IPv4. Best-effort: "" when unresolvable — the IP is
+// display-only.
 func probeOutboundIP(frontendURL string) string {
 	u, err := url.Parse(frontendURL)
 	if err != nil || u.Host == "" {
@@ -97,6 +102,9 @@ func probeOutboundIP(frontendURL string) string {
 	ip, err := hostmetrics.OutboundIP(u.Host)
 	if err != nil {
 		return ""
+	}
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.IsLoopback() {
+		return hostmetrics.PrimaryIPv4()
 	}
 	return ip
 }
