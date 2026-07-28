@@ -333,6 +333,18 @@ type FileConvert struct {
 	//                  when the user uploaded bare); use {{if .UserText}}
 	//                  ... {{end}} to omit the section entirely
 	PromptTemplate string `json:"prompt_template,omitempty"`
+	// PostPromptTemplate renders the prompt body for a post-type (rich text)
+	// Feishu message. Optional: when empty, post messages still work but
+	// degrade to plain Markdown text (no image download, no body.md) so an
+	// operator who wants only single-file uploads does not need to configure
+	// a second template. When set, the dispatcher materialises inline images
+	// into the inbox and writes body.md, naming its absolute path here.
+	//
+	// Variables:
+	//   {{.Path}}     absolute path of body.md (the agent's read entry point)
+	//   {{.UserText}} accompanying text (rarely populated for posts; post
+	//                content IS the body — kept for parity with file uploads)
+	PostPromptTemplate string `json:"post_prompt_template,omitempty"`
 }
 
 // expandEnvVars replaces ${VAR} patterns in raw config bytes with env

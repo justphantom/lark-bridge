@@ -52,6 +52,11 @@ type IncomingMessage struct {
 	// FileName is the original upload name on a file-type message. Empty for
 	// other types or when Feishu omits it.
 	FileName string
+	// Post carries the parsed AST for post-type messages (MsgType=="post").
+	// Nil for every other type; the dispatcher switches on this rather than
+	// re-parsing Content. Raw Content is preserved verbatim for traceability
+	// (archived to inbox/raw/post.json by the file pipeline).
+	Post *Post
 }
 
 // CardAction is the normalized payload for one interactive card

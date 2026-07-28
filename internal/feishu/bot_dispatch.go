@@ -141,6 +141,22 @@ func buildIncomingMessage(ev *lark.MessageReceiveEvent, logger *log.Logger) (*In
 			content = parsed
 		}
 	}
+	// post-type messages carry a locale-wrapped JSON Content. Parse it into
+	// an AST once here so the dispatcher can branch without re-parsing.
+	// ParsePost is total: corrupt JSON returns an error that we log + drop
+	// (IncomingMessage.Post stays nil), letting the dispatcher's downstream
+	// "post with nil Post" path surface a friendly notice.
+	var post *Post
+	if ev.MsgType == "post" {
+		p, err := ParsePost(content)
+		if err != nil {
+			logger.Warn("parse post content failed",
+				log.FieldMessageID, ev.MessageID,
+				log.FieldError, err.Error())
+		} else {
+			post = p
+		}
+	}
 	return &IncomingMessage{
 		EventID:      ev.EventID,
 		MessageID:    ev.MessageID,
@@ -153,6 +169,7 @@ func buildIncomingMessage(ev *lark.MessageReceiveEvent, logger *log.Logger) (*In
 		CreateTimeMs: ev.CreateTimeMs,
 		FileKey:      ev.FileKey,
 		FileName:     ev.FileName,
+		Post:         post,
 	}, nil
 }
 

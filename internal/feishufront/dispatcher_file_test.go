@@ -57,6 +57,9 @@ func (f *fakeDownloader) DownloadFile(_ context.Context, _, _, _ string) (io.Rea
 // fake downloader carrying `body`, an in-memory converter, and a temp inbox
 // at `inbox`. Returns the dispatcher, the backend's event channel, the
 // downloader, and the sink so tests can inspect what the user saw.
+//
+// postPromptTemplate is nil here: these tests exercise the single-file path
+// only. dispatcher_post_test.go covers the post pipeline.
 func wireFileDispatcher(t *testing.T, body []byte, inbox string, maxSize int64) (*Dispatcher, *BackendConn, *fakeDownloader, *fakeSink) {
 	t.Helper()
 	sink := &fakeSink{}
@@ -66,7 +69,7 @@ func wireFileDispatcher(t *testing.T, body []byte, inbox string, maxSize int64) 
 	conn, _ := reg.Get(backendID)
 	dl := &fakeDownloader{body: body}
 	d := NewDispatcher(sink, reg, NewTurnManager(), boundRouter{backendID: backendID})
-	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), inbox, maxSize, mustParseTestTemplate(t))
+	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), inbox, maxSize, mustParseTestTemplate(t), nil)
 	return d, conn, dl, sink
 }
 
@@ -230,7 +233,7 @@ func TestDispatchIncoming_DownloadErrorNotice(t *testing.T) {
 	conn, _ := reg.Get(backendID)
 	dl := &fakeDownloader{err: errFake()}
 	d := NewDispatcher(sink, reg, NewTurnManager(), boundRouter{backendID: backendID})
-	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t))
+	d.SetFilePipeline(dl, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t), nil)
 
 	err := d.DispatchIncoming(context.Background(), &feishu.IncomingMessage{
 		EventID:   "evt_dl",
@@ -289,7 +292,7 @@ func TestExecuteFilePromptTemplate_DefaultWording(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
-			d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t))
+			d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, mustParseTestTemplate(t), nil)
 
 			msg := &feishu.IncomingMessage{Content: c.userText}
 			got, err := d.executeFilePromptTemplate("notes.md", "/abs/path/notes.md", msg)
@@ -321,7 +324,7 @@ func TestExecuteFilePromptTemplate_CustomTemplate(t *testing.T) {
 		t.Fatalf("parse custom: %v", err)
 	}
 	d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, tmpl)
+	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), t.TempDir(), 5<<20, tmpl, nil)
 
 	got, err := d.executeFilePromptTemplate("report.docx", "/inbox/oc/p/report.md", &feishu.IncomingMessage{})
 	if err != nil {
@@ -429,7 +432,7 @@ func TestPruneInbox_RemovesOldEntries(t *testing.T) {
 	}
 
 	d := NewDispatcher(&fakeSink{}, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), inbox, 5<<20, mustParseTestTemplate(t))
+	d.SetFilePipeline(&fakeDownloader{}, fileconvert.New(fileconvert.Options{}), inbox, 5<<20, mustParseTestTemplate(t), nil)
 	d.PruneInbox(7 * 24 * time.Hour)
 
 	if _, err := os.Stat(filepath.Join(inbox, "oc_old")); !os.IsNotExist(err) {

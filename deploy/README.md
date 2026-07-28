@@ -71,6 +71,31 @@ pandoc --version
 需要"无附加说明时不渲染该段"，用 `{{if .UserText}}…{{end}}`。模板语法错误会在
 `feishu-front` 启动时立即报错（fail-fast）。
 
+### 富文本消息（post）
+
+`file_convert.post_prompt_template` 是发送给 agent 的富文本消息（`MsgType=post`）
+prompt 模板。**可选**：留空时 post 消息降级为纯 Markdown 文本路径（图片渲染为
+`[图片]` 占位符，不下载）；填上则启用完整 post 管线：
+
+- 解析 post AST（text / a / at / img / media / emotion / code_block）
+- 内联图片（`tag=img`）下载到 inbox，扩展名按响应 `Content-Type` 推断
+- `body.md` 写到 `{inbox}/{chatID}/{promptID}/`，图片用 `![](abs/path)` 引用
+- 视频（`tag=media`）渲染为 `[视频]` 占位符（agent 读不了视频，不下载）
+- 单图失败转占位符（`[图片下载失败]` / `[图片过大]`），整条消息不阻塞
+
+可用变量：
+
+| 变量 | 含义 |
+|------|------|
+| `{{.Path}}` | `body.md` 绝对路径（agent 的 Read 入口） |
+| `{{.UserText}}` | 附带文本（post 本身就是内容，一般为空） |
+
+`@bot` / `@all` 在解析阶段被剔除（与文本消息的 `StripMentionPlaceholders`
+语义一致），普通 `@用户` 保留为 `@<name>`。
+
+默认模板见 `config.example.json` / `deploy/feishu-config.json`，操作员可直接
+编辑换语言、改措辞。
+
 ## 1. 构建
 
 ```bash

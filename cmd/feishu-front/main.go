@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"text/template"
 	"time"
@@ -332,13 +333,25 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		return fmt.Errorf("file_convert: parse prompt_template: %w", err)
 	}
 
-	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize, tmpl)
+	// PostPromptTemplate is optional: empty → post messages degrade to
+	// text-only Markdown (no image download). When set, parse it the same
+	// way so a typo fails fast at startup.
+	var postTmpl *template.Template
+	if strings.TrimSpace(cfg.FileConvert.PostPromptTemplate) != "" {
+		postTmpl, err = template.New("file_convert.post_prompt_template").Funcs(config.PromptTemplateFuncs()).Parse(cfg.FileConvert.PostPromptTemplate)
+		if err != nil {
+			return fmt.Errorf("file_convert: parse post_prompt_template: %w", err)
+		}
+	}
+
+	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize, tmpl, postTmpl)
 	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
 	logger.Info("file pipeline enabled",
 		"inbox", inbox,
 		"pandoc", pandocPath,
 		"max_file_size", cfg.FileConvert.MaxFileSize,
 		"convert_timeout", time.Duration(cfg.FileConvert.ConvertTimeout),
-		"retention", time.Duration(cfg.FileConvert.Retention))
+		"retention", time.Duration(cfg.FileConvert.Retention),
+		"post_pipeline", postTmpl != nil)
 	return nil
 }

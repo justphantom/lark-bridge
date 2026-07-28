@@ -156,6 +156,15 @@ func validate(cfg *Config) error {
 		if err := validatePromptTemplate(cfg.FileConvert.PromptTemplate); err != nil {
 			return fmt.Errorf("file_convert.prompt_template: %w", err)
 		}
+		// PostPromptTemplate is optional: when empty, post messages degrade
+		// to text-only Markdown (no image download). When non-empty, parse
+		// it once here so a typo fails fast at startup, not on the first
+		// post.
+		if strings.TrimSpace(cfg.FileConvert.PostPromptTemplate) != "" {
+			if err := validatePromptTemplate(cfg.FileConvert.PostPromptTemplate); err != nil {
+				return fmt.Errorf("file_convert.post_prompt_template: %w", err)
+			}
+		}
 	}
 
 	return nil

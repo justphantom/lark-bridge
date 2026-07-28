@@ -144,14 +144,15 @@ type Dispatcher struct {
 
 	// —— 文件上传管线（可选）：仅当 SetFilePipeline 装配后启用 ——
 	// fileDownloader 抓取飞书消息资源；fileConverter 把 docx/md/txt 转成 .md。
-	// promptTemplate 把上传事件渲染成发给 agent 的 prompt 文本（变量：
-	// FileName/Path/UserText）。三者任一为零值时，file-type 消息照旧被拒，
-	// 保持向后兼容。
-	fileDownloader FileDownloader
-	fileConverter  *fileconvert.Converter
-	promptTemplate *template.Template
-	inboxDir       string
-	inboxMaxSize   int64
+	// promptTemplate 把单文件上传事件渲染成发给 agent 的 prompt 文本（变量：
+	// FileName/Path/UserText）。postPromptTemplate 是富文本消息对应的模板
+	// （变量 Path/UserText）。三者任一为零值时，对应 MsgType 走降级路径。
+	fileDownloader     FileDownloader
+	fileConverter      *fileconvert.Converter
+	promptTemplate     *template.Template
+	postPromptTemplate *template.Template
+	inboxDir           string
+	inboxMaxSize       int64
 }
 
 // FileDownloader is the subset of the Feishu bot needed to pull a binary
@@ -169,18 +170,32 @@ type FileDownloader interface {
 // existing tests/configs are unaffected. maxSize<=0 keeps the fileconvert
 // default. The caller owns template parsing (config.Validate already syntax-
 // checked it at Load time).
-func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *fileconvert.Converter, inboxDir string, maxSize int64, promptTemplate *template.Template) {
+//
+// postPromptTemplate may be nil — post messages then fall back to the plain
+// "render to Markdown text" path (no body.md, no image download) so an
+// operator who only wants single-file uploads can still receive post
+// messages without configuring a second template.
+func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *fileconvert.Converter, inboxDir string, maxSize int64, promptTemplate *template.Template, postPromptTemplate *template.Template) {
 	d.fileDownloader = downloader
 	d.fileConverter = converter
 	d.inboxDir = inboxDir
 	d.inboxMaxSize = maxSize
 	d.promptTemplate = promptTemplate
+	d.postPromptTemplate = postPromptTemplate
 }
 
-// filePipelineEnabled reports whether the file pipeline is wired and ready.
-// Kept as a method so the gating logic stays next to the field it reads.
+// filePipelineEnabled reports whether the file pipeline is wired for
+// single-file uploads (the original path). Kept as a method so the gating
+// logic stays next to the fields it reads.
 func (d *Dispatcher) filePipelineEnabled() bool {
 	return d.fileDownloader != nil && d.fileConverter != nil && d.inboxDir != "" && d.promptTemplate != nil
+}
+
+// postPipelineEnabled reports whether the post pipeline is fully wired:
+// file pipeline plus a postPromptTemplate. When false but filePipelineEnabled
+// is true, post messages degrade to text-only Markdown (方案 B semantics).
+func (d *Dispatcher) postPipelineEnabled() bool {
+	return d.filePipelineEnabled() && d.postPromptTemplate != nil
 }
 
 func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, router ChatRouter) *Dispatcher {
@@ -328,12 +343,44 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 				"暂仅支持文本消息。如需处理上传的文件，请在配置中启用 file_convert。")
 		}
 		return d.handleFileMessage(ctx, msg)
+	case "post":
+		return d.handlePostIncoming(ctx, msg)
 	default:
-		// image/post/share/... content arrives as raw JSON; forwarding it as
+		// image / share / ... content arrives as raw JSON; forwarding it as
 		// a prompt would leak metadata and confuse the model. Keep rejected.
 		return d.notice(ctx, msg.ChatID, "info", "不支持的消息类型",
-			"暂仅支持文本消息与文件（docx/md/txt），图片/富文本/转发消息暂无法处理")
+			"暂仅支持文本消息、文件（docx/md/txt）与富文本（post）")
 	}
+}
+
+// handlePostIncoming routes a post-type message: if the file pipeline is
+// fully wired (file_convert.enabled + post_prompt_template), run the full
+// materialisation path (image downloads + body.md). Otherwise degrade to
+// text-only Markdown so the message is never silently lost.
+//
+// Post==nil means feishu.buildIncomingMessage could not parse the content;
+// surface as a notice so the user knows their message was rejected.
+func (d *Dispatcher) handlePostIncoming(ctx context.Context, msg *feishu.IncomingMessage) error {
+	if msg.Post == nil {
+		return d.notice(ctx, msg.ChatID, "warning", "解析失败",
+			"无法解析富文本消息，请改用文本或重新发送")
+	}
+	if d.postPipelineEnabled() {
+		return d.handlePostMessage(ctx, msg)
+	}
+	// Degraded path: no inbox, no image download. Render to plain Markdown
+	// and forward as a text prompt. This keeps post useful for deployments
+	// that have not enabled file_convert.
+	body := d.renderPostBodyAsTextOnly(msg)
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil
+	}
+	if len(body) > maxPromptBytes {
+		return d.notice(ctx, msg.ChatID, "warning", "消息过长",
+			"消息超过 "+strconv.Itoa(maxPromptBytes>>10)+"KiB 上限，请缩短后重试")
+	}
+	return d.dispatchPrompt(ctx, msg, body, false)
 }
 
 // handleTextMessage handles the legacy text-prompt path: @-strip → /backend or

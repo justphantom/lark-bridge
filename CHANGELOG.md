@@ -7,6 +7,33 @@
 
 ### Added
 
+- **飞书富文本消息（post）支持 + 内联图片下载（opt-in）**：feishu-front
+  现可接收 `MsgType=post` 的富文本消息，转换成 Markdown 物化到 inbox。
+  设计文档见 `docs/post-rich-text-design.md`（方案 C，已按推荐定档全部
+  5 个决策点）。
+  - 新增 `internal/feishu/post.go`：`Post` / `PostNode` AST +
+    `ParsePost(content)`（locale 兜底）+ `RenderNodeToMarkdown`（纯函数）+
+    `RenderPostToMarkdown`（含占位符完整渲染）+ `StripBotMentionsFromPost`
+    （@bot / @all 剔除）。
+  - 新增 `internal/feishufront/dispatcher_post.go`：`handlePostMessage` 串联
+    AST 遍历 → 图片下载 → body.md 落盘 → post 模板渲染 → dispatchPrompt。
+  - 内联图片：`tag=img` 下载到 `{inbox}/{chatID}/{promptID}/img-NNN.<ext>`，
+    扩展名按响应 `Content-Type` 推断（png/jpg/gif/webp，默认 png）。
+  - 错误降级矩阵：单图失败转占位符（`[图片下载失败]` / `[图片过大]` /
+    `[图片存储失败]`），整条消息不阻塞；解析失败才整体阻塞。
+  - `tag=media`（视频）渲染为 `[视频]` 占位符（agent 读不了视频，不下载）。
+  - inbox 布局：扁平（`body.md` + `img-NNN.<ext>` + `raw/post.json`），
+    与单文件场景统一。
+  - 顺序下载（95% post ≤ 3 图，<3s），错误聚合无需锁。
+  - 配置：新增 `file_convert.post_prompt_template`（**可选**，留空时走
+    "降级路径"——post 转 Markdown 文本直接发，不下载图）。启用时若配错
+    语法在启动时 fail-fast。
+  - `IncomingMessage` 加 `Post *Post` 字段；`feishu.buildIncomingMessage`
+    在 `case "post"` 时调用 `ParsePost` 一次，dispatcher 直接消费 AST。
+  - 安全：复用 `inboxMaxSize` 单图大小上限；`@bot` / `@all` 在渲染前
+    剔除；AST 深拷贝避免污染原始事件。
+  - 协议层零改动：post 最终仍以纯文本 prompt 抵达后端（含 body.md 路径）。
+
 - **飞书文件上传 → pandoc → markdown 管线（opt-in）**：feishu-front 现可接收
   群聊中上传的 `file` 类型消息（docx/md/markdown/txt），通过自实现的 IM resources
   端点下载二进制，pandoc 转换为 GitHub-flavoured Markdown，落地到
