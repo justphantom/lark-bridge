@@ -13,6 +13,11 @@ import (
 // tail collapses to "…另 N 条". 5 keeps the card scannable while identifiable.
 const maxTurnsPerBackend = 5
 
+// staleAfterIntervals is how many refresh periods a host/service row may go
+// without a new metrics report before it is marked "(stale)" — e.g. a backend
+// whose metrics channel broke (old frontend 404) while SSE stays online.
+const staleAfterIntervals = 3
+
 // TurnRow is the cardkit view of one in-flight turn for StatusReport. It
 // mirrors protocol.TurnInfo's display fields without importing protocol, so
 // cardkit stays a pure rendering layer (same convention as Notice taking only
@@ -21,6 +26,48 @@ type TurnRow struct {
 	BackendID string
 	ChatID    string // full Feishu chat id; rendered via ShortID
 	ElapsedS  int64
+}
+
+// HostRow is the cardkit view of one host's load snapshot (protocol.HostStats
+// without the import). ReportedAt drives the "(stale)" marker.
+type HostRow struct {
+	IP             string
+	Load1          float64
+	Load5          float64
+	Load15         float64
+	MemTotalBytes  uint64
+	MemAvailBytes  uint64
+	DiskTotalBytes uint64
+	DiskUsedBytes  uint64
+	ReportedAt     int64
+}
+
+// ServiceRow is the cardkit view of one backend process's snapshot
+// (protocol.ServiceStat without the import). CgroupMemBytes == 0 renders "—"
+// (no instance, or unreadable cgroup); an empty Version renders "unknown" and
+// is excluded from drift detection.
+type ServiceRow struct {
+	BackendID      string
+	IP             string
+	Version        string
+	CgroupMemBytes uint64
+	ReportedAt     int64
+}
+
+// StatusReportInput carries everything StatusReport renders. An options
+// struct (not positional params) because the host/service sections took the
+// arity past readability; mirrors the TurnRow convention of cardkit-local
+// view types, with the dispatcher doing protocol→view conversion.
+type StatusReportInput struct {
+	Footer      FooterInfo
+	Title       string
+	GeneratedAt int64
+	IntervalS   int
+	InFlight    int
+	Backends    []string
+	Turns       []TurnRow
+	Hosts       []HostRow
+	Services    []ServiceRow
 }
 
 // ShortID shortens a Feishu id (oc_/om_ + hex) to its last 8 chars so a row
@@ -35,30 +82,39 @@ func ShortID(id string) string {
 
 // StatusReport builds the standing overview card pushed by the status-monitor
 // backend: a summary line (updated time · period · online backends · in-flight
-// count) followed by per-backend turn groups (short chat id + elapsed). When
-// there are no in-flight turns the body collapses to a one-line idle notice
-// plus the online-backend list. schema 1.0 via Card, same as every other card.
-func StatusReport(footer FooterInfo, title string, generatedAt int64, intervalS, inflight int, backends []string, turns []TurnRow) ([]byte, error) {
-	info := HeaderInfo{BackendType: footer.BackendType, Title: title, Template: "blue"}
+// count), optional 主机/进程 sections (host load, per-service version and
+// cgroup memory), then per-backend turn groups. A version drift (one backend
+// behind the dominant version) marks the row and flips the header template
+// from blue to orange. schema 1.0 via Card, same as every other card.
+func StatusReport(in StatusReportInput) ([]byte, error) {
+	_, drifted := versionDrift(in.Services)
+	template := "blue"
+	if len(drifted) > 0 {
+		template = "orange"
+	}
+	info := HeaderInfo{BackendType: in.Footer.BackendType, Title: in.Title, Template: template}
 	if info.Title == "" {
 		info.Title = "状态总览"
 	}
 
 	var b strings.Builder
 	// Summary line.
-	fmt.Fprintf(&b, "更新 %s", time.Unix(generatedAt, 0).Format("15:04:05"))
-	if intervalS > 0 {
-		fmt.Fprintf(&b, " · 周期 %s", formatPeriod(intervalS))
+	fmt.Fprintf(&b, "更新 %s", time.Unix(in.GeneratedAt, 0).Format("15:04:05"))
+	if in.IntervalS > 0 {
+		fmt.Fprintf(&b, " · 周期 %s", formatPeriod(in.IntervalS))
 	}
-	fmt.Fprintf(&b, " · 在线后端 %d · 会话 %d", len(backends), inflight)
+	fmt.Fprintf(&b, " · 在线后端 %d · 会话 %d", len(in.Backends), in.InFlight)
 
-	if inflight == 0 || len(turns) == 0 {
+	writeHostSection(&b, in.Hosts, in.GeneratedAt, in.IntervalS)
+	writeServiceSection(&b, in.Services, drifted, in.GeneratedAt, in.IntervalS)
+
+	if in.InFlight == 0 || len(in.Turns) == 0 {
 		b.WriteString("\n\n当前没有运行中的会话。")
-		if len(backends) > 0 {
-			b.WriteString("\n\n在线后端：" + strings.Join(backends, " · "))
+		if len(in.Backends) > 0 {
+			b.WriteString("\n\n在线后端：" + strings.Join(in.Backends, " · "))
 		}
 	} else {
-		groups := groupTurns(backends, turns)
+		groups := groupTurns(in.Backends, in.Turns)
 		for _, g := range groups {
 			fmt.Fprintf(&b, "\n\n▸ %s  %d 个会话", g.backendID, len(g.rows))
 			shown := g.rows
@@ -78,7 +134,149 @@ func StatusReport(footer FooterInfo, title string, generatedAt int64, intervalS,
 
 	md := truncateRunes(b.String(), MaxBodyRunes)
 	elements := []Element{MarkdownElement(md)}
-	return Card(info, footer, elements, nil)
+	return Card(info, in.Footer, elements, nil)
+}
+
+// writeHostSection renders the ▸ 主机 block: one row per host, sorted by IP
+// for deterministic output. Empty IP renders "?" — a missing probe is
+// display-only and must not blank the row.
+func writeHostSection(b *strings.Builder, hosts []HostRow, now int64, intervalS int) {
+	if len(hosts) == 0 {
+		return
+	}
+	sorted := make([]HostRow, len(hosts))
+	copy(sorted, hosts)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].IP < sorted[j].IP })
+	b.WriteString("\n\n▸ 主机")
+	for _, h := range sorted {
+		ip := h.IP
+		if ip == "" {
+			ip = "?"
+		}
+		memPct, diskPct := 0, 0
+		if h.MemTotalBytes > 0 {
+			memPct = int((h.MemTotalBytes - h.MemAvailBytes) * 100 / h.MemTotalBytes) //nolint:gosec // G115: 比值 ∈ [0,100]
+		}
+		if h.DiskTotalBytes > 0 {
+			diskPct = int(h.DiskUsedBytes * 100 / h.DiskTotalBytes) //nolint:gosec // G115: 比值 ∈ [0,100]
+		}
+		fmt.Fprintf(b, "\n　· %s  load %.2f/%.2f/%.2f  内存 %s/%s (%d%%)  盘 %s/%s (%d%%)%s",
+			clip(ip, 15),
+			h.Load1, h.Load5, h.Load15,
+			formatBytes(h.MemTotalBytes-h.MemAvailBytes), formatBytes(h.MemTotalBytes), memPct,
+			formatBytes(h.DiskUsedBytes), formatBytes(h.DiskTotalBytes), diskPct,
+			staleMark(h.ReportedAt, now, intervalS))
+	}
+}
+
+// writeServiceSection renders the ▸ 进程 block: one row per backend, sorted
+// by backendID. Drifted rows (version != dominant) carry the 🔴 marker.
+func writeServiceSection(b *strings.Builder, services []ServiceRow, drifted map[string]bool, now int64, intervalS int) {
+	if len(services) == 0 {
+		return
+	}
+	sorted := make([]ServiceRow, len(services))
+	copy(sorted, services)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].BackendID < sorted[j].BackendID })
+	b.WriteString("\n\n▸ 进程")
+	for _, s := range sorted {
+		version := s.Version
+		if version == "" {
+			version = "unknown"
+		}
+		ip := s.IP
+		if ip == "" {
+			ip = "?"
+		}
+		mem := "—"
+		if s.CgroupMemBytes > 0 {
+			mem = formatBytes(s.CgroupMemBytes)
+		}
+		fmt.Fprintf(b, "\n　· %s  %s  %s  %s", clip(s.BackendID, 15), clip(ip, 15), clip(version, 12), mem)
+		if drifted[s.BackendID] {
+			b.WriteString("  🔴 版本漂移")
+		}
+		b.WriteString(staleMark(s.ReportedAt, now, intervalS))
+	}
+}
+
+// versionDrift finds the dominant (mode) version across services with a
+// non-empty version and the set of backendIDs that disagree. Drift detection
+// only runs when ≥2 backends report a version — a single backend, or all
+// "unknown", has nothing to drift from. Ties break to the lexicographically
+// smallest version so the verdict is deterministic.
+func versionDrift(services []ServiceRow) (dominant string, drifted map[string]bool) {
+	counts := map[string]int{}
+	for _, s := range services {
+		if s.Version != "" {
+			counts[s.Version]++
+		}
+	}
+	if len(counts) == 0 {
+		return "", nil
+	}
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	if total < 2 {
+		return "", nil
+	}
+	best, bestN := "", 0
+	for v, n := range counts {
+		if n > bestN || (n == bestN && v < best) {
+			best, bestN = v, n
+		}
+	}
+	drifted = map[string]bool{}
+	for _, s := range services {
+		if s.Version != "" && s.Version != best {
+			drifted[s.BackendID] = true
+		}
+	}
+	return best, drifted
+}
+
+// staleMark returns "  (stale)" when the row's last report is older than
+// staleAfterIntervals × the refresh period. A zero ReportedAt (metrics never
+// pushed) or non-positive interval never marks — there is no cadence to be
+// stale against.
+func staleMark(reportedAt, now int64, intervalS int) string {
+	if reportedAt == 0 || intervalS <= 0 {
+		return ""
+	}
+	if now-reportedAt > int64(staleAfterIntervals)*int64(intervalS) {
+		return "  (stale)"
+	}
+	return ""
+}
+
+// clip truncates s to at most n runes (no ellipsis — column alignment matters
+// more than the lost tail on these fixed-width fields).
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
+// formatBytes renders a byte count as "1.7G" / "14M" / "512K": one decimal,
+// trailing ".0" trimmed, so columns stay tight on the card.
+func formatBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := uint64(unit), 0
+	for x := n / unit; x >= unit && exp < 3; x /= unit {
+		div *= unit
+		exp++
+	}
+	v := float64(n) / float64(div)
+	s := fmt.Sprintf("%.1f", v)
+	s = strings.TrimSuffix(s, ".0")
+	return fmt.Sprintf("%s%c", s, "KMGT"[exp])
 }
 
 // turnGroup is one backend's in-flight turns, sorted by elapsed desc.

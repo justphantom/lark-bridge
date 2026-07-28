@@ -55,7 +55,14 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	rpc, err := backendrpc.Connect(cfg.BackendID, "status-monitor", cfg.FrontendURL, cfg.IPCSecret)
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "status-monitor",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
 		return fmt.Errorf("connect frontend: %w", err)
 	}
@@ -78,8 +85,18 @@ func run(cfgPath string) error {
 	// be blocked. Both share ctx; main's defer stop() cancels the loop on exit.
 	go func() { _ = h.Run(ctx) }()
 
+	// Host/process metrics push: this backend is also a metrics producer for
+	// the card it renders.
+	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+		Interval: interval,
+		StateDir: cfg.StateDir,
+		UnitName: "lark-status-monitor.service",
+		Version:  version,
+		Logger:   logger,
+	})
+
 	eventErr := func(err error) { logger.Warn("ipc", log.FieldError, err) }
-	runErr := backendrpc.Run(ctx, cfg.BackendID, "status-monitor", cfg.FrontendURL, cfg.IPCSecret,
+	runErr := backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", "event_type", ev.Type, log.FieldError, err)

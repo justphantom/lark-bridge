@@ -364,11 +364,13 @@ type NoticePayload struct {
 // plus presentation metadata (Title/IntervalS/GeneratedAt). Turns reuses the
 // protocol.TurnInfo type so the wire shape matches /v1/status exactly.
 type StatusReportPayload struct {
-	Key         string     `json:"key"`                 // stable id (default = backendID); frontend keys messageID on chatID|key
-	GeneratedAt int64      `json:"generatedAt"`         // unix seconds, backend's clock at assembly time
-	IntervalS   int        `json:"intervalS,omitempty"` // refresh period, display-only
-	Title       string     `json:"title,omitempty"`     // card title
-	InFlight    int        `json:"inflight"`            // in-flight turn count
-	Backends    []string   `json:"backends,omitempty"`  // online backend IDs
-	Turns       []TurnInfo `json:"turns,omitempty"`     // per in-flight turn (reuses protocol.TurnInfo)
+	Key         string        `json:"key"`                 // stable id (default = backendID); frontend keys messageID on chatID|key
+	GeneratedAt int64         `json:"generatedAt"`         // unix seconds, backend's clock at assembly time
+	IntervalS   int           `json:"intervalS,omitempty"` // refresh period, display-only
+	Title       string        `json:"title,omitempty"`     // card title
+	InFlight    int           `json:"inflight"`            // in-flight turn count
+	Backends    []string      `json:"backends,omitempty"`  // online backend IDs
+	Turns       []TurnInfo    `json:"turns,omitempty"`     // per in-flight turn (reuses protocol.TurnInfo)
+	Hosts       []HostStats   `json:"hosts,omitempty"`     // per-host load snapshot
+	Services    []ServiceStat `json:"services,omitempty"`  // per-backend process snapshot
 }

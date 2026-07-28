@@ -105,6 +105,8 @@ func (h *Handler) tick(ctx context.Context) {
 			InFlight:    snap.InFlight,
 			Backends:    snap.Backends,
 			Turns:       snap.Turns,
+			Hosts:       snap.Hosts,
+			Services:    snap.Services,
 		},
 	}
 	if err := h.rpc.SendControl(ctx, ctrl); err != nil {

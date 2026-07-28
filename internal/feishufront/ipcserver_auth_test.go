@@ -133,7 +133,7 @@ func TestIPCAuth_BackendClientEndToEnd(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := backendrpc.Connect("back-1", "claude", ts.URL, secret)
+	client, err := backendrpc.Connect(backendrpc.ConnectOptions{BackendID: "back-1", BackendType: "claude", FrontendURL: ts.URL, Secret: secret})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestIPCAuth_WrongSecretHandshakeFails(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	if _, err := backendrpc.Connect("back-1", "claude", ts.URL, "wrong"); err == nil {
+	if _, err := backendrpc.Connect(backendrpc.ConnectOptions{BackendID: "back-1", BackendType: "claude", FrontendURL: ts.URL, Secret: "wrong"}); err == nil {
 		t.Fatal("expected handshake failure with wrong secret")
 	}
 }

@@ -94,7 +94,14 @@ func run(cfgPath string) error {
 		return fmt.Errorf("opencode CLI health check: %w", err)
 	}
 
-	rpc, err := backendrpc.Connect(cfg.BackendID, "opencode", cfg.FrontendURL, cfg.IPCSecret)
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "opencode",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
 		return fmt.Errorf("connect frontend: %w", err)
 	}
@@ -117,6 +124,15 @@ func run(cfgPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Host/process metrics push for the status-monitor overview card.
+	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+		Interval: time.Duration(cfg.StatusMonitor.Interval),
+		StateDir: cfg.StateDir,
+		UnitName: "lark-opencode-back.service",
+		Version:  version,
+		Logger:   baseLogger,
+	})
+
 	baseLogger.Info("opencode-back ready",
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
@@ -125,7 +141,7 @@ func run(cfgPath string) error {
 	eventErr := func(err error) {
 		baseLogger.Warn("ipc", log.FieldError, err)
 	}
-	return backendrpc.Run(ctx, cfg.BackendID, "opencode", cfg.FrontendURL, cfg.IPCSecret,
+	return backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				baseLogger.Error("handle event", "event_type", ev.Type, log.FieldError, err)

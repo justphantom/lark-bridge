@@ -25,7 +25,9 @@ import (
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/fileconvert"
+	"github.com/justphantom/lark-bridge/internal/hostmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 var version = "dev"
@@ -174,6 +176,27 @@ func run(cfgPath, addr string) error {
 	turns.SetTypeResolver(registry.BackendType)
 	ipc.SetInFlightTurns(turns.InFlight)
 	ipc.SetInFlightDetail(turns.InFlightTurns)
+
+	// feishu-front self-reports into /v1/status: it does not POST
+	// /v1/metrics to itself (a self-loop HTTP hop buys nothing), the status
+	// handler reads the local host directly instead. The IP is probed once —
+	// display-only, so DHCP churn between restarts is harmless.
+	selfIP := hostmetrics.PrimaryIPv4()
+	ipc.SetSelfMetrics(func() (protocol.HostStats, protocol.ServiceStat) {
+		host, _ := hostmetrics.CollectHost(cfg.StateDir, time.Now())
+		host.IP = selfIP
+		cg, ok, _ := hostmetrics.SelfCgroupMem("lark-feishu-front.service")
+		if !ok {
+			cg = 0
+		}
+		return host, protocol.ServiceStat{
+			BackendID:      "feishu-front",
+			IP:             selfIP,
+			Version:        version,
+			CgroupMemBytes: cg,
+			ReportedAt:     host.ReportedAt,
+		}
+	})
 
 	bot.OnIncoming(dispatcher.DispatchIncoming)
 	bot.OnCardAction(dispatcher.DispatchCardAction)

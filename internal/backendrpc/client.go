@@ -118,12 +118,23 @@ func (c *Client) SetLogger(l *log.Logger) {
 	}
 }
 
-// Connect opens an SSE connection to the frontend. secret is the shared bearer
-// token the frontend validates; pass "" only for a loopback-only frontend
-// with no auth configured. The Client owns the HTTP transport it creates and
-// releases its idle pool on Close.
-func Connect(backendID, backendType, frontendURL, secret string) (*Client, error) {
-	return connect(backendID, backendType, frontendURL, secret, newHTTPClient(), true)
+// ConnectOptions carries everything Connect needs to open an SSE connection.
+// Version is the binary's ldflags-injected build version, reported once in
+// the SSE handshake for the status-monitor overview card; empty = "unknown".
+type ConnectOptions struct {
+	BackendID   string
+	BackendType string
+	FrontendURL string
+	Secret      string
+	Version     string
+}
+
+// Connect opens an SSE connection to the frontend. opts.Secret is the shared
+// bearer token the frontend validates; pass "" only for a loopback-only
+// frontend with no auth configured. The Client owns the HTTP transport it
+// creates and releases its idle pool on Close.
+func Connect(opts ConnectOptions) (*Client, error) {
+	return connect(opts, newHTTPClient(), true)
 }
 
 // ConnectWithHTTPClient opens an SSE connection using the given HTTP client
@@ -132,22 +143,22 @@ func Connect(backendID, backendType, frontendURL, secret string) (*Client, error
 // The Client does NOT own the supplied transport: Close leaves its idle pool
 // untouched so the caller (test, embedder, http.DefaultClient user) keeps
 // reuse semantics intact.
-func ConnectWithHTTPClient(backendID, backendType, frontendURL, secret string, httpClient *http.Client) (*Client, error) {
-	return connect(backendID, backendType, frontendURL, secret, httpClient, false)
+func ConnectWithHTTPClient(opts ConnectOptions, httpClient *http.Client) (*Client, error) {
+	return connect(opts, httpClient, false)
 }
 
 // connect is the shared body of Connect / ConnectWithHTTPClient. The
 // ownsTransport flag is wired through so Close can decide whether to release
 // the transport's idle connections (only when the Client created it).
-func connect(backendID, backendType, frontendURL, secret string, httpClient *http.Client, ownsTransport bool) (*Client, error) {
-	if backendID == "" || backendType == "" || frontendURL == "" {
+func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (*Client, error) {
+	if opts.BackendID == "" || opts.BackendType == "" || opts.FrontendURL == "" {
 		return nil, fmt.Errorf("backendID/backendType/frontendURL required")
 	}
 	c := &Client{
-		backendID:     backendID,
-		backendType:   backendType,
-		frontendURL:   strings.TrimSuffix(frontendURL, "/"),
-		secret:        secret,
+		backendID:     opts.BackendID,
+		backendType:   opts.BackendType,
+		frontendURL:   strings.TrimSuffix(opts.FrontendURL, "/"),
+		secret:        opts.Secret,
 		httpClient:    httpClient,
 		ownsTransport: ownsTransport,
 		eventCh:       make(chan *protocol.Event, sseEventChanBuf),
@@ -160,8 +171,11 @@ func connect(backendID, backendType, frontendURL, secret string, httpClient *htt
 	}
 	u.Path = u.Path + "/v1/events"
 	q := u.Query()
-	q.Set("backendID", backendID)
-	q.Set("backendType", backendType)
+	q.Set("backendID", opts.BackendID)
+	q.Set("backendType", opts.BackendType)
+	if opts.Version != "" {
+		q.Set("version", opts.Version)
+	}
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -295,6 +309,45 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 	if resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		return fmt.Errorf("send control %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
+}
+
+// metricsPushTimeout bounds a PushMetrics POST when the caller's ctx has no
+// deadline. Metrics are best-effort (a 404 from an old frontend is skipped
+// silently), so the timeout is tight.
+const metricsPushTimeout = 10 * time.Second
+
+// PushMetrics POSTs a periodic host/process metrics report to the frontend's
+// /v1/metrics/<backendID>. Fire-and-forget semantics: callers log and move on.
+// An old frontend without the endpoint answers 404 — the caller treats that
+// as "metrics unsupported" and retries next tick, so rolling upgrades never
+// break the SSE/control paths.
+func (c *Client) PushMetrics(ctx context.Context, report *protocol.MetricsReport) error {
+	body, err := json.Marshal(report)
+	if err != nil {
+		return err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, metricsPushTimeout)
+		defer cancel()
+	}
+	url := fmt.Sprintf("%s/v1/metrics/%s", c.frontendURL, c.backendID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.setAuth(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }() // metrics POST fire-and-forget
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+		return fmt.Errorf("push metrics %d: %s", resp.StatusCode, respBody)
 	}
 	return nil
 }

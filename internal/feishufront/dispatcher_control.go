@@ -370,7 +370,41 @@ func (d *Dispatcher) sendStatusReport(ctx context.Context, rc RoutedControl) err
 	for i, t := range p.Turns {
 		rows[i] = cardkit.TurnRow{BackendID: t.BackendID, ChatID: t.ChatID, ElapsedS: t.ElapsedS}
 	}
-	card, err := cardkit.StatusReport(footer, p.Title, p.GeneratedAt, p.IntervalS, p.InFlight, p.Backends, rows)
+	hosts := make([]cardkit.HostRow, len(p.Hosts))
+	for i, h := range p.Hosts {
+		hosts[i] = cardkit.HostRow{
+			IP:             h.IP,
+			Load1:          h.Load1,
+			Load5:          h.Load5,
+			Load15:         h.Load15,
+			MemTotalBytes:  h.MemTotalBytes,
+			MemAvailBytes:  h.MemAvailBytes,
+			DiskTotalBytes: h.DiskTotalBytes,
+			DiskUsedBytes:  h.DiskUsedBytes,
+			ReportedAt:     h.ReportedAt,
+		}
+	}
+	services := make([]cardkit.ServiceRow, len(p.Services))
+	for i, s := range p.Services {
+		services[i] = cardkit.ServiceRow{
+			BackendID:      s.BackendID,
+			IP:             s.IP,
+			Version:        s.Version,
+			CgroupMemBytes: s.CgroupMemBytes,
+			ReportedAt:     s.ReportedAt,
+		}
+	}
+	card, err := cardkit.StatusReport(cardkit.StatusReportInput{
+		Footer:      footer,
+		Title:       p.Title,
+		GeneratedAt: p.GeneratedAt,
+		IntervalS:   p.IntervalS,
+		InFlight:    p.InFlight,
+		Backends:    p.Backends,
+		Turns:       rows,
+		Hosts:       hosts,
+		Services:    services,
+	})
 	if err != nil {
 		return err
 	}

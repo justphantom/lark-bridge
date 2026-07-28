@@ -13,8 +13,10 @@ func TestStatusReport_RenderAndGroups(t *testing.T) {
 		{BackendID: "claude-1", ChatID: "oc_2222222222222222bbbbbbbbbbbbbbbb", ElapsedS: 745}, // 12m25s, longest first
 		{BackendID: "opencode-1", ChatID: "oc_3333333333333333cccccccccccccccc", ElapsedS: 5},
 	}
-	card, err := StatusReport(footer, "总览", 1700000000, 60, 2,
-		[]string{"claude-1", "opencode-1", "status-1"}, turns)
+	card, err := StatusReport(StatusReportInput{
+		Footer: footer, Title: "总览", GeneratedAt: 1700000000, IntervalS: 60,
+		InFlight: 2, Backends: []string{"claude-1", "opencode-1", "status-1"}, Turns: turns,
+	})
 	if err != nil {
 		t.Fatalf("StatusReport: %v", err)
 	}
@@ -46,7 +48,10 @@ func TestStatusReport_RenderAndGroups(t *testing.T) {
 }
 
 func TestStatusReport_IdleNoTurns(t *testing.T) {
-	card, err := StatusReport(FooterInfo{BackendType: "status-monitor"}, "", 1700000000, 60, 0, []string{"claude-1"}, nil)
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: 1700000000,
+		IntervalS: 60, Backends: []string{"claude-1"},
+	})
 	if err != nil {
 		t.Fatalf("StatusReport: %v", err)
 	}
@@ -67,7 +72,10 @@ func TestStatusReport_TruncatesHeavyBackend(t *testing.T) {
 	for i := range turns {
 		turns[i] = TurnRow{BackendID: "claude-1", ChatID: "oc_x", ElapsedS: int64(i)}
 	}
-	card, err := StatusReport(FooterInfo{BackendType: "status-monitor"}, "t", 1, 60, len(turns), []string{"claude-1"}, turns)
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, Title: "t", GeneratedAt: 1,
+		IntervalS: 60, InFlight: len(turns), Backends: []string{"claude-1"}, Turns: turns,
+	})
 	if err != nil {
 		t.Fatalf("StatusReport: %v", err)
 	}
@@ -86,5 +94,155 @@ func TestShortID(t *testing.T) {
 	}
 	if got := ShortID("short"); got != "short" {
 		t.Errorf("ShortID(short) = %q, want short", got)
+	}
+}
+
+func cardBody(t *testing.T, card []byte) (md string, m map[string]any) {
+	t.Helper()
+	if err := json.Unmarshal(card, &m); err != nil {
+		t.Fatalf("invalid card json: %v", err)
+	}
+	elems, _ := m["elements"].([]any)
+	if len(elems) == 0 {
+		t.Fatalf("no elements")
+	}
+	md, _ = elems[0].(map[string]any)["content"].(string)
+	return md, m
+}
+
+func TestStatusReport_HostAndServiceSections(t *testing.T) {
+	const now = 1700000000
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: now, IntervalS: 60,
+		Backends: []string{"claude-1", "status-1"},
+		Hosts: []HostRow{
+			{
+				IP: "192.168.1.10", Load1: 1.42, Load5: 1.10, Load15: 0.95,
+				MemTotalBytes: 16 << 30, MemAvailBytes: 11 << 30,
+				DiskTotalBytes: 50 << 30, DiskUsedBytes: 12 << 30,
+				ReportedAt: now,
+			},
+			{
+				IP: "192.168.1.5", Load1: 0.95, Load5: 0.38, Load15: 0.33,
+				MemTotalBytes: 8 << 30, MemAvailBytes: 6 << 30,
+				DiskTotalBytes: 47 << 30, DiskUsedBytes: 26 << 30,
+				ReportedAt: now - 400, // 400s > 3×60s → stale
+			},
+		},
+		Services: []ServiceRow{
+			{BackendID: "claude-1", IP: "192.168.1.10", Version: "v1.5.0", CgroupMemBytes: 14 << 20, ReportedAt: now},
+			{BackendID: "miniagent-1", IP: "192.168.1.10", Version: "v1.5.0", CgroupMemBytes: 0, ReportedAt: now},
+			{BackendID: "status-1", IP: "192.168.1.5", Version: "v1.4.0", CgroupMemBytes: 8 << 20, ReportedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StatusReport: %v", err)
+	}
+	md, m := cardBody(t, card)
+	for _, want := range []string{
+		"▸ 主机", "▸ 进程",
+		"192.168.1.5", "192.168.1.10",
+		"load 0.95/0.38/0.33",
+		"2G/8G (25%)", "12G/50G (24%)",
+		"v1.5.0", "14M",
+		"—",       // miniagent cgroup 0
+		"🔴 版本漂移",  // status-1 behind the dominant v1.5.0
+		"(stale)", // 192.168.1.5 host row
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("body missing %q; body=%q", want, md)
+		}
+	}
+	// Drift flips the header template to orange.
+	header, _ := m["header"].(map[string]any)
+	if header["template"] != "orange" {
+		t.Errorf("template = %v, want orange", header["template"])
+	}
+	// Hosts sorted by IP lexicographically: ".10" precedes ".5" (per design).
+	if strings.Index(md, "192.168.1.10") > strings.Index(md, "192.168.1.5") {
+		t.Errorf("hosts not sorted by IP; body=%q", md)
+	}
+}
+
+func TestStatusReport_NoDriftWhenUniform(t *testing.T) {
+	const now = 1700000000
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: now, IntervalS: 60,
+		Backends: []string{"a", "b"},
+		Services: []ServiceRow{
+			{BackendID: "a", Version: "v1.5.0", ReportedAt: now},
+			{BackendID: "b", Version: "v1.5.0", ReportedAt: now},
+			{BackendID: "c", Version: "", ReportedAt: now}, // unknown: excluded, not drifted
+		},
+	})
+	if err != nil {
+		t.Fatalf("StatusReport: %v", err)
+	}
+	md, m := cardBody(t, card)
+	if strings.Contains(md, "版本漂移") {
+		t.Errorf("unexpected drift mark; body=%q", md)
+	}
+	if !strings.Contains(md, "unknown") {
+		t.Errorf("empty version not rendered as unknown; body=%q", md)
+	}
+	header, _ := m["header"].(map[string]any)
+	if header["template"] != "blue" {
+		t.Errorf("template = %v, want blue", header["template"])
+	}
+}
+
+func TestVersionDrift(t *testing.T) {
+	// Single backend: no drift possible.
+	if _, drifted := versionDrift([]ServiceRow{{BackendID: "a", Version: "v1"}}); len(drifted) != 0 {
+		t.Errorf("single backend drifted: %v", drifted)
+	}
+	// Tie breaks to the lexicographically smallest version (deterministic).
+	dominant, drifted := versionDrift([]ServiceRow{
+		{BackendID: "a", Version: "v2"},
+		{BackendID: "b", Version: "v1"},
+	})
+	if dominant != "v1" || !drifted["a"] || drifted["b"] {
+		t.Errorf("tie: dominant=%q drifted=%v", dominant, drifted)
+	}
+}
+
+func TestStaleMark(t *testing.T) {
+	if got := staleMark(1000, 1000+3*60+1, 60); got == "" {
+		t.Errorf("want stale beyond 3×interval")
+	}
+	if got := staleMark(1000, 1000+3*60, 60); got != "" {
+		t.Errorf("boundary should not be stale: %q", got)
+	}
+	if got := staleMark(0, 999999, 60); got != "" {
+		t.Errorf("zero ReportedAt should not be stale: %q", got)
+	}
+	if got := staleMark(1000, 999999, 0); got != "" {
+		t.Errorf("zero interval should not be stale: %q", got)
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	cases := map[uint64]string{
+		0:               "0B",
+		512:             "512B",
+		14 << 20:        "14M",
+		3<<20 + 102<<10: "3.1M",
+		1700 << 20:      "1.7G",
+		16 << 30:        "16G",
+		47 << 30:        "47G",
+	}
+	for in, want := range cases {
+		if got := formatBytes(in); got != want {
+			t.Errorf("formatBytes(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestClip(t *testing.T) {
+	if got := clip("abcdefghijklmnopqrst", 15); got != "abcdefghijklmno" {
+		t.Errorf("clip = %q", got)
+	}
+	if got := clip("short", 15); got != "short" {
+		t.Errorf("clip short = %q", got)
 	}
 }

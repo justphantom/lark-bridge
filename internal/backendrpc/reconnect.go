@@ -55,14 +55,14 @@ var ErrGiveUpReconnect = errors.New("backendrpc: give up reconnecting after sust
 // logged and does not terminate the loop — a handler bug should not take the
 // backend offline. The EventErr callback, when non-nil, is notified of every
 // connect/recv failure and successful reconnect (for observability).
-func Run(ctx context.Context, backendID, backendType, frontendURL, secret string,
+func Run(ctx context.Context, opts ConnectOptions,
 	handle func(context.Context, *protocol.Event) error,
 	eventErr func(err error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// Initial connect must succeed; a bad config should fail fast.
-	client, err := Connect(backendID, backendType, frontendURL, secret)
+	client, err := Connect(opts)
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,7 @@ func Run(ctx context.Context, backendID, backendType, frontendURL, secret string
 				eventErr(fmt.Errorf("sse recv: %w", rerr))
 			}
 			// Reconnect with backoff, interruptible by ctx.
-			client, err = reconnect(ctx, backendID, backendType, frontendURL, secret, &backoff, &failures, eventErr)
+			client, err = reconnect(ctx, opts, &backoff, &failures, eventErr)
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil
@@ -141,7 +141,7 @@ func Run(ctx context.Context, backendID, backendType, frontendURL, secret string
 // then immediately drops the stream still drives the count toward the
 // give-up threshold. Returns ErrGiveUpReconnect (wrap-aware via errors.Is)
 // when the threshold is reached.
-func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret string,
+func reconnect(ctx context.Context, opts ConnectOptions,
 	backoff *time.Duration, failures *int, eventErr func(error)) (*Client, error) {
 	for {
 		*failures++
@@ -153,7 +153,7 @@ func reconnect(ctx context.Context, backendID, backendType, frontendURL, secret 
 			return nil, ctx.Err()
 		case <-time.After(jitteredBackoff(*backoff)):
 		}
-		c, err := Connect(backendID, backendType, frontendURL, secret)
+		c, err := Connect(opts)
 		if err == nil {
 			if eventErr != nil {
 				eventErr(errors.New("reconnected"))

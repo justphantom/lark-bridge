@@ -62,9 +62,11 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 // Turns names each in-flight turn so a stranded turn (backend crashed mid-turn)
 // is identifiable, not just a stale count.
 type statusResponse struct {
-	InFlight int          `json:"inflight"`
-	Backends []string     `json:"backends"`
-	Turns    []turnStatus `json:"turns"`
+	InFlight int                    `json:"inflight"`
+	Backends []string               `json:"backends"`
+	Turns    []turnStatus           `json:"turns"`
+	Hosts    []protocol.HostStats   `json:"hosts,omitempty"`
+	Services []protocol.ServiceStat `json:"services,omitempty"`
 }
 
 // turnStatus is one in-flight turn's operator-facing identity. ElapsedS is the
@@ -104,6 +106,12 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	hosts, services := s.registry.Snapshot()
+	if fn := s.selfMetrics.Load(); fn != nil {
+		selfHost, selfSvc := (*fn)()
+		hosts = mergeHostByIP(hosts, selfHost)
+		services = append(services, selfSvc)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// Best-effort status write: the response is fire-and-forget and the
 	// connection may already be torn down by the time Encode flushes.
@@ -111,5 +119,7 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		InFlight: inflight,
 		Backends: s.registry.Registered(),
 		Turns:    turns,
+		Hosts:    hosts,
+		Services: services,
 	})
 }

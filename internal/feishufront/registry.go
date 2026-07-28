@@ -38,6 +38,15 @@ type BackendConn struct {
 	// SSE flush. Kept atomic so Touch (hot flush path) and LastSeen (health
 	// check) do not contend with mu, which protects only closed + the channel.
 	lastSeen atomic.Int64
+
+	// version is the backend's build version, set once at SSE handshake
+	// (empty for pre-metrics backends → rendered "unknown"). Atomic because
+	// SetVersion (SSE goroutine) races Snapshot (status handler goroutine).
+	version atomic.Pointer[string]
+	// metrics is the latest periodic MetricsReport pushed via
+	// POST /v1/metrics. Atomic pointer swap: writers are the metrics HTTP
+	// handlers, readers are /v1/status. nil until the first push.
+	metrics atomic.Pointer[protocol.MetricsReport]
 }
 
 func newBackendConn(id, typ string) *BackendConn {
@@ -182,6 +191,77 @@ func (r *BackendRegistry) Registered() []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// SetVersion records the backend's build version from the SSE handshake.
+// Unknown id is a no-op (a handshake whose Register was superseded).
+func (r *BackendRegistry) SetVersion(id, v string) {
+	r.mu.RLock()
+	conn, ok := r.conns[id]
+	r.mu.RUnlock()
+	if !ok || v == "" {
+		return
+	}
+	conn.version.Store(&v)
+}
+
+// SetMetrics stores the latest MetricsReport for id. An unregistered id (SSE
+// not connected) is rejected so a forged push cannot invent a backend row.
+func (r *BackendRegistry) SetMetrics(id string, m *protocol.MetricsReport) error {
+	r.mu.RLock()
+	conn, ok := r.conns[id]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("backend %s not registered", id)
+	}
+	conn.metrics.Store(m)
+	return nil
+}
+
+// Snapshot aggregates the registry's metrics into per-host (deduped by IP —
+// same-host backends overwrite with the latest report) and per-service rows.
+// feishu-front itself is NOT included; the status handler merges its own row
+// separately (it does not POST to itself).
+func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []protocol.ServiceStat) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	hostIdx := map[string]int{}
+	for id, conn := range r.conns {
+		var version string
+		if v := conn.version.Load(); v != nil {
+			version = *v
+		}
+		svc := protocol.ServiceStat{BackendID: id, Version: version}
+		m := conn.metrics.Load()
+		if m != nil {
+			svc.IP = m.IP
+			svc.CgroupMemBytes = m.CgroupMemBytes
+			svc.ReportedAt = m.ReportedAt
+			if svc.Version == "" {
+				svc.Version = m.Version // fallback for a handshake-less deploy
+			}
+			h := m.Host
+			h.IP = m.IP
+			if h.Hostname == "" {
+				h.Hostname = m.Hostname
+			}
+			if h.ReportedAt == 0 {
+				h.ReportedAt = m.ReportedAt
+			}
+			key := h.IP
+			if key == "" {
+				key = id // no probe result: keep rows distinct rather than collapsing
+			}
+			if i, ok := hostIdx[key]; ok {
+				hosts[i] = h // same host: latest push wins
+			} else {
+				hostIdx[key] = len(hosts)
+				hosts = append(hosts, h)
+			}
+		}
+		services = append(services, svc)
+	}
+	return hosts, services
 }
 
 // SendEvent pushes an Event to the named backend.

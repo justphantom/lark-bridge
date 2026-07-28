@@ -19,7 +19,7 @@ import (
 func TestRun_InitialConnectFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := Run(ctx, "b1", "claude", "http://127.0.0.1:0", "",
+	err := Run(ctx, ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: "http://127.0.0.1:0"},
 		func(context.Context, *protocol.Event) error { return nil },
 		func(error) {})
 	if err == nil {
@@ -39,7 +39,7 @@ func TestRun_ReceivesEventsThenExitsOnCancel(t *testing.T) {
 	var got atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, "back-run", "claude", ts.URL, "",
+		done <- Run(ctx, ConnectOptions{BackendID: "back-run", BackendType: "claude", FrontendURL: ts.URL},
 			func(_ context.Context, ev *protocol.Event) error {
 				if ev.Type == protocol.TypePing {
 					got.Add(1)
@@ -104,7 +104,7 @@ func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 	var mu sync.Mutex
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, "back-rc", "claude", ts.URL, "",
+		done <- Run(ctx, ConnectOptions{BackendID: "back-rc", BackendType: "claude", FrontendURL: ts.URL},
 			func(_ context.Context, ev *protocol.Event) error {
 				if ev.Type == protocol.TypePing {
 					mu.Lock()
@@ -193,7 +193,7 @@ func TestReconnect_NoBackoffResetOnConnectSuccess(t *testing.T) {
 	initial := 100 * time.Millisecond
 	backoff := initial
 	var failures int
-	c, err := reconnect(ctx, "b-reset", "claude", ts.URL, "", &backoff, &failures, nil)
+	c, err := reconnect(ctx, ConnectOptions{BackendID: "b-reset", BackendType: "claude", FrontendURL: ts.URL}, &backoff, &failures, nil)
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestReconnect_GivesUpAtThreshold(t *testing.T) {
 	backoff := time.Millisecond
 	failures := maxReconnectFailures - 2 // one wait, then give-up
 	start := time.Now()
-	_, err := reconnect(ctx, "b-giveup", "claude", "http://127.0.0.1:0", "",
+	_, err := reconnect(ctx, ConnectOptions{BackendID: "b-giveup", BackendType: "claude", FrontendURL: "http://127.0.0.1:0"},
 		&backoff, &failures, nil)
 	if err == nil {
 		t.Fatal("expected give-up error, got nil")
@@ -297,7 +297,7 @@ func TestReconnect_FailuresPersistAcrossConnectSuccess(t *testing.T) {
 	// must increment by exactly one (the iter that succeeded), not reset.
 	preSeed := 5
 	failures := preSeed
-	c, err := reconnect(ctx, "b-persist", "claude", ts.URL, "",
+	c, err := reconnect(ctx, ConnectOptions{BackendID: "b-persist", BackendType: "claude", FrontendURL: ts.URL},
 		&backoff, &failures, nil)
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
@@ -340,7 +340,7 @@ func TestRun_GivesUpAfterSustainedFailures(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, "b-e2e", "claude", ts.URL, "",
+		done <- Run(ctx, ConnectOptions{BackendID: "b-e2e", BackendType: "claude", FrontendURL: ts.URL},
 			func(context.Context, *protocol.Event) error { return nil }, nil)
 	}()
 
@@ -400,7 +400,7 @@ func TestRun_RecvSuccessResetsFailures(t *testing.T) {
 	var got atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, "b-rst", "claude", ts.URL, "",
+		done <- Run(ctx, ConnectOptions{BackendID: "b-rst", BackendType: "claude", FrontendURL: ts.URL},
 			func(_ context.Context, ev *protocol.Event) error {
 				if ev.Type == protocol.TypePing {
 					got.Add(1)

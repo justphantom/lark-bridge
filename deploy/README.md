@@ -287,6 +287,36 @@ make upgrade-status
 卡片 PATCH 失败（被用户删除/撤回，飞书返回 `code:230011`）时自动重发，不叠加。
 升级时短暂离线（systemd restart），期间停推一帧，下个 tick 自动恢复。
 
+## 6.7. 总览卡主机/进程监控（多机部署）
+
+总览卡新增两个 section：**主机**（load / 内存 / state_dir 所在磁盘）与**进程**
+（每个 backend 的版本号 + systemd cgroup 内存）。数据流：
+
+- 每个 backend 启动时在 SSE handshake 带 `?version=` 上报版本；
+- 每个 backend 每 `status_monitor.interval` 秒 `POST /v1/metrics/<backendID>`
+  上报本机主机+进程快照（推送周期与卡片刷新周期同源，改一处全集群生效）；
+- feishu-front 不 POST 自己，在 `/v1/status` handler 里直读本机数据合并；
+- frontend 按 IP 去重主机行（同机多 backend 取最新），聚合进 `/v1/status`，
+  status-monitor 原样透传渲染。
+
+**多机部署**：backend 分布在多台主机时各自上报本机数据（IP 取 dial frontend
+的出站地址，即 frontend 实际看到的地址），无需额外配置——只要把 backend
+部署到目标机并指向同一 `frontend_url` 即可，卡片自然每台主机一行。
+
+**渲染规则**：
+
+- cgroup 内存读不到（非 systemd 环境 / 单元未注册）显示 `—`；
+- 某行数据超过 `3 × interval` 未更新（backend 在线但 metrics 通道挂掉）
+  行尾标 `(stale)`；
+- 在线 backend 版本不一致（某台落后于众数版本，疑似升级失败留旧版）时
+  该行标 `🔴 版本漂移`，卡片头由蓝色变橙色；版本为 `unknown`（老 backend）
+  的行不参与判定。
+
+**发版顺序约束**：先升级 feishu-front，再升级各 backend（deploy.sh 的重启
+顺序天然满足）。反序时新版 backend 的 metrics 推送在旧 frontend 上是 404
+（静默跳过、业务路径无影响），但卡片上的主机/进程 section 会空白到
+frontend 升级完成。新旧任意组合下 SSE event / control 业务路径零影响。
+
 ## 7. 验证
 
 ```bash

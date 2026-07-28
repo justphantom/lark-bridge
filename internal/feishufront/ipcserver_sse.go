@@ -40,6 +40,11 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// dispatches (e.g. a test, or a backend whose first POST loses the race
 	// with the SSE handler goroutine) must observe the backend as registered.
 	conn := s.registry.Register(id, typ)
+	// Version arrives once in the handshake query (empty for pre-metrics
+	// backends → "unknown" on the card). Old frontends ignore the param.
+	if v := r.URL.Query().Get("version"); v != "" {
+		s.registry.SetVersion(id, v)
+	}
 	defer func() {
 		// If UnregisterIfMatch actually removed the conn (the backend
 		// genuinely disconnected, not a reconnect-overwrite), fire onOffline

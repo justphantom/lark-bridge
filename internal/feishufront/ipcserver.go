@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // IPCServer is the frontend's HTTP server: it serves the SSE endpoint that
@@ -44,6 +45,12 @@ type IPCServer struct {
 	// stranded by a crashed backend is visible by name, not just as a stale
 	// inflight number. nil in unit tests — the endpoint then omits the list.
 	inFlightDetail atomic.Pointer[func() []Turn]
+
+	// selfMetrics, when set, returns feishu-front's own host/process snapshot
+	// for GET /v1/status (the frontend does not POST /v1/metrics to itself —
+	// it reads its own host directly in the handler). nil in unit tests —
+	// the endpoint then omits the self row.
+	selfMetrics atomic.Pointer[func() (protocol.HostStats, protocol.ServiceStat)]
 
 	// wasOffline tracks backend IDs that were evicted by the health checker,
 	// so handleSSE can distinguish a reconnect from a first-time connect.
@@ -247,6 +254,7 @@ func (s *IPCServer) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/events", s.handleSSE)
 	mux.HandleFunc("POST /v1/control/{backendID}", s.handleControl)
+	mux.HandleFunc("POST /v1/metrics/{backendID}", s.handleMetrics)
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	return mux
 }
@@ -328,6 +336,14 @@ func (s *IPCServer) SetInFlightTurns(fn func() int) {
 // list (back-compat for callers/tests that only need the count).
 func (s *IPCServer) SetInFlightDetail(fn func() []Turn) {
 	s.inFlightDetail.Store(&fn)
+}
+
+// SetSelfMetrics wires feishu-front's own host/process collector for
+// GET /v1/status. Called once per status request, so the collector runs
+// on-demand rather than on a ticker. When unset, the endpoint omits the
+// frontend's self row.
+func (s *IPCServer) SetSelfMetrics(fn func() (protocol.HostStats, protocol.ServiceStat)) {
+	s.selfMetrics.Store(&fn)
 }
 
 // maxWasOffline bounds the dead-backend-ID set. Steady state is 2-3

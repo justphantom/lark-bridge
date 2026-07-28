@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/config"
@@ -87,7 +88,14 @@ func run(cfgPath string) error {
 	}
 	defer r.Close()
 
-	rpc, err := backendrpc.Connect(cfg.BackendID, "miniagent", cfg.FrontendURL, cfg.IPCSecret)
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "miniagent",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
 		return fmt.Errorf("connect frontend: %w", err)
 	}
@@ -116,6 +124,17 @@ func run(cfgPath string) error {
 	defer stop()
 	defer h.Close()
 
+	// Host/process metrics push for the status-monitor overview card. The
+	// cgroup row is the parent service's memory; fork-on-prompt children are
+	// not sampled separately (idle → "—" only when the file is unreadable).
+	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+		Interval: time.Duration(cfg.StatusMonitor.Interval),
+		StateDir: cfg.StateDir,
+		UnitName: "lark-miniagent-back.service",
+		Version:  version,
+		Logger:   logger,
+	})
+
 	logger.Info("miniagent ready (CLI mode, stateless)",
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
@@ -126,7 +145,7 @@ func run(cfgPath string) error {
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
 	}
-	return backendrpc.Run(ctx, cfg.BackendID, "miniagent", cfg.FrontendURL, cfg.IPCSecret,
+	return backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", "event_type", ev.Type, log.FieldError, err)

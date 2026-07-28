@@ -22,7 +22,7 @@ func TestClient_EventAndControl(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := Connect("back-1", "claude", ts.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "back-1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestConnect_RequiresAllParams(t *testing.T) {
 		{"b1", "claude", ""},
 	}
 	for _, c := range cases {
-		if _, err := Connect(c.id, c.typ, c.url, ""); err == nil {
+		if _, err := Connect(ConnectOptions{BackendID: c.id, BackendType: c.typ, FrontendURL: c.url}); err == nil {
 			t.Fatalf("expected error for %+v", c)
 		}
 	}
@@ -88,7 +88,7 @@ func TestConnect_Non200Handshake(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	// Hit the control endpoint with GET to force a 405, not the SSE 200 path.
-	if _, err := Connect("b1", "claude", ts.URL+"/v1/control", ""); err == nil {
+	if _, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: ts.URL + "/v1/control"}); err == nil {
 		t.Fatal("expected error for non-200 handshake")
 	}
 }
@@ -99,7 +99,7 @@ func TestRecvEvent_AfterClose(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := Connect("b1", "claude", ts.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestClose_Idempotent(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := Connect("b1", "claude", ts.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestClose_ExternalClientDoesNotClearPool(t *testing.T) {
 	tr := &countingTransport{base: http.DefaultTransport}
 	hc := &http.Client{Transport: tr}
 
-	client, err := ConnectWithHTTPClient("b1", "claude", ts.URL, "", hc)
+	client, err := ConnectWithHTTPClient(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: ts.URL}, hc)
 	if err != nil {
 		t.Fatalf("ConnectWithHTTPClient: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestConnect_ParallelWithInFlight(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			client, err := Connect(fmt.Sprintf("b-%d", i), "claude", ts.URL, "")
+			client, err := Connect(ConnectOptions{BackendID: fmt.Sprintf("b-%d", i), BackendType: "claude", FrontendURL: ts.URL})
 			if err != nil {
 				t.Errorf("Connect: %v", err)
 				return
@@ -249,7 +249,7 @@ func TestStatus_ReturnsInFlightTurns(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := Connect("back-1", "claude", ts.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "back-1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestSendControl_ValidationFails(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
-	client, err := Connect("b1", "claude", ts.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestReadSSE_MalformedFrameDropped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := Connect("b1", "claude", srv.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: srv.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestReadSSE_InvalidEventDropped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := Connect("b1", "claude", srv.URL, "")
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "claude", FrontendURL: srv.URL})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}

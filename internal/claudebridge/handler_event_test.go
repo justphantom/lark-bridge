@@ -42,7 +42,7 @@ func connectTestRPC(t *testing.T) (*backendrpc.Client, *feishufront.BackendRegis
 	reg := feishufront.NewBackendRegistry()
 	srv := feishufront.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
-	client, err := backendrpc.Connect("claude-1", "claude", ts.URL, "")
+	client, err := backendrpc.Connect(backendrpc.ConnectOptions{BackendID: "claude-1", BackendType: "claude", FrontendURL: ts.URL})
 	if err != nil {
 		ts.Close()
 		t.Fatalf("connect: %v", err)

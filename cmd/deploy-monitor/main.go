@@ -62,7 +62,14 @@ func run(cfgPath string) error {
 		return err
 	}
 
-	rpc, err := backendrpc.Connect(cfg.BackendID, "deploy-monitor", cfg.FrontendURL, cfg.IPCSecret)
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "deploy-monitor",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
 		return fmt.Errorf("connect frontend: %w", err)
 	}
@@ -84,6 +91,15 @@ func run(cfgPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Host/process metrics push for the status-monitor overview card.
+	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+		Interval: time.Duration(cfg.StatusMonitor.Interval),
+		StateDir: cfg.StateDir,
+		UnitName: "lark-deploy-monitor.service",
+		Version:  version,
+		Logger:   logger,
+	})
+
 	logger.Info("deploy-monitor ready",
 		"backend_id", cfg.BackendID,
 		"frontend_url", cfg.FrontendURL,
@@ -93,7 +109,7 @@ func run(cfgPath string) error {
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
 	}
-	runErr := backendrpc.Run(ctx, cfg.BackendID, "deploy-monitor", cfg.FrontendURL, cfg.IPCSecret,
+	runErr := backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", "event_type", ev.Type, log.FieldError, err)

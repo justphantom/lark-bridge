@@ -7,6 +7,35 @@
 
 ### Added
 
+- **总览卡主机/进程监控（多机部署）**：status-monitor 总览卡新增「主机」
+  （load / 内存 / state_dir 磁盘占用）与「进程」（各 backend 版本号 +
+  systemd cgroup 内存）两个 section。设计文档见
+  `docs/status-monitor-metrics-design.md`（push-via-frontend 方案，D1/D2
+  已定）。
+  - 新增 `internal/hostmetrics` 包：纯函数采集 `/proc/loadavg`、
+    `/proc/meminfo`、`statfs`（state_dir 挂载点，失败 fallback `/`）、
+    cgroup v2 `memory.current`（读不到 → 卡片显示 `—`），6 个 binary 共用；
+    `OutboundIP` 经 UDP 路由查询探测 frontend 实际看到的本机 IP。
+  - 协议扩展（全部 `omitempty`，新旧任意组合零影响）：`HostStats` /
+    `ServiceStat` / `MetricsReport`；`StatusSnapshot` 与
+    `StatusReportPayload` 各加 `Hosts` / `Services`。
+  - 上行通道：版本走 SSE handshake `?version=`（一次性）；指标走新
+    endpoint `POST /v1/metrics/<backendID>`（周期推送，复用 IPC_SECRET
+    Bearer 认证，64KB body 上限，仅接受已注册 SSE 的 backendID）。旧
+    frontend 返回 404，backend 静默跳过——非破坏性。
+  - `backendrpc.Connect` 改 `ConnectOptions` struct（D1）；新增
+    `Client.PushMetrics` 与 `backendrpc.StartMetricsLoop`（推送周期绑死
+    `status_monitor.interval`，单一真源）。
+  - frontend：`BackendConn` 加 version/metrics 原子字段，`/v1/status`
+    按 IP 去重聚合主机行；feishu-front 不 POST 自己，在 handler 内直读
+    本机数据合并（D4）；frontend 不持久化 metrics（D5）。
+  - 渲染（cardkit `StatusReportInput` options struct，D2）：版本漂移
+    （落后于众数版本）行标 `🔴 版本漂移` + 卡头 blue→orange；超过
+    `3 × interval` 未更新的行标 `(stale)`；`unknown` 版本不参与漂移判定。
+  - **发版顺序约束**：先部署 feishu-front 再部署各 backend（deploy.sh
+    顺序天然满足；反序时 metrics 在旧 frontend 上 404，主机/进程 section
+    空白至 frontend 升级完成，业务路径不受影响）。
+
 - **opencode-back 空闲看门狗（idle watchdog，opt-in）**：当 opencode
   子进程在 `idle_timeout` 内未吐出任何 stdout 事件时，判定为卡死（上游
   LLM 卡顿 / 内部死锁 / tool 等待 stdin），SIGKILL 整个进程组并向飞书

@@ -113,7 +113,7 @@ func wireFrontend(t *testing.T, defaultBackend string) (*Dispatcher, *fakeSink, 
 	turns := NewTurnManager()
 	disp := NewDispatcher(sink, reg, turns, router)
 
-	client, err := backendrpc.Connect(defaultBackend, "opencode", ts.URL, "")
+	client, err := backendrpc.Connect(backendrpc.ConnectOptions{BackendID: defaultBackend, BackendType: "opencode", FrontendURL: ts.URL})
 	if err != nil {
 		ts.Close()
 		t.Fatalf("connect: %v", err)

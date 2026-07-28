@@ -90,7 +90,14 @@ func run(cfgPath string) error {
 		Logger:             logger,
 	})
 
-	rpc, err := backendrpc.Connect(cfg.BackendID, "claude", cfg.FrontendURL, cfg.IPCSecret)
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "claude",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
 		return fmt.Errorf("connect frontend: %w", err)
 	}
@@ -122,6 +129,15 @@ func run(cfgPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Host/process metrics push for the status-monitor overview card.
+	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+		Interval: time.Duration(cfg.StatusMonitor.Interval),
+		StateDir: cfg.StateDir,
+		UnitName: "lark-claude-back.service",
+		Version:  version,
+		Logger:   logger,
+	})
+
 	// On signal, cancel ctx so backendrpc.Run's reconnect loop exits instead
 	// of hanging on a closed RecvEvent.
 	logger.Info("claude-back ready",
@@ -131,7 +147,7 @@ func run(cfgPath string) error {
 	eventErr := func(err error) {
 		logger.Warn("ipc", log.FieldError, err)
 	}
-	return backendrpc.Run(ctx, cfg.BackendID, "claude", cfg.FrontendURL, cfg.IPCSecret,
+	return backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", log.FieldEventType, ev.Type, log.FieldError, err)
