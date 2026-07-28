@@ -60,6 +60,9 @@ type Config struct {
 
 	// —— 防重放：feishu-front 用，后端忽略 ——
 	Dedup DedupConfig `json:"dedup,omitempty"`
+
+	// —— 渲染：feishu-front 用，后端忽略 ——
+	Renderer Renderer `json:"renderer,omitempty"`
 }
 
 // Claude holds settings for the local Claude Code CLI subprocess that
@@ -262,6 +265,19 @@ type DedupConfig struct {
 	EventTTL Duration `json:"event_ttl,omitempty"`
 	// EventMaxEntries is the eventIDs LRU hard cap. <=0/absent → default 1000.
 	EventMaxEntries int `json:"event_max_entries,omitempty"`
+}
+
+// Renderer holds feishu-front progress-card rendering tunables. All fields
+// optional; zero values keep the renderer's built-in defaults. Only consumed
+// by feishu-front; backends ignore.
+type Renderer struct {
+	// MaxThinkingRunes caps the model's live reasoning shown in the progress
+	// card's "思考中" zone — the trailing runes are kept, prefixed with
+	// "… （前略）" when the trace is longer. The card is a live dashboard,
+	// not a reading surface, so only the tail is useful as a "what it's doing
+	// right now" hint; the full trace stays in the session archive for later
+	// review. <=0/absent → 50.
+	MaxThinkingRunes int `json:"max_thinking_runes,omitempty"`
 }
 
 // expandEnvVars replaces ${VAR} patterns in raw config bytes with env

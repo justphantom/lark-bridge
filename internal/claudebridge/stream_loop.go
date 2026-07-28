@@ -263,6 +263,20 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					TaskID:     ev.TaskID,
 				},
 			})
+		case claude.EventThinking:
+			// A thinking content block arrives whole (parseContentBlocks emits
+			// one Event per block, not a streaming delta), so Replace=true
+			// mirrors opencode's reasoning handling: the thinking zone reflects
+			// the latest block instead of concatenating every step's trace into
+			// an unreadable wall.
+			h.emitAsync(promptID, &protocol.Control{
+				Type:     protocol.TypeThinking,
+				ChatID:   chatID,
+				Thinking: &protocol.ThinkingPayload{
+					Delta:   ev.Text,
+					Replace: true,
+				},
+			})
 		case claude.EventText:
 			text.WriteString(ev.Text)
 		case claude.EventToolUse:

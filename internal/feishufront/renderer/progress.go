@@ -68,6 +68,11 @@ type ProgressState struct {
 	// string so Clone copies it by value (race-free under the render lock).
 	// Capped at render time, not storage time — see renderThinkingZone.
 	thinking string
+	// maxThinkingRunes overrides the reasoning-zone cap when >0; 0 falls
+	// back to defaultMaxThinkingRunes at render time. Set once per state
+	// from the dispatcher's config-derived value; untouched in tests, which
+	// keep the default.
+	maxThinkingRunes int
 }
 
 // GateInfo mirrors protocol.GateInfo at the renderer boundary (this package
@@ -108,6 +113,14 @@ func (s *ProgressState) SetThinking(delta string, replace bool) {
 		return
 	}
 	s.thinking += delta
+}
+
+// SetMaxThinkingRunes overrides the per-card reasoning cap. n<=0 keeps the
+// default. Called by the dispatcher when wiring config.Renderer.MaxThinkingRunes.
+func (s *ProgressState) SetMaxThinkingRunes(n int) {
+	if n > 0 {
+		s.maxThinkingRunes = n
+	}
 }
 
 // AddToolUse records a tool invocation start. A repeated call with the same
@@ -245,9 +258,13 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// Zone 0.5: live reasoning. The model thinks before it acts, so the
 	// thinking zone sits between the banner and the tool zones — above the
 	// action it is reasoning about. Grey + dimmed to read as context, not
-	// output; capped to the trailing ~400 runes so a long reasoning block
-	// cannot crowd the action zones off the card.
-	if zone := renderThinkingZone(s.thinking); zone != nil {
+	// output; capped to the trailing maxThinkingRunes (default 50) so a long
+	// reasoning block cannot crowd the action zones off the card.
+	maxThinking := s.maxThinkingRunes
+	if maxThinking <= 0 {
+		maxThinking = defaultMaxThinkingRunes
+	}
+	if zone := renderThinkingZone(s.thinking, maxThinking); zone != nil {
 		zones = append(zones, zone)
 	}
 
@@ -343,24 +360,25 @@ func appendZones(zones []cardkit.Element) []cardkit.Element {
 	return out
 }
 
-// maxThinkingRunes caps the reasoning shown on the progress card. The card is
-// a live dashboard: only the trailing ~50 runes of the model's current
-// reasoning are useful as a "what it's doing right now" hint, not a reading
-// surface — showing more crowds the action zones without adding value. The
-// full reasoning stays in the session for later review.
-const maxThinkingRunes = 50
+// defaultMaxThinkingRunes is the fallback cap on the reasoning shown in the
+// progress card's "思考中" zone when no override is wired via
+// SetMaxThinkingRunes. The card is a live dashboard: only the trailing ~50
+// runes of the model's current reasoning are useful as a "what it's doing
+// right now" hint, not a reading surface — showing more crowds the action
+// zones without adding value. The full reasoning stays in the session for
+// later review.
+const defaultMaxThinkingRunes = 50
 
 // renderThinkingZone returns the reasoning zone element, or nil when thinking
 // is empty. The body is grey-dimmed markdown under a "💭 思考中" header, capped
-// to the trailing maxThinkingRunes runes. Trailing (not leading) is kept
-// because the most recent reasoning is the most relevant to the model's next
-// action.
-func renderThinkingZone(thinking string) cardkit.Element {
+// to the trailing max runes. Trailing (not leading) is kept because the most
+// recent reasoning is the most relevant to the model's next action.
+func renderThinkingZone(thinking string, max int) cardkit.Element {
 	thinking = strings.TrimSpace(thinking)
 	if thinking == "" {
 		return nil
 	}
-	return cardkit.MarkdownElement("<font color=\"grey\">💭 **思考中**\n" + truncateThinkingTail(thinking, maxThinkingRunes) + "</font>")
+	return cardkit.MarkdownElement("<font color=\"grey\">💭 **思考中**\n" + truncateThinkingTail(thinking, max) + "</font>")
 }
 
 // truncateThinkingTail keeps the trailing maxRunes runes of s, prefixed with

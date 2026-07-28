@@ -135,6 +135,9 @@ func run(cfgPath, addr string) error {
 	// Card click → PATCH delay (Feishu's click-handling window reverts an
 	// immediate PATCH). Default 5s; overridable via timeouts.card_patch_delay.
 	dispatcher.SetCardPatchDelay(time.Duration(cfg.Timeouts.CardPatchDelay))
+	// Progress card "思考中" zone: cap the live reasoning shown. Default 50
+	// runes; overridable via renderer.max_thinking_runes.
+	dispatcher.SetMaxThinkingRunes(cfg.Renderer.MaxThinkingRunes)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

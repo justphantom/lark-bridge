@@ -809,8 +809,8 @@ func TestSetThinking_AppendAndReplace(t *testing.T) {
 // shown as its trailing ~maxThinkingRunes runes with a "（前略）" prefix, and a
 // multi-byte (CJK) tail is never split mid-character.
 func TestRenderThinkingZone_TruncatesTail(t *testing.T) {
-	long := strings.Repeat("行", maxThinkingRunes*3) // 3× cap, all CJK (3 bytes/rune)
-	zone := renderThinkingZone(long)
+	long := strings.Repeat("行", defaultMaxThinkingRunes*3) // 3× cap, all CJK (3 bytes/rune)
+	zone := renderThinkingZone(long, defaultMaxThinkingRunes)
 	if zone == nil {
 		t.Fatal("non-empty thinking must render a zone")
 	}
@@ -828,14 +828,42 @@ func TestRenderThinkingZone_TruncatesTail(t *testing.T) {
 	}
 }
 
+// TestProgressState_SetMaxThinkingRunes pins the config override: the cap is
+// non-positive until wired, non-positive SetMaxThinkingRunes calls are ignored
+// (so the renderer default still applies), and a positive value flows through
+// to the tail truncation.
+func TestProgressState_SetMaxThinkingRunes(t *testing.T) {
+	s := NewProgressState()
+	if s.maxThinkingRunes != 0 {
+		t.Fatalf("default state cap = %d, want 0 (renderer falls back)", s.maxThinkingRunes)
+	}
+	// Non-positive values are ignored so the renderer default still applies.
+	s.SetMaxThinkingRunes(0)
+	s.SetMaxThinkingRunes(-5)
+	if s.maxThinkingRunes != 0 {
+		t.Errorf("non-positive set should be ignored, got %d", s.maxThinkingRunes)
+	}
+	s.SetMaxThinkingRunes(13)
+	if s.maxThinkingRunes != 13 {
+		t.Errorf("cap = %d, want 13", s.maxThinkingRunes)
+	}
+	// The override reaches the truncation: 30 runes under a cap of 13 keeps
+	// exactly the trailing 13 (plus the 前略 marker line).
+	tail := truncateThinkingTail(strings.Repeat("行", 30), s.maxThinkingRunes)
+	body := strings.TrimPrefix(tail, "… （前略）\n")
+	if got := len([]rune(body)); got != 13 {
+		t.Errorf("truncated to %d runes, want 13: %q", got, body)
+	}
+}
+
 // TestRenderThinkingZone_OmitsWhenEmpty pins that no zone is inserted for an
 // empty/whitespace thinking buffer (Render must not add an empty section that
 // would still cost an hr divider via appendZones).
 func TestRenderThinkingZone_OmitsWhenEmpty(t *testing.T) {
-	if zone := renderThinkingZone(""); zone != nil {
+	if zone := renderThinkingZone("", defaultMaxThinkingRunes); zone != nil {
 		t.Errorf("empty thinking must yield nil zone, got %v", zone)
 	}
-	if zone := renderThinkingZone("   \n  "); zone != nil {
+	if zone := renderThinkingZone("   \n  ", defaultMaxThinkingRunes); zone != nil {
 		t.Errorf("whitespace-only thinking must yield nil zone, got %v", zone)
 	}
 }
@@ -853,7 +881,7 @@ func TestProgressState_ClonePreservesThinking(t *testing.T) {
 	if cp.thinking != "foo bar" {
 		t.Errorf("clone thinking = %q, want %q", cp.thinking, "foo bar")
 	}
-	zone := renderThinkingZone(cp.thinking)
+	zone := renderThinkingZone(cp.thinking, defaultMaxThinkingRunes)
 	if zone == nil {
 		t.Fatal("clone should render a thinking zone")
 	}

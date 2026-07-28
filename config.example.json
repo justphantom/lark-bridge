@@ -67,5 +67,9 @@
     "stale_window":       "300s",
     "event_ttl":          "5m",
     "event_max_entries":  1000
+  },
+
+  "renderer": {
+    "max_thinking_runes": 50
   }
 }

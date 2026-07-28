@@ -93,6 +93,7 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 	state, exists := d.progress[ctrl.PromptID]
 	if !exists {
 		state = renderer.NewProgressState()
+		state.SetMaxThinkingRunes(d.maxThinkingRunes)
 		d.progress[ctrl.PromptID] = state
 	}
 	switch ctrl.Type {

@@ -110,6 +110,11 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("dedup.event_max_entries must be >= 0, got %d", cfg.Dedup.EventMaxEntries)
 	}
 
+	// Renderer tunables. Zero values are valid (means "use renderer default").
+	if cfg.Renderer.MaxThinkingRunes < 0 {
+		return fmt.Errorf("renderer.max_thinking_runes must be >= 0, got %d", cfg.Renderer.MaxThinkingRunes)
+	}
+
 	return nil
 }
 

@@ -122,6 +122,11 @@ type Dispatcher struct {
 	// overridable via SetCardPatchDelay from config.
 	cardPatchDelay time.Duration
 
+	// maxThinkingRunes caps the progress card's "思考中" zone. 0 lets the
+	// renderer use its built-in default. Wired from
+	// config.Renderer.MaxThinkingRunes via SetMaxThinkingRunes.
+	maxThinkingRunes int
+
 	// statusMu guards statusCards: key = chatID + "\x00" + reportKey → the
 	// messageID of the standing overview card for that (chat, status-monitor
 	// backend) pair. The status-monitor backend pushes a TypeStatusReport each
@@ -173,6 +178,15 @@ func (d *Dispatcher) SetLogger(l *log.Logger) {
 func (d *Dispatcher) SetCardPatchDelay(delay time.Duration) {
 	if delay > 0 {
 		d.cardPatchDelay = delay
+	}
+}
+
+// SetMaxThinkingRunes overrides the progress card's reasoning-zone cap.
+// Called by main.go from config (renderer.max_thinking_runes); non-positive
+// values keep the renderer's built-in default.
+func (d *Dispatcher) SetMaxThinkingRunes(n int) {
+	if n > 0 {
+		d.maxThinkingRunes = n
 	}
 }
 
@@ -314,6 +328,7 @@ func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingM
 	header := cardkit.HeaderInfo{BackendType: backendType, Title: "处理中", Template: "blue"}
 	footer := cardkit.FooterInfo{BackendID: backendID, BackendType: backendType, Status: "处理中"}
 	placeholder := renderer.NewProgressState()
+	placeholder.SetMaxThinkingRunes(d.maxThinkingRunes)
 	card, err := placeholder.Render(header, footer)
 	if err != nil {
 		// Nothing durable was established for this message yet: clear the
