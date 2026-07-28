@@ -150,9 +150,18 @@ func buildIncomingMessage(ev *lark.MessageReceiveEvent, logger *log.Logger) (*In
 	if ev.MsgType == "post" {
 		p, err := ParsePost(content)
 		if err != nil {
+			// Log a capped slice of the raw Content so a non-standard wire
+			// format (double-encoded JSON, unexpected locale-block shape, …)
+			// can be diagnosed from the exact run that hit it.
+			const rawCap = 1024 // runes
+			raw := content
+			if r := []rune(content); len(r) > rawCap {
+				raw = string(r[:rawCap]) + "...(truncated)"
+			}
 			logger.Warn("parse post content failed",
 				log.FieldMessageID, ev.MessageID,
-				log.FieldError, err.Error())
+				log.FieldError, err.Error(),
+				"raw_content", raw)
 		} else {
 			post = p
 		}

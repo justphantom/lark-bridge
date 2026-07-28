@@ -40,38 +40,46 @@ type Post struct {
 
 // ParsePost decodes a post-type message's Content field into a Post AST.
 //
-// Locale resolution: a post always carries exactly one locale block; the
-// key name (zh_cn / en_us / ...) is informational. We unmarshal into a
-// map[string]*json.RawMessage and take the first value rather than maintain
-// a locale priority list, which would always be arbitrary.
+// Two wire shapes are accepted:
+//   - locale-wrapped: {"zh_cn":{"title":...,"content":[...]}} — the classic
+//     format. The locale key is informational; we take the first (only) block.
+//   - flat: {"title":...,"content":[...],"content_v2":...} — sent by newer
+//     clients with no locale wrapper. A top-level "content" key distinguishes
+//     the two shapes; locale keys (zh_cn / en_us / …) never carry that name,
+//     so the check is unambiguous. Siblings such as content_v2 are ignored.
 //
-// Returns an error only on JSON corruption (the wire format changed, or
-// Feishu sent malformed content). Missing optional fields (title, empty
-// blocks) do not error: an empty post returns &Post{} + nil.
+// Returns an error only on JSON corruption. Missing optional fields (title,
+// empty blocks) do not error: an empty post returns &Post{} + nil.
 func ParsePost(content string) (*Post, error) {
 	if strings.TrimSpace(content) == "" {
 		return &Post{Blocks: [][]PostNode{}}, nil
 	}
-	// Outer wrap: { "<locale>": { "title": ..., "content": [...] } }.
-	var locales map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(content), &locales); err != nil {
+	// Peek at the top-level keys via a RawMessage map so we can branch on
+	// shape without committing to one. A present "content" key means flat;
+	// otherwise the object is locale-wrapped and we take the first block.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &top); err != nil {
 		return nil, fmt.Errorf("feishu: parse post locales: %w", err)
 	}
-	if len(locales) == 0 {
-		return &Post{Blocks: [][]PostNode{}}, nil
-	}
-	// Take the first locale block. Map iteration order is unspecified but
-	// Feishu always sends exactly one; picking any is correct.
-	var raw json.RawMessage
-	for _, v := range locales {
-		raw = v
-		break
+	body := json.RawMessage(content)
+	if _, ok := top["content"]; !ok {
+		// Locale-wrapped. Map iteration order is unspecified but Feishu always
+		// sends exactly one locale block; picking any is correct.
+		var raw json.RawMessage
+		for _, v := range top {
+			raw = v
+			break
+		}
+		if len(raw) == 0 {
+			return &Post{Blocks: [][]PostNode{}}, nil
+		}
+		body = raw
 	}
 	var block struct {
 		Title   string       `json:"title"`
 		Content [][]PostNode `json:"content"`
 	}
-	if err := json.Unmarshal(raw, &block); err != nil {
+	if err := json.Unmarshal(body, &block); err != nil {
 		return nil, fmt.Errorf("feishu: parse post body: %w", err)
 	}
 	if block.Content == nil {

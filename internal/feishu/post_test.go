@@ -108,6 +108,67 @@ func TestParsePost_NoContent(t *testing.T) {
 	}
 }
 
+// TestParsePost_FlatLayout verifies the flat wire shape newer Feishu clients
+// send: no locale wrapper, content sits at the top level alongside title
+// (and content_v2, which must be ignored). A top-level "content" key is what
+// tells ParsePost this is flat rather than locale-wrapped. Reproduces the
+// real payload observed in production (group chat post with content_v2).
+func TestParsePost_FlatLayout(t *testing.T) {
+	cases := []struct {
+		name      string
+		content   string
+		wantTitle string
+		wantRows  int
+		wantText  string // first row, second node
+	}{
+		{
+			name: "title and content_v2 present",
+			content: `{
+				"title": "",
+				"content": [
+					[{"tag":"text","text":"1. ","style":[]},{"tag":"text","text":"修 flaky 测试","style":[]}],
+					[{"tag":"text","text":"2. ","style":[]},{"tag":"a","text":"CHANGELOG","href":"https://x/y","style":[]}]
+				],
+				"content_v2": [[{"tag":"text","text":"v2-must-not-leak"}]]
+			}`,
+			wantTitle: "",
+			wantRows:  2,
+			wantText:  "修 flaky 测试",
+		},
+		{
+			name:      "content only no title no v2",
+			content:   `{"content":[[{"tag":"text","text":"- "},{"tag":"text","text":"only"}]]}`,
+			wantTitle: "",
+			wantRows:  1,
+			wantText:  "only",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := ParsePost(c.content)
+			if err != nil {
+				t.Fatalf("ParsePost: %v", err)
+			}
+			if p.Title != c.wantTitle {
+				t.Errorf("Title = %q, want %q", p.Title, c.wantTitle)
+			}
+			if len(p.Blocks) != c.wantRows {
+				t.Fatalf("Blocks len = %d, want %d", len(p.Blocks), c.wantRows)
+			}
+			if got := p.Blocks[0][1].Text; got != c.wantText {
+				t.Errorf("first row second node text = %q, want %q", got, c.wantText)
+			}
+			for _, row := range p.Blocks {
+				for _, n := range row {
+					if n.Text == "v2-must-not-leak" {
+						t.Errorf("content_v2 leaked into AST: %+v", n)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestRenderNode covers each supported tag's renderer branch, including
 // the "image_key / file_key not materialised" contract for img and media.
 func TestRenderNode(t *testing.T) {
