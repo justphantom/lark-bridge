@@ -24,6 +24,9 @@ systemd hardening）。所有改动向后兼容：对外协议字段不变；移
   呈现区域，与主 turn 的工具行分离。设计见 `docs/subagent-rendering-design.md`。
 - **架构与规范文档**：新增 `ARCHITECTURE.md`（仓库级架构真源）与 `CODING_STANDARDS.md`；
   补充飞书开放平台 API 参考文档。
+- **renderer `max_thinking_runes` 配置项**：进度卡"思考中"区的 rune 上限从硬编码 50
+  改为可配置（`renderer.max_thinking_runes`，默认仍 50）。同时 Claude 的 thinking
+  内容块接入 `TypeThinking` zone（`Replace: true`，与 opencode reasoning 行为对齐）。
 
 ### Changed
 
