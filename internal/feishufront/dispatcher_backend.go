@@ -341,7 +341,13 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 	msgID := action.MessageID
 	go func() {
 		time.Sleep(delay)
-		patchCtx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
+		// WithoutCancel: this PATCH must outlive the click-handler request
+		// (the 3-5s sleep crosses the handler's return). A request-scoped
+		// ctx would already be canceled by the time UpdateCard runs, so we
+		// detach the cancel signal while still inheriting request values
+		// (tracing, ...) for observability. WithTimeout bounds the PATCH
+		// itself so the goroutine never hangs.
+		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 		defer cancel()
 		if err := d.bot.UpdateCard(patchCtx, msgID, card); err != nil {
 			d.logger.Load().Warn("delayed picker UpdateCard failed",
