@@ -341,6 +341,13 @@ deploy.sh 支持三种正交维度，组合使用：
 - `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode miniagent`）。
 - `--init` / `--force`：首次生成配置 / 跳过运行中会话检查。
 
+**运行中会话检查（preflight）**：部署前 deploy.sh 调用 feishu-front 的
+`GET /v1/deploy-preflight?services=<子集>`，由前端按内存中的 turn 列表判断——
+部署 feishu（重启 IPC）会中断所有会话，返回 409 全拒；只部署 backend 子集时
+仅当会话挂在目标 backend 上才拒绝，其它 backend 的会话不阻塞。旧版前端无此
+端点（404）时退化为保守策略：只要有会话就拒绝。判断逻辑在 Go 侧
+（`internal/feishufront/ipcserver_preflight.go`，含单测），bash 只读状态码。
+
 ### 8.1 打包分发（编译与部署解耦）
 
 ```bash

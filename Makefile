@@ -5,7 +5,8 @@
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
-#   test        build-check + vet + go test -race ./...
+#   test        build-check + vet + deploy-smoke + go test -race ./...
+#   deploy-smoke bash helper unit tests (deploy/tests/smoke.sh)
 #   deploy      build, then install as systemd services via deploy/deploy.sh
 #   pack        build all six binaries and bundle into a distributable tarball
 #               (bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz); cross-compile via
@@ -76,8 +77,14 @@ fmt:
 
 # test runs build-check + vet as gates, then the full suite under the race
 # detector. -race needs CGO_ENABLED=1, which is the default on Linux.
-test: build-check vet
+test: build-check vet deploy-smoke
 	go test -race ./...
+
+# deploy-smoke unit-tests the bash deploy helpers (lib-common.sh + deploy.sh's
+# source guard) without systemd/sudo; catches mapping-table and escaping
+# regressions that `bash -n` cannot.
+deploy-smoke:
+	./deploy/tests/smoke.sh
 
 clean:
 	rm -rf bin/

@@ -15,28 +15,12 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BIN_DIR="$PROJECT_ROOT/bin"
-DEPLOY_DIR="/opt/lark-bridge/bin"
-CONFIG_DIR="/etc/lark-bridge"
+# 共享样板：路径 / 颜色 / RUN_USER / info-warn-fail（与 deploy.sh 同源）。
+# shellcheck source=deploy/lib-common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
 
 UNIT_NAME="lark-deploy-monitor"
 CONFIG_NAME="deploy-monitor-config.json"
-
-# 颜色（与 deploy.sh 一致）
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
-info() { echo -e "${GREEN}[INFO]${NC}  $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-fail() { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
-
-# RUN_USER 还原（与 deploy.sh 同逻辑）
-if [[ "$EUID" -eq 0 ]]; then
-    RUN_USER="${SUDO_USER:-}"
-    [[ -n "$RUN_USER" ]] || fail "请勿直接以 root 运行；用 sudo -E 保证 SUDO_USER 可用"
-else
-    RUN_USER="$(whoami)"
-fi
 
 # ── 构建 ──────────────────────────────────────────────
 build_monitor() {

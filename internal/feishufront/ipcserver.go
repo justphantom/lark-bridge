@@ -248,7 +248,8 @@ func isLoopbackAddr(addr string) bool {
 }
 
 // Routes returns the mux serving /v1/events (SSE), /v1/control/{backendID}
-// (POST), and /v1/status (GET). Use this with httptest.NewServer; Listen is
+// (POST), /v1/metrics/{backendID} (POST), /v1/status (GET), and
+// /v1/deploy-preflight (GET). Use this with httptest.NewServer; Listen is
 // for production.
 func (s *IPCServer) Routes() http.Handler {
 	mux := http.NewServeMux()
@@ -256,6 +257,7 @@ func (s *IPCServer) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/control/{backendID}", s.handleControl)
 	mux.HandleFunc("POST /v1/metrics/{backendID}", s.handleMetrics)
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
+	mux.HandleFunc("GET /v1/deploy-preflight", s.handleDeployPreflight)
 	return mux
 }
 
