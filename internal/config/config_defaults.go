@@ -122,5 +122,11 @@ func applyDefaults(cfg *Config, cfgPath string) {
 		if cfg.FileConvert.Retention == 0 {
 			cfg.FileConvert.Retention = Duration(7 * 24 * time.Hour)
 		}
+		// xlsx formula mode defaults to cached value (decision 6A). An
+		// operator who leaves it empty gets "value"; an explicit empty is
+		// indistinguishable from absent under JSON, so treat both as default.
+		if cfg.FileConvert.XlsxFormulaMode == "" {
+			cfg.FileConvert.XlsxFormulaMode = "value"
+		}
 	}
 }

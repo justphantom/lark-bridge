@@ -81,7 +81,14 @@
     "max_file_size":    31457280,
     "convert_timeout":  "60s",
     "retention":        "168h",
+
+    "pptx_text_only":     true,
+    "pptx_max_slides":    0,
+    "pptx_extract_notes": false,
+    "xlsx_max_sheets":    0,
+    "xlsx_formula_mode":  "value",
     "prompt_template":  "用户上传了一份文件并希望基于其内容进行处理。\n文件名：{{.FileName}}\n已转换为 Markdown，路径：{{.Path}}\n请先用 Read 工具读取该文件，再按用户的进一步指示处理。{{if .UserText}}\n\n用户的附加说明：{{.UserText}}{{end}}",
-    "post_prompt_template": "用户发送了一条富文本消息并已转为 Markdown。\n主体内容已保存到：{{.Path}}\n请先用 Read 工具读取该文件，其中可能包含图片引用（vision-capable 的 agent 可直接读取图片路径）。{{if .UserText}}\n\n用户的附加说明：{{.UserText}}{{end}}"
+    "post_prompt_template": "用户发送了一条富文本消息并已转为 Markdown。\n主体内容已保存到：{{.Path}}\n请先用 Read 工具读取该文件，其中可能包含图片引用（vision-capable 的 agent 可直接读取图片路径）。{{if .UserText}}\n\n用户的附加说明：{{.UserText}}{{end}}",
+    "xlsx_prompt_template":  "用户上传了一份 Excel 表格并已转为 Markdown。\n文件名：{{.FileName}}\n主体已保存到：{{.Path}}（共 {{.SheetCount}} 个 sheet）\n各 sheet 概况：\n{{.SheetsSection}}请使用 Read 工具（支持 offset/limit）按需读取对应区间，不要一次性读入全部。{{if .UserText}}\n\n用户的附加说明：{{.UserText}}{{end}}"
   }
 }

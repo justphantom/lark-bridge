@@ -31,6 +31,8 @@ const (
 // round-trip to the IM resources API.
 var supportedUploadExt = map[string]bool{
 	".docx":     true,
+	".pptx":     true,
+	".xlsx":     true,
 	".md":       true,
 	".markdown": true,
 	".txt":      true,
@@ -80,7 +82,7 @@ func (d *Dispatcher) handleFileMessage(ctx context.Context, msg *feishu.Incoming
 	ext := strings.ToLower(filepath.Ext(fileName))
 	if !supportedUploadExt[ext] {
 		return d.notice(ctx, msg.ChatID, "info", "暂不支持的文件类型",
-			"仅支持 docx / md / markdown / txt，当前上传: "+ext)
+			"仅支持 docx / pptx / xlsx / md / markdown / txt，当前上传: "+ext)
 	}
 
 	// Per-prompt inbox: {inboxDir}/{chatID}/{promptID}/. MkdirAll keeps the
@@ -128,23 +130,47 @@ func (d *Dispatcher) handleFileMessage(ctx context.Context, msg *feishu.Incoming
 	// under raw/, so even a `.md` source (base == name) cannot overwrite
 	// itself. The agent always reads this stable name regardless of the
 	// original extension.
+	//
+	// xlsx follows the C paradigm (office-extract-design.md §3.2): the full
+	// data body is written to dstPath AND sheet metadata flows back here so
+	// the prompt carries only path + column names + row counts. Every other
+	// type goes through Convert (docx→pandoc, pptx→pure-Go extractor, md/txt
+	// →copy), which returns only an error.
 	base := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	dstPath := filepath.Join(dir, sanitizePathElement(base+".md"))
-	if err := d.fileConverter.Convert(ctx, srcPath, dstPath); err != nil {
-		if errors.Is(err, fileconvert.ErrUnsupported) {
-			return d.notice(ctx, msg.ChatID, "info", "暂不支持的文件类型",
-				"仅支持 docx / md / markdown / txt")
+	var xlsxMeta *fileconvert.XlsxMeta
+	if ext == ".xlsx" {
+		meta, cerr := d.fileConverter.ConvertXlsx(ctx, srcPath, dstPath)
+		if cerr != nil {
+			l := d.logger.Load()
+			if l != nil {
+				l.Warn("file convert failed",
+					log.FieldChatID, msg.ChatID,
+					log.FieldMessageID, msg.MessageID,
+					log.FieldError, cerr.Error(),
+					"src", filepath.Base(srcPath))
+			}
+			return d.notice(ctx, msg.ChatID, "error", "转换失败",
+				"无法将文件转为 Markdown: "+cerr.Error())
 		}
-		l := d.logger.Load()
-		if l != nil {
-			l.Warn("file convert failed",
-				log.FieldChatID, msg.ChatID,
-				log.FieldMessageID, msg.MessageID,
-				log.FieldError, err.Error(),
-				"src", filepath.Base(srcPath))
+		xlsxMeta = meta
+	} else {
+		if err := d.fileConverter.Convert(ctx, srcPath, dstPath); err != nil {
+			if errors.Is(err, fileconvert.ErrUnsupported) {
+				return d.notice(ctx, msg.ChatID, "info", "暂不支持的文件类型",
+					"仅支持 docx / pptx / xlsx / md / markdown / txt")
+			}
+			l := d.logger.Load()
+			if l != nil {
+				l.Warn("file convert failed",
+					log.FieldChatID, msg.ChatID,
+					log.FieldMessageID, msg.MessageID,
+					log.FieldError, err.Error(),
+					"src", filepath.Base(srcPath))
+			}
+			return d.notice(ctx, msg.ChatID, "error", "转换失败",
+				"无法将文件转为 Markdown: "+err.Error())
 		}
-		return d.notice(ctx, msg.ChatID, "error", "转换失败",
-			"无法将文件转为 Markdown: "+err.Error())
 	}
 
 	// Make the path absolute before giving it to the agent: relative paths
@@ -154,7 +180,16 @@ func (d *Dispatcher) handleFileMessage(ctx context.Context, msg *feishu.Incoming
 	if err != nil {
 		absDst = dstPath
 	}
-	promptText, err := d.executeFilePromptTemplate(fileName, absDst, msg)
+	// xlsx builds its prompt from sheet metadata (decision Q11); all other
+	// types use the generic single-file template. When no xlsx template is
+	// configured, fall back to the generic one so an xlsx upload still works
+	// (the agent gets the path but not the schema) rather than failing.
+	var promptText string
+	if ext == ".xlsx" && xlsxMeta != nil && d.xlsxPromptTemplate != nil {
+		promptText, err = d.executeXlsxPromptTemplate(fileName, absDst, xlsxMeta, msg)
+	} else {
+		promptText, err = d.executeFilePromptTemplate(fileName, absDst, msg)
+	}
 	if err != nil {
 		// The template already parsed at config Load; reaching here means a
 		// runtime execution failure (e.g. a custom FuncMap entry panicking).
@@ -262,6 +297,58 @@ func userTextFromFileMessage(msg *feishu.IncomingMessage) string {
 	// leave the hook in place so a future enrichment (e.g. parent quote
 	// extraction) slots in here without rewriting the prompt builder.
 	return strings.TrimSpace(msg.Content)
+}
+
+// xlsxPromptVars is the variable bag for file_convert.xlsx_prompt_template.
+// Unlike filePromptVars it carries the per-sheet schema summary (decision
+// Q11): the data body never enters the prompt, only column names + row
+// counts + caveats, so the agent can decide which range to Read itself.
+type xlsxPromptVars struct {
+	FileName      string
+	Path          string
+	SheetCount    int
+	SheetsSection string
+	UserText      string
+}
+
+// executeXlsxPromptTemplate renders the xlsx prompt with one workbook's
+// metadata. The sheets section is pre-rendered here (one line per sheet)
+// rather than looped inside the template so operators customising the
+// template only rewrite the framing prose, not the per-sheet line format
+// (which the C-paradigm contract pins).
+func (d *Dispatcher) executeXlsxPromptTemplate(fileName, absPath string, meta *fileconvert.XlsxMeta, msg *feishu.IncomingMessage) (string, error) {
+	vars := xlsxPromptVars{
+		FileName:      fileName,
+		Path:          absPath,
+		SheetCount:    len(meta.Sheets),
+		SheetsSection: renderXlsxSheetsSection(meta),
+		UserText:      userTextFromFileMessage(msg),
+	}
+	var b strings.Builder
+	if err := d.xlsxPromptTemplate.Execute(&b, vars); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// renderXlsxSheetsSection builds the per-sheet bullet list that the prompt
+// carries. Each line is `Sheet "X": N columns [c1, c2, …], M rows` plus, when
+// the sheet has a caveat (e.g. a chart that was not extracted), a trailing
+// parenthetical. A workbook-level caveat (pivot tables) gets one final line.
+func renderXlsxSheetsSection(meta *fileconvert.XlsxMeta) string {
+	var b strings.Builder
+	for _, s := range meta.Sheets {
+		fmt.Fprintf(&b, "- Sheet %q: %d columns [%s], %d rows",
+			s.Name, len(s.Columns), strings.Join(s.Columns, ", "), s.RowCount)
+		if s.Note != "" {
+			b.WriteString(" (" + s.Note + ")")
+		}
+		b.WriteByte('\n')
+	}
+	if meta.Note != "" {
+		b.WriteString("- " + meta.Note + "\n")
+	}
+	return b.String()
 }
 
 // sanitizePathElement strips path separators and ".." from a caller-supplied

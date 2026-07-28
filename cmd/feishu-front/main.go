@@ -341,9 +341,13 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 	}
 
 	converter := fileconvert.New(fileconvert.Options{
-		PandocPath: pandocPath,
-		Timeout:    time.Duration(cfg.FileConvert.ConvertTimeout),
-		Logger:     logger,
+		PandocPath:      pandocPath,
+		Timeout:         time.Duration(cfg.FileConvert.ConvertTimeout),
+		Logger:          logger,
+		PptxMaxSlides:   cfg.FileConvert.PptxMaxSlides,
+		PptxTextOnly:    true, // v1 always text-only (decision 3A); config flag is a forward hook
+		XlsxMaxSheets:   cfg.FileConvert.XlsxMaxSheets,
+		XlsxFormulaMode: cfg.FileConvert.XlsxFormulaMode,
 	})
 
 	// Parse the operator-supplied prompt template once at startup. config.
@@ -367,7 +371,19 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		}
 	}
 
+	// XlsxPromptTemplate is optional: empty → xlsx uploads fall back to the
+	// generic template (path only, no per-sheet schema). When set, parse it
+	// so the C-paradigm prompt (path + column names + row counts) is wired.
+	var xlsxTmpl *template.Template
+	if strings.TrimSpace(cfg.FileConvert.XlsxPromptTemplate) != "" {
+		xlsxTmpl, err = template.New("file_convert.xlsx_prompt_template").Funcs(config.PromptTemplateFuncs()).Parse(cfg.FileConvert.XlsxPromptTemplate)
+		if err != nil {
+			return fmt.Errorf("file_convert: parse xlsx_prompt_template: %w", err)
+		}
+	}
+
 	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize, tmpl, postTmpl)
+	dispatcher.SetXlsxPromptTemplate(xlsxTmpl)
 	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
 	logger.Info("file pipeline enabled",
 		"inbox", inbox,
@@ -375,6 +391,7 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		"max_file_size", cfg.FileConvert.MaxFileSize,
 		"convert_timeout", time.Duration(cfg.FileConvert.ConvertTimeout),
 		"retention", time.Duration(cfg.FileConvert.Retention),
-		"post_pipeline", postTmpl != nil)
+		"post_pipeline", postTmpl != nil,
+		"xlsx_pipeline", xlsxTmpl != nil)
 	return nil
 }

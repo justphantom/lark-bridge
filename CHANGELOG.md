@@ -5,7 +5,46 @@
 
 ## [Unreleased]
 
-无。下一版起步请在此追加。
+### Added
+
+- **pptx / xlsx 文件上传 → markdown 管线**：feishu-front 现可接收群聊上传的
+  `.pptx` / `.xlsx` 文件，转成 GitHub-flavoured Markdown 落到 inbox，agent
+  走与 docx 完全相同的 Read 路径。设计见 `docs/office-extract-design.md`。
+  - pptx 走纯 Go 标准库自研（`archive/zip` + `encoding/xml`），L1 档位：
+    全页提标题 / 正文 / 项目列表 / 简单表格；图表与 SmartArt 输出 HTML 注释
+    占位（决策 9A）；图片完全忽略（决策 3A）。幻灯片顺序按
+    `presentation.xml` 的 `sldIdLst`，不按文件名。
+  - xlsx 走 `xuri/excelize/v2`（C 范式）：数据本体全量 GFM 表格写盘（含
+    chart/pivot 占位、合并单元格只填左上角、公式提缓存值），递交 agent 的
+    prompt 只含路径 + 每 sheet 列名 + 每 sheet 总行数（决策 Q11），由 agent
+    用 Read 工具（支持 offset/limit）按需读取区间。
+  - 新增 `internal/fileconvert/convert_pptx.go`、`convert_xlsx.go`、
+    `convert_xlsx_scan.go`（chart/pivot 的 OOXML 关系链 zip 扫描）、
+    `gfm.go`（GFM 表格渲染 + 宽表 >20 列降级为 fenced CSV）；新增
+    `internal/strutil/gfm.go` 单元格消毒（`|` / 换行 / 空白）。
+  - `dispatcher_file.go`：上传白名单新增 `.pptx` / `.xlsx` 与错误文案；
+    xlsx 走专用 `ConvertXlsx`（返回 `XlsxMeta`）+ 可选 `xlsx_prompt_template`；
+    dispatcher 新增 `SetXlsxPromptTemplate` 独立 setter（不改 `SetFilePipeline`
+    签名，现有调用点零改动）。
+  - 配置项 `file_convert` 段新增 `pptx_max_slides` / `pptx_extract_notes` /
+    `pptx_text_only` / `xlsx_max_sheets` / `xlsx_formula_mode` /
+    `xlsx_prompt_template`，`xlsx_formula_mode` 强制 `value|formula|both`
+    枚举校验。
+  - **首次引入第三方直接依赖** `github.com/xuri/excelize/v2`（Apache-2.0），
+    打破 CODING_STANDARDS.md 的零依赖硬约束；豁免理由见
+    `docs/office-extract-design.md` §5.1（excelize 已覆盖 sharedStrings /
+    numFmt / merge / 公式缓存，自研即重复造轮子；纯 Go、无 cgo、单二进制
+    部署形态不变），接口面收敛在 `convert_xlsx.go` 单文件。
+
+### Notes
+
+- chart 检测：excelize v2 无 chart 读取 API（设计 §5.4 所述 `GetCharts()`
+  实际不存在），改用 `archive/zip` 扫描 `xl/` 关系链（workbook→worksheet→
+  drawing→chart）按 sheet 计数；pivot 仅做 workbook 级检测（pivotTable 的
+  `<location>` 不含 sheet 名，精确 sheet 关联在 zip 层面成本过高），二者均
+  保留 HTML 注释占位以遵守"不静默跳过"契约。
+- value 模式（默认）不对每个 cell 反查公式，避免大表 O(cells) 调用拖垮
+  性能；公式文本/聚合注释仅在 `formula` / `both` 模式触发。
 
 ## [1.5.0] - 2026-07-28
 

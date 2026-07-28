@@ -673,3 +673,69 @@ func TestLoadFileConvertDisabledSkipsTemplateCheck(t *testing.T) {
 		t.Errorf("disabled section should leave template empty, got %q", cfg.FileConvert.PromptTemplate)
 	}
 }
+
+// TestLoadFileConvert_XlsxFormulaModeEnum verifies xlsx_formula_mode is
+// constrained to value|formula|both. A typo must fail at Load, not surface
+// later as a silent default at conversion time.
+func TestLoadFileConvert_XlsxFormulaModeEnum(t *testing.T) {
+	good := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "p={{.Path}}",
+			"xlsx_formula_mode": "both"
+		}
+	}`)
+	cfg, err := Load(good)
+	if err != nil {
+		t.Fatalf("both should Load fine, got: %v", err)
+	}
+	if cfg.FileConvert.XlsxFormulaMode != "both" {
+		t.Errorf("formula mode = %q, want both", cfg.FileConvert.XlsxFormulaMode)
+	}
+	// Empty is normalised to "value" by applyDefaults.
+	def := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "p={{.Path}}"
+		}
+	}`)
+	cfgDef, _ := Load(def)
+	if cfgDef.FileConvert.XlsxFormulaMode != "value" {
+		t.Errorf("default formula mode = %q, want value", cfgDef.FileConvert.XlsxFormulaMode)
+	}
+	// An out-of-enum value is rejected.
+	bad := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "p={{.Path}}",
+			"xlsx_formula_mode": "raw"
+		}
+	}`)
+	if _, err := Load(bad); err == nil {
+		t.Fatal("Load succeeded with bogus xlsx_formula_mode; want enum error")
+	}
+}
+
+// TestLoadFileConvert_XlsxPromptTemplateSyntaxChecked verifies a configured
+// xlsx_prompt_template is parse-checked at Load time, mirroring the
+// prompt_template contract.
+func TestLoadFileConvert_XlsxPromptTemplateSyntaxChecked(t *testing.T) {
+	bad := writeConfig(t, `{
+		"state_dir": "`+t.TempDir()+`",
+		"file_convert": {
+			"enabled": true,
+			"prompt_template": "p={{.Path}}",
+			"xlsx_prompt_template": "{{.SheetCount"
+		}
+	}`)
+	_, err := Load(bad)
+	if err == nil {
+		t.Fatal("Load succeeded with unclosed xlsx_prompt_template action; want parse error")
+	}
+	if !strings.Contains(err.Error(), "xlsx_prompt_template") {
+		t.Errorf("error %q does not name xlsx_prompt_template", err)
+	}
+}

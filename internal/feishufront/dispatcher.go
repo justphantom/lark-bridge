@@ -151,6 +151,7 @@ type Dispatcher struct {
 	fileConverter      *fileconvert.Converter
 	promptTemplate     *template.Template
 	postPromptTemplate *template.Template
+	xlsxPromptTemplate *template.Template
 	inboxDir           string
 	inboxMaxSize       int64
 }
@@ -182,6 +183,15 @@ func (d *Dispatcher) SetFilePipeline(downloader FileDownloader, converter *filec
 	d.inboxMaxSize = maxSize
 	d.promptTemplate = promptTemplate
 	d.postPromptTemplate = postPromptTemplate
+}
+
+// SetXlsxPromptTemplate wires the optional C-paradigm prompt template for xlsx
+// uploads (office-extract-design.md §3.2). Kept as a separate setter rather
+// than a seventh SetFilePipeline parameter so existing callers (and every
+// dispatcher test) are untouched; an unset template means xlsx uploads fall
+// back to the generic promptTemplate (path only, no per-sheet schema).
+func (d *Dispatcher) SetXlsxPromptTemplate(tmpl *template.Template) {
+	d.xlsxPromptTemplate = tmpl
 }
 
 // filePipelineEnabled reports whether the file pipeline is wired for

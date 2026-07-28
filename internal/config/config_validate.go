@@ -143,6 +143,22 @@ func validate(cfg *Config) error {
 		if d := time.Duration(cfg.FileConvert.Retention); d > 0 && d < time.Hour {
 			return fmt.Errorf("file_convert.retention must be >= 1h when set, got %s", d)
 		}
+		// xlsx_formula_mode must be one of the supported semantics. The
+		// default ("value") is filled by applyDefaults, so reaching validate
+		// with an empty value means an operator explicitly cleared it.
+		switch cfg.FileConvert.XlsxFormulaMode {
+		case "value", "formula", "both":
+		default:
+			return fmt.Errorf("file_convert.xlsx_formula_mode must be one of value/formula/both, got %q", cfg.FileConvert.XlsxFormulaMode)
+		}
+		// pptx/xlsx caps: only reject negative limits (0 means unlimited,
+		// which is the design default, so 0 is always valid).
+		if cfg.FileConvert.PptxMaxSlides < 0 {
+			return fmt.Errorf("file_convert.pptx_max_slides must be >= 0 (0 = unlimited), got %d", cfg.FileConvert.PptxMaxSlides)
+		}
+		if cfg.FileConvert.XlsxMaxSheets < 0 {
+			return fmt.Errorf("file_convert.xlsx_max_sheets must be >= 0 (0 = unlimited), got %d", cfg.FileConvert.XlsxMaxSheets)
+		}
 		// PromptTemplate is required: no compiled-in default exists (the
 		// canonical wording ships in config.example.json
 		// so operators can edit it). Refuse to start so a half-configured
@@ -163,6 +179,14 @@ func validate(cfg *Config) error {
 		if strings.TrimSpace(cfg.FileConvert.PostPromptTemplate) != "" {
 			if err := validatePromptTemplate(cfg.FileConvert.PostPromptTemplate); err != nil {
 				return fmt.Errorf("file_convert.post_prompt_template: %w", err)
+			}
+		}
+		// XlsxPromptTemplate is optional (empty → fall back to the generic
+		// prompt_template). When set, parse-check it now so a typo fails at
+		// startup, not on the first xlsx upload.
+		if strings.TrimSpace(cfg.FileConvert.XlsxPromptTemplate) != "" {
+			if err := validatePromptTemplate(cfg.FileConvert.XlsxPromptTemplate); err != nil {
+				return fmt.Errorf("file_convert.xlsx_prompt_template: %w", err)
 			}
 		}
 	}

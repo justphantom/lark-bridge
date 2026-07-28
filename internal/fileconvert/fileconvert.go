@@ -59,6 +59,24 @@ type Options struct {
 	// Logger receives debug lines on each conversion (skip/copy/pandoc).
 	// nil → no logging.
 	Logger logger
+
+	// —— pptx (office-extract-design.md §2 / §4.1) ——
+	// PptxMaxSlides caps emitted slides; <=0 → unlimited (design default).
+	PptxMaxSlides int
+	// PptxExtractNotes reserves speaker-notes emission; v1 ignores it
+	// (slides only). Kept so future enablement is config-only.
+	PptxExtractNotes bool
+	// PptxTextOnly forces text-only extraction. v1 always behaves as
+	// text-only (images dropped per decision 3A); the switch is the forward
+	// hook for image extraction and currently has no behavioural effect.
+	PptxTextOnly bool
+
+	// —— xlsx (C paradigm: full data to disk, prompt carries metadata) ——
+	// XlsxMaxSheets caps emitted sheets; <=0 → unlimited (decision Q10).
+	XlsxMaxSheets int
+	// XlsxFormulaMode selects value/formula/both for formula cells;
+	// empty → "value" (decision 6A). Validated by config to the enum.
+	XlsxFormulaMode string
 }
 
 // logger is the minimal surface we use; declared locally to avoid importing
@@ -72,9 +90,14 @@ type logger interface {
 // Safe for concurrent use: each Convert spawns its own subprocess and writes
 // to a caller-supplied destination path; no shared mutable state.
 type Converter struct {
-	pandoc  string
-	timeout time.Duration
-	log     logger
+	pandoc           string
+	timeout          time.Duration
+	log              logger
+	pptxMaxSlides    int
+	pptxExtractNotes bool
+	pptxTextOnly     bool
+	xlsxMaxSheets    int
+	xlsxFormulaMode  string
 }
 
 // New builds a Converter from opts.
@@ -87,7 +110,20 @@ func New(opts Options) *Converter {
 	if timeout <= 0 {
 		timeout = ConvertTimeout
 	}
-	c := &Converter{pandoc: pandoc, timeout: timeout, log: opts.Logger}
+	formulaMode := opts.XlsxFormulaMode
+	if formulaMode == "" {
+		formulaMode = "value" // decision 6A default
+	}
+	c := &Converter{
+		pandoc:           pandoc,
+		timeout:          timeout,
+		log:              opts.Logger,
+		pptxMaxSlides:    opts.PptxMaxSlides,
+		pptxExtractNotes: opts.PptxExtractNotes,
+		pptxTextOnly:     opts.PptxTextOnly,
+		xlsxMaxSheets:    opts.XlsxMaxSheets,
+		xlsxFormulaMode:  formulaMode,
+	}
 	return c
 }
 
@@ -106,8 +142,17 @@ func (c *Converter) Convert(ctx context.Context, srcPath, dstPath string) error 
 	switch ext {
 	case ".docx":
 		return c.runPandoc(ctx, srcPath, dstPath)
+	case ".pptx":
+		return c.convertPptx(ctx, srcPath, dstPath)
 	case ".md", ".markdown", ".txt":
 		return copyFile(srcPath, dstPath)
+	case ".xlsx":
+		// xlsx follows the C paradigm (office-extract-design.md §3.2):
+		// the full data body goes to dstPath AND sheet metadata must flow
+		// back to the dispatcher to build a path+schema+rows-only prompt.
+		// Convert returns only an error, so it cannot carry that metadata;
+		// force callers through ConvertXlsx instead of silently dropping it.
+		return fmt.Errorf("fileconvert: xlsx must go through ConvertXlsx (C-paradigm metadata return), got %s", filepath.Base(srcPath))
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupported, ext)
 	}

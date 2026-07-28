@@ -354,6 +354,49 @@ type FileConvert struct {
 	//   {{.UserText}} accompanying text (rarely populated for posts; post
 	//                content IS the body — kept for parity with file uploads)
 	PostPromptTemplate string `json:"post_prompt_template,omitempty"`
+	// XlsxPromptTemplate renders the prompt body for an xlsx upload following
+	// the C paradigm (office-extract-design.md §3.2): the full data body is
+	// on disk, so the prompt carries only a path plus a per-sheet schema
+	// summary. Optional — when empty, xlsx uploads fall back to
+	// PromptTemplate (path only, no schema) so deployments without it still
+	// work.
+	//
+	// Variables:
+	//   {{.FileName}}       original upload name (e.g. "data.xlsx")
+	//   {{.Path}}           absolute path of the converted .md
+	//   {{.SheetCount}}     number of sheets
+	//   {{.SheetsSection}}  pre-rendered per-sheet list (column names + row
+	//                       counts + caveats); one bullet per sheet
+	//   {{.UserText}}       accompanying text ("")
+	XlsxPromptTemplate string `json:"xlsx_prompt_template,omitempty"`
+
+	// —— pptx 提取调优（office-extract-design.md §2 / §4.1）——
+	// PptxMaxSlides caps the number of slides emitted. <=0 → unlimited, which
+	// is the design default (decision Q1: extract every slide). An operator
+	// with a tight LLM context budget can lower it to truncate long decks.
+	PptxMaxSlides int `json:"pptx_max_slides,omitempty"`
+	// PptxExtractNotes reserves a switch to also emit speaker notes
+	// (ppt/notesSlides). v1 ignores it and emits slides only; the field is
+	// kept so future enablement is a config flip, not a schema change.
+	PptxExtractNotes bool `json:"pptx_extract_notes,omitempty"`
+	// PptxTextOnly forces text-only extraction: images are dropped entirely
+	// (decision 3A — no download, no reference, no placeholder). v1 always
+	// behaves as text-only regardless of this value; the switch is the
+	// forward hook for the day image extraction is added.
+	PptxTextOnly bool `json:"pptx_text_only,omitempty"`
+
+	// —— xlsx 提取调优（C 范式：数据本体全量落盘，prompt 仅元数据）——
+	// XlsxMaxSheets caps the number of sheets emitted. <=0 → unlimited
+	// (decision Q10: every sheet). The full data body is always written to
+	// the inbox .md; this only bounds how many sheets survive that write.
+	XlsxMaxSheets int `json:"xlsx_max_sheets,omitempty"`
+	// XlsxFormulaMode selects what an xlsx cell carrying a formula yields:
+	//   "value"    → the cached result (default, decision 6A)
+	//   "formula"  → the formula text
+	//   "both"     → "cached (formula)"
+	// An empty value is normalised to "value" by applyDefaults and rejected
+	// by validate if it falls outside the enum.
+	XlsxFormulaMode string `json:"xlsx_formula_mode,omitempty"`
 }
 
 // expandEnvVars replaces ${VAR} patterns in raw config bytes with env
