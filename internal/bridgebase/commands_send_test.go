@@ -243,3 +243,23 @@ func must(t *testing.T, err error) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestSafeJoin_RootIsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behaviour on Windows differs; EvalSymlinks needs privileges")
+	}
+	real := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(real, "f.txt"), []byte("x"), 0o600))
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink create failed (privileges?): %v", err)
+	}
+	// A bound directory that is itself a symlink must not false-positive
+	// every file as out-of-bounds.
+	if _, err := SafeJoin(link, "f.txt"); err != nil {
+		t.Errorf("SafeJoin with symlink root: %v", err)
+	}
+	if _, err := ReadFilePayload("c", "f.txt", link, filepath.Join(link, "f.txt"), ""); err != nil {
+		t.Errorf("ReadFilePayload with symlink root: %v", err)
+	}
+}

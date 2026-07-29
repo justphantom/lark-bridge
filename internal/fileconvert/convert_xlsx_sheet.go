@@ -18,6 +18,18 @@ const xlsxCtxCheckInterval = 64
 // it so a hostile cell reference cannot trigger unbounded row padding.
 const xlsxMaxColumns = 16384
 
+// xlsxMaxPadCells bounds the empty-string padding one sheet may accumulate
+// (sparse-column gaps in flushCell + rectangular fill in normalise). Real
+// cell content costs the attacker XML bytes proportionally, but padding is
+// free amplification: ~50 bytes of XML per 128 KB row of empties. Past the
+// budget the sheet degrades to a 读取失败 placeholder via the parseSheet
+// recover, same as any other broken part.
+const xlsxMaxPadCells = 1 << 20
+
+// errSheetTooSparse is the panic sentinel for the padding budget; parseSheet's
+// recover maps it to a plain error instead of a "parser panic" message.
+var errSheetTooSparse = errors.New("sheet exceeds padding budget (hostile sparse columns)")
+
 // sheetResult carries one parsed sheet: the rectangular row set for
 // renderTable plus the per-sheet caveat counters that become aggregate
 // placeholders after the table (decisions Q4/Q5, §4.3).
@@ -45,7 +57,11 @@ func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtInde
 	defer func() {
 		if r := recover(); r != nil {
 			res = nil
-			err = fmt.Errorf("parser panic: %v", r)
+			if r == errSheetTooSparse {
+				err = errSheetTooSparse
+			} else {
+				err = fmt.Errorf("parser panic: %v", r)
+			}
 		}
 	}()
 	p := &sheetParser{
@@ -118,6 +134,8 @@ type sheetParser struct {
 	inIs     bool // inside <is> (inlineStr)
 	inT      bool // inside <is><t>
 	maxCols  int
+
+	padCells int // cumulative empty-string padding, capped by xlsxMaxPadCells
 }
 
 func (p *sheetParser) start(se xml.StartElement) {
@@ -217,6 +235,10 @@ func (p *sheetParser) charData(cd xml.CharData) {
 func (p *sheetParser) flushCell() {
 	for len(p.curRow) < p.cellCol {
 		p.curRow = append(p.curRow, "")
+		p.padCells++
+	}
+	if p.padCells > xlsxMaxPadCells {
+		panic(errSheetTooSparse)
 	}
 	p.curRow = append(p.curRow, p.cellValue())
 	p.curCol = p.cellCol + 1
@@ -292,6 +314,10 @@ func (p *sheetParser) normalise() {
 	for i, r := range p.res.rows {
 		for len(r) < p.maxCols {
 			r = append(r, "")
+			p.padCells++
+		}
+		if p.padCells > xlsxMaxPadCells {
+			panic(errSheetTooSparse)
 		}
 		p.res.rows[i] = r
 	}

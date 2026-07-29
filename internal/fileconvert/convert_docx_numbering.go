@@ -90,7 +90,7 @@ func parseNumbering(data []byte) *numberingIndex {
 				if absID == "" {
 					continue
 				}
-				lvlIlvl, _ = strconv.Atoi(attrW(t, "ilvl"))
+				lvlIlvl = clampIlvl(attrW(t, "ilvl"))
 				insideLvl = true
 				idx.lvls[absID][lvlIlvl] = lvlInfo{start: 1}
 			case "start":
@@ -178,7 +178,7 @@ func newListState() *listState {
 // else (decision Q5). ok=false when numID has no definition — the caller
 // falls back to a bullet and counts a missingNumPr placeholder.
 func (l *listState) marker(idx *numberingIndex, numID string, ilvl int) (prefix string, ok bool) {
-	indent := strings.Repeat("  ", min(ilvl, maxListLevel))
+	indent := strings.Repeat("  ", min(max(ilvl, 0), maxListLevel))
 	absID, found := idx.numToAbs[numID]
 	if !found {
 		return "", false

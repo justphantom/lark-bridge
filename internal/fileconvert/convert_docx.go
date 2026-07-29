@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -25,6 +26,13 @@ const maxListLevel = 8
 // maxGridSpan caps a table cell's column span; a hostile gridSpan cannot pad
 // a row with millions of empty strings.
 const maxGridSpan = 64
+
+// maxTablePadCells bounds the cumulative gridSpan padding across one
+// document. gridSpan is already clamped per cell, but many rows × 63 pads is
+// still free amplification for a hostile document (~40 XML bytes per KB of
+// empties); past the budget the padding simply stops (the row stays ragged,
+// which renderTable tolerates) rather than failing the whole conversion.
+const maxTablePadCells = 1 << 20
 
 // convertDocx renders a .docx file into GFM Markdown in-process (L1+ scope:
 // headings, inline emphasis, lists, tables, hyperlinks, footnotes —
@@ -191,6 +199,7 @@ type docParser struct {
 	inTc       bool
 	cellHasTxt bool
 	gridSpan   int
+	padCells   int // cumulative gridSpan padding, capped by maxTablePadCells
 	vMergeCont bool
 	nestedTbl  bool
 	tblPics    int
@@ -473,8 +482,9 @@ func (p *docParser) end(ee xml.EndElement, ctx context.Context) {
 				content = "" // decision Q4: merged region keeps top-left value only
 			}
 			p.curRow = append(p.curRow, content)
-			for i := 1; i < p.gridSpan; i++ {
+			for i := 1; i < p.gridSpan && p.padCells < maxTablePadCells; i++ {
 				p.curRow = append(p.curRow, "")
+				p.padCells++
 			}
 			p.inTc = false
 		}
@@ -528,6 +538,15 @@ func (p *docParser) appendSeg(s segment) {
 		}
 	}
 	p.segs = append(p.segs, s)
+}
+
+// clampIlvl parses a list-level attribute and clamps it to
+// [0, maxListLevel]. Unlike atoiSafe this must accept (and then floor)
+// negative values: a hostile w:ilvl="-1" reaching strings.Repeat would panic
+// and fail the whole conversion.
+func clampIlvl(raw string) int {
+	n, _ := strconv.Atoi(raw)
+	return min(max(n, 0), maxListLevel)
 }
 
 // atoiSafe parses a non-negative int attribute, returning 0 on any garbage.

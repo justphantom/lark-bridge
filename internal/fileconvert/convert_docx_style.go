@@ -85,7 +85,7 @@ func parseStyles(data []byte) *styleIndex {
 				}
 			case "ilvl":
 				if inStyle && cur.hasNumPr {
-					cur.ilvl, _ = strconv.Atoi(attrW(t, "val"))
+					cur.ilvl = clampIlvl(attrW(t, "val"))
 				}
 			}
 		case xml.EndElement:

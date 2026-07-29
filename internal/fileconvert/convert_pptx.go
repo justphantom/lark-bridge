@@ -56,6 +56,7 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 		select {
 		case <-ctx.Done():
 			_ = out.Close()
+			_ = os.Remove(dstPath)
 			return fmt.Errorf("fileconvert: pptx %s cancelled: %w", base, ctx.Err())
 		default:
 		}
@@ -337,12 +338,11 @@ func (p *slideParser) emitParagraph(text string) {
 		p.listNum++
 		prefix = fmt.Sprintf("%d. ", p.listNum)
 	}
-	if prefix == "" {
-		// Plain paragraphs get the same GFM guard the docx path applies:
-		// slide text opening with "#"/">"/"- "/"1. " must not be misread as
-		// a block construct.
-		text = escapeLeading(text)
-	}
+	// escapeLeading applies in every branch (not just plain paragraphs):
+	// bullet/numbered text opening with ``` or "- " would otherwise open a
+	// fence or a nested list inside the item; after a "#" prefix the escape
+	// is harmless.
+	text = escapeLeading(text)
 	p.bw.WriteString(prefix)
 	p.bw.WriteString(text)
 	p.bw.WriteString("\n\n")

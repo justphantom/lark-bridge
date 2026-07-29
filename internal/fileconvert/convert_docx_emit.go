@@ -130,7 +130,7 @@ func (p *docParser) emitBodyParagraph(text string) {
 	case isList && text != "":
 		marker, ok := p.list.marker(p.numbering, numID, ilvl)
 		if !ok {
-			marker = strings.Repeat("  ", min(ilvl, maxListLevel)) + "- "
+			marker = strings.Repeat("  ", min(max(ilvl, 0), maxListLevel)) + "- "
 			p.missingNumPr++
 		}
 		p.bw.WriteString(marker + escapeLeading(text) + "\n")

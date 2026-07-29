@@ -33,7 +33,7 @@ const sendDirOptionLimit = maxQuestionOptions
 // Errors deliberately carry no absolute server paths — the message lands in
 // the chat verbatim, and leaking /home/... layouts aids an attacker.
 func SafeJoin(root, rel string) (string, error) {
-	absRoot, err := filepath.Abs(filepath.Clean(root))
+	absRoot, err := ResolveRoot(root)
 	if err != nil {
 		return "", fmt.Errorf("解析根目录失败")
 	}
@@ -47,6 +47,22 @@ func SafeJoin(root, rel string) (string, error) {
 		return "", fmt.Errorf("路径越界：%s", rel)
 	}
 	return resolved, nil
+}
+
+// ResolveRoot returns root's absolute, symlink-resolved form. The resolution
+// matters when the bound directory is itself a symlink (~/proj → /data/proj):
+// EvalSymlinks on the target resolves every component including root's, so
+// comparing against the unresolved root would false-positive every file as
+// "越界". A root that cannot be resolved falls back to the Abs/Clean form.
+func ResolveRoot(root string) (string, error) {
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", err
+	}
+	if r, rerr := filepath.EvalSymlinks(absRoot); rerr == nil {
+		absRoot = r
+	}
+	return absRoot, nil
 }
 
 // withinRoot reports whether resolved lies at or under absRoot. The check is
@@ -123,7 +139,7 @@ func ParseSendOption(choice string) (kind, name string) {
 // capped at MaxSendFileSize+1 so a file growing after Stat cannot slip past.
 // Errors carry no absolute server paths (they surface in the chat verbatim).
 func ReadFilePayload(chatID, fileName, root, path, updateMessageID string) (*protocol.FilePayload, error) {
-	absRoot, err := filepath.Abs(filepath.Clean(root))
+	absRoot, err := ResolveRoot(root)
 	if err != nil {
 		return nil, fmt.Errorf("工作目录无效")
 	}
@@ -190,7 +206,7 @@ func CmdSend(ctx context.Context, c *Core, chatID, rootDir string, args []string
 	if rootDir == "" {
 		return cmdutil.ErrorResult("尚未设置工作目录。发送 `/cd` 选择一个项目目录后再发送文件。")
 	}
-	absRoot, err := filepath.Abs(filepath.Clean(rootDir))
+	absRoot, err := ResolveRoot(rootDir)
 	if err != nil {
 		return cmdutil.ErrorResult("工作目录无效：%v", err)
 	}

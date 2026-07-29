@@ -25,7 +25,7 @@ func (h *Handler) cmdSend(_ context.Context, chatID, arg string) (level, title, 
 	if dir == "" {
 		return "warning", "未设置目录", "尚未配置工作目录（WORKSPACE_ROOT 为空或未 /cd），无法发送文件。"
 	}
-	absRoot, err := filepath.Abs(filepath.Clean(dir))
+	absRoot, err := bridgebase.ResolveRoot(dir)
 	if err != nil {
 		return "error", "发送失败", "工作目录无效：" + err.Error()
 	}
