@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
@@ -112,13 +113,15 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 
 	// Stale-session recovery (§10.7): if --resume hit a session the CLI no
 	// longer knows, drop the binding's sessionID and retry once with a fresh
-	// session. OMP's exact stale报文 is not yet confirmed (§10.7 未决项), so
-	// this degrades to "any non-cancel error with a non-empty SessionID
-	// retries once" — the warning log surfaces the suspected retry for
-	// post-hoc triage. A cancelled/idle-timeout turn is never retried.
+	// session. The exact报文 was confirmed empirically against omp/17.1.8:
+	// a bad --resume id makes omp exit 1 with empty stdout and stderr
+	// `Error: Session "<id>" not found.`, which the client's pump surfaces
+	// as a synthesised EventError whose text contains "Session" + "not found".
+	// isStaleSessionErr matches that signature so a real error (403, network,
+	// …) with a non-empty SessionID does NOT trigger a spurious retry.
 	if result.err != nil && !result.isCancelled && !result.isIdleTimeout &&
-		binding.SessionID != "" && ctx.Err() == nil {
-		h.Logger.Warn("stale omp session suspected, retrying without --resume",
+		binding.SessionID != "" && ctx.Err() == nil && isStaleSessionErr(result.err) {
+		h.Logger.Warn("stale omp session, retrying without --resume",
 			log.FieldChatID, chatID,
 			log.FieldSessionID, binding.SessionID,
 			log.FieldError, result.err)
@@ -276,4 +279,19 @@ func mapThinkingLevel(pin, def string) string {
 		return def
 	}
 	return "auto"
+}
+
+// isStaleSessionErr reports whether err looks like omp's "session not found"
+// failure on a bad --resume. Confirmed signature (omp/17.1.8, exit 1, empty
+// stdout): stderr is `Error: Session "<id>" not found.`, which the client's
+// pump rolls into the synthesised EventError text alongside the exit status.
+// Matching on "session" + "not found" (case-insensitive) keeps this stable
+// across id values and the surrounding "Run `omp --resume` …" hint without
+// over-matching unrelated errors (a 403 / network error never contains both).
+func isStaleSessionErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "session") && strings.Contains(s, "not found")
 }

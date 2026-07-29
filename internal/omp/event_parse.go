@@ -156,9 +156,17 @@ func parseEvent(line string) (Event, bool, error) {
 		base.Attempt = head.Attempt
 		return base, true, nil
 
-	// turn_start/turn_end carry no actionable signal (token info is
-	// incomplete; §6.1). Ignore.
-	case "turn_start", "turn_end":
+	// turn_start is the per-round boundary: each assistant round (incl. each
+	// tool-call round) opens with one. The bridge resets the text accumulator
+	// here so the previous round's inline-thinking preamble does not leak
+	// into the reply (verified empirically against agnes-2.0-flash).
+	//
+	// turn_end carries nothing actionable (no usage, no terminal signal), so
+	// it stays ignored.
+	case "turn_start":
+		base.Type = EventTurnStart
+		return base, true, nil
+	case "turn_end":
 		return Event{}, false, nil
 
 	default:
@@ -214,9 +222,19 @@ func parseMessageEnd(base Event, raw json.RawMessage) (Event, bool, error) {
 // parseMessageUpdate routes a message_update line by its inner
 // assistantMessageEvent.type per §6.3's分流 table:
 //
-//	text_delta / text_end      → EventMessageUpdate (delta / content)
-//	thinking_delta / thinking_end → EventThinking (delta / content)
-//	toolcall_* / done / error   → ignored (tool_execution_* is authoritative)
+//	text_delta               → EventMessageUpdate (delta appended by bridge)
+//	text_end                 → IGNORED. Carries the whole block in `content`,
+//	                           but the text_delta events already streamed the
+//	                           full text; emitting it here doubled the reply
+//	                           (verified against agnes-2.0-flash: a single
+//	                           "pong" reply produced "pongpong").
+//	thinking_delta           → IGNORED. The bridge emits TypeThinking with
+//	                           Replace=true, which would clobber the zone with
+//	                           each partial; only thinking_end (full block) is
+//	                           emitted so the final trace is shown cleanly.
+//	thinking_end             → EventThinking (content = full thinking block;
+//	                           Replace=true in the bridge shows the whole block)
+//	toolcall_* / done / error → ignored (tool_execution_* is authoritative)
 func parseMessageUpdate(base Event, raw json.RawMessage) (Event, bool, error) {
 	if len(raw) == 0 {
 		return Event{}, false, nil
@@ -231,19 +249,15 @@ func parseMessageUpdate(base Event, raw json.RawMessage) (Event, bool, error) {
 		base.Text = inner.Delta
 		return base, true, nil
 	case "text_end":
-		// content holds the whole text block. Emit as a text update; the
-		// bridge's text accumulator is idempotent only if this arrives once
-		// per block, which is the observed shape.
-		base.Type = EventMessageUpdate
-		base.Text = inner.Content
-		return base, true, nil
+		// Redundant: the deltas already accumulated the full text. Emitting
+		// the whole-block content again would double the reply.
+		return Event{}, false, nil
 	case "thinking_delta":
-		base.Type = EventThinking
-		base.Text = inner.Delta
-		return base, true, nil
+		// Drop partials: the bridge uses Replace=true, so each partial would
+		// clobber the zone. thinking_end carries the definitive full block.
+		return Event{}, false, nil
 	case "thinking_end":
-		// content holds the whole thinking block; Replace=true in the bridge
-		// overwrites the running trace.
+		// Full thinking block; the bridge emits TypeThinking with Replace=true.
 		base.Type = EventThinking
 		base.Text = inner.Content
 		return base, true, nil

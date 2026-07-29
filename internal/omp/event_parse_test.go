@@ -69,15 +69,32 @@ func TestParseEvent_MessageUpdateText(t *testing.T) {
 	}
 }
 
-// TestParseEvent_MessageUpdateThinking verifies thinking_delta routes to
-// EventThinking.
-func TestParseEvent_MessageUpdateThinking(t *testing.T) {
-	ev := parseOne(t, `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"hm"}}`)
+// TestParseEvent_MessageUpdateThinkingEnd verifies thinking_end routes to
+// EventThinking carrying the full block content. (thinking_delta is IGNORED —
+// see TestParseEvent_MessageUpdateTextEndIgnored for the doubling rationale.)
+func TestParseEvent_MessageUpdateThinkingEnd(t *testing.T) {
+	ev := parseOne(t, `{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"the full trace"}}`)
 	if ev.Type != EventThinking {
 		t.Errorf("Type = %q, want %q", ev.Type, EventThinking)
 	}
-	if ev.Text != "hm" {
-		t.Errorf("Text = %q, want hm", ev.Text)
+	if ev.Text != "the full trace" {
+		t.Errorf("Text = %q, want the full block content", ev.Text)
+	}
+}
+
+// TestParseEvent_MessageUpdateTextEndIgnored verifies text_end is ignored:
+// it carries the whole block redundantly (the text_delta events already
+// streamed it), and emitting it again doubled the reply (verified against
+// agnes-2.0-flash). thinking_delta is ignored for the symmetric reason
+// (Replace=true would clobber the zone with each partial).
+func TestParseEvent_MessageUpdateTextEndIgnored(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"whole block"}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"partial"}}`,
+	} {
+		if _, ok, err := parseEvent(line); err != nil || ok {
+			t.Errorf("parseEvent(%q) → ok=%v err=%v, want ok=false err=nil", line, ok, err)
+		}
 	}
 }
 
@@ -166,15 +183,22 @@ func TestParseEvent_MessageEndStopReasonError(t *testing.T) {
 	}
 }
 
-// TestParseEvent_TurnIgnored verifies turn_start/turn_end are ignored.
+// TestParseEvent_TurnIgnored verifies turn_end is ignored (turn_start is NOT —
+// see TestParseEvent_TurnStartBoundary).
 func TestParseEvent_TurnIgnored(t *testing.T) {
-	for _, line := range []string{
-		`{"type":"turn_start"}`,
-		`{"type":"turn_end","toolResults":[]}`,
-	} {
-		if _, ok, err := parseEvent(line); err != nil || ok {
-			t.Errorf("parseEvent(%q) → ok=%v err=%v, want ok=false err=nil", line, ok, err)
-		}
+	if _, ok, err := parseEvent(`{"type":"turn_end","toolResults":[]}`); err != nil || ok {
+		t.Errorf("turn_end → ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+// TestParseEvent_TurnStartBoundary verifies turn_start yields EventTurnStart.
+// This is the per-round boundary the bridge resets the text accumulator on
+// (verified against agnes-2.0-flash: without it, a tool-call turn's round-1
+// inline-thinking preamble leaks into the reply).
+func TestParseEvent_TurnStartBoundary(t *testing.T) {
+	ev := parseOne(t, `{"type":"turn_start"}`)
+	if ev.Type != EventTurnStart {
+		t.Errorf("Type = %q, want %q", ev.Type, EventTurnStart)
 	}
 }
 

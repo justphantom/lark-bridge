@@ -85,18 +85,12 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		switch ev.Type {
 		case omp.EventAgentStart:
 			stepCount++
-			// A new agent round begins: discard any text accumulated in the
-			// previous round. omp emits one assistant text stream per agent
-			// round (the preamble before a tool call in round N, the final
-			// answer after the last tool call in round N+1); the reply must
-			// be only the terminal round's text.
-			//
-			// ⚠ Correctness of this reset depends on "a new agent_start
-			// discards the previous round's partial text", which is not yet
-			// verified against a successful multi-round sample (§A.3 only
-			// observed the failure-retry path). Listed as a Milestone 3
-			// verification item; revisit once a success sample is captured.
-			text.Reset()
+			// agent_start fires ONCE per turn (and once per auto_retry), NOT
+			// once per assistant round. The per-round text reset happens on
+			// EventTurnStart (verified against agnes-2.0-flash: a tool-call
+			// turn emits agent_start → turn_start #1 → … → turn_start #2 →
+			// …, and only resetting on turn_start discards round 1's
+			// inline-thinking preamble correctly).
 			if startTime.IsZero() {
 				startTime = time.Now()
 			}
@@ -109,6 +103,17 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				ChatID:   chatID,
 				Progress: &protocol.ProgressPayload{},
 			})
+		case omp.EventTurnStart:
+			// New assistant round begins: discard any text accumulated in the
+			// previous round. A tool-call turn streams one assistant message
+			// per round — round N's preamble (for agnes/glm: inline thinking
+			// text ending in a stray `</think>` before the toolcall) must not
+			// be concatenated onto round N+1's final answer. StripThinking
+			// cannot rescue this because OMP emits the closing `</think>`
+			// without a matching open tag; turn_start is the only clean
+			// boundary. (The first turn_start fires on an empty accumulator,
+			// so the reset is harmless there.)
+			text.Reset()
 		case omp.EventMessageUpdate:
 			text.WriteString(ev.Text)
 		case omp.EventMessageEnd:

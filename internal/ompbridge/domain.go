@@ -18,10 +18,6 @@ type promptResult struct {
 	// (no stdout event for IdleTimeout). Distinct from isCancelled so
 	// emitTerminal can show "响应超时" instead of the generic "已取消".
 	isIdleTimeout bool
-	// stale flags a turn whose error looks like a --resume against a session
-	// the CLI no longer has. runPrompt retries once with an empty SessionID
-	// when stale is set (§10.7).
-	stale bool
 
 	// Token breakdown accumulated across every role=assistant message_end
 	// (§7.3 EventMessageEnd case). agent_end carries no telemetry (§A.1), so

@@ -12,9 +12,21 @@ const (
 	// the binding so the next turn --resume continues the session).
 	EventSession = "session"
 	// EventAgentStart: a new agent round begins (one per turn, plus one per
-	// auto_retry). The bridge bumps stepCount and resets the assistant text
-	// accumulator. Corresponds to the outer `agent_start` line.
+	// auto_retry). The bridge bumps stepCount. Corresponds to the outer
+	// `agent_start` line. NOTE: agent_start fires ONCE per turn even on multi-
+	// round (tool-call) turns — the per-round boundary is EventTurnStart, not
+	// this event (verified against agnes-2.0-flash, §7.3 Milestone 3).
 	EventAgentStart = "agent_start"
+	// EventTurnStart: a new assistant turn begins (`turn_start`). This is the
+	// real per-round boundary: each tool-call round opens with a turn_start
+	// followed by a fresh assistant message. The bridge resets the assistant
+	// text accumulator here so the previous round's preamble (notably the
+	// inline-thinking text agnes/glm models emit before `</think>` ahead of a
+	// tool call) is discarded and only the final round's text becomes the
+	// reply. Verified empirically: without this reset the round-1 thinking
+	// preamble leaks into the reply (and StripThinking cannot remove it
+	// because OMP emits the closing `</think>` without a matching open tag).
+	EventTurnStart = "turn_start"
 	// EventAgentEnd: the terminal event for a turn (`agent_end`,
 	// isTerminal:true). Carries no telemetry in observed versions (§A.1),
 	// so usage comes from the accumulated message_end events instead.
