@@ -17,15 +17,28 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// confirmTimeout bounds how long a /deploy-force confirm card waits for the
-// user's click. It is shorter than the frontend's cardkit.InteractiveTimeout
-// (10m) so the goroutine releases before the card auto-expires; a human will
-// not take 5 minutes to click a confirm button.
-const confirmTimeout = 5 * time.Minute
+// confirmTimeout bounds how long a /deploy-some / /deploy-force picker waits
+// for the user's submission. It MUST be >= cardkit.InteractiveTimeout: the
+// picker card advertises that lifetime to the user ("⏳ 等待你的确认（10 分钟后
+// 自动失效）"), and if the backend gave up first a submission in the gap would
+// be silently dropped — the AnswerBroker slot would be gone, so Deliver
+// returns false and the deploy never runs while the card still looks alive.
+// Derived from the card's lifetime plus a buffer that absorbs the IPC
+// round-trip + clock skew, so the card expires before the wait does (a click
+// on an expired card is rejected by the frontend, not silently swallowed here).
+const confirmTimeout = cardkit.InteractiveTimeout + time.Minute
+
+// deployNoticeTimeout bounds a single deploy notice POST (the progress banner,
+// the busy-reject notice, each notifyWithRetry attempt). A picker's own wait
+// deadline is deliberately NOT reused for this: a submission near the
+// picker-timeout boundary would otherwise leave almost no budget for the
+// banner POST, and a failed banner used to strand h.running=true forever.
+const deployNoticeTimeout = 10 * time.Second
 
 // controlSender is the subset of *backendrpc.Client the handler needs. It
 // exists so tests can substitute a fake that captures Controls instead of
@@ -122,7 +135,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 
 	switch prompt {
 	case "/deploy":
-		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "make", h.deployArgs(false, nil), "部署")
+		return h.acquireAndRun(chatID, promptID, cardMsgID, "make", h.deployArgs(false, nil), "部署")
 	case "/deploy-some":
 		// /deploy-some pops a multi-select card; the deploy runs only after
 		// the user submits a non-empty subset, which becomes --services=<csv>.
@@ -135,9 +148,9 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	case "/pull":
 		// --ff-only: refuse to create a merge on divergence instead of
 		// leaving a conflicted working tree that would block later deploys.
-		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "git", []string{"pull", "--ff-only"}, "拉取")
+		return h.acquireAndRun(chatID, promptID, cardMsgID, "git", []string{"pull", "--ff-only"}, "拉取")
 	case "/push":
-		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "git", []string{"push"}, "推送")
+		return h.acquireAndRun(chatID, promptID, cardMsgID, "git", []string{"push"}, "推送")
 	case "/running":
 		// Read-only query; must NOT take the single-flight slot — a /running
 		// while a job is in progress should still answer.
@@ -178,19 +191,42 @@ func (h *Handler) deployArgs(force bool, services []string) []string {
 // success/error notice fires from the goroutine, likewise bound — and
 // carrying cardMsgID as UpdateMessageID so it patches the progress card by
 // raw message_id even if the job restarted the frontend in between.
-func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, cardMsgID, name string, args []string, label string) error {
+//
+// The notice POSTs use a self-derived short ctx (deployNoticeTimeout), NOT
+// the caller's ctx. /deploy-some / /deploy-force reach this from a picker-wait
+// ctx whose deadline shrinks as the user takes longer to submit; reusing it
+// would starve the banner POST near the timeout boundary. busy is NOT
+// returned as an error: a failed busy-notice was previously mislabelled by
+// callers (awaitDeploySome/awaitForceConfirm) as "部署失败". It is now logged
+// best-effort and the rejection returns nil.
+func (h *Handler) acquireAndRun(chatID, promptID, cardMsgID, name string, args []string, label string) error {
 	h.mu.Lock()
 	if h.running {
 		h.mu.Unlock()
 		h.logger.Info("job rejected: already running",
 			log.FieldChatID, chatID, "cmd", jobLabel(name, args))
-		return h.notify(ctx, chatID, promptID, cardMsgID, "warning", label+"进行中",
-			"已有一次操作正在执行，请等待其完成后再试。")
+		nctx, cancel := context.WithTimeout(context.Background(), deployNoticeTimeout)
+		defer cancel()
+		if err := h.notify(nctx, chatID, promptID, cardMsgID, "warning", label+"进行中",
+			"已有一次操作正在执行，请等待其完成后再试。"); err != nil {
+			h.logger.Warn("busy-reject notice failed",
+				log.FieldChatID, chatID, log.FieldError, err)
+		}
+		return nil
 	}
 	h.running = true
 	h.mu.Unlock()
 
-	if err := h.notifyProgress(ctx, chatID, promptID, "⏳ "+label+"执行中…"); err != nil {
+	progCtx, cancel := context.WithTimeout(context.Background(), deployNoticeTimeout)
+	defer cancel()
+	if err := h.notifyProgress(progCtx, chatID, promptID, "⏳ "+label+"执行中…"); err != nil {
+		// Roll back the slot: runJob never started, so the defer inside runJob
+		// that clears h.running will never run. Without this rollback a single
+		// failed banner POST would wedge single-flight forever (every later
+		// /deploy / /pull / /push rejected as "进行中").
+		h.mu.Lock()
+		h.running = false
+		h.mu.Unlock()
 		return err
 	}
 	// Track the job under jobWg BEFORE the goroutine starts so Close (which
@@ -271,7 +307,7 @@ func (h *Handler) runJob(chatID, promptID, cardMsgID, name string, args []string
 // notice to the command's card (see runJob).
 func (h *Handler) notifyWithRetry(chatID, promptID, cardMsgID, level, title, message string) {
 	for attempt := range 15 {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), deployNoticeTimeout)
 		err := h.notify(ctx, chatID, promptID, cardMsgID, level, title, message)
 		cancel()
 		if err == nil {

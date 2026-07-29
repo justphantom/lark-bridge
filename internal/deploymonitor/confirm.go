@@ -68,7 +68,7 @@ func (h *Handler) awaitForceConfirm(chatID, promptID, cardMsgID string, ch <-cha
 			h.notifyWithRetry(chatID, promptID, cardMsgID, "info", "已取消", "强制部署已取消，未执行任何操作。")
 			return
 		}
-		if err := h.acquireAndRun(confirmCtx, chatID, promptID, cardMsgID, "make", h.deployArgs(true, nil), "部署"); err != nil {
+		if err := h.acquireAndRun(chatID, promptID, cardMsgID, "make", h.deployArgs(true, nil), "部署"); err != nil {
 			h.notifyWithRetry(chatID, promptID, cardMsgID, "error", "部署失败", "启动部署失败："+err.Error())
 		}
 	case <-confirmCtx.Done():

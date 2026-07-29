@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -841,4 +842,83 @@ func TestHandleEvent_DeploySome_BusyOnSubmit(t *testing.T) {
 	close(release)
 	t.Fatalf("expected 进行中 notice on busy submit; calls=%d notices=%+v",
 		cmd.callCount(), rpc.snapshot())
+}
+
+// TestConfirmTimeoutCoversCardLifetime locks in the P1 fix: the picker card
+// advertises cardkit.InteractiveTimeout ("⏳ 等待你的确认（10 分钟后自动失效）"),
+// so the backend MUST wait at least that long. If confirmTimeout fell below
+// the card's lifetime, a submission in the gap would be silently dropped (the
+// AnswerBroker slot would already be gone).
+func TestConfirmTimeoutCoversCardLifetime(t *testing.T) {
+	if confirmTimeout < cardkit.InteractiveTimeout {
+		t.Errorf("confirmTimeout (%s) must be >= cardkit.InteractiveTimeout (%s); "+
+			"otherwise submissions between the two are silently dropped",
+			confirmTimeout, cardkit.InteractiveTimeout)
+	}
+}
+
+// TestAcquireAndRun_ProgressFailRollsBackSlot verifies the h.running rollback
+// when the progress banner POST fails. Without the rollback, runJob never
+// starts (so its defer that clears h.running never runs) and a single failed
+// banner POST would wedge single-flight forever — every later /deploy / /pull
+// / /push rejected as 进行中. The banner ctx is self-derived (P2), so a stale
+// picker-wait deadline can no longer trigger this, but a transport failure
+// still can; the rollback must hold in that case too.
+func TestAcquireAndRun_ProgressFailRollsBackSlot(t *testing.T) {
+	rpc := &fakeSender{notifyErr: errors.New("frontend 503")}
+	cmd := &fakeCommander{}
+	h := newHandler(rpc, cmd)
+
+	if err := h.acquireAndRun("chat", "p1", "card", "make", []string{"deploy"}, "部署"); err == nil {
+		t.Fatal("acquireAndRun must fail when the progress banner POST fails")
+	}
+	if h.running {
+		t.Fatal("h.running must roll back to false when the banner POST fails (else single-flight wedges)")
+	}
+
+	// The slot being free, a second acquireAndRun must proceed (not busy). Clear
+	// the transport error so the banner succeeds and the job actually runs.
+	rpc.notifyErr = nil
+	if err := h.acquireAndRun("chat", "p2", "card2", "make", []string{"deploy"}, "部署"); err != nil {
+		t.Fatalf("second acquireAndRun after rollback should proceed, got: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if cmd.callCount() == 0 {
+		t.Error("second acquireAndRun's job never ran — slot was not actually freed by the rollback")
+	}
+}
+
+// TestAcquireAndRun_BusyIsNotAnError locks in the P3 fix: a busy rejection
+// returns nil (the 进行中 notice was sent best-effort), NOT the notice's
+// error. Previously callers mislabelled a failed busy-notice as "部署失败".
+func TestAcquireAndRun_BusyIsNotAnError(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{cancelCh: make(chan struct{})}
+	h := newHandler(rpc, cmd)
+
+	// First call grabs the slot and blocks (job waits on cancelCh).
+	if err := h.acquireAndRun("chat", "p1", "card", "make", []string{"deploy"}, "部署"); err != nil {
+		t.Fatalf("first acquireAndRun: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if cmd.callCount() == 0 {
+		close(cmd.cancelCh)
+		t.Fatal("first job never started")
+	}
+
+	// Second call is rejected as busy; it must return nil even though the
+	// busy-notice transport may fail (here it succeeds).
+	if err := h.acquireAndRun("chat", "p2", "card2", "make", []string{"deploy"}, "部署"); err != nil {
+		t.Errorf("busy rejection must return nil (not surface to callers as 部署失败), got: %v", err)
+	}
+	if !h.running {
+		t.Error("h.running should still be true (first job still holds the slot)")
+	}
+	close(cmd.cancelCh)
 }

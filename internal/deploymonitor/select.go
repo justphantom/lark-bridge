@@ -87,7 +87,7 @@ func (h *Handler) awaitDeploySome(chatID, promptID, cardMsgID string, ch <-chan 
 				return
 			}
 		}
-		if err := h.acquireAndRun(selectCtx, chatID, promptID, cardMsgID, "make", h.deployArgs(false, ans.Choices), "部署"); err != nil {
+		if err := h.acquireAndRun(chatID, promptID, cardMsgID, "make", h.deployArgs(false, ans.Choices), "部署"); err != nil {
 			h.notifyWithRetry(chatID, promptID, cardMsgID, "error", "部署失败", "启动部署失败："+err.Error())
 		}
 	case <-selectCtx.Done():
