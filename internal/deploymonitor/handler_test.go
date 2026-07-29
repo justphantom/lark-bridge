@@ -602,3 +602,243 @@ func TestHandleEvent_DeployForce_CancelDoesNotRun(t *testing.T) {
 	t.Fatalf("expected 已取消 notice and zero make calls; calls=%d notices=%+v",
 		cmd.callCount(), rpc.snapshot())
 }
+
+// findQuestion returns the first TypeQuestion control captured, or nil.
+func findQuestion(ctrls []*protocol.Control) *protocol.Control {
+	for _, c := range ctrls {
+		if c.Type == protocol.TypeQuestion && c.Question != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// answerEventChoices simulates the frontend forwarding a multi-select question
+// card submission as a TypeAnswer carrying Choices (the multi-select path).
+func answerEventChoices(chatID, requestID string, choices []string) *protocol.Event {
+	return &protocol.Event{
+		Type: protocol.TypeAnswer,
+		Answer: &protocol.AnswerPayload{
+			ChatID:    chatID,
+			RequestID: requestID,
+			Choices:   choices,
+		},
+	}
+}
+
+// waitForQuestion polls captured controls for the /deploy-some picker card so
+// the test delivers its answer only after the await goroutine has registered.
+func waitForQuestion(rpc *fakeSender) *protocol.Control {
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if q := findQuestion(rpc.snapshot()); q != nil {
+			return q
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
+}
+
+// TestHandleEvent_DeploySome_EmitsMultiSelectCard pins the card shape: a
+// TypeQuestion with Multiple=true and the four business-service options.
+func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cs", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	q := waitForQuestion(rpc)
+	if q == nil {
+		t.Fatalf("expected a TypeQuestion picker card, got %+v", rpc.snapshot())
+	}
+	if q.Question.RequestID != "msg-cs" || q.PromptID != "msg-cs" {
+		t.Errorf("picker requestID/promptID = %q/%q, want msg-cs/msg-cs",
+			q.Question.RequestID, q.PromptID)
+	}
+	if len(q.Question.Questions) != 1 {
+		t.Fatalf("want one question item, got %d", len(q.Question.Questions))
+	}
+	item := q.Question.Questions[0]
+	if !item.Multiple {
+		t.Errorf("question item must be Multiple=true for /deploy-some")
+	}
+	if got := strings.Join(item.Options, ","); got != "feishu,claude,opencode,miniagent" {
+		t.Errorf("options = %q, want feishu,claude,opencode,miniagent", got)
+	}
+	// Deploy must NOT run before the user submits.
+	if cmd.callCount() > 0 {
+		t.Fatalf("deploy ran before submit: calls=%d", cmd.callCount())
+	}
+	// Release the picker goroutine so it does not leak for confirmTimeout.
+	_ = h.HandleEvent(context.Background(), answerEventChoices("cs", "msg-cs", nil))
+}
+
+// TestHandleEvent_DeploySome_MultiSelectRuns delivers a [feishu,claude] pick
+// and asserts make deploy ARGS=--services=feishu,claude actually runs.
+func TestHandleEvent_DeploySome_MultiSelectRuns(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cs", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	if waitForQuestion(rpc) == nil {
+		t.Fatalf("picker card never emitted")
+	}
+	if err := h.HandleEvent(context.Background(), answerEventChoices("cs", "msg-cs", []string{"feishu", "claude"})); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy ARGS=--services=feishu,claude" {
+		t.Errorf("submit should run `make deploy ARGS=--services=feishu,claude`, got %q", got)
+	}
+}
+
+// TestHandleEvent_DeploySome_EmptyCancel verifies an empty submission releases
+// the wait WITHOUT running make, emitting an "已取消" notice.
+func TestHandleEvent_DeploySome_EmptyCancel(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("ce", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	if waitForQuestion(rpc) == nil {
+		t.Fatalf("picker card never emitted")
+	}
+	if err := h.HandleEvent(context.Background(), answerEventChoices("ce", "msg-ce", nil)); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("empty submit must NOT run make, got calls=%d", cmd.callCount())
+		}
+		if strings.Contains(lastNoticeMessage(rpc.snapshot()), "已取消") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected 已取消 notice and zero make calls; calls=%d notices=%+v",
+		cmd.callCount(), rpc.snapshot())
+}
+
+// TestHandleEvent_DeploySome_UnknownService verifies an unknown service name
+// fails fast without running make.
+func TestHandleEvent_DeploySome_UnknownService(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cu", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	if waitForQuestion(rpc) == nil {
+		t.Fatalf("picker card never emitted")
+	}
+	if err := h.HandleEvent(context.Background(), answerEventChoices("cu", "msg-cu", []string{"feishu", "bogus"})); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("unknown-service submit must NOT run make, got calls=%d", cmd.callCount())
+		}
+		body := lastNoticeMessage(rpc.snapshot())
+		if strings.Contains(body, "未知服务") && strings.Contains(body, "bogus") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected 选择无效 notice mentioning bogus; calls=%d notices=%+v",
+		cmd.callCount(), rpc.snapshot())
+}
+
+// TestHandleEvent_DeploySome_WaitDoesNotOccupySlot verifies the picker wait
+// does NOT take the single-flight slot: while the card is pending h.running
+// stays false. The slot is only claimed on submit (see BusyOnSubmit).
+func TestHandleEvent_DeploySome_WaitDoesNotOccupySlot(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cw", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	if waitForQuestion(rpc) == nil {
+		t.Fatalf("picker card never emitted")
+	}
+	if h.running {
+		t.Errorf("picker wait must NOT occupy the single-flight slot")
+	}
+	// Cancel the picker so its goroutine exits cleanly instead of leaking.
+	if err := h.HandleEvent(context.Background(), answerEventChoices("cw", "msg-cw", nil)); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("cancel must not run make")
+		}
+		if strings.Contains(lastNoticeMessage(rpc.snapshot()), "已取消") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestHandleEvent_DeploySome_BusyOnSubmit verifies that submitting the picker
+// while another job holds the slot is rejected: the /deploy-some make does
+// NOT run and an "进行中" notice is emitted by acquireAndRun.
+func TestHandleEvent_DeploySome_BusyOnSubmit(t *testing.T) {
+	rpc := &fakeSender{}
+	release := make(chan struct{})
+	cmd := &fakeCommander{cancelCh: release}
+	h := newHandler(rpc, cmd)
+
+	// /deploy grabs the slot and blocks.
+	if err := h.HandleEvent(context.Background(), promptEvent("cb", "/deploy")); err != nil {
+		t.Fatalf("HandleEvent /deploy: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// /deploy-some picker waits (does not need the slot to show its card).
+	if err := h.HandleEvent(context.Background(), promptEvent("cb", "/deploy-some")); err != nil {
+		t.Fatalf("HandleEvent /deploy-some: %v", err)
+	}
+	if waitForQuestion(rpc) == nil {
+		t.Fatalf("picker card never emitted")
+	}
+	before := cmd.callCount()
+	if err := h.HandleEvent(context.Background(), answerEventChoices("cb", "msg-cb", []string{"feishu"})); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	// The submit must NOT start a second make; the busy notice must appear.
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > before {
+			close(release)
+			t.Fatalf("submit while busy must NOT run make, calls=%d", cmd.callCount())
+		}
+		for _, c := range rpc.snapshot() {
+			if c.Notice != nil && strings.Contains(c.Notice.Title, "进行中") {
+				close(release)
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+	t.Fatalf("expected 进行中 notice on busy submit; calls=%d notices=%+v",
+		cmd.callCount(), rpc.snapshot())
+}

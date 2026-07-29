@@ -122,7 +122,11 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 
 	switch prompt {
 	case "/deploy":
-		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "make", h.deployArgs(false), "部署")
+		return h.acquireAndRun(ctx, chatID, promptID, cardMsgID, "make", h.deployArgs(false, nil), "部署")
+	case "/deploy-some":
+		// /deploy-some pops a multi-select card; the deploy runs only after
+		// the user submits a non-empty subset, which becomes --services=<csv>.
+		return h.confirmAndDeploySome(ctx, chatID, promptID, cardMsgID)
 	case "/deploy-force":
 		// /deploy-force passes ARGS=--force to deploy.sh, skipping safety
 		// checks — a one-click destructive deploy is too easy to fire by
@@ -140,16 +144,25 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return h.handleRunning(ctx, chatID, promptID, cardMsgID)
 	default:
 		return h.notify(ctx, chatID, promptID, cardMsgID, "warning", "未知指令",
-			"本后端接受 /deploy、/deploy-force（需确认）、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
+			"本后端接受 /deploy（全量）、/deploy-some（多选服务子集）、/deploy-force（需确认）、/pull（git pull --ff-only）、/push（git push）或 /running（查看运行中会话）。")
 	}
 }
 
-// deployArgs assembles the make argument list for the deploy target. force
-// appends ARGS=--force, which deploy.sh reads as a `make deploy` override.
-func (h *Handler) deployArgs(force bool) []string {
+// deployArgs assembles the make argument list for the deploy target. services
+// (non-empty) appends ARGS=--services=<csv>; force appends --force inside the
+// same ARGS override. deploy.sh parses both via parse_args. The csv is what
+// /deploy-some's multi-select submits; /deploy passes nil for a full deploy.
+func (h *Handler) deployArgs(force bool, services []string) []string {
 	args := []string{h.cfg.DeployTarget}
+	var overrides []string
+	if len(services) > 0 {
+		overrides = append(overrides, "--services="+strings.Join(services, ","))
+	}
 	if force {
-		args = append(args, "ARGS=--force")
+		overrides = append(overrides, "--force")
+	}
+	if len(overrides) > 0 {
+		args = append(args, "ARGS="+strings.Join(overrides, " "))
 	}
 	return args
 }

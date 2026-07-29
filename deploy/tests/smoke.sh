@@ -64,6 +64,28 @@ out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
 check "deploy.sh sourceable: preflight fn" "$(head -1 <<<"$out")" "function"
 check "deploy.sh sourceable: main fn"      "$(tail -1 <<<"$out")" "function"
 
+# -- select_services: --services csv parsing (drives /deploy-some's ARGS) -----
+# Validates the comma-split deploy.sh applies to ARGS=--services=feishu,claude
+# arriving from /deploy-some. SERVICES_ARG must be set AFTER `source` because
+# deploy.sh's top level resets SERVICES_ARG="" (deploy.sh:50).
+csv_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
+    source deploy/deploy.sh
+    SERVICES_ARG="feishu,claude"
+    select_services >/dev/null
+    echo "${SELECTED[*]}"
+' 2>/dev/null)"
+check "select_services csv split" "$csv_out" "feishu claude"
+
+if (cd "$DEPLOY_DIR_SRC/.." && bash -c '
+    source deploy/deploy.sh
+    SERVICES_ARG="bogus"
+    select_services
+' 2>/dev/null); then
+    bad "select_services bogus should fail"
+else
+    ok "select_services bogus fails"
+fi
+
 echo
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
