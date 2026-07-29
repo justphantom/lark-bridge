@@ -31,6 +31,19 @@
     "list_cache_ttl":    3600
   },
 
+  "omp": {
+    "cli_path":            "omp",
+    "default_directory":   "${STATE_DIR}/omp",
+    "max_concurrent":      4,
+    "stream_history":      50,
+    "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
+    "approval_mode":       "write",
+    "thinking_level":      "auto",
+    "model_options":       ["claude-haiku", "claude-sonnet", "opus", "glm-5.2"],
+    "approval_options":    ["always-ask", "write", "yolo"],
+    "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+  },
+
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",
     "base_url":        "${MINIAGENT_BASE_URL}",

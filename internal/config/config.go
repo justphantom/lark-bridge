@@ -44,6 +44,7 @@ type Config struct {
 	// —— 后端运行时：各后端按需 ——
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
+	OMP           OMP           `json:"omp,omitempty"`            // omp-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 	StatusMonitor StatusMonitor `json:"status_monitor,omitempty"` // status-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
@@ -138,6 +139,48 @@ type Opencode struct {
 	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
 }
 
+// OMP holds settings for the local Oh My Pi (omp) CLI subprocess that acts
+// as the agent backend. The omp-back binary shells out to the `omp` binary
+// per turn via `omp -p --mode json` and reads an NDJSON event flow from
+// stdout. OMP's approval/thinking/model axes mirror claude's
+// permission/effort/model (there is no agent concept), so the picker
+// command set is /perm /thinking /model.
+type OMP struct {
+	// CLIPath is the path to the omp binary (default "omp").
+	CLIPath string `json:"cli_path,omitempty"`
+	// DefaultDirectory is the base dir for per-chat session working dirs.
+	DefaultDirectory string `json:"default_directory,omitempty"`
+	// MaxConcurrent caps parallel omp subprocesses (default 4).
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
+	// StreamHistory caps how many recent per-run raw NDJSON captures are
+	// kept under {state_dir}/streams. <=0/unset -> 50. The archive is
+	// best-effort and stores lines verbatim (no redaction).
+	StreamHistory int `json:"stream_history,omitempty"`
+	// AppendSystemPrompt is passed verbatim as --append-system-prompt.
+	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
+	// ApprovalMode is the default --approval-mode. Empty defaults to "write"
+	// (≈ claude acceptEdits): the CLI's "always-ask" mode prompts
+	// interactively, which stalls the non-interactive -p stream; "yolo"
+	// (≈ bypassPermissions) auto-executes dangerous tool calls and is left
+	// as an explicit operator opt-in.
+	ApprovalMode string `json:"approval_mode,omitempty"`
+	// ThinkingLevel is the default --thinking level (e.g. "auto"). Empty
+	// defaults to "auto".
+	ThinkingLevel string `json:"thinking_level,omitempty"`
+	// ModelOptions lists the models offered in the interactive /model picker
+	// card. nil/unset leaves the picker without a static list (the user can
+	// still type a custom model id). Model availability is deployment-
+	// dependent, so no default list is compiled in.
+	ModelOptions []string `json:"model_options,omitempty"`
+	// ApprovalOptions lists the modes offered in the interactive /perm
+	// picker card. nil/unset -> [always-ask, write, yolo].
+	ApprovalOptions []string `json:"approval_options,omitempty"`
+	// ThinkingOptions lists the levels offered in the interactive /thinking
+	// picker card. nil/unset -> [off, minimal, low, medium, high, xhigh,
+	// max, auto].
+	ThinkingOptions []string `json:"thinking_options,omitempty"`
+}
+
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which
 // receives /deploy prompts and runs `make <DeployTarget>` in ProjectRoot.
 type DeployMonitor struct {
@@ -196,6 +239,7 @@ type MiniAgent struct {
 type ComponentLogLevel struct {
 	Router        string `json:"router,omitempty"`
 	Opencode      string `json:"opencode,omitempty"`
+	Omp           string `json:"omp,omitempty"`
 	Feishu        string `json:"feishu,omitempty"`
 	Bridge        string `json:"bridge,omitempty"`
 	Dedup         string `json:"dedup,omitempty"`

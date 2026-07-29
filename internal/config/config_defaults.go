@@ -72,6 +72,40 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Opencode.ListCacheTTL == 0 {
 		cfg.Opencode.ListCacheTTL = 3600
 	}
+	// OMP CLI defaults. ApprovalMode defaults to "write" (≈ claude
+	// acceptEdits), NOT "yolo" (≈ bypassPermissions): the latter auto-executes
+	// dangerous tool calls without confirmation, which conflicts with the
+	// project's default safety posture (§12 risk table). Operators who want
+	// yolo must set it explicitly in config. ThinkingLevel defaults to "auto"
+	// so the CLI picks the level per model.
+	if cfg.OMP.CLIPath == "" {
+		cfg.OMP.CLIPath = "omp"
+	}
+	if cfg.OMP.MaxConcurrent == 0 {
+		cfg.OMP.MaxConcurrent = 4
+	}
+	if cfg.OMP.StreamHistory <= 0 {
+		cfg.OMP.StreamHistory = 50
+	}
+	if cfg.OMP.AppendSystemPrompt == "" {
+		cfg.OMP.AppendSystemPrompt = "你的回答应该简洁，通常不超过1000字"
+	}
+	if cfg.OMP.ApprovalMode == "" {
+		cfg.OMP.ApprovalMode = "write"
+	}
+	if cfg.OMP.ThinkingLevel == "" {
+		cfg.OMP.ThinkingLevel = "auto"
+	}
+	// ModelOptions defaults to nil: model availability is deployment-dependent
+	// (§A.1 observed claude-haiku 403, §A.3 observed glm-5.2 upstream 120s
+	// timeout), so no list is compiled in. config.example.json offers a
+	// suggested list; operators adjust per actually-available models.
+	if cfg.OMP.ApprovalOptions == nil {
+		cfg.OMP.ApprovalOptions = []string{"always-ask", "write", "yolo"}
+	}
+	if cfg.OMP.ThinkingOptions == nil {
+		cfg.OMP.ThinkingOptions = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
+	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}

@@ -58,6 +58,7 @@ func validate(cfg *Config) error {
 	for comp, level := range map[string]string{
 		"router":   cfg.ComponentLogLevels.Router,
 		"opencode": cfg.ComponentLogLevels.Opencode,
+		"omp":      cfg.ComponentLogLevels.Omp,
 		"feishu":   cfg.ComponentLogLevels.Feishu,
 		"bridge":   cfg.ComponentLogLevels.Bridge,
 		"dedup":    cfg.ComponentLogLevels.Dedup,
@@ -89,6 +90,22 @@ func validate(cfg *Config) error {
 	// so 0 reaching here can only be an explicit negative number.
 	if cfg.Opencode.MaxConcurrent < 1 {
 		return fmt.Errorf("opencode.max_concurrent must be >= 1, got %d", cfg.Opencode.MaxConcurrent)
+	}
+
+	// OMP CLI fields. applyDefaults always populates cfg.OMP (cli_path,
+	// approval_mode, thinking_level, max_concurrent, ...).
+	switch cfg.OMP.ApprovalMode {
+	case "always-ask", "write", "yolo", "":
+	default:
+		return fmt.Errorf("omp.approval_mode must be one of always-ask/write/yolo, got %q", cfg.OMP.ApprovalMode)
+	}
+	switch cfg.OMP.ThinkingLevel {
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto", "":
+	default:
+		return fmt.Errorf("omp.thinking_level must be one of off/minimal/low/medium/high/xhigh/max/auto, got %q", cfg.OMP.ThinkingLevel)
+	}
+	if cfg.OMP.MaxConcurrent < 1 {
+		return fmt.Errorf("omp.max_concurrent must be >= 1, got %d", cfg.OMP.MaxConcurrent)
 	}
 
 	// StateDir writability.
