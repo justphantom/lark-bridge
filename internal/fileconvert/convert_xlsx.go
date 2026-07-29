@@ -200,7 +200,11 @@ func (c *Converter) parseSheetByName(ctx context.Context, parts map[string]*zip.
 func writeXlsxSheetBody(buf *bytes.Buffer, sheet string, res *sheetResult, perr error, chartCount int) {
 	switch {
 	case perr != nil:
-		fmt.Fprintf(buf, "<!-- Sheet %q: 读取失败，未提取: %v -->\n\n", sheet, perr)
+		// perr may carry attacker-controlled text (a zip part name / rels
+		// target from the workbook); sanitise before embedding in an HTML
+		// comment so a "-->" in the message cannot close it early and inject
+		// markdown into the file the agent later Reads.
+		fmt.Fprintf(buf, "<!-- Sheet %q: 读取失败，未提取: %s -->\n\n", sheet, sanitizeMetaText(perr.Error()))
 		return
 	case len(res.rows) == 0 && chartCount > 0:
 		fmt.Fprintf(buf, "<!-- Sheet %q: 含 %d 个图表（chart），未提取 -->\n\n", sheet, chartCount)

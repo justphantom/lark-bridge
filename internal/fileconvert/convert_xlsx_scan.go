@@ -124,15 +124,44 @@ func relsPathFor(partPath string) string {
 	return path.Join(dir, "_rels", path.Base(partPath)+".rels")
 }
 
-// maxZipPartSize caps one decompressed zip entry. The caller bounds only the
-// COMPRESSED upload size, so without this a zip bomb (a few MB packing a GB
-// of XML) would be swallowed whole by io.ReadAll and OOM the process. Parts
-// past the cap are treated as broken — the per-part degradation contract
-// already covers broken parts.
+// maxZipPartSize caps one decompressed DATA zip entry (worksheet bodies,
+// sharedStrings, document.xml). The caller bounds only the COMPRESSED upload
+// size, so without this a zip bomb (a few MB packing a GB of XML) would be
+// swallowed whole by io.ReadAll and OOM the process. Parts past the cap are
+// treated as broken — the per-part degradation contract already covers broken
+// parts.
 const maxZipPartSize = 256 << 20 // 256 MiB
 
-// readZipPart reads one zip entry fully into memory, bounded by
-// maxZipPartSize. These metadata parts are usually tiny (kilobytes), so
+// maxZipMetaPartSize is the tighter ceiling for metadata parts that are tiny
+// by spec: relationship lists (*.rels), the workbook sheet index, and the
+// presentation slide-id list. These are the parts the relationship-chain
+// walker reads repeatedly, so capping them far below the data ceiling shrinks
+// the zip-bomb amplification window (a hostile .rels packed towards 256 MiB
+// gains nothing legitimate — real ones are kilobytes) without ever rejecting
+// a real document.
+const maxZipMetaPartSize = 8 << 20 // 8 MiB
+
+// zipPartLimit picks the decompressed byte ceiling for a part by name. Only
+// always-small metadata parts get the tight cap; anything that can
+// legitimately carry bulk (document/worksheet/sharedStrings/styles/numbering/
+// footnotes) keeps the generous data-part ceiling.
+func zipPartLimit(name string) int64 {
+	if strings.HasSuffix(name, ".rels") {
+		return maxZipMetaPartSize
+	}
+	base := name
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		base = name[i+1:]
+	}
+	switch base {
+	case "workbook.xml", "presentation.xml":
+		return maxZipMetaPartSize
+	}
+	return maxZipPartSize
+}
+
+// readZipPart reads one zip entry fully into memory, bounded by a part-type
+// specific cap (zipPartLimit). These parts are usually tiny (kilobytes), so
 // buffering the whole entry is cheaper than streaming.
 func readZipPart(zf *zip.File) ([]byte, error) {
 	rc, err := zf.Open()
@@ -140,12 +169,13 @@ func readZipPart(zf *zip.File) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(io.LimitReader(rc, maxZipPartSize+1))
+	limit := zipPartLimit(zf.Name)
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxZipPartSize {
-		return nil, fmt.Errorf("zip part %s exceeds %d MiB decompressed", zf.Name, maxZipPartSize>>20)
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("zip part %s exceeds %d MiB decompressed", zf.Name, limit>>20)
 	}
 	return data, nil
 }

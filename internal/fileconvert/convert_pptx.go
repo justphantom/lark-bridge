@@ -70,7 +70,7 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 		}
 		data, rerr := readZipPart(zf)
 		if rerr != nil {
-			fmt.Fprintf(bw, "<!-- Slide %d: 读取失败，未提取: %v -->\n\n", i+1, rerr)
+			fmt.Fprintf(bw, "<!-- Slide %d: 读取失败，未提取: %s -->\n\n", i+1, sanitizeMetaText(rerr.Error()))
 			bw.WriteString("---\n\n")
 			continue
 		}
@@ -95,9 +95,11 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 
 	if _, err := bw.WriteTo(out); err != nil {
 		_ = out.Close()
+		_ = os.Remove(dstPath)
 		return fmt.Errorf("fileconvert: write pptx dst: %w", err)
 	}
 	if err := out.Close(); err != nil {
+		_ = os.Remove(dstPath)
 		return fmt.Errorf("fileconvert: close pptx dst: %w", err)
 	}
 	return nil

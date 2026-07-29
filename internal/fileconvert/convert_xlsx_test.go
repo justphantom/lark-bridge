@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -754,5 +755,46 @@ func TestConvertXlsx_MaxSheetsNote(t *testing.T) {
 	_, meta := convertXlsxTo(t, New(Options{XlsxMaxSheets: 1}), src)
 	if !strings.Contains(meta.Note, "2 sheets") || !strings.Contains(meta.Note, "first 1") {
 		t.Errorf("truncation note missing: %q", meta.Note)
+	}
+}
+
+// TestWriteXlsxSheetBody_ErrorSanitised locks in R1: a parse error carrying
+// attacker-controlled text (a zip part name / rels target with "-->") must be
+// sanitised before embedding in the HTML comment, so it cannot close the
+// comment early and inject markdown into the file the agent later Reads.
+func TestWriteXlsxSheetBody_ErrorSanitised(t *testing.T) {
+	var buf bytes.Buffer
+	hostile := fmt.Errorf("worksheet part xl/ev-->il/sheet1.xml missing")
+	writeXlsxSheetBody(&buf, "ok", nil, hostile, 0)
+	got := buf.String()
+	if strings.Contains(got, "ev-->il") {
+		t.Errorf("error text not sanitised; \"-->\" can close the HTML comment early:\n%s", got)
+	}
+	if !strings.Contains(got, "读取失败") || !strings.HasSuffix(strings.TrimSpace(got), "-->") {
+		t.Errorf("placeholder shape changed:\n%s", got)
+	}
+}
+
+// TestZipPartLimit locks in R2: metadata parts (*.rels, workbook/presentation
+// indexes) get the tight cap; data-bearing parts keep the generous ceiling.
+func TestZipPartLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		want int64
+	}{
+		{"xl/_rels/workbook.xml.rels", maxZipMetaPartSize},
+		{"xl/workbook.xml", maxZipMetaPartSize},
+		{"ppt/presentation.xml", maxZipMetaPartSize},
+		{"ppt/_rels/presentation.xml.rels", maxZipMetaPartSize},
+		{"word/_rels/document.xml.rels", maxZipMetaPartSize},
+		{"xl/worksheets/sheet1.xml", maxZipPartSize},
+		{"xl/sharedStrings.xml", maxZipPartSize},
+		{"word/document.xml", maxZipPartSize},
+		{"xl/styles.xml", maxZipPartSize},
+	}
+	for _, tc := range cases {
+		if got := zipPartLimit(tc.name); got != tc.want {
+			t.Errorf("zipPartLimit(%q) = %d, want %d", tc.name, got, tc.want)
+		}
 	}
 }

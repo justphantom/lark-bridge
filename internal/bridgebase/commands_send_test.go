@@ -248,10 +248,10 @@ func TestSafeJoin_RootIsSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behaviour on Windows differs; EvalSymlinks needs privileges")
 	}
-	real := t.TempDir()
-	must(t, os.WriteFile(filepath.Join(real, "f.txt"), []byte("x"), 0o600))
+	realDir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(realDir, "f.txt"), []byte("x"), 0o600))
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realDir, link); err != nil {
 		t.Skipf("symlink create failed (privileges?): %v", err)
 	}
 	// A bound directory that is itself a symlink must not false-positive

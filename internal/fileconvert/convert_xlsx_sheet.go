@@ -57,7 +57,11 @@ func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtInde
 	defer func() {
 		if r := recover(); r != nil {
 			res = nil
-			if r == errSheetTooSparse {
+			// errSheetTooSparse is panic'd unwrapped, but recover() may also
+			// surface a runtime error or a string; guard the errors.Is with a
+			// type assertion so a non-error panic routes to the generic branch
+			// (and the linter stays satisfied — errorlint forbids == on error).
+			if e, ok := r.(error); ok && errors.Is(e, errSheetTooSparse) {
 				err = errSheetTooSparse
 			} else {
 				err = fmt.Errorf("parser panic: %v", r)

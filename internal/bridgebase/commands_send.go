@@ -169,7 +169,7 @@ func ReadFilePayload(chatID, fileName, root, path, updateMessageID string) (*pro
 	if err != nil {
 		return nil, fmt.Errorf("文件不存在或无权访问：%s", fileName)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, MaxSendFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("读取文件失败：%s", fileName)

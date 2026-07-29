@@ -385,7 +385,11 @@ func TestWSClient_PingSent(t *testing.T) {
 	bsrv := bootstrapServerNoConfig(t, fs.URL())
 	defer bsrv.Close()
 	wc := newWSClient("a", "s", bsrv.URL, bsrv.Client(), Lifecycle{}, nil)
-	wc.cfg = clientConfig{PingInterval: 200 * time.Millisecond}
+	// A short PingInterval makes the first ping fire soon after the connection
+	// comes up, and a generous waitUntil window absorbs the bootstrap→dial→
+	// handshake startup latency under -race / scheduler load. The previous
+	// 200ms+3s pairing was tight enough to flake under contention.
+	wc.cfg = clientConfig{PingInterval: 50 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = wc.Start(ctx) }()
@@ -398,7 +402,7 @@ func TestWSClient_PingSent(t *testing.T) {
 			}
 		}
 		return false
-	}, 3*time.Second) {
+	}, 5*time.Second) {
 		t.Fatal("client did not send a ping frame")
 	}
 }
