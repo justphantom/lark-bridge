@@ -505,6 +505,21 @@ func TestControlRoundTrip(t *testing.T) {
 - `go test -race ./...` 是 CI/Makefile `test` 目标的默认跑法（`Makefile:78-79`）。
 - `_test.go` 文件对 `noctx/gosec/errcheck/gocheckcompilerdirectives` 放宽（`.golangci.yml:184-189`）：测试桩用 `os.WriteFile`、假 SSE server、硬编码 `sk-test` 等是预期行为。
 
+### 8.7 测试专用导出 API 白名单
+个别导出符号生产代码不调用、仅测试使用（`deadcode` 会报）。**决策：保留导出现状**（已逐一审阅，移入 `export_test.go` 收口对当前调用点无收益且增加跨包测试阻力），以下为显式白名单，新增前须先评估能否改用未导出 + 同包测试：
+
+| 符号 | 位置 | 调用分布 | 保留理由 |
+|------|------|---------|---------|
+| `backendrpc.ConnectWithHTTPClient` | `backendrpc/client.go` | 跨包（feishufront 测试） | 跨包测试注入自定义 `http.Client` 起假 SSE server |
+| `bridgebase.AnswerBroker.PendingIDs` | `bridgebase/answer.go` | 跨包（claudebridge / opencodebridge 测试） | 跨包测试取待选槽 requestID（picker 刚注册的槽） |
+| `lark/websocket.ComputeAccept` | `lark/websocket/dial.go` | 跨包（lark/ws 测试） | 假 test server 构造 `Sec-WebSocket-Accept` 握手回执 |
+| `claude.ParseEvent` | `claude/event_parse.go` | 跨包（claudebridge 测试）+ 同包 | 跨包回放抓包的真实 stream-json 行 |
+| `opencode.ParseEvent` | `opencode/event_parse.go` | 跨包（opencodebridge 测试）+ 同包 | 跨包测试构造 `Event`（同构理由） |
+| `feishufront.TurnManager.TurnsByBackend` | `feishufront/turn.go` | 仅同包测试 | 零生产调用（原服务 `OnBackendOffline` 清理，该路径已废弃）；保留作外部诊断接口 |
+| `usage.Store.Snapshot` | `usage/usage.go` | 仅同包测试 | 同包测试断言用量快照；保留供未来跨包诊断/CLI 复用 |
+
+> 触发于 `docs/repo-audit-2026-07-29.md` §1.2 的「保留 vs 收口」决策项；本节即该决策的持久化记录（`docs/` 在 `.gitignore` 内，不入版本控制）。后两项（仅同包使用）可在后续维护中改为未导出收口，不阻塞发版。
+
 ---
 
 ## 9. Makefile 与开发流程

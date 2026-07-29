@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-29
+
+v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、配置字段
+`pandoc_path` 删除）+ 多个 feat，按 semver 升 minor。**发版顺序**：先 feishu-front
+后各 backend（deploy.sh 顺序天然满足）。升级前请从配置中移除 `pandoc_path`。
+
 ### Added
 
 - **pptx / xlsx 文件上传 → markdown 管线**：feishu-front 现可接收群聊上传的
@@ -57,6 +63,16 @@
   - 安全：后端 `SafeJoin` 强制目标在 `Binding.Directory` 内（Abs/Clean +
     EvalSymlinks + Rel 越界检查），单文件 30 MiB 上限。
 
+- **`/send` 目录浏览器原地 PATCH 选择卡**：跳转目录时不再每层堆一张 standalone
+  picker 卡，改为从第 2 轮起对同一张卡原地 PATCH。根因：首轮 `AskAndWait` 的
+  takeover 调用了 `turns.Finish`，第 2 轮+ takeover 失败回退 `SendCard`。
+  - 协议新增 `QuestionPayload.UpdateMessageID`（omitempty，前端老版本忽略）：
+    指示前端对既有卡做一次延迟 PATCH（过飞书 ~3-5s 点击处理窗口）。
+  - `bridgebase.AskCardUpdate`（+ `Core.AskCardUpdate` 接收端形式）：从第 2 轮
+    起刷新上一轮 picker 卡；miniagent 镜像同款流程（无 `Core`，独立 `askCardUpdate`）。
+  - 前端 `sendInteractiveCard` 走延迟 PATCH；`sendInteractive` 驱逐上一轮
+    `requestID` 绑定，新轮独占卡片，无 cache/timer 泄漏（`TurnManager.RequestIDsByMessageID`）。
+
 ### Notes
 
 - /send：miniagent 因无 `bridgebase.Core` 且命令系统独立（map + 不同 emit/
@@ -66,6 +82,11 @@
 - `nilerr` 约束：`handleFileControl` 把 decode/send 错误处理放进无返回值的
   `deliverFile`，避免 `if err != nil { return nil }` 模式触发 nilerr——失败已作为
   notice 反馈，返回 nil 表示 TypeFile 已"handled"。
+
+- 集成规格文档：新增 `CLAUDE_INTEGRATION_SPEC.md` / `OPENCODE_INTEGRATION_SPEC.md`
+  （仓库根），描述外部 agent CLI 接入 lark-bridge 桥层的协议契约、事件流、斜杠
+  命令对齐要求，供后续桥接新 agent（或回归对比）参考。纯文档，无代码影响。
+  本批同时刷新了 `ARCHITECTURE.md` / `CODING_STANDARDS.md` 的包/接口统计数字。
 
 - chart 检测：excelize v2 无 chart 读取 API（设计 §5.4 所述 `GetCharts()`
   实际不存在），改用 `archive/zip` 扫描 `xl/` 关系链（workbook→worksheet→
@@ -122,6 +143,19 @@
     依赖。
 
 ### Fixed
+
+- **`/deploy-some` picker 卡与后端超时不一致（静默吞提交）**：多选卡文案承诺
+  10 分钟失效，后端 `confirmTimeout` 只等 5 分钟，5–10 分钟窗口内的提交因
+  `AnswerBroker` 槽已取消而被静默丢弃。`confirmTimeout` 改为单源派生
+  `cardkit.InteractiveTimeout + time.Minute`（leaf pkg 引入无环依赖，杜绝再次
+  漂移）。审查见 `docs/deploy-some-review-2026-07-29.md` P1。`/deploy-force`
+  共用 `confirmTimeout`，同步受益。
+  - 附带 P2：`acquireAndRun` 不再吃 caller 的 picker-wait ctx，notify/notifyProgress
+    自派 `deployNoticeTimeout`（10s），避免 deadline 临近时 banner POST 因 ctx
+    超时失败导致任务不启动；banner POST 失败时回滚 `h.running`（否则 runJob 不
+    启动、其清理 defer 不跑，单飞会永久卡死）。
+  - 附带 P3：busy 拒绝返回 nil，busy-notice 失败 best-effort 记日志，不再被
+    调用方误标为「部署失败：启动部署失败」。
 
 - stale-session 检测改为经 `claude.IsStaleSession` 单点判定：
   `finalizeResult` 在 error result 上置 `promptResult.stale`，

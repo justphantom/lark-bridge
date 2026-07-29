@@ -79,7 +79,7 @@ lark-bridge/
 │   │   ├── websocket/        #   RFC 6455 WS 客户端
 │   │   └── ws/               #   帧编解码 + 重连 + 分片重组
 │   ├── feishu/               # lark.Client 的业务封装层（Bot/IncomingMessage）
-│   ├── feishufront/          # ★ 前端核心（9502 行，最大包）
+│   ├── feishufront/          # ★ 前端核心（9692 行，最大包）
 │   │   ├── cardkit/          #   飞书卡片元素 schema
 │   │   └── renderer/         #   progress/result/interactive 渲染器
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
@@ -148,7 +148,7 @@ lark-bridge/
 
 按规模（行数）降序，共 24 个包。
 
-### 5.1 `feishufront/`（9502 行，32 文件）——前端核心
+### 5.1 `feishufront/`（9692 行，32 文件）——前端核心
 
 前端的所有业务逻辑集中地，是体量最大的包。
 
@@ -272,7 +272,7 @@ v1.3.0 的核心改动。
 
 **纯结构 + Validate，无业务逻辑**（`README.md:24`）。
 - `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ 4 类 payload（Prompt/Answer/Abort/Ping）。`PromptPayload.HasFrontendOverride`（:68）是安全护栏。
-- `protocol_control.go`：**`Control`**（:6，后端→前端，POST）+ 12 类 payload。
+- `protocol_control.go`：**`Control`**（:6，后端→前端，POST）+ 14 类 payload（v1.6.0 新增 `TypeFile`：后端→前端投递文件；`QuestionPayload.UpdateMessageID`：原地刷新既有 picker 卡）。
 - `protocol_validate.go`：enum 校验（todo.status/priority、notice.level 等，`CHANGELOG.md:166`）。
 - `status.go`：`StatusSnapshot`（/v1/status 响应）。
 
@@ -286,7 +286,7 @@ v1.3.0 的核心改动。
 
 | 包 | 行数 | 职责 |
 |---|---|---|
-| `fileconvert/` | 4579 | docx/xlsx/pptx → Markdown 提取（流式 zip/XML 解析，GFM 表格，宽表降 CSV） |
+| `fileconvert/` | 5110 | docx/xlsx/pptx → Markdown 提取（流式 zip/XML 解析，GFM 表格，宽表降 CSV） |
 | `cmdutil/` | 596 | 斜杠命令公共框架：`Spec`（:45）、`Result`（:34）、`Timeout=15s`（:22）、纯 helper（错误配对、设置变更日志、/help 渲染） |
 | `usage/` | 548 | 每 session token/cost 累计，`Delta`（:42），atomicwrite 持久化，TTL 7d + 定期 prune（:31-38） |
 | `log/` | 303 | slog 封装 + 统一字段名常量（`FieldChatID` 等，:42+）+ `LevelVar` 支持热更 |
