@@ -4,6 +4,7 @@
 /opencode*
 .env
 .zcode/
+.codegraph/
 claude.log
 opencode.log
 /miniagent-back
