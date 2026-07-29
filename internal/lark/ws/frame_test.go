@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+// appendHeader returns h with a new key/value pair appended. Test-local
+// helper (production builds Headers literals directly).
+func appendHeader(h Headers, key, value string) Headers {
+	return append(h, Header{Key: key, Value: value})
+}
+
 // goldenFrames is a set of representative frames spanning the field
 // combinations lark actually emits: control ping, data event (small payload),
 // data card (larger payload + headers), and frames with every optional field

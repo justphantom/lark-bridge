@@ -240,20 +240,3 @@ func validateSessionDirPath(dir string) error {
 	}
 	return nil
 }
-
-// validateSettingsPath guards the --settings file path against directory
-// traversal. An empty path is allowed (clear semantics). A path that, after
-// filepath.Clean, still starts with ".." would escape upward relative to the
-// working directory (e.g. "../../etc/passwd") and is rejected. Absolute paths
-// and paths that Clean to a non-escaping relative are accepted; the Claude CLI
-// itself reports a missing or malformed file on the next run.
-func validateSettingsPath(path string) error {
-	if path == "" {
-		return nil
-	}
-	cleaned := filepath.Clean(path)
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return fmt.Errorf("路径包含非法的目录穿越（..）：%s", path)
-	}
-	return nil
-}

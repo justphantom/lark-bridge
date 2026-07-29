@@ -67,7 +67,7 @@ lark-bridge/
 │   ├── miniagent-back/
 │   ├── deploy-monitor/
 │   └── status-monitor/
-├── internal/                    # ~21 个包，禁止跨项目引用
+├── internal/                    # ~24 个包，禁止跨项目引用
 │   ├── atomicwrite/             # 单一职责小包
 │   ├── backendrpc/              # 后端→前端 IPC 客户端
 │   ├── bridgebase/              # 三桥（claude/opencode/miniagent）共享脊柱
@@ -111,7 +111,7 @@ lark-bridge/
 - 单词：`log`、`config`、`router`、`protocol`、`usage`、`strutil`
 - 复合（仍全小写连写）：`atomicwrite`、`bridgebase`、`cmdutil`、`backendrpc`、`streamarchive`、`deploymonitor`、`miniclient`、`feishufront`、`claudebridge`
 
-依据：`internal/` 下全部 21 个目录。
+依据：`internal/` 下全部 24 个目录。
 
 ### 3.2 文件命名
 **snake_case**，常带语义前缀做分组：
@@ -132,7 +132,7 @@ lark-bridge/
 type httpDoer interface { Do(*http.Request) (*http.Response, error) }
 // internal/lark/ws/session.go:187
 type frameWriter interface { ... }
-// internal/bridgebase/gitjob.go:28
+// internal/bridgebase/git_runner.go:28
 type GitCommander interface { Run(ctx, dir, name string, args ...string) ([]byte, error) }
 // internal/deploymonitor/handler.go:33,40,48
 type controlSender interface { ... }
@@ -142,7 +142,7 @@ type Commander      interface { ... }
 type Handler     interface { ... }
 type ChatRouter  interface { ... }
 ```
-共 12 个 interface，绝大多数 `-er` 结尾。
+共 20 个 interface，绝大多数 `-er` 结尾。
 
 ### 3.5 常量命名
 PascalCase（导出）/ camelCase（未导出），**分组放进 `const ( ... )` 块**：
@@ -316,7 +316,7 @@ logger.Error("...", "error", err)   // 应用 log.FieldError
 
 ### 5.4 便捷函数
 - `log.NewFromConfig(level, output, format, component)`：4 个 main 共用（`logger.go:90-103`），消除重复样板。
-- `log.Nop()`：测试专用空 logger；构造函数对 `nil` logger 自动替换为 Nop（`bridgebase.NewCore:136-138`、`gitjob.go:62-64`）。
+- `log.Nop()`：测试专用空 logger；构造函数对 `nil` logger 自动替换为 Nop（`bridgebase.NewCore:136-138`、`git_runner.go:62-64`）。
 - `log.LogOperation(logger, name, fn)`：包裹一段操作，自动计时 + 成功/失败两态分别记一条（`logger.go:159-176`）——失败时**只记 Error 一条**，不先记 Info 再记 Error 制造噪音（注释 `logger.go:164-166` 明示）。
 
 ### 5.5 脱敏
@@ -376,7 +376,7 @@ type Core struct { ... }
 
 ### 6.3 语言约定
 - **代码注释 / godoc / commit message / 变量名 / 错误消息**：**英文**。
-- **用户可见文案**（飞书卡片正文、notice、slash 命令回复）：**中文**。例：`"本群已有一次 "+label+" 操作正在执行，请等待其完成后再试。"`（`gitjob.go:84`）；`.golangci.yml:95-97` 明确禁用 `gosmopolitan`，理由即这些中文字符串是「intentional user-facing copy」。
+- **用户可见文案**（飞书卡片正文、notice、slash 命令回复）：**中文**。例：`"本群已有一次 "+label+" 操作正在执行，请等待其完成后再试。"`（`git_runner.go:84`）；`.golangci.yml:95-97` 明确禁用 `gosmopolitan`，理由即这些中文字符串是「intentional user-facing copy」。
 - **config 结构分组注释**：中文分隔线 `// —— 飞书凭证：feishu-front 用；后端忽略 ——`（`config.go:31,37,44,50,60`）。
 - **少量函数级中文注释**：在 `internal/log/logger.go:114`（`handlerOpts` 共享选项）、`Makefile:34,51`（中文 build 注释）等位置出现。
 
@@ -406,7 +406,7 @@ type Core struct { ... }
   t *tokenManager   // internal/lark/auth.go
   e *APIError       // internal/lark/auth.go:150
   n *nopHandler     // internal/log/logger.go:152
-  r *GitRunner      // internal/bridgebase/gitjob.go:79
+  r *GitRunner      // internal/bridgebase/git_runner.go:79
   d *Duration       // internal/config/config.go:196
   ```
 - **值 vs 指针**：默认指针；小值/只读访问器用值（`func (d Duration) MarshalJSON`）。`recvcheck` 强制同一类型不混用。
@@ -439,7 +439,7 @@ import (
 ### 7.6 并发原语
 - **goroutine 必须有退出路径**：`context.Context` 驱动 + `select { case <-ctx.Done(): return }`（`feishu-front/main.go:173-194`）。
 - **panic-safe goroutine** 一律走 `GoSafe`（§4.5）。
-- **per-chat 单飞**用 `sync.Mutex.TryLock`（`gitjob.go:81`）；进程级单飞用 `sync.Once`（`core.go:250`）。
+- **per-chat 单飞**用 `sync.Mutex.TryLock`（`git_runner.go:81`）；进程级单飞用 `sync.Once`（`core.go:250`）。
 - **embedded mutex 禁用**：`embeddedstructfieldcheck: forbid-mutex: true`（`.golangci.yml:162-165`），避免外层类型暴露 `Lock/Unlock`。
 
 ---

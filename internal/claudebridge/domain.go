@@ -20,6 +20,7 @@ type promptResult struct {
 	costUSD       float64 // from the result event's total_cost_usd
 	steps         int     // num_turns from the result event
 	isCancelled   bool    // true if the turn was cancelled via /session-abort
+	stale         bool    // true if err is the CLI's "session no longer exists" (claude.IsStaleSession)
 
 	// Token breakdown from the result event, fed to the usage store.
 	// contextTokens above mirrors input+output for the result card; these

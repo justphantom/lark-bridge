@@ -29,14 +29,6 @@ func ReplyToID(ctx context.Context) string {
 	return id
 }
 
-// WithReplyToID stamps id onto ctx as the ReplyToID value. It is the inverse
-// of ReplyToID, exported so tests (and other callers that drive a command
-// handler directly rather than via Dispatch) can construct a ctx equivalent
-// to what Dispatch would have supplied.
-func WithReplyToID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, replyToIDKey{}, id)
-}
-
 // CommandSpec is one slash command's metadata plus its handler. The display
 // metadata (Name/Summary/Args/Title/Level) is shared infrastructure from
 // cmdutil.Spec; the Handler binds the bridge's own handler type.

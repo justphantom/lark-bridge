@@ -72,12 +72,6 @@ func (h Headers) GetInt(key string) int {
 	return n
 }
 
-// appendHeader returns h with a new key/value pair appended. Functional form
-// avoids a pointer-receiver/value-receiver mix on the Headers slice type.
-func appendHeader(h Headers, key, value string) Headers {
-	return append(h, Header{Key: key, Value: value})
-}
-
 // NewPingFrame builds a control-frame ping (Method=control, type=ping) seeded
 // with the connection's service id. The server replies with a pong that may
 // carry an updated ClientConfig in its payload.

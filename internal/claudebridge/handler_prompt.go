@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/claude"
@@ -95,8 +94,9 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 
 	// Stale-session recovery: if --resume hit a session the CLI no longer
 	// knows, drop the binding's sessionID and retry once with a fresh session.
-	if result.err != nil && binding.SessionID != "" &&
-		strings.Contains(result.err.Error(), "No conversation found") &&
+	// The stale match itself is centralised in claude.IsStaleSession (set on
+	// the result by finalizeResult) so a CLI rewording fixes in one place.
+	if result.err != nil && result.stale && binding.SessionID != "" &&
 		ctx.Err() == nil {
 		h.Logger.Warn("stale claude session, retrying without --resume",
 			log.FieldChatID, chatID,

@@ -79,7 +79,7 @@ lark-bridge/
 │   │   ├── websocket/        #   RFC 6455 WS 客户端
 │   │   └── ws/               #   帧编解码 + 重连 + 分片重组
 │   ├── feishu/               # lark.Client 的业务封装层（Bot/IncomingMessage）
-│   ├── feishufront/          # ★ 前端核心（9824 行，最大包）
+│   ├── feishufront/          # ★ 前端核心（9502 行，最大包）
 │   │   ├── cardkit/          #   飞书卡片元素 schema
 │   │   └── renderer/         #   progress/result/interactive 渲染器
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
@@ -91,13 +91,16 @@ lark-bridge/
 │   ├── miniagent/            # miniagent-back 业务逻辑
 │   ├── miniclient/           # miniagent CLI 子进程封装
 │   ├── deploymonitor/        # /deploy 单飞执行器
+│   ├── statusmonitor/        # 周期性总览卡数据组装（push-only）
+│   ├── hostmetrics/          # 主机 CPU/内存/磁盘采样
+│   ├── fileconvert/          # docx/xlsx/pptx → Markdown 提取
 │   ├── usage/                # 每 session token/cost 累计
 │   ├── streamarchive/        # 每轮 CLI stdout 原文落盘（带保留期）
 │   ├── cmdutil/              # 斜杠命令公共框架
 │   ├── atomicwrite/          # tmp+fsync+rename 原子写
 │   └── strutil/              # 截断/脱敏/环境变量工具
 ├── deploy/                   # 部署脚本 + 配置模板 + systemd 示例
-├── docs/                     # 6 篇设计/审查文档（.gitignore，本地）
+├── docs/                     # 15 篇设计/审查文档（.gitignore，本地）
 ├── scripts/                  # openapi_to_md.py（外部工具，.gitignore）
 ├── bin/                      # 编译产物（gitignore）
 ├── config.example.json       # 配置模板
@@ -145,7 +148,7 @@ lark-bridge/
 
 按规模（行数）降序，共 24 个包。
 
-### 5.1 `feishufront/`（9824 行，36 文件）——前端核心
+### 5.1 `feishufront/`（9502 行，32 文件）——前端核心
 
 前端的所有业务逻辑集中地，是体量最大的包。
 
@@ -217,11 +220,11 @@ v1.3.0 的核心改动。
 | `answer.go` | **`AnswerBroker`**：问答/权限卡的请求-应答配对（RequestID → chan） |
 | `interactive.go` | `AskPermission`/`AskQuestion` 共享逻辑 |
 | `commands.go` | 斜杠命令 dispatcher（绑定 `*Handler`） |
-| `gitjob.go` + `git_job.go` + `gosafe.go` | `/pull` `/push` 每 chat 单飞，`GitRunner.AcquireAndRun` |
+| `git_job.go` + `git_runner.go` + `gosafe.go` | `/pull` `/push` 每 chat 单飞，`GitRunner.AcquireAndRun` |
 | `running.go` | `/running` 命令 |
 | `toolinput.go` | 工具输入摘要（`SummarizeToolInput`） |
 | `throttle.go` | 节流 |
-| `dircache.go` | `/cd` 工作目录缓存 |
+| `dir_cache.go` | `/cd` 工作目录缓存 |
 
 ### 5.5 `opencode/`（2188 行）与 `claude/`（2170 行）——CLI 驱动层
 
@@ -283,12 +286,15 @@ v1.3.0 的核心改动。
 
 | 包 | 行数 | 职责 |
 |---|---|---|
+| `fileconvert/` | 4579 | docx/xlsx/pptx → Markdown 提取（流式 zip/XML 解析，GFM 表格，宽表降 CSV） |
 | `cmdutil/` | 596 | 斜杠命令公共框架：`Spec`（:45）、`Result`（:34）、`Timeout=15s`（:22）、纯 helper（错误配对、设置变更日志、/help 渲染） |
 | `usage/` | 548 | 每 session token/cost 累计，`Delta`（:42），atomicwrite 持久化，TTL 7d + 定期 prune（:31-38） |
 | `log/` | 303 | slog 封装 + 统一字段名常量（`FieldChatID` 等，:42+）+ `LevelVar` 支持热更 |
 | `streamarchive/` | 288 | 每 turn stdout 落盘到 `{state_dir}/streams/{backend}/`，文件名时间序，保留期裁剪。**含敏感数据**（`README.md:54` 警告） |
 | `atomicwrite/` | 172 | tmp+fsync+rename+dirfsync（:31），崩溃安全。`open_flags_unix.go`/`_other.go` 平台分叉（O_NOFOLLOW） |
-| `strutil/` | 149 | `Truncate`（rune 边界，:14）、`redact.go`（脱敏）、`env.go`（`EnvVarPattern`，config 与 strutil 共享避免漂移，config.go:26） |
+| `strutil/` | 209 | `Truncate`（rune 边界，:14）、`redact.go`（脱敏）、`env.go`（`EnvVarPattern`，config 与 strutil 共享避免漂移，config.go:26） |
+| `hostmetrics/` | 359 | 主机 CPU/内存/磁盘采样（/proc 解析），供 statusmonitor 总览卡 |
+| `statusmonitor/` | 261 | 周期性总览卡数据组装（push-only，无 IPC 入站） |
 
 ---
 

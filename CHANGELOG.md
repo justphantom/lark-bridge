@@ -121,6 +121,28 @@
   - 测试 fixture 重写为内联 XML（与 docx/pptx 同模式），CI 无任何第三方
     依赖。
 
+### Fixed
+
+- stale-session 检测改为经 `claude.IsStaleSession` 单点判定：
+  `finalizeResult` 在 error result 上置 `promptResult.stale`，
+  `handlePrompt` 不再手撸 `strings.Contains(err, "No conversation found")`
+  ——字符串匹配集中在 `internal/claude` 内，CLI 改文案时单点修复。
+
+### Removed
+
+- 死代码清理（全仓 deadcode + 交叉核对，审查记录见
+  `docs/repo-audit-2026-07-29.md`）：
+  - `bridgebase.WithReplyToID`（零调用，`Dispatch` 直接 `context.WithValue`）
+  - `bridgebase/throttle.go` 整文件（`ControlThrottle`/`TextThrottle`，
+    生产无调用方，连同其测试）
+  - `claudebridge.validateSettingsPath`（/settings 禁自定义路径后失去
+    调用点，连同其测试）
+  - `lark/ws.appendHeader`（仅测试使用，移入 `frame_test.go`）
+  - 空 `go.sum`（模块零第三方依赖）
+- 文件名统一为 snake_case：`gitjob.go`→`git_runner.go`、
+  `dircache.go`→`dir_cache.go`（测试文件同步），与 CODING_STANDARDS
+  §3.2 及兄弟包 `dir_cache.go` 对齐。
+
 ## [1.5.0] - 2026-07-28
 
 v1.4.0 之后的增量完善。无协议层破坏性改动：`PromptPayload.CardMessageID` 为

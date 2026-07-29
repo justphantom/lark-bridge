@@ -414,6 +414,7 @@ func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, m
 			msg = "Claude 返回错误"
 		}
 		result.err = errors.New(msg)
+		result.stale = claude.IsStaleSession(ev)
 		return result
 	}
 

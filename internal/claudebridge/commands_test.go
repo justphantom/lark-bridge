@@ -367,34 +367,3 @@ func TestListWorkspaceDirs_EmptyRoot(t *testing.T) {
 		t.Fatal("expected error for empty workspaceRoot")
 	}
 }
-
-// TestValidateSettingsPath covers the traversal guard: empty and normal paths
-// pass; paths that Clean to an upward escape are rejected.
-func TestValidateSettingsPath(t *testing.T) {
-	cases := []struct {
-		name    string
-		path    string
-		wantErr bool
-	}{
-		{"empty allowed (clear)", "", false},
-		{"absolute normal", "/home/u/.claude/k.json", false},
-		{"absolute with .. that cleans down", "/a/../b.json", false},
-		{"relative normal", "k.json", false},
-		{"relative subpath", "sub/k.json", false},
-		{"relative ..", "..", true},
-		{"relative ../", "../etc/passwd", true},
-		{"deep ../", "../../etc/shadow", true},
-		{"leading dotdot slash", "../../../root", true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			err := validateSettingsPath(c.path)
-			if c.wantErr && err == nil {
-				t.Errorf("validateSettingsPath(%q) expected error, got nil", c.path)
-			}
-			if !c.wantErr && err != nil {
-				t.Errorf("validateSettingsPath(%q) unexpected error: %v", c.path, err)
-			}
-		})
-	}
-}
