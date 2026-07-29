@@ -1,19 +1,20 @@
 # lark-bridge
 
-把飞书群聊桥接到本地编程 agent（Claude Code / opencode / miniagent）。采用 **1 前端 + N 后端** 的拆分架构，前端通过 SSE/POST 与后端通信，飞书群里一个会话绑定一个后端。
+把飞书群聊桥接到本地编程 agent（Claude Code / opencode / omp / miniagent）。采用 **1 前端 + N 后端** 的拆分架构，前端通过 SSE/POST 与后端通信，飞书群里一个会话绑定一个后端。
 
 ## 架构
 
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-          ┌───────────┬───────────┬─────────────────────┐    ┌──────────────┐
-     claude-back  opencode-back  miniagent-back   deploy-monitor   status-monitor
-     (Claude CLI) (opencode CLI) (LLM API 直调)  (make deploy)    (状态总览)
+        ┌──────────┬──────────┬──────────┬────────────────┐    ┌──────────────┐
+   claude-back opencode-back omp-back  miniagent-back  deploy-monitor  status-monitor
+   (Claude CLI)(opencode CLI)(omp CLI) (LLM API 直调)  (make deploy)   (状态总览)
 ```
 
 - `feishu-front`：持有飞书 WebSocket 机器人，IPC 服务（SSE + Control POST），chatID→后端路由，分发器（消息→Prompt 事件，Control→卡片）。
-- `claude-back` / `opencode-back`：每个 prompt fork 一次对应 CLI 子进程。
+- `claude-back` / `opencode-back` / `omp-back`：每个 prompt fork 一次对应 CLI 子进程。
+- `omp-back`：每个 prompt fork 一次 `omp -p --mode json` 子进程（对接 Oh My Pi CLI，对接规范见 `OMP_INTEGRATION_SPEC.md`）。
 - `miniagent-back`：每个 prompt fork 一次 miniagent 二进制（自带 ReAct 循环与 LLM 调用）。
 - `deploy-monitor`：收到 `/deploy`、`/pull`、`/push` 在项目根执行 `make`，单飞（single-flight），结果回执。**独立部署**，避免「部署脚本管自己的触发者」循环依赖。
 - `status-monitor`：每 N 秒（`status_monitor.interval`，默认 60s）向绑定的每个群推送一张总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。**独立部署**，push-only。
@@ -29,6 +30,7 @@
 - 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
 - claude-back：`/running` `/session-list` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/send` `/pull` `/push` `/help`。
 - opencode-back：`/running` `/session-new` `/session-abort` `/session-del` `/session-list` `/session-use` `/session-clean` `/current` `/model` `/agent` `/cd` `/send` `/pull` `/push` `/help`。
+- omp-back：`/running` `/session-new` `/session-abort` `/session-del` `/current` `/model` `/perm` `/thinking` `/cd` `/send` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/models` `/cd` `/send` `/pull` `/push` `/running` `/session-abort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/deploy-some` `/pull` `/push` `/running`。
 - status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。
@@ -36,7 +38,7 @@
 ## 构建
 
 ```bash
-make build      # 产物在 bin/：6 个二进制，git 版本号注入
+make build      # 产物在 bin/：7 个二进制，git 版本号注入
 make test       # build-check + vet + go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -s -w .
@@ -74,7 +76,7 @@ systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](dep
 
 ## 目录约定
 
-- `cmd/`：6 个二进制的入口（feishu-front、claude-back、opencode-back、miniagent-back、deploy-monitor、status-monitor）。
-- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
+- `cmd/`：7 个二进制的入口（feishu-front、claude-back、opencode-back、omp-back、miniagent-back、deploy-monitor、status-monitor）。
+- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `opencode` `opencodebridge` `omp` `ompbridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

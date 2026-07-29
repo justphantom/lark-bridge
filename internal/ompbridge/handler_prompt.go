@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -12,11 +11,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/router"
 	"github.com/justphantom/lark-bridge/internal/streamarchive"
 )
-
-// cancelNoticeTimeout bounds the fresh context used to emit a fallback notice
-// when the prompt ctx is already cancelled. Used by runPrompt's panic recover;
-// the terminal emit itself uses bridgebase.CancelNoticeTimeout via Core.
-const cancelNoticeTimeout = 5 * time.Second
 
 // runPrompt drives one omp turn for chatID: it starts an `omp` CLI subprocess,
 // streams its events, and emits the terminal control. The `session` header's

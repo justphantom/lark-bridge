@@ -31,11 +31,14 @@ const (
 	// isTerminal:true). Carries no telemetry in observed versions (§A.1),
 	// so usage comes from the accumulated message_end events instead.
 	EventAgentEnd = "agent_end"
-	// EventMessageUpdate: an assistant text delta. Only emitted for
-	// assistantMessageEvent.type text_delta / text_end (the delta or content
-	// field). toolcall_* deltas are dropped here (tool_execution_* events
-	// are the authoritative source); done/error are dropped (terminal is
-	// decided by message_end/agent_end).
+	// EventMessageUpdate: an assistant text delta. Emitted ONLY for
+	// assistantMessageEvent.type text_delta (the `delta` field). text_end is
+	// intentionally dropped: it carries the whole block in `content`, but the
+	// text_delta events already streamed the full text, so emitting it here
+	// doubled the reply (verified against agnes-2.0-flash: a single "pong"
+	// reply produced "pongpong"). toolcall_* deltas are dropped here
+	// (tool_execution_* events are the authoritative source); done/error are
+	// dropped (terminal is decided by message_end/agent_end).
 	EventMessageUpdate = "message_update"
 	// EventMessageEnd: a message completed. Usage (input/output/cacheRead/
 	// cacheWrite/cost) is carried ONLY on role=assistant message_end events
@@ -43,9 +46,12 @@ const (
 	// assistant ones. message_start's usage is always zero (§A.6) and
 	// ignored.
 	EventMessageEnd = "message_end"
-	// EventThinking: an assistant thinking delta. Emitted for
-	// assistantMessageEvent.type thinking_delta / thinking_end. The bridge
-	// emits TypeThinking with Replace=true (claude/opencode parity).
+	// EventThinking: an assistant thinking block. Emitted ONLY for
+	// assistantMessageEvent.type thinking_end (the full block in `content`).
+	// thinking_delta is intentionally dropped: the bridge emits TypeThinking
+	// with Replace=true, so each partial delta would clobber the zone into an
+	// unreadable wall; only the definitive thinking_end block is emitted so
+	// the final trace shows cleanly (claude/opencode parity).
 	EventThinking = "thinking_delta"
 	// EventToolStart: a tool invocation begins (`tool_execution_start` with
 	// toolCallId/toolName/args/intent). The bridge emits TypeToolUse.

@@ -2,6 +2,7 @@ package ompbridge
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
@@ -151,6 +152,17 @@ func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult
 	if err != nil {
 		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
+	}
+	// Defensive: the picker card lists h.approvalOptions, and
+	// isSettableApprovalMode is normally a superset of those, but an operator
+	// can misconfigure approval_options to hold a value the CLI's
+	// --approval-mode rejects. Persisting it would break the next omp run; reject
+	// here (mirroring the /perm direct-arg path) and patch the picker card so
+	// the user sees why nothing changed.
+	if !isSettableApprovalMode(choice) {
+		h.EmitCardUpdateLogged(chatID, messageID, "error", "选择无效",
+			fmt.Sprintf("未知审批模式 %q；可选 always-ask | write | yolo", choice))
+		return commandResult{Handled: true}
 	}
 	old := oldMode
 	if old == "" {

@@ -3,7 +3,6 @@ package claudebridge
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/claude"
@@ -12,11 +11,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/streamarchive"
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
-
-// cancelNoticeTimeout bounds the fresh context used to emit a fallback notice
-// when the prompt ctx is already cancelled. Used by runPrompt's panic recover;
-// the terminal emit itself uses bridgebase.CancelNoticeTimeout via Core.
-const cancelNoticeTimeout = 5 * time.Second
 
 // runPrompt drives one Claude turn for chatID: it starts a `claude` CLI
 // subprocess, streams its events, and emits the terminal control. The

@@ -193,6 +193,56 @@ func TestBuildCommand_EmptyCLIPathErrors(t *testing.T) {
 	}
 }
 
+// TestBuildCommand_RejectsInvalidApproval verifies buildCommand defends the
+// exported RunOptions against an illegal --approval-mode value, even though
+// the slash-command + config-validate gates already reject it upstream. Empty
+// is valid (omits the flag); a bogus value fails fast with an attributable
+// error instead of omp exiting 2 on a bad flag.
+func TestBuildCommand_RejectsInvalidApproval(t *testing.T) {
+	c := New(Options{CLIPath: "omp", Logger: log.Nop()})
+	for _, bad := range []string{"unsafe", "ASK", "default", "bypassPermissions"} {
+		if _, err := c.buildCommand(context.Background(), RunOptions{
+			Prompt: "hi", ApprovalMode: bad, ThinkingLevel: "auto",
+		}); err == nil {
+			t.Errorf("expected error for approval_mode=%q, got nil", bad)
+		}
+	}
+	// Valid values (including the claude-name aliases the bridge maps before
+	// reaching here — but the client itself only accepts omp-native values).
+	for _, ok := range []string{"always-ask", "write", "yolo"} {
+		if _, err := c.buildCommand(context.Background(), RunOptions{
+			Prompt: "hi", ApprovalMode: ok, ThinkingLevel: "auto",
+		}); err != nil {
+			t.Errorf("unexpected error for approval_mode=%q: %v", ok, err)
+		}
+	}
+	// Empty is valid (flag omitted at a higher layer's discretion).
+	if _, err := c.buildCommand(context.Background(), RunOptions{Prompt: "hi"}); err != nil {
+		t.Errorf("unexpected error for empty approval_mode: %v", err)
+	}
+}
+
+// TestBuildCommand_RejectsInvalidThinking verifies the same defensive check
+// for --thinking. Guards against drift between config_validate.go's accepted
+// set and the client's accepted set.
+func TestBuildCommand_RejectsInvalidThinking(t *testing.T) {
+	c := New(Options{CLIPath: "omp", Logger: log.Nop()})
+	for _, bad := range []string{"ultra", "HIGH", "extended", "medium-high"} {
+		if _, err := c.buildCommand(context.Background(), RunOptions{
+			Prompt: "hi", ApprovalMode: "write", ThinkingLevel: bad,
+		}); err == nil {
+			t.Errorf("expected error for thinking_level=%q, got nil", bad)
+		}
+	}
+	for _, ok := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"} {
+		if _, err := c.buildCommand(context.Background(), RunOptions{
+			Prompt: "hi", ApprovalMode: "write", ThinkingLevel: ok,
+		}); err != nil {
+			t.Errorf("unexpected error for thinking_level=%q: %v", ok, err)
+		}
+	}
+}
+
 // TestNew_DefaultsCLIPath verifies the "omp" default when Options.CLIPath is
 // empty, so main.go can construct without a config-supplied path.
 func TestNew_DefaultsCLIPath(t *testing.T) {

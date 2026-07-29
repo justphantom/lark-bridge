@@ -21,6 +21,31 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
+// validApprovalModes / validThinkingLevels are the accepted --approval-mode /
+// --thinking value sets, mirrored from config.OMP validation
+// (config_validate.go) and the slash-command setters (commands_config.go).
+// buildCommand defends the exported RunOptions struct: upstream (slash commands
+// + config validate) already rejects illegal values, but RunOptions can be
+// constructed directly by tests or future code, and an illegal flag would make
+// omp exit 2 with a CLI-level error that is hard to attribute back to the
+// client. Keep these in sync with config_validate.go / commands_config.go.
+var validApprovalModes = map[string]struct{}{
+	"always-ask": {},
+	"write":      {},
+	"yolo":       {},
+}
+
+var validThinkingLevels = map[string]struct{}{
+	"off":     {},
+	"minimal": {},
+	"low":     {},
+	"medium":  {},
+	"high":    {},
+	"xhigh":   {},
+	"max":     {},
+	"auto":    {},
+}
+
 // readyTimeout bounds the `omp --version` health check performed by IsReady.
 // §A.5 observed omp/17.1.8 returns `omp --version` quickly, so a short budget
 // fails fast on a missing/broken CLI without flirting with systemd's
@@ -184,6 +209,21 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, error) {
 	if c.cliPath == "" {
 		return nil, errors.New("omp: cli_path is empty")
+	}
+	// Defensive enum validation: RunOptions is exported, so a caller can bypass
+	// the slash-command / config-validate gates and hand in an illegal value.
+	// Fail fast with an attributable error instead of letting omp exit 2 on a
+	// bad --approval-mode / --thinking flag. Empty values are valid (they fall
+	// back to defaults at a higher layer; here they simply omit the flag).
+	if opts.ApprovalMode != "" {
+		if _, ok := validApprovalModes[opts.ApprovalMode]; !ok {
+			return nil, fmt.Errorf("omp: invalid approval_mode %q (want one of always-ask/write/yolo)", opts.ApprovalMode)
+		}
+	}
+	if opts.ThinkingLevel != "" {
+		if _, ok := validThinkingLevels[opts.ThinkingLevel]; !ok {
+			return nil, fmt.Errorf("omp: invalid thinking_level %q (want one of off/minimal/low/medium/high/xhigh/max/auto)", opts.ThinkingLevel)
+		}
 	}
 	args := []string{
 		"-p",

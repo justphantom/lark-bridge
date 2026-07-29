@@ -11,16 +11,16 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// trackMax atomically updates *max to cur when cur is larger. Avoids the
-// read-modify-write race a naive "if cur > max { max = cur }" pattern
+// trackMax atomically updates *mx to cur when cur is larger. Avoids the
+// read-modify-write race a naive "if cur > mx { mx = cur }" pattern
 // introduces under -race.
-func trackMax(max *int32, cur int32) {
+func trackMax(mx *int32, cur int32) {
 	for {
-		old := atomic.LoadInt32(max)
+		old := atomic.LoadInt32(mx)
 		if cur <= old {
 			return
 		}
-		if atomic.CompareAndSwapInt32(max, old, cur) {
+		if atomic.CompareAndSwapInt32(mx, old, cur) {
 			return
 		}
 	}
@@ -42,18 +42,16 @@ func TestSingleFlightJobRunner_GlobalRejectsConcurrent(t *testing.T) {
 		return []byte("ok"), nil
 	}
 	var acquireWg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		jobWg.Add(1)
 		acquireWg.Add(1)
 		go func(i int) {
 			defer acquireWg.Done()
-			// If Acquire rejects, we never spawn a job — balance jobWg so
-			// the wait below does not hang.
-			if !r.Acquire("chat-"+string(rune('a'+i)), "test", job, nil,
-				func(level, title, body string) { jobWg.Done() }) {
-				// Reject callback fires synchronously inside Acquire, so the
-				// Done() above already balanced jobWg.
-			}
+			// Acquire registers the job and, on reject, fires the 4th-arg
+			// callback synchronously to balance jobWg — so the bool return
+			// needs no extra handling here.
+			_ = r.Acquire("chat-"+string(rune('a'+i)), "test", job, nil,
+				func(level, title, body string) { jobWg.Done() })
 		}(i)
 	}
 	acquireWg.Wait()

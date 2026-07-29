@@ -163,7 +163,7 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 		}
 	}
 	rpc.SetLogger(rpcLogger)
-	defer rpc.Close()
+	defer func() { _ = rpc.Close() }()
 
 	h, err := r.BuildHandler(rr, rpc, cfg, base)
 	if err != nil {

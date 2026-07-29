@@ -2,6 +2,7 @@ package bridgebase
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
@@ -92,11 +93,25 @@ func MakeEnumPicker[H any](c *Core, cfg EnumPickerConfig, acc EnumPickerAccessor
 
 // runEnumPicker drives the interactive selection. allowCustom=false so the
 // picker restricts selection to the configured options.
+//
+// The choice is re-checked against cfg.Valid before the router mutation: the
+// card lists cfg.Options, and Valid is normally a superset of Options, but an
+// operator can misconfigure Options to hold a value Valid rejects (e.g. an
+// omp approval_options entry that is not a legal --approval-mode). Persisting
+// such a choice would make the next CLI run fail at flag parse. Rejecting here
+// mirrors the direct-pin path (line ~84) and keeps the binding clean; the
+// picker card is patched in place with an error so the user sees why nothing
+// changed. cfg.Valid == nil (clear path has none) skips the check.
 func runEnumPicker[H any](c *Core, h H, chatID, replyToID string, cfg EnumPickerConfig, acc EnumPickerAccessors[H], oldDisplay string) cmdutil.Result {
 	choice, messageID, err := c.AskAndWait(chatID, replyToID, cfg.FieldLabel, "选择"+cfg.FieldLabel, StaticOptions(cfg.Options), false)
 	if err != nil {
 		c.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return cmdutil.Result{Body: err.Error(), Handled: true}
+	}
+	if cfg.Valid != nil && !cfg.Valid(choice) {
+		c.EmitCardUpdateLogged(chatID, messageID, "error", "选择无效",
+			fmt.Sprintf("未知%s %q；%s", cfg.FieldLabel, choice, cfg.ErrorHint))
+		return cmdutil.Result{Handled: true}
 	}
 	acc.Set(h, chatID, choice)
 	res := cmdutil.ChangeResult(cfg.FieldLabel, oldDisplay, choice, "下次提问生效。")
