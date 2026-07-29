@@ -8,8 +8,8 @@
 //     Go parser in convert_docx.go (archive/zip + encoding/xml; L1+ scope:
 //     headings, inline emphasis, lists, tables, hyperlinks, footnotes).
 //   - .pptx — converted by the pure Go extractor in convert_pptx.go.
-//   - .xlsx — converted via ConvertXlsx (excelize; C-paradigm metadata
-//     return, office-extract-design.md §3.2).
+//   - .xlsx — converted via ConvertXlsx (pure Go parser in convert_xlsx.go;
+//     C-paradigm metadata return, office-extract-design.md §3.2).
 //   - .md / .markdown — copied verbatim.
 //   - .txt — copied verbatim with a .md extension so the agent treats it as
 //     Markdown when reading.

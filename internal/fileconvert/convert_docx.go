@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,14 @@ import (
 // subprocess could, but a hostile docx (deep nesting, millions of empty
 // paragraphs) could still pin the dispatcher goroutine without a budget.
 const docxCtxCheckInterval = 64
+
+// maxListLevel caps the list indentation level (OOXML allows 0-8); a hostile
+// ilvl attribute cannot become an unbounded strings.Repeat indent.
+const maxListLevel = 8
+
+// maxGridSpan caps a table cell's column span; a hostile gridSpan cannot pad
+// a row with millions of empty strings.
+const maxGridSpan = 64
 
 // convertDocx renders a .docx file into GFM Markdown in-process (L1+ scope:
 // headings, inline emphasis, lists, tables, hyperlinks, footnotes —
@@ -289,7 +298,9 @@ func (p *docParser) start(se xml.StartElement) {
 		}
 	case "ilvl":
 		if p.inP && p.hasNumPr {
-			p.ilvl = atoiSafe(attrW(se, "val"))
+			// Clamp to the OOXML maximum of 9 levels: a hostile ilvl would
+			// otherwise become an unbounded strings.Repeat indent.
+			p.ilvl = min(atoiSafe(attrW(se, "val")), maxListLevel)
 		}
 	case "r":
 		p.inR = true
@@ -387,7 +398,9 @@ func (p *docParser) start(se xml.StartElement) {
 	case "gridSpan":
 		if p.inTc {
 			if n := atoiSafe(attrW(se, "val")); n > 1 {
-				p.gridSpan = n
+				// Clamp: a hostile gridSpan would otherwise pad the row with
+				// millions of empty strings (memory-amplification DoS).
+				p.gridSpan = min(n, maxGridSpan)
 			}
 		}
 	case "vMerge":
@@ -518,13 +531,20 @@ func (p *docParser) appendSeg(s segment) {
 }
 
 // atoiSafe parses a non-negative int attribute, returning 0 on any garbage.
+// An overflowing digit string also yields 0 (treated as garbage) — wrapping
+// into a negative would turn a hostile attribute into a slice index or a
+// strings.Repeat count panic.
 func atoiSafe(s string) int {
 	n := 0
 	for i := range len(s) {
 		if s[i] < '0' || s[i] > '9' {
 			return 0
 		}
-		n = n*10 + int(s[i]-'0')
+		d := int(s[i] - '0')
+		if n > (math.MaxInt-d)/10 {
+			return 0
+		}
+		n = n*10 + d
 	}
 	return n
 }

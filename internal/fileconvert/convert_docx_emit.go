@@ -88,16 +88,18 @@ func (p *docParser) emitBodyParagraph(text string) {
 		return
 	}
 
-	// Code paragraph (decision Q7): raw text into a fenced block.
+	// Code paragraph (decision Q7): raw text into a fenced block. The fence
+	// length adapts to the content so a ``` inside the code cannot break out.
 	if text != "" && p.styles.isCodeStyle(p.pStyle) {
 		p.closeList()
-		p.bw.WriteString("```\n")
 		raw := plainSegments(p.segs)
+		fence := gfmFence(raw)
+		p.bw.WriteString(fence + "\n")
 		p.bw.WriteString(raw)
 		if !strings.HasSuffix(raw, "\n") {
 			p.bw.WriteByte('\n')
 		}
-		p.bw.WriteString("```\n\n")
+		p.bw.WriteString(fence + "\n\n")
 		return
 	}
 
@@ -128,7 +130,7 @@ func (p *docParser) emitBodyParagraph(text string) {
 	case isList && text != "":
 		marker, ok := p.list.marker(p.numbering, numID, ilvl)
 		if !ok {
-			marker = strings.Repeat("  ", ilvl) + "- "
+			marker = strings.Repeat("  ", min(ilvl, maxListLevel)) + "- "
 			p.missingNumPr++
 		}
 		p.bw.WriteString(marker + escapeLeading(text) + "\n")
@@ -216,16 +218,27 @@ func (p *docParser) closeList() {
 
 // escapeLeading backslash-escapes text that GFM would misread as a block
 // construct when it opens a plain paragraph or list item: "#"/">" headings
-// and quotes, "- "/"+" bullets, "1. " ordered items.
+// and quotes, "- "/"+" bullets, "1. " ordered items, "|" table rows, and
+// ``` / ~~~ code fences.
 func escapeLeading(s string) string {
 	if s == "" {
 		return s
 	}
 	switch s[0] {
-	case '#', '>':
+	case '#', '>', '|':
 		return `\` + s
 	case '-', '+':
 		if len(s) > 1 && s[1] == ' ' {
+			return `\` + s
+		}
+		return s
+	case '`':
+		if strings.HasPrefix(s, "```") {
+			return `\` + s
+		}
+		return s
+	case '~':
+		if strings.HasPrefix(s, "~~~") {
 			return `\` + s
 		}
 		return s

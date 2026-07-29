@@ -63,21 +63,41 @@ func renderGfmTable(rows [][]string) string {
 	return b.String()
 }
 
+// gfmFence returns a backtick fence one longer than the longest backtick run
+// in content (minimum 3): a fixed ``` fence lets content containing ``` break
+// out of its own block, so the fence length adapts to the payload.
+func gfmFence(content string) string {
+	longest, run := 0, 0
+	for i := range len(content) {
+		if content[i] == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(longest+1, 3))
+}
+
 // renderCSVBlock emits a fenced ```csv block. encoding/csv quotes cells that
 // contain a comma, quote, or newline per RFC 4180, so a wide sheet survives
 // intact where GFM pipes would mangle it. Writing to a bytes.Buffer never
-// errors, so the WriteAll return is intentionally discarded.
+// errors, so the WriteAll return is intentionally discarded. The fence length
+// adapts to the content (gfmFence) so a cell holding ``` cannot break out.
 func renderCSVBlock(rows [][]string) string {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	_ = w.WriteAll(rows) //nolint:errcheck // bytes.Buffer.Write is infallible
 	w.Flush()
+	fence := gfmFence(buf.String())
 	var b strings.Builder
-	b.WriteString("```csv\n")
+	b.WriteString(fence + "csv\n")
 	b.WriteString(buf.String())
 	if !strings.HasSuffix(buf.String(), "\n") {
 		b.WriteByte('\n')
 	}
-	b.WriteString("```\n")
+	b.WriteString(fence + "\n")
 	return b.String()
 }

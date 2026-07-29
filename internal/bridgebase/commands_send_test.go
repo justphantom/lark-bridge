@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -16,6 +17,7 @@ func TestSafeJoin(t *testing.T) {
 	sub := filepath.Join(abs, "sub")
 	must(t, os.Mkdir(sub, 0o700))
 	must(t, os.WriteFile(filepath.Join(sub, "file.txt"), []byte("x"), 0o600))
+	must(t, os.WriteFile(filepath.Join(abs, "..foo"), []byte("d"), 0o600))
 
 	cases := []struct {
 		name    string
@@ -24,6 +26,7 @@ func TestSafeJoin(t *testing.T) {
 	}{
 		{"direct file", "sub/file.txt", false},
 		{"nested via ..", "sub/../sub/file.txt", false},
+		{"dotdot-named file", "..foo", false},
 		{"escape via ..", "../../etc/passwd", true},
 		{"missing", "nope.txt", true},
 	}
@@ -140,7 +143,7 @@ func TestReadFilePayload_RoundTrip(t *testing.T) {
 	original := []byte("hello\x00binary\n世界")
 	must(t, os.WriteFile(path, original, 0o600))
 
-	p, err := ReadFilePayload("oc_chat", "data.bin", path, "om_card")
+	p, err := ReadFilePayload("oc_chat", "data.bin", dir, path, "om_card")
 	if err != nil {
 		t.Fatalf("ReadFilePayload: %v", err)
 	}
@@ -157,9 +160,49 @@ func TestReadFilePayload_RoundTrip(t *testing.T) {
 }
 
 func TestReadFilePayload_MissingFile(t *testing.T) {
-	_, err := ReadFilePayload("c", "x", filepath.Join(t.TempDir(), "nope"), "")
+	dir := t.TempDir()
+	_, err := ReadFilePayload("c", "x", dir, filepath.Join(dir, "nope"), "")
 	if err == nil {
 		t.Errorf("expected error for missing file")
+	}
+}
+
+func TestReadFilePayload_RejectsSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behaviour on Windows differs; EvalSymlinks needs privileges")
+	}
+	root := t.TempDir()
+	outside := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o600))
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(outside, "secret"), link); err != nil {
+		t.Skipf("symlink create failed (privileges?): %v", err)
+	}
+	if _, err := ReadFilePayload("c", "link", root, link, ""); err == nil {
+		t.Errorf("ReadFilePayload via symlink escaping root should fail")
+	}
+}
+
+func TestReadFilePayload_RejectsNonRegular(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFO test requires Unix")
+	}
+	root := t.TempDir()
+	fifo := filepath.Join(root, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo failed: %v", err)
+	}
+	if _, err := ReadFilePayload("c", "pipe", root, fifo, ""); err == nil {
+		t.Errorf("ReadFilePayload on a FIFO should fail")
+	}
+}
+
+func TestReadFilePayload_RejectsEmpty(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "empty.txt")
+	must(t, os.WriteFile(path, nil, 0o600))
+	if _, err := ReadFilePayload("c", "empty.txt", root, path, ""); err == nil {
+		t.Errorf("ReadFilePayload on an empty file should fail")
 	}
 }
 
@@ -186,7 +229,7 @@ func TestReadFilePayload_OverLimit(t *testing.T) {
 	}
 	_ = f.Close()
 
-	_, err = ReadFilePayload("c", "big.bin", path, "")
+	_, err = ReadFilePayload("c", "big.bin", dir, path, "")
 	if err == nil {
 		t.Errorf("expected over-limit error")
 	} else if !strings.Contains(err.Error(), "上限") {

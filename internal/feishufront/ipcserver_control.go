@@ -8,10 +8,12 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// maxControlBody bounds the size of a POSTed Control JSON. The schema is small
-// and closed (protocol.Validate), so 1 MiB is ample even for long result text
-// while preventing a runaway/compromised backend from driving the frontend OOM.
-const maxControlBody = 1 << 20
+// maxControlBody bounds the size of a POSTed Control JSON. It must accommodate
+// the largest legitimate payload: a /send TypeFile carries 30 MiB raw → ~40 MiB
+// base64 (bridgebase.MaxSendFileSize), so the cap sits at 48 MiB with headroom
+// for envelope fields, while still preventing a runaway/compromised backend
+// from driving the frontend OOM.
+const maxControlBody = 48 << 20
 
 // handleControl decodes a Control from the body, validates it, requires the
 // backendID to be registered, backfills BackendID from the URL path, and

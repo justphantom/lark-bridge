@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,22 +30,34 @@ const sendDirOptionLimit = maxQuestionOptions
 // target are both Abs/Clean-ed first; EvalSymlinks then resolves the real
 // path, and a Rel check confirms it did not land above root. Returns the
 // resolved absolute path or an error a backend turns into a user notice.
+// Errors deliberately carry no absolute server paths — the message lands in
+// the chat verbatim, and leaking /home/... layouts aids an attacker.
 func SafeJoin(root, rel string) (string, error) {
 	absRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
-		return "", fmt.Errorf("解析根目录失败：%w", err)
+		return "", fmt.Errorf("解析根目录失败")
 	}
 	rel = filepath.Clean(rel)
 	target := filepath.Join(absRoot, rel)
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return "", fmt.Errorf("路径不存在或无法访问：%w", err)
+		return "", fmt.Errorf("路径不存在或无法访问：%s", rel)
 	}
-	rel2, err := filepath.Rel(absRoot, resolved)
-	if err != nil || strings.HasPrefix(rel2, "..") {
+	if !withinRoot(absRoot, resolved) {
 		return "", fmt.Errorf("路径越界：%s", rel)
 	}
 	return resolved, nil
+}
+
+// withinRoot reports whether resolved lies at or under absRoot. The check is
+// rel == ".." or a "../" prefix — a plain ".." prefix would also reject a
+// legitimate sibling named "..foo".
+func withinRoot(absRoot, resolved string) bool {
+	rel, err := filepath.Rel(absRoot, resolved)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // BuildSendOptions renders one directory's entries as the picker option list:
@@ -101,17 +114,52 @@ func ParseSendOption(choice string) (kind, name string) {
 // miniagent so the size/encoding/escape policy lives in one place. updateMessageID
 // is threaded through so the frontend can PATCH the picker card the user just
 // clicked instead of sending a standalone result notice.
-func ReadFilePayload(chatID, fileName, path, updateMessageID string) (*protocol.FilePayload, error) {
-	info, err := os.Stat(path)
+//
+// root is the chat's bound directory: the path is re-validated here (symlink
+// resolution + containment) at read time rather than only at selection time,
+// closing the swap-a-symlink TOCTOU window between the two. Non-regular files
+// (FIFO/device) are rejected — os.Stat reports size 0 for a FIFO, which would
+// otherwise pass the cap and then block the read forever. The read itself is
+// capped at MaxSendFileSize+1 so a file growing after Stat cannot slip past.
+// Errors carry no absolute server paths (they surface in the chat verbatim).
+func ReadFilePayload(chatID, fileName, root, path, updateMessageID string) (*protocol.FilePayload, error) {
+	absRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
-		return nil, fmt.Errorf("文件不存在或无权访问：%w", err)
+		return nil, fmt.Errorf("工作目录无效")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, fmt.Errorf("路径不存在或无法访问：%s", fileName)
+	}
+	if !withinRoot(absRoot, resolved) {
+		return nil, fmt.Errorf("路径越界：%s", fileName)
+	}
+	// Stat before Open: opening a FIFO for read blocks until a writer shows
+	// up, so the regular-file gate must happen on Stat (which never blocks).
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("文件不存在或无权访问：%s", fileName)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s 不是常规文件，无法发送", fileName)
+	}
+	if info.Size() == 0 {
+		return nil, fmt.Errorf("文件 %s 为空，不支持发送空文件", fileName)
 	}
 	if info.Size() > MaxSendFileSize {
 		return nil, fmt.Errorf("文件 %s 为 %s，超过 %s 上限", fileName, sendFileSize(info.Size()), sendFileSize(MaxSendFileSize))
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("读取文件失败：%w", err)
+		return nil, fmt.Errorf("文件不存在或无权访问：%s", fileName)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxSendFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("读取文件失败：%s", fileName)
+	}
+	if int64(len(data)) > MaxSendFileSize {
+		return nil, fmt.Errorf("文件 %s 超过 %s 上限", fileName, sendFileSize(MaxSendFileSize))
 	}
 	return &protocol.FilePayload{
 		ChatID:          chatID,
@@ -147,11 +195,14 @@ func CmdSend(ctx context.Context, c *Core, chatID, rootDir string, args []string
 		return cmdutil.ErrorResult("工作目录无效：%v", err)
 	}
 	if len(args) > 0 {
-		target, jerr := SafeJoin(absRoot, args[0])
+		// Join rather than args[0]: Fields-splitting breaks paths containing
+		// spaces, and silently truncating to the first word would send the
+		// wrong file or report a confusing "not exists".
+		target, jerr := SafeJoin(absRoot, strings.Join(args, " "))
 		if jerr != nil {
 			return cmdutil.ErrorResult("%v", jerr)
 		}
-		GoSafe(c.Logger, "send:direct", func() { emitSendFile(c, chatID, target, "") })
+		GoSafe(c.Logger, "send:direct", func() { emitSendFile(c, chatID, absRoot, target, "") })
 		return cmdutil.Result{Handled: true}, nil
 	}
 	GoSafe(c.Logger, "send:browser", func() { runSendBrowser(c, chatID, replyToID, absRoot) })
@@ -187,10 +238,22 @@ func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 		case "up":
 			currDir = sendParentDir(currDir, absRoot)
 		case "dir":
-			currDir = filepath.Join(currDir, name)
+			// SafeJoin per transition (not just at the final file pick) so a
+			// symlinked directory — or one swapped in mid-browse — cannot walk
+			// the browser outside absRoot.
+			target, jerr := SafeJoin(currDir, name)
+			if jerr != nil {
+				c.EmitNoticeLogged(chatID, "error", "发送失败", jerr.Error())
+				return
+			}
+			currDir = target
 		case "file":
-			target := filepath.Join(currDir, name)
-			emitSendFile(c, chatID, target, messageID)
+			target, jerr := SafeJoin(currDir, name)
+			if jerr != nil {
+				c.EmitNoticeLogged(chatID, "error", "发送失败", jerr.Error())
+				return
+			}
+			emitSendFile(c, chatID, absRoot, target, messageID)
 			return
 		default:
 			c.EmitNoticeLogged(chatID, "warning", "发送取消", "未识别的选择。")
@@ -203,8 +266,7 @@ func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 // check guards against a currDir already at root (returns root unchanged).
 func sendParentDir(currDir, absRoot string) string {
 	parent := filepath.Dir(currDir)
-	rel, err := filepath.Rel(absRoot, parent)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if !withinRoot(absRoot, parent) {
 		return absRoot
 	}
 	return parent
@@ -214,10 +276,11 @@ func sendParentDir(currDir, absRoot string) string {
 // to the frontend, which uploads and sends it. updateMessageID (the picker
 // card when set) lets the frontend PATCH that card with the outcome; "" falls
 // back to a standalone notice on failure (success is silent — the file itself
-// landing in the chat is the confirmation).
-func emitSendFile(c *Core, chatID, path, updateMessageID string) {
+// landing in the chat is the confirmation). absRoot is re-enforced inside
+// ReadFilePayload at read time.
+func emitSendFile(c *Core, chatID, absRoot, path, updateMessageID string) {
 	fileName := filepath.Base(path)
-	payload, err := ReadFilePayload(chatID, fileName, path, updateMessageID)
+	payload, err := ReadFilePayload(chatID, fileName, absRoot, path, updateMessageID)
 	if err != nil {
 		c.EmitNoticeLogged(chatID, "error", "发送失败", err.Error())
 		return

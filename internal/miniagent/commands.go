@@ -66,6 +66,11 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 	arg := ""
 	if len(fields) > 1 {
 		arg = fields[1]
+		// /send takes a path that may contain spaces; joining the rest beats
+		// silently truncating to the first word.
+		if fields[0] == "/send" {
+			arg = strings.Join(fields[1:], " ")
+		}
 	}
 	fn := sessionCmds[fields[0]]
 	level, title, body := fn(h, ctx, chatID, arg)

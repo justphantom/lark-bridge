@@ -257,8 +257,12 @@ type uploadFileResponse struct {
 //
 // The request is multipart/form-data (the API rejects JSON for binary
 // uploads), so it cannot reuse doJSON: it builds its own token-authenticated
-// request. The body is streamed from rd into the multipart writer, so a 30 MiB
-// upload only ever holds one copy in memory alongside the multipart envelope.
+// request. The whole multipart body is assembled in memory (peak ≈ payload +
+// envelope, ~40 MB at the 30 MiB /send cap); callers bound concurrency.
+//
+// Uploads use uploadHTTP rather than r.http: http.Client.Timeout covers the
+// entire body write, and 30 MiB over a slow uplink does not fit in the
+// default 30s.
 func (r *restClient) UploadFile(ctx context.Context, fileName, fileType string, rd io.Reader) (string, error) {
 	if fileName == "" {
 		return "", fmt.Errorf("lark: fileName required")
@@ -293,7 +297,7 @@ func (r *restClient) UploadFile(ctx context.Context, fileName, fileType string, 
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := r.http.Do(req)
+	resp, err := uploadHTTP.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("lark: upload file: %w", err)
 	}
@@ -329,3 +333,7 @@ func (r *restClient) UploadFile(ctx context.Context, fileName, fileType string, 
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
+
+// uploadHTTP serves UploadFile only: large uploads need a budget far beyond
+// the 30s interactive default (Timeout spans the full request body write).
+var uploadHTTP = &http.Client{Timeout: 5 * time.Minute}

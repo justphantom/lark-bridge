@@ -211,6 +211,11 @@ func (h *Handler) acquireAndRun(ctx context.Context, chatID, promptID, cardMsgID
 // state); the job's own timeout still bounds it. main calls this after
 // backendrpc.Run returns so SIGTERM does not SIGKILL a running make.
 func (h *Handler) Close(ctx context.Context) error {
+	// Unblock picker waits first: awaitDeploySome/awaitForceConfirm goroutines
+	// are not in jobWg and would otherwise sit on their answer channel until
+	// process exit, leaving the user's card forever at "待选择". Drain closes
+	// every slot so each blocked picker emits its 已取消 notice and returns.
+	h.answers.Drain()
 	done := make(chan struct{})
 	go func() { h.jobWg.Wait(); close(done) }()
 	select {

@@ -684,3 +684,75 @@ func TestDetectChartsAndPivots_NoChart(t *testing.T) {
 		t.Errorf("got counts=%v pivot=%v, want empty/false", counts, hasPivot)
 	}
 }
+
+func TestParseSheet_HostileSstIndex(t *testing.T) {
+	// An overflowing shared-string index must count as an overrun, never a
+	// panic or a wrong sst[0] lookup.
+	res, err := parseSheet(context.Background(),
+		[]byte(`<worksheet `+sDecl+`><sheetData>`+xR(xC("A1", "s", xV("9999999999999999999"))+xC("B1", "s", xV("abc")))+`</sheetData></worksheet>`),
+		[]string{"zero"}, nil, false, "value")
+	if err != nil {
+		t.Fatalf("parseSheet: %v", err)
+	}
+	if res.sstOverrun != 2 {
+		t.Errorf("sstOverrun = %d, want 2 (overflow + garbage)", res.sstOverrun)
+	}
+	// Both cells emitted empty values, so the row is dropped as fully empty.
+	if len(res.rows) != 0 {
+		t.Errorf("hostile cells should emit empty values, got %v", res.rows)
+	}
+}
+
+func TestColLettersToIdx_HostileClamp(t *testing.T) {
+	if got := colLettersToIdx("ZZZZZZZ1"); got != xlsxMaxColumns-1 {
+		t.Errorf("colLettersToIdx(ZZZZZZZ1) = %d, want clamp %d", got, xlsxMaxColumns-1)
+	}
+	if got := colLettersToIdx("XFD1"); got != xlsxMaxColumns-1 {
+		t.Errorf("colLettersToIdx(XFD1) = %d, want %d", got, xlsxMaxColumns-1)
+	}
+}
+
+func TestAtoiSafe_Overflow(t *testing.T) {
+	if got := atoiSafe("99999999999999999999999"); got != 0 {
+		t.Errorf("atoiSafe overflow = %d, want 0 (garbage)", got)
+	}
+	if got := atoiSafe("42"); got != 42 {
+		t.Errorf("atoiSafe(42) = %d", got)
+	}
+}
+
+func TestParseSheet_EmptyBoolCell(t *testing.T) {
+	res, err := parseSheet(context.Background(),
+		[]byte(`<worksheet `+sDecl+`><sheetData>`+xR(xC("A1", "b", "")+xC("B1", "b", xV("1")))+`</sheetData></worksheet>`),
+		nil, nil, false, "value")
+	if err != nil {
+		t.Fatalf("parseSheet: %v", err)
+	}
+	if len(res.rows) != 1 || res.rows[0][0] != "" || res.rows[0][1] != "TRUE" {
+		t.Errorf("empty bool should stay empty, got %v", res.rows)
+	}
+}
+
+func TestConvertXlsx_SheetNameSanitised(t *testing.T) {
+	src := buildXlsx(t, []xlsxSheet{
+		{"evil--> \nname", xR(xC("A1", "", xV("1")))},
+	}, nil)
+	body, meta := convertXlsxTo(t, New(Options{}), src)
+	if strings.Contains(body, "--> \n") || strings.Contains(body, "evil-->") {
+		t.Errorf("sheet name broke the HTML comment / forged a line:\n%s", body)
+	}
+	if len(meta.Sheets) != 1 || strings.ContainsAny(meta.Sheets[0].Name, "\n") {
+		t.Errorf("meta sheet name not sanitised: %+v", meta.Sheets[0].Name)
+	}
+}
+
+func TestConvertXlsx_MaxSheetsNote(t *testing.T) {
+	src := buildXlsx(t, []xlsxSheet{
+		{"S1", xR(xC("A1", "", xV("1")))},
+		{"S2", xR(xC("A1", "", xV("2")))},
+	}, nil)
+	_, meta := convertXlsxTo(t, New(Options{XlsxMaxSheets: 1}), src)
+	if !strings.Contains(meta.Note, "2 sheets") || !strings.Contains(meta.Note, "first 1") {
+		t.Errorf("truncation note missing: %q", meta.Note)
+	}
+}

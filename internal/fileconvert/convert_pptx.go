@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -28,6 +27,8 @@ const (
 // silently (decision 3A). Slide order follows presentation.xml's sldIdLst,
 // never the slideN.xml filename order.
 func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 	base := filepath.Base(srcPath)
 	zr, err := zip.OpenReader(srcPath)
 	if err != nil {
@@ -73,7 +74,15 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 			continue
 		}
 		p := &slideParser{bw: bw}
-		p.safeRun(data)
+		if perr := p.safeRun(data); perr != nil {
+			// A panic on one hostile slide must surface (never silently
+			// swallowed): leave a placeholder and a debug line, continue.
+			fmt.Fprintf(bw, "<!-- Slide %d: 解析失败，部分内容可能丢失 -->\n\n", i+1)
+			if c.log != nil {
+				c.log.Debug("fileconvert: pptx slide parse panic",
+					"src", base, "slide", i+1, "error", perr.Error())
+			}
+		}
 		if p.charts > 0 {
 			fmt.Fprintf(bw, "<!-- Slide %d: 含 %d 个图表（chart），未提取 -->\n\n", i+1, p.charts)
 		}
@@ -110,7 +119,7 @@ func orderedSlidePaths(parts map[string]*zip.File) []string {
 		if !ok || rel.External {
 			continue
 		}
-		out = append(out, path.Clean(path.Join("ppt", rel.Target)))
+		out = append(out, resolvePartTarget("ppt", rel.Target))
 	}
 	return out
 }
@@ -166,10 +175,18 @@ type slideParser struct {
 
 // safeRun runs run with a recover guard so one malformed slide never aborts
 // the whole deck: anything already written stays, and the loop continues to
-// the next slide (office-extract-design.md §5.3).
-func (p *slideParser) safeRun(data []byte) {
-	defer func() { _ = recover() }()
+// the next slide (office-extract-design.md §5.3). The panic is returned as an
+// error so the caller can leave a placeholder + log line — a silently
+// swallowed panic would hide a parser bug and violate the "never silently
+// skip" contract.
+func (p *slideParser) safeRun(data []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("parser panic: %v", r)
+		}
+	}()
 	p.run(data)
+	return nil
 }
 
 func (p *slideParser) run(data []byte) {
@@ -319,6 +336,12 @@ func (p *slideParser) emitParagraph(text string) {
 	case "autonum":
 		p.listNum++
 		prefix = fmt.Sprintf("%d. ", p.listNum)
+	}
+	if prefix == "" {
+		// Plain paragraphs get the same GFM guard the docx path applies:
+		// slide text opening with "#"/">"/"- "/"1. " must not be misread as
+		// a block construct.
+		text = escapeLeading(text)
 	}
 	p.bw.WriteString(prefix)
 	p.bw.WriteString(text)

@@ -14,6 +14,10 @@ import (
 // N rows so a hostile workbook cannot pin the dispatcher goroutine.
 const xlsxCtxCheckInterval = 64
 
+// xlsxMaxColumns is the OOXML column ceiling (XFD). colLettersToIdx clamps to
+// it so a hostile cell reference cannot trigger unbounded row padding.
+const xlsxMaxColumns = 16384
+
 // sheetResult carries one parsed sheet: the rectangular row set for
 // renderTable plus the per-sheet caveat counters that become aggregate
 // placeholders after the table (decisions Q4/Q5, §4.3).
@@ -33,7 +37,17 @@ type sheetResult struct {
 // output renderTable expects. Fully empty rows are dropped: renderTable
 // treats row 0 as the GFM header, and a blank header row would corrupt the
 // table (excelize's GetRows behaves the same way).
-func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtIndex, date1904 bool, formulaMode string) (*sheetResult, error) {
+//
+// A parser panic on a hostile sheet is recovered into an error (same
+// contract as the docx safeRun): the caller renders a 读取失败 placeholder
+// for this sheet and continues with the next, never crashing the process.
+func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtIndex, date1904 bool, formulaMode string) (res *sheetResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = nil
+			err = fmt.Errorf("parser panic: %v", r)
+		}
+	}()
 	p := &sheetParser{
 		sst:         sst,
 		fmts:        fmts,
@@ -214,19 +228,21 @@ func (p *sheetParser) cellValue() string {
 	value := raw
 	switch p.cellType {
 	case "s":
-		idx := atoiSafe(raw)
-		if raw == "" {
-			value = ""
-		} else if idx < len(p.sst) {
+		if idx, ok := parseSSTIndex(raw); ok && idx < len(p.sst) {
 			value = p.sst[idx]
 		} else {
+			// Garbage or out-of-pool index: count an overrun rather than
+			// emitting sst[0]'s wrong data (and never index with it).
 			p.res.sstOverrun++
 			value = ""
 		}
 	case "b":
-		if raw == "1" {
+		switch raw {
+		case "1":
 			value = "TRUE"
-		} else {
+		case "":
+			value = ""
+		default:
 			value = "FALSE"
 		}
 	case "e", "str", "d":
@@ -281,9 +297,30 @@ func (p *sheetParser) normalise() {
 	}
 }
 
+// parseSSTIndex parses a sharedStrings index strictly: all digits, at most 9
+// (a 9-digit cap keeps the multiply-accumulate far from int overflow, and no
+// real workbook approaches 10^9 shared strings). ok=false marks garbage the
+// caller counts as an overrun instead of trusting.
+func parseSSTIndex(raw string) (int, bool) {
+	if raw == "" || len(raw) > 9 {
+		return 0, false
+	}
+	n := 0
+	for i := range len(raw) {
+		if raw[i] < '0' || raw[i] > '9' {
+			return 0, false
+		}
+		n = n*10 + int(raw[i]-'0')
+	}
+	return n, true
+}
+
 // colLettersToIdx converts a cell reference's column letters ("A", "BC") to
 // a 0-based column index. Parsing stops at the first non-letter, so the row
-// digits are simply ignored; a reference with no letters yields 0.
+// digits are simply ignored; a reference with no letters yields 0. The index
+// is clamped to the OOXML maximum (XFD = 16384 columns): a hostile reference
+// like "ZZZZZZZ1" would otherwise make flushCell pad the row with billions
+// of empty strings (memory-amplification DoS).
 func colLettersToIdx(ref string) int {
 	idx := 0
 	for i := range len(ref) {
@@ -295,6 +332,9 @@ func colLettersToIdx(ref string) int {
 			break
 		}
 		idx = idx*26 + int(c-'A'+1)
+		if idx > xlsxMaxColumns {
+			return xlsxMaxColumns - 1
+		}
 	}
 	if idx == 0 {
 		return 0

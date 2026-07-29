@@ -36,7 +36,7 @@ func (h *Handler) cmdSend(_ context.Context, chatID, arg string) (level, title, 
 			return "error", "发送失败", jerr.Error()
 		}
 		go func() { //nolint:gosec // G118: read+emit outlives the turn ctx for large files
-			h.emitSendFile(chatID, target, "")
+			h.emitSendFile(chatID, absRoot, target, "")
 		}()
 		return "async", "", ""
 	}
@@ -75,9 +75,21 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 		case "up":
 			currDir = sendParentDirMini(currDir, absRoot)
 		case "dir":
-			currDir = filepath.Join(currDir, name)
+			// SafeJoin per transition so a symlinked (or mid-browse swapped)
+			// directory cannot walk the browser outside absRoot.
+			target, jerr := bridgebase.SafeJoin(currDir, name)
+			if jerr != nil {
+				h.notifyWithPromptID(chatID, promptID, "error", "发送失败", jerr.Error())
+				return
+			}
+			currDir = target
 		case "file":
-			h.emitSendFile(chatID, filepath.Join(currDir, name), messageID)
+			target, jerr := bridgebase.SafeJoin(currDir, name)
+			if jerr != nil {
+				h.notifyWithCardUpdate(chatID, messageID, "error", "发送失败", jerr.Error())
+				return
+			}
+			h.emitSendFile(chatID, absRoot, target, messageID)
 			return
 		default:
 			h.notifyWithCardUpdate(chatID, messageID, "warning", "发送取消", "未识别的选择。")
@@ -88,10 +100,11 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 
 // emitSendFile reads one file into a TypeFile payload (shared helper) and
 // ships it to the frontend, which uploads + sends. updateMessageID (the picker
-// card) lets the frontend PATCH that card with the outcome.
-func (h *Handler) emitSendFile(chatID, path, updateMessageID string) {
+// card) lets the frontend PATCH that card with the outcome. absRoot is
+// re-enforced inside ReadFilePayload at read time.
+func (h *Handler) emitSendFile(chatID, absRoot, path, updateMessageID string) {
 	fileName := filepath.Base(path)
-	payload, err := bridgebase.ReadFilePayload(chatID, fileName, path, updateMessageID)
+	payload, err := bridgebase.ReadFilePayload(chatID, fileName, absRoot, path, updateMessageID)
 	if err != nil {
 		h.notifyWithPromptID(chatID, "", "error", "发送失败", err.Error())
 		return
@@ -109,7 +122,7 @@ func (h *Handler) emitSendFile(chatID, path, updateMessageID string) {
 func sendParentDirMini(currDir, absRoot string) string {
 	parent := filepath.Dir(currDir)
 	rel, err := filepath.Rel(absRoot, parent)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return absRoot
 	}
 	return parent

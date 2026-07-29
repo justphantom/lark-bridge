@@ -76,6 +76,8 @@ parse_args() {
             --debug)       DEBUG=true ;;
             --help|-h)     awk 'NR==1{next} /^#!/{next} /^[^#]/{exit} {sub(/^#[[:space:]]?/,""); print}' "$0" | sed 's/^$//'; exit 0 ;;
             --binaries|--services) prev="$arg" ;;
+            --binaries=*)    BINARIES_SRC="${arg#*=}" ;;
+            --services=*)    SERVICES_ARG="${arg#*=}" ;;
             *)             fail "Unknown argument: $arg (valid: --init --force --debug --help --binaries <path> --services <list>)" ;;
         esac
     done

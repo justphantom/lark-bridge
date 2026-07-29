@@ -62,7 +62,10 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		// A backend asking the frontend to send a file into the chat. NOT a
 		// terminal frame (the turn's picker/result lifecycle is independent),
 		// so it skips the terminals dedup and the result/notice rendering path.
-		return d.handleFileControl(ctx, ctrl, backendType)
+		// Async: decode + upload + send can take a minute for a large file and
+		// must not head-of-line block this serial pump.
+		d.dispatchFileAsync(ctx, ctrl, backendType)
+		return nil
 	default:
 		return fmt.Errorf("dispatcher: unknown control type %q", ctrl.Type)
 	}

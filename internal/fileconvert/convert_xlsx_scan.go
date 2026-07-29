@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"path"
 	"strings"
@@ -71,14 +72,14 @@ func detectChartsAndPivots(srcPath string) (map[string]int, bool) {
 		if !ok || rel.External {
 			continue
 		}
-		wsPath := path.Clean(path.Join("xl", rel.Target))
+		wsPath := resolvePartTarget("xl", rel.Target)
 		// Walk worksheet (or chartsheet) → drawings → charts. A chartsheet's
 		// rels point straight at a drawing, so the same loop covers both.
 		for _, drel := range relsMap(parts, relsPathFor(wsPath)) {
 			if drel.External || !isDrawingRel(drel.Type) {
 				continue
 			}
-			drawPath := path.Clean(path.Join(path.Dir(wsPath), drel.Target))
+			drawPath := resolvePartTarget(path.Dir(wsPath), drel.Target)
 			for _, crel := range relsMap(parts, relsPathFor(drawPath)) {
 				if !crel.External && isChartRel(crel.Type) {
 					chartCounts[sh.Name]++
@@ -123,15 +124,41 @@ func relsPathFor(partPath string) string {
 	return path.Join(dir, "_rels", path.Base(partPath)+".rels")
 }
 
-// readZipPart reads one zip entry fully into memory. These metadata parts are
-// tiny (kilobytes), so buffering the whole entry is cheaper than streaming.
+// maxZipPartSize caps one decompressed zip entry. The caller bounds only the
+// COMPRESSED upload size, so without this a zip bomb (a few MB packing a GB
+// of XML) would be swallowed whole by io.ReadAll and OOM the process. Parts
+// past the cap are treated as broken — the per-part degradation contract
+// already covers broken parts.
+const maxZipPartSize = 256 << 20 // 256 MiB
+
+// readZipPart reads one zip entry fully into memory, bounded by
+// maxZipPartSize. These metadata parts are usually tiny (kilobytes), so
+// buffering the whole entry is cheaper than streaming.
 func readZipPart(zf *zip.File) ([]byte, error) {
 	rc, err := zf.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxZipPartSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxZipPartSize {
+		return nil, fmt.Errorf("zip part %s exceeds %d MiB decompressed", zf.Name, maxZipPartSize>>20)
+	}
+	return data, nil
+}
+
+// resolvePartTarget joins a relationship target onto its base directory. A
+// target starting with "/" is an absolute part name (legal per OOXML
+// packaging conventions): strip the slash and use it verbatim — a plain
+// path.Join would produce "ppt/ppt/..." and silently lose the part.
+func resolvePartTarget(baseDir, target string) string {
+	if strings.HasPrefix(target, "/") {
+		return path.Clean(target[1:])
+	}
+	return path.Clean(path.Join(baseDir, target))
 }
 
 // isDrawingRel matches the worksheet→drawing relationship type. containment

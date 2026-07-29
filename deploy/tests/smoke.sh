@@ -86,6 +86,22 @@ else
     ok "select_services bogus fails"
 fi
 
+# -- parse_args: --services=csv equals form (the exact shape /deploy-some emits)
+eq_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
+    source deploy/deploy.sh
+    parse_args --services=feishu,claude
+    select_services >/dev/null
+    echo "${SELECTED[*]}"
+' 2>/dev/null)"
+check "parse_args --services=csv" "$eq_out" "feishu claude"
+
+eq_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
+    source deploy/deploy.sh
+    parse_args --binaries=/tmp/bins --services=claude
+    echo "$BINARIES_SRC $SERVICES_ARG"
+' 2>/dev/null)"
+check "parse_args --binaries= equals form" "$eq_out" "/tmp/bins claude"
+
 echo
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

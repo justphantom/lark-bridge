@@ -82,3 +82,29 @@ func TestRenderTable_Empty(t *testing.T) {
 		t.Errorf("nil rows should render empty, got %q", got)
 	}
 }
+
+func TestGfmFence(t *testing.T) {
+	cases := map[string]string{
+		"plain":          "```",
+		"has ``` inside": "````",
+		"``only":         "```",
+		"five ```` `x":   "`````",
+	}
+	for content, want := range cases {
+		if got := gfmFence(content); got != want {
+			t.Errorf("gfmFence(%q) = %q, want %q", content, got, want)
+		}
+	}
+}
+
+func TestRenderCSVBlock_FenceBreakout(t *testing.T) {
+	rows := make([][]string, 2)
+	for i := range rows {
+		rows[i] = make([]string, 21) // > gfmMaxColumns forces the CSV path
+	}
+	rows[1][0] = "before\n```\nafter"
+	got := renderCSVBlock(rows)
+	if !strings.HasPrefix(got, "````csv\n") || !strings.HasSuffix(got, "````\n") {
+		t.Errorf("fence did not adapt to content containing ```:\n%s", got)
+	}
+}

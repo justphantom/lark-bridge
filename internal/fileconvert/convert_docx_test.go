@@ -445,10 +445,11 @@ func TestConvertDocx_InstrTextSkipped(t *testing.T) {
 func TestConvertDocx_LeadingCharsEscaped(t *testing.T) {
 	src := writeDocx(t, "esc.docx", map[string]string{
 		"word/document.xml": docxDoc(
-			docxPara("# 不是标题") + docxPara("- 不是列表") + docxPara("1. 不是编号")),
+			docxPara("# 不是标题") + docxPara("- 不是列表") + docxPara("1. 不是编号") +
+				docxPara("| 不是表格") + docxPara("```") + docxPara("~~~")),
 	})
 	body := convertDocxTo(t, New(Options{}), src)
-	mustContain(t, body, `\# 不是标题`, `\- 不是列表`, `1\. 不是编号`)
+	mustContain(t, body, `\# 不是标题`, `\- 不是列表`, `1\. 不是编号`, `\| 不是表格`, "\\```", "\\~~~")
 }
 
 func TestConvertDocx_MissingSubPartsDegrade(t *testing.T) {

@@ -5,12 +5,43 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
+
+// fileSendSem bounds concurrent file deliveries. Decode + upload + send of a
+// 30 MiB file can take a minute and hold ~100 MB; an unbounded burst of /send
+// controls would otherwise pile goroutines and memory onto the frontend.
+var fileSendSem = make(chan struct{}, 4)
+
+// dispatchFileAsync runs a TypeFile control off the caller's goroutine. The
+// control pump is a single serial goroutine — a synchronous deliverFile would
+// head-of-line block every chat's card updates behind one slow upload.
+func (d *Dispatcher) dispatchFileAsync(ctx context.Context, ctrl *protocol.Control, backendType string) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if l := d.logger.Load(); l != nil {
+					l.Error("panic in file delivery",
+						log.FieldChatID, ctrl.ChatID,
+						log.FieldPanic, r,
+						log.FieldStack, string(debug.Stack()))
+				}
+			}
+		}()
+		fileSendSem <- struct{}{}
+		defer func() { <-fileSendSem }()
+		if err := d.handleFileControl(ctx, ctrl, backendType); err != nil {
+			if l := d.logger.Load(); l != nil {
+				l.Error("file control", log.FieldChatID, ctrl.ChatID, log.FieldError, err)
+			}
+		}
+	}()
+}
 
 // handleFileControl materialises a TypeFile control: it base64-decodes the
 // payload, asks the wired FileSender to upload+send the file into the chat,
@@ -89,14 +120,21 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 		updateID = p.UpdateMessageID
 	}
 	if updateID != "" {
-		if err := d.bot.UpdateCard(ctx, updateID, card); err == nil || !feishu.IsCardGone(err) {
+		err := d.bot.UpdateCard(ctx, updateID, card)
+		if err == nil {
 			return
 		}
-		// Card withdrawn: re-send as a fresh card on failure (never lose the
-		// error), or drop on success (file already delivered).
-		if level == "success" {
+		// Card withdrawn on success: drop silently (the file already arrived).
+		if feishu.IsCardGone(err) && level == "success" {
 			return
+		}
+		// Otherwise — withdrawn card on failure, or any transient patch error
+		// — fall through to a fresh card so the outcome is never lost.
+	}
+	if _, err := d.bot.SendCard(ctx, ctrl.ChatID, card, ""); err != nil {
+		if l := d.logger.Load(); l != nil {
+			l.Warn("file outcome fallback notice failed",
+				log.FieldChatID, ctrl.ChatID, log.FieldError, err.Error())
 		}
 	}
-	_, _ = d.bot.SendCard(ctx, ctrl.ChatID, card, "")
 }

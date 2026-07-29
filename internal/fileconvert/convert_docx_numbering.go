@@ -178,7 +178,7 @@ func newListState() *listState {
 // else (decision Q5). ok=false when numID has no definition — the caller
 // falls back to a bullet and counts a missingNumPr placeholder.
 func (l *listState) marker(idx *numberingIndex, numID string, ilvl int) (prefix string, ok bool) {
-	indent := strings.Repeat("  ", ilvl)
+	indent := strings.Repeat("  ", min(ilvl, maxListLevel))
 	absID, found := idx.numToAbs[numID]
 	if !found {
 		return "", false

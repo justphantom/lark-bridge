@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -62,6 +61,8 @@ func (c *Converter) ConvertXlsx(ctx context.Context, srcPath, dstPath string) (*
 // detectChartsAndPivots scanner. Per-part degradation follows §4.3: missing
 // sharedStrings/styles demote features, only a broken workbook.xml is fatal.
 func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*XlsxMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 	base := filepath.Base(srcPath)
 
 	// Chart/pivot detection runs on the raw zip and is best-effort: a parse
@@ -109,6 +110,16 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 	if hasPivot {
 		meta.Note = "workbook contains pivot table(s), not extracted"
 	}
+	// Sheet-count truncation must be visible in the metadata: a prompt that
+	// lists only the converted prefix would otherwise mislead the agent into
+	// believing the workbook ends there.
+	if c.xlsxMaxSheets > 0 && len(sheets) > c.xlsxMaxSheets {
+		trunc := fmt.Sprintf("workbook has %d sheets; only first %d converted", len(sheets), c.xlsxMaxSheets)
+		if meta.Note != "" {
+			meta.Note += "; "
+		}
+		meta.Note += trunc
+	}
 
 	for i, sheet := range sheets {
 		if c.xlsxMaxSheets > 0 && i >= c.xlsxMaxSheets {
@@ -124,12 +135,16 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 		default:
 		}
 
-		fmt.Fprintf(buf, "# Sheet: %s\n\n", sheet.Name)
+		// Sheet names are workbook-authored: sanitise before embedding them
+		// in Markdown headings / HTML comments so a hostile name cannot forge
+		// new lines or close the comment early (the output feeds an agent).
+		name := sanitizeMetaText(sheet.Name)
+		fmt.Fprintf(buf, "# Sheet: %s\n\n", name)
 		res, perr := c.parseSheetByName(ctx, parts, wbRels, sheet, sst, fmts, date1904)
-		writeXlsxSheetBody(buf, sheet.Name, res, perr, chartCounts[sheet.Name])
+		writeXlsxSheetBody(buf, name, res, perr, chartCounts[sheet.Name])
 		buf.WriteString("---\n\n")
 
-		meta.Sheets = append(meta.Sheets, buildSheetMeta(sheet.Name, res, perr, chartCounts[sheet.Name]))
+		meta.Sheets = append(meta.Sheets, buildSheetMeta(name, res, perr, chartCounts[sheet.Name]))
 
 		if c.log != nil {
 			c.log.Debug("fileconvert: xlsx sheet converted",
@@ -164,7 +179,7 @@ func (c *Converter) parseSheetByName(ctx context.Context, parts map[string]*zip.
 	if !ok || rel.External {
 		return nil, fmt.Errorf("sheet %q has no worksheet relationship", sheet.Name)
 	}
-	wsPath := path.Clean(path.Join("xl", rel.Target))
+	wsPath := resolvePartTarget("xl", rel.Target)
 	zf := parts[wsPath]
 	if zf == nil {
 		return nil, fmt.Errorf("worksheet part %s missing", wsPath)
@@ -230,6 +245,21 @@ func buildSheetMeta(sheet string, res *sheetResult, perr error, chartCount int) 
 		sm.Note = fmt.Sprintf("contains %d chart(s), not extracted", chartCount)
 	}
 	return sm
+}
+
+// sanitizeMetaText makes a workbook-authored string (a sheet name) safe to
+// embed in Markdown headings and HTML comments: ASCII control characters
+// (which could forge new lines / a fake prompt) become spaces, and "--" (an
+// illegal sequence inside HTML comments — "-->" would close one early) is
+// replaced by an em dash.
+func sanitizeMetaText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.ReplaceAll(s, "--", "—")
 }
 
 // deriveColumnsAndRows picks the first non-empty row as the header and counts
