@@ -45,6 +45,12 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 			delete(d.cards, rid)
 			d.cardMu.Unlock()
 		}
+		// An in-place picker refresh PATCHes a card that a prior round still
+		// owns: drop that round's binding (and its stopped TTL timer / cached
+		// bytes) so the new requestID owns the card and nothing leaks.
+		if ctrl.Type == protocol.TypeQuestion && ctrl.Question != nil && ctrl.Question.UpdateMessageID != "" {
+			d.evictInteractiveByMessageID(messageID, requestID)
+		}
 		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID)
 		d.cardMu.Lock()
 		d.cards[requestID] = card
@@ -79,6 +85,34 @@ func interactiveTakeOver(ctrl *protocol.Control) bool {
 }
 
 func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Control, chatID string, card []byte) (string, error) {
+	// Multi-round picker refresh (the /send directory browser): PATCH the
+	// existing picker card in place with the new option set instead of morphing
+	// the progress card or shipping a standalone one. The click that triggered
+	// this refresh is still inside Feishu's ~3-5s card.action.trigger handling
+	// window, during which an immediate PatchMessage gets silently reverted —
+	// so the PATCH is delayed past the window via a background goroutine
+	// (same pattern as handleBackendChoice). The card binding/cache/timer are
+	// wired by sendInteractive immediately so a click once the PATCH lands
+	// resolves correctly; only the Feishu-side bytes lag by cardPatchDelay.
+	if ctrl.Type == protocol.TypeQuestion && ctrl.Question != nil && ctrl.Question.UpdateMessageID != "" {
+		msgID := ctrl.Question.UpdateMessageID
+		delay := d.cardPatchDelay
+		if delay <= 0 {
+			delay = cardPatchDelayDefault
+		}
+		go func() {
+			time.Sleep(delay)
+			patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
+			defer cancel()
+			if err := d.bot.UpdateCard(patchCtx, msgID, card); err != nil {
+				if l := d.logger.Load(); l != nil {
+					l.Warn("delayed picker refresh UpdateCard failed",
+						log.FieldMessageID, msgID, log.FieldError, err.Error())
+				}
+			}
+		}()
+		return msgID, nil
+	}
 	if interactiveTakeOver(ctrl) && ctrl.PromptID != "" {
 		if turn, ok := d.turns.Get(ctrl.PromptID); ok {
 			// Flush pending debounced progress frames first so they cannot
@@ -94,6 +128,28 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 		}
 	}
 	return d.bot.SendCard(ctx, chatID, card, "")
+}
+
+// evictInteractiveByMessageID drops every interactive-card binding, cached
+// card bytes and TTL timer pointing at messageID except keepRequestID. Called
+// before binding the new round of an in-place picker refresh so the prior
+// round's requestID does not linger against the same card (its timer was
+// already stopped on submit, so without this the cache entry would leak until
+// a SweepInteractive pass that never reaps a stopped-timer entry).
+func (d *Dispatcher) evictInteractiveByMessageID(messageID, keepRequestID string) {
+	for _, rid := range d.turns.RequestIDsByMessageID(messageID) {
+		if rid == keepRequestID {
+			continue
+		}
+		d.cardMu.Lock()
+		if t := d.interactiveTimers[rid]; t != nil {
+			t.Stop()
+			delete(d.interactiveTimers, rid)
+		}
+		delete(d.cards, rid)
+		d.cardMu.Unlock()
+		d.turns.UnbindInteractive(rid)
+	}
 }
 
 // submitSummary renders the confirmation line prepended to a submitted card.

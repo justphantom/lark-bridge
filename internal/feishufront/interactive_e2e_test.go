@@ -846,3 +846,77 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 		t.Errorf("text fallback should carry the reply text; got %q", texts[0].text)
 	}
 }
+
+// TestSendInteractive_QuestionUpdateRefreshesSameCard verifies the multi-round
+// picker refresh path (the /send directory browser): a TypeQuestion carrying
+// UpdateMessageID PATCHes that existing card in place (no fresh SendCard),
+// re-binds the new requestID to the card, and evicts the prior round's binding
+// so the new round owns the card with no leak. The PATCH itself is delayed
+// past Feishu's click window (here cardPatchDelay≈0), so the test polls for it.
+func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	d.SetCardPatchDelay(1 * time.Nanosecond)
+
+	// Simulate round 1: a prior picker already owns om_picker under req-r1
+	// (the progress card morphed into the picker on the first AskAndWait).
+	d.turns.BindInteractive("req-r1", "om_picker", "")
+	d.cardMu.Lock()
+	d.cards["req-r1"] = []byte("round1")
+	d.cardMu.Unlock()
+
+	// Round 2: backend asks to refresh the SAME card with a new option set
+	// under a fresh requestID (so clicks on the old options cannot collide).
+	ctrl := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID:       "req-r2",
+			Questions:       []protocol.QuestionItem{{Label: "选择", Options: []string{"📄 a", "📁 b/"}}},
+			UpdateMessageID: "om_picker",
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: ctrl}); err != nil {
+		t.Fatalf("DispatchControl: %v", err)
+	}
+
+	// Synchronous invariants (the delayed PATCH goroutine does not affect these):
+	// no fresh SendCard; the new requestID owns the card; the prior one is gone.
+	if sends, _ := sink.counts(); sends != 0 {
+		t.Errorf("expected 0 SendCard for an in-place refresh, got %d", sends)
+	}
+	if mid, ok := d.turns.InteractiveMessageID("req-r2"); !ok || mid != "om_picker" {
+		t.Errorf("req-r2 should bind to om_picker, got (%q,%v)", mid, ok)
+	}
+	if _, ok := d.turns.InteractiveMessageID("req-r1"); ok {
+		t.Error("req-r1 should be evicted by the refresh (only req-r2 owns the card)")
+	}
+	d.cardMu.Lock()
+	_, hasNew := d.cards["req-r2"]
+	_, hasOld := d.cards["req-r1"]
+	d.cardMu.Unlock()
+	if !hasNew {
+		t.Error("new card bytes should be cached under req-r2")
+	}
+	if hasOld {
+		t.Error("old round-1 card bytes should be evicted from the cache")
+	}
+
+	// The Feishu PATCH is fired by a delayed goroutine; poll for it.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		hit := false
+		for _, u := range sink.updates {
+			if u.messageID == "om_picker" {
+				hit = true
+				break
+			}
+		}
+		sink.mu.Unlock()
+		if hit {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("delayed UpdateCard on om_picker never fired within 2s")
+}

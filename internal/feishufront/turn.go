@@ -198,6 +198,23 @@ func (m *TurnManager) InteractiveByPromptID(promptID string) []InteractiveBindin
 	return out
 }
 
+// RequestIDsByMessageID returns the requestIDs of every interactive binding
+// currently pointing at messageID. Used when a multi-round picker (the /send
+// directory browser) refreshes one card in place: the prior round's
+// requestID→messageID binding must be dropped so the new round's requestID
+// owns the card (and its TTL/cache do not leak).
+func (m *TurnManager) RequestIDsByMessageID(messageID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for rid, e := range m.interactive {
+		if e.messageID == messageID {
+			out = append(out, rid)
+		}
+	}
+	return out
+}
+
 // UnbindInteractive removes the interactive card binding for requestID. Called
 // once the card has been submitted so the entry does not leak.
 func (m *TurnManager) UnbindInteractive(requestID string) {

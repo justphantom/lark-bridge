@@ -51,8 +51,14 @@ func (h *Handler) cmdSend(_ context.Context, chatID, arg string) (level, title, 
 // asks one question through miniagent.askAndWait, and descends/ascends/sends
 // on the user's pick. The chosen card's messageID threads through to
 // emitSendFile so the frontend PATCHes that card with the outcome.
+//
+// Round 1 morphs the progress card; every later round PATCHes that SAME card
+// in place via askCardUpdate so descending into a directory updates the picker
+// rather than leaving the prior card behind and piling up a new card per
+// level. pickerMsgID carries the round-1 card's message_id across iterations.
 func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 	currDir := absRoot
+	pickerMsgID := ""
 	for {
 		entries, err := os.ReadDir(currDir)
 		if err != nil {
@@ -64,11 +70,23 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 			h.notifyWithPromptID(chatID, promptID, "warning", "发送文件", "当前目录为空。")
 			return
 		}
-		choice, messageID, err := h.askAndWait(context.Background(), chatID, promptID,
-			"选择要发送的文件（📁 进入子目录，⬆️ 返回上级）", options)
-		if err != nil {
-			h.notifyWithPromptID(chatID, promptID, "warning", "发送取消", err.Error())
+		label := "选择要发送的文件（📁 进入子目录，⬆️ 返回上级）"
+		var (
+			choice    string
+			messageID string
+			aerr      error
+		)
+		if pickerMsgID == "" {
+			choice, messageID, aerr = h.askAndWait(context.Background(), chatID, promptID, label, options)
+		} else {
+			choice, messageID, aerr = h.askCardUpdate(context.Background(), chatID, pickerMsgID, label, options)
+		}
+		if aerr != nil {
+			h.notifyWithPromptID(chatID, promptID, "warning", "发送取消", aerr.Error())
 			return
+		}
+		if pickerMsgID == "" {
+			pickerMsgID = messageID
 		}
 		kind, name := bridgebase.ParseSendOption(choice)
 		switch kind {

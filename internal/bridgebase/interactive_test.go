@@ -208,3 +208,59 @@ func TestAskAndWait_TruncatesOptionsAtCap(t *testing.T) {
 		t.Errorf("prefix not preserved: first=%q last=%q", got[0], got[maxQuestionOptions-1])
 	}
 }
+
+// TestAskCardUpdate_RefreshesCardInPlace verifies the multi-round picker
+// refresh path used by /send's directory browser: AskCardUpdate emits a
+// question control that PATCHes an existing card (UpdateMessageID set) with a
+// fresh requestID, does NOT request progress-card takeover, and surfaces the
+// clicked card's messageID to the caller.
+func TestAskCardUpdate_RefreshesCardInPlace(t *testing.T) {
+	answers := NewAnswerBroker()
+	var emitted *protocol.Control
+	emit := func(_ context.Context, _ string, c *protocol.Control) error {
+		emitted = c
+		return nil
+	}
+
+	const updateID = "om_picker"
+	done := make(chan struct{})
+	var gotChoice, gotMessageID string
+	go func() {
+		defer close(done)
+		gotChoice, gotMessageID, _ = AskCardUpdate(
+			context.Background(), answers, emit, "chat-1", updateID, "文件", "选择",
+			StaticOptions([]string{"📄 a", "📁 b/"}), false)
+	}()
+
+	reqID := ""
+	for reqID == "" {
+		if ids := answers.PendingIDs(); len(ids) > 0 {
+			reqID = ids[0]
+		}
+	}
+	// An answer carrying a messageID wins; absent one, the carried updateID is
+	// returned so the browser keeps PATCHing the same card across rounds.
+	answers.Deliver(reqID, &protocol.AnswerPayload{RequestID: reqID, ChatID: "chat-1", MessageID: "om_picker", Choices: []string{"📁 b/"}})
+	<-done
+
+	// Assert on the emitted control only after the goroutine has returned, so
+	// the emit-side write to `emitted` is not raced with these reads.
+	if emitted == nil {
+		t.Fatal("no question control emitted")
+	}
+	if emitted.Question.UpdateMessageID != updateID {
+		t.Errorf("UpdateMessageID = %q, want %q", emitted.Question.UpdateMessageID, updateID)
+	}
+	if emitted.Question.TakeOverProgress {
+		t.Error("refresh must NOT set TakeOverProgress (it PATCHes an existing card, not the progress card)")
+	}
+	if emitted.Question.RequestID != reqID {
+		t.Errorf("RequestID = %q, want the fresh %q", emitted.Question.RequestID, reqID)
+	}
+	if gotChoice != "📁 b/" {
+		t.Errorf("choice = %q, want 📁 b/", gotChoice)
+	}
+	if gotMessageID != "om_picker" {
+		t.Errorf("messageID = %q, want om_picker", gotMessageID)
+	}
+}

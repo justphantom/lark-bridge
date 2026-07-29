@@ -230,8 +230,17 @@ func CmdSend(ctx context.Context, c *Core, chatID, rootDir string, args []string
 // and descends / ascends / sends on the user's pick. AskAndWait's appCtx +
 // 9-minute wait outlast the dispatcher timeout, and its TakeOverProgress
 // morphs the /send progress card into the picker card each round.
+//
+// Round 1 morphs the progress card; every later round PATCHes that SAME card
+// in place via AskCardUpdate (QuestionPayload.UpdateMessageID), so descending
+// into a directory updates the picker rather than leaving the prior card
+// behind and piling up a new one per level. pickerMsgID carries the round-1
+// card's message_id across iterations; AskCardUpdate returns the message_id
+// the click actually landed on (the same card unless the frontend fell back to
+// a standalone send).
 func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 	currDir := absRoot
+	pickerMsgID := ""
 	for {
 		entries, err := os.ReadDir(currDir)
 		if err != nil {
@@ -244,10 +253,22 @@ func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 			return
 		}
 		label := "选择要发送的文件（📁 进入子目录，⬆️ 返回上级）"
-		choice, messageID, err := c.AskAndWait(chatID, replyToID, "文件", label, StaticOptions(options), false)
-		if err != nil {
-			c.EmitNoticeLogged(chatID, "warning", "发送取消", err.Error())
+		var (
+			choice    string
+			messageID string
+			aerr      error
+		)
+		if pickerMsgID == "" {
+			choice, messageID, aerr = c.AskAndWait(chatID, replyToID, "文件", label, StaticOptions(options), false)
+		} else {
+			choice, messageID, aerr = c.AskCardUpdate(chatID, pickerMsgID, "文件", label, StaticOptions(options), false)
+		}
+		if aerr != nil {
+			c.EmitNoticeLogged(chatID, "warning", "发送取消", aerr.Error())
 			return
+		}
+		if pickerMsgID == "" {
+			pickerMsgID = messageID
 		}
 		kind, name := ParseSendOption(choice)
 		switch kind {

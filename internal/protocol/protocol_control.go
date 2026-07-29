@@ -279,6 +279,17 @@ type QuestionPayload struct {
 	// command→pick→result interaction lives on one card. Mid-turn
 	// permission/question cards leave it unset and ship standalone.
 	TakeOverProgress bool `json:"takeOverProgress,omitempty"`
+	// UpdateMessageID turns a question control into an in-place refresh of an
+	// existing picker card: instead of morphing the progress card or shipping a
+	// standalone card, the frontend PATCHes THIS message_id with the new
+	// options. Used by multi-round pickers (notably /send's directory browser)
+	// so descending into a directory updates the same card instead of leaving
+	// the prior picker behind and piling up a new card per level. The PATCH is
+	// delayed past Feishu's click-handling window by the frontend. Empty on the
+	// first round (which morphs the progress card); set to that card's
+	// message_id on every subsequent round. The RequestID must still be fresh
+	// per round so clicks on the old option set cannot collide with the new one.
+	UpdateMessageID string `json:"updateMessageID,omitempty"`
 }
 
 // QuestionItem is one question within a QuestionPayload.

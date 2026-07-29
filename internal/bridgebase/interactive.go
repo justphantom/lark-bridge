@@ -303,6 +303,102 @@ func (c *Core) AskAndWait(
 	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
 }
 
+// AskCardUpdate refreshes an existing picker card in place for the next round
+// of a multi-round picker (today only /send's directory browser). It is the
+// in-place counterpart to AskAndWait: instead of morphing the progress card or
+// shipping a standalone card, it tells the frontend to PATCH updateMessageID
+// (the message_id AskAndWait returned on round 1) with a fresh option list and
+// a fresh requestID, then blocks for the answer exactly like AskAndWait.
+//
+// updateMessageID is what binds the whole browser to one card across rounds;
+// passing "" degrades to a standalone card (callers should pass the round-1 id
+// they captured). listFn/allowCustom mirror AskAndWait. Runs on appCtx, so the
+// caller MUST be on a background goroutine (the dispatcher returns Handled=true
+// immediately), exactly like AskAndWait.
+func AskCardUpdate(
+	appCtx context.Context,
+	answers *AnswerBroker,
+	emit EmitFunc,
+	chatID, updateMessageID, kind, label string,
+	listFn func(context.Context) ([]string, error),
+	allowCustom bool,
+) (string, string, error) {
+	listCtx, listCancel := context.WithTimeout(appCtx, listFnTimeout)
+	defer listCancel()
+	options, err := listFn(listCtx)
+	if err != nil {
+		return "", "", fmt.Errorf("获取%s列表失败：%w", kind, err)
+	}
+	if len(options) == 0 {
+		return "", "", fmt.Errorf("没有可用的%s", kind)
+	}
+	if len(options) > maxQuestionOptions {
+		options = options[:maxQuestionOptions]
+	}
+
+	requestID, err := newRequestID()
+	if err != nil {
+		return "", "", fmt.Errorf("生成请求 ID 失败：%w", err)
+	}
+	ch, ok := answers.Register(requestID)
+	if !ok {
+		return "", "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
+	}
+
+	q := &protocol.Control{
+		Type:   protocol.TypeQuestion,
+		ChatID: chatID,
+		Question: &protocol.QuestionPayload{
+			RequestID:       requestID,
+			Questions:       []protocol.QuestionItem{{Label: label, Options: options, Custom: allowCustom}},
+			UpdateMessageID: updateMessageID,
+		},
+	}
+	emitCtx, emitCancel := context.WithTimeout(appCtx, emitNoticeTimeout)
+	defer emitCancel()
+	if err := emit(emitCtx, "", q); err != nil {
+		answers.Cancel(requestID)
+		return "", "", fmt.Errorf("刷新选择卡片失败：%w", err)
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(appCtx, AskWaitTimeout)
+	defer waitCancel()
+	select {
+	case ans, ok := <-ch:
+		if !ok {
+			return "", "", errors.New("服务正在关闭，请稍后重试")
+		}
+		choice := PickAnswerValue(ans)
+		if choice == "" {
+			return "", "", fmt.Errorf("未选择任何%s", kind)
+		}
+		// The card patched in place is updateMessageID; an answer carries the
+		// message_id the user actually clicked, which is the same card. Prefer
+		// the carried id when present (it survives a frontend fallback to a
+		// fresh standalone card) and fall back to updateMessageID otherwise.
+		messageID := updateMessageID
+		if ans != nil && ans.MessageID != "" {
+			messageID = ans.MessageID
+		}
+		return choice, messageID, nil
+	case <-waitCtx.Done():
+		answers.Cancel(requestID)
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return "", "", fmt.Errorf("选择超时（>%s），请重新发起", AskWaitTimeout)
+		}
+		return "", "", errors.New("等待选择被中断")
+	}
+}
+
+// AskCardUpdate is the receiver form binding the Core's appCtx, answers, emit.
+func (c *Core) AskCardUpdate(
+	chatID, updateMessageID, kind, label string,
+	listFn func(context.Context) ([]string, error),
+	allowCustom bool,
+) (string, string, error) {
+	return AskCardUpdate(c.AppCtx, c.Answers, c.Emit, chatID, updateMessageID, kind, label, listFn, allowCustom)
+}
+
 func (c *Core) AskPermission(chatID, promptID, requestID, kind string, msg protocol.PermissionMessage, options []protocol.PermissionOption, takeOver bool) (string, string, error) {
 	return AskPermission(c.AppCtx, c.Answers, c.Emit, chatID, promptID, requestID, kind, msg, options, takeOver)
 }

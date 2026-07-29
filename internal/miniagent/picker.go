@@ -144,6 +144,57 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID, label string
 	}
 }
 
+// askCardUpdate is miniagent's in-place counterpart to askAndWait for the
+// second and later rounds of a multi-round picker (/send's directory browser):
+// it PATCHes updateMessageID (the round-1 card) with a fresh option list +
+// requestID instead of morphing the progress card or shipping a standalone
+// card. Blocks for the answer like askAndWait. Local copy because miniagent
+// keeps its picker independent of bridgebase.
+func (h *Handler) askCardUpdate(ctx context.Context, chatID, updateMessageID, label string, options []string) (string, string, error) {
+	if len(options) == 0 {
+		return "", "", fmt.Errorf("没有可选项")
+	}
+	requestID, err := newRequestID()
+	if err != nil {
+		return "", "", fmt.Errorf("生成请求 ID 失败：%w", err)
+	}
+	ch, ok := h.answers.Register(requestID)
+	if !ok {
+		return "", "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
+	}
+	ctrl := &protocol.Control{
+		Type:   protocol.TypeQuestion,
+		ChatID: chatID,
+		Question: &protocol.QuestionPayload{
+			RequestID:       requestID,
+			Questions:       []protocol.QuestionItem{{Label: label, Options: options}},
+			UpdateMessageID: updateMessageID,
+		},
+	}
+	h.sendCtrl(ctrl)
+
+	waitCtx, waitCancel := context.WithTimeout(ctx, askWaitTimeout)
+	defer waitCancel()
+	select {
+	case ans, ok := <-ch:
+		if !ok {
+			return "", "", fmt.Errorf("服务正在关闭，请稍后重试")
+		}
+		choice := pickAnswerValue(ans)
+		if choice == "" {
+			return "", "", fmt.Errorf("未选择任何%s", label)
+		}
+		messageID := updateMessageID
+		if ans != nil && ans.MessageID != "" {
+			messageID = ans.MessageID
+		}
+		return choice, messageID, nil
+	case <-waitCtx.Done():
+		h.answers.Cancel(requestID)
+		return "", "", fmt.Errorf("选择超时（>%s），请重新发起", askWaitTimeout)
+	}
+}
+
 // pickAnswerValue extracts the user's selection. Custom input wins over a
 // listed pick; Choices[0] carries a single-select's value.
 func pickAnswerValue(ans *protocol.AnswerPayload) string {
