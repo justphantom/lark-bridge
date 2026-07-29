@@ -2,14 +2,11 @@ package claudebridge
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/claude"
-
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -76,7 +73,7 @@ func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult
 	}
 	choice, messageID, err := h.AskPermission(chatID, replyToID, "", "权限模式", protocol.PermissionMessage{Message: "选择权限模式"}, opts, true)
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	old := oldMode
@@ -86,7 +83,7 @@ func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult
 	h.Router.SetPermissionMode(chatID, choice)
 	cmdutil.LogSettingChange(h.Logger, chatID, "permission_mode", choice)
 	res := cmdutil.ChangeResult("权限模式", old, choice, "下次提问生效。")
-	h.emitCardUpdateLogged(chatID, messageID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
+	h.EmitCardUpdateLogged(chatID, messageID, "success", "已设置权限模式", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 
@@ -140,11 +137,11 @@ func (h *Handler) cmdSettings(ctx context.Context, chatID string, args []string)
 func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandResult {
 	paths, err := h.agent.ListSettings(h.AppCtx)
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", "获取 settings 文件列表失败："+err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", "获取 settings 文件列表失败："+err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	if len(paths) == 0 {
-		h.emitPromptNotice(chatID, replyToID, "warning", "无可选项",
+		h.EmitPromptNotice(chatID, replyToID, "warning", "无可选项",
 			"settings 目录下没有 settings.json 或 *-settings.json 文件。")
 		return commandResult{Body: "没有可用的 settings 文件", Handled: true}
 	}
@@ -161,7 +158,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandRe
 
 	choice, messageID, err := h.AskAndWait(chatID, replyToID, "settings 文件", "选择 settings 文件", bridgebase.StaticOptions(options), false)
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 
@@ -169,7 +166,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandRe
 	// path. An unknown value is a defensive reject (it should not happen).
 	path, ok := byName[choice]
 	if !ok {
-		h.emitCardUpdateLogged(chatID, messageID, "error", "选择无效", "未知的 settings 文件："+choice)
+		h.EmitCardUpdateLogged(chatID, messageID, "error", "选择无效", "未知的 settings 文件："+choice)
 		return commandResult{Body: "未知的 settings 文件：" + choice, Handled: true}
 	}
 	old := oldFile
@@ -179,7 +176,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandRe
 	h.Router.SetSettingsFile(chatID, path)
 	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", path)
 	res := cmdutil.ChangeResult("--settings 文件", old, path, "下次提问生效。")
-	h.emitCardUpdateLogged(chatID, messageID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
+	h.EmitCardUpdateLogged(chatID, messageID, "success", "已设置 settings 文件", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 
@@ -192,51 +189,4 @@ func clearSettingsFile(h *Handler, chatID, oldFile string) commandResult {
 	h.Router.SetSettingsFile(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "settings_file", "")
 	return cmdutil.ChangeResult("--settings 文件", old, "(未设置)", "已清除 --settings 文件设置。")
-}
-
-// validateAbsDir checks that dir is an absolute path, an existing
-// directory, and writable by the current uid — the same uid the Claude
-// subprocess will run as, so the probe result is authoritative. The
-// writability check is what makes a systemd ReadWritePaths exclusion
-// surface here (with a clear message) rather than mid-turn inside
-// Claude's acceptEdits flow.
-func validateAbsDir(dir string) error {
-	if !filepath.IsAbs(dir) {
-		return fmt.Errorf("路径必须是绝对路径：%s", dir)
-	}
-
-	info, err := os.Stat(dir)
-	if err != nil {
-		return fmt.Errorf("目录不可访问：%w", err)
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("路径不是目录：%s", dir)
-	}
-
-	probe, err := os.MkdirTemp(dir, ".cdprobe-*")
-	if err != nil {
-		return fmt.Errorf("目录不可写（可能被 systemd ReadWritePaths 排除或 Unix 权限不足）：%w", err)
-	}
-	_ = os.Remove(probe)
-	return nil
-}
-
-// validateSessionDirPath checks the shape of a session directory the bridge is
-// about to create from an Event-carried override: it must be an absolute path.
-// Event.Directory is empty in production (the frontend never sets it), so this
-// is defence in depth — the workspace boundary is enforced by /cd.
-//
-// IsAbs only, by design: a relative path (including "..") does not begin with
-// "/", so IsAbs already rejects it; a ".." segment inside an absolute path
-// (e.g. "/a/../b") is resolved by the filesystem to a concrete path at
-// MkdirAll/CWD time and is not a traversal escape. The workspace root boundary
-// is enforced separately — /cd's validateAbsDir and bridgebase's filepath.Rel
-// check both Clean before comparing. Existence is not required (unlike /cd's
-// validateAbsDir) — ensureBinding creates the dir via MkdirAll on demand.
-func validateSessionDirPath(dir string) error {
-	if !filepath.IsAbs(dir) {
-		return fmt.Errorf("路径必须是绝对路径：%s", dir)
-	}
-	return nil
 }

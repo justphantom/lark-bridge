@@ -47,12 +47,12 @@ type messageShape struct {
 // cacheWrite/totalTokens plus the nested cost.{input,output,cacheRead,
 // cacheWrite,total}. Only the cost.total aggregate is consumed (§6.3).
 type usageShape struct {
-	Input       int        `json:"input"`
-	Output      int        `json:"output"`
-	CacheRead   int        `json:"cacheRead"`
-	CacheWrite  int        `json:"cacheWrite"`
-	TotalTokens int        `json:"totalTokens"`
-	Cost        costShape  `json:"cost"`
+	Input       int       `json:"input"`
+	Output      int       `json:"output"`
+	CacheRead   int       `json:"cacheRead"`
+	CacheWrite  int       `json:"cacheWrite"`
+	TotalTokens int       `json:"totalTokens"`
+	Cost        costShape `json:"cost"`
 }
 
 type costShape struct {

@@ -134,23 +134,27 @@ func TestStreamRun_AccumulatesCostAndTokensAcrossSteps(t *testing.T) {
 
 	events := parseLines(t, toolStep, toolStep, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
 
 	// cost: 0.01 + 0.01 + 0.02 = 0.04 (would be 0.02 if only the terminal step counted).
-	if res.costUSD != 0.04 {
-		t.Errorf("costUSD = %v, want 0.04", res.costUSD)
+	if res.CostUSD != 0.04 {
+		t.Errorf("costUSD = %v, want 0.04", res.CostUSD)
 	}
-	if res.inputTokens != 1400 { // 200 + 200 + 1000
-		t.Errorf("inputTokens = %v, want 1400", res.inputTokens)
+	if res.InputTokens != 1400 { // 200 + 200 + 1000
+		t.Errorf("inputTokens = %v, want 1400", res.InputTokens)
 	}
-	if res.outputTokens != 660 { // 80 + 80 + 500
-		t.Errorf("outputTokens = %v, want 660", res.outputTokens)
+	if res.OutputTokens != 660 { // 80 + 80 + 500
+		t.Errorf("outputTokens = %v, want 660", res.OutputTokens)
 	}
-	if res.cacheRead != 1100 { // 400 + 400 + 300
-		t.Errorf("cacheRead = %v, want 1100", res.cacheRead)
+	if res.CacheRead != 1100 { // 400 + 400 + 300
+		t.Errorf("cacheRead = %v, want 1100", res.CacheRead)
 	}
 }
 
@@ -161,12 +165,16 @@ func TestStreamRun_SingleStepCostIsTerminal(t *testing.T) {
 
 	events := parseLines(t, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
-	if res.costUSD != 0.02 {
-		t.Errorf("costUSD = %v, want 0.02", res.costUSD)
+	if res.CostUSD != 0.02 {
+		t.Errorf("costUSD = %v, want 0.02", res.CostUSD)
 	}
 }
 
@@ -187,18 +195,22 @@ func TestStreamRun_OnlyTerminalStepTextBecomesReply(t *testing.T) {
 
 	events := parseLines(t, stepStart, preamble, toolStep, stepStart, finalAnswer, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
-	if res.err != nil {
-		t.Fatalf("streamRun: %v", res.err)
+	if res.Err != nil {
+		t.Fatalf("streamRun: %v", res.Err)
 	}
-	if !strings.Contains(res.reply, "FINAL_ANSWER_AFTER_TOOL") {
-		t.Errorf("reply = %q, want contains 'FINAL_ANSWER_AFTER_TOOL'", res.reply)
+	if !strings.Contains(res.Reply, "FINAL_ANSWER_AFTER_TOOL") {
+		t.Errorf("reply = %q, want contains 'FINAL_ANSWER_AFTER_TOOL'", res.Reply)
 	}
-	if strings.Contains(res.reply, "PREAMBLE_BEFORE_TOOL") {
-		t.Errorf("reply leaked non-terminal step text: %q", res.reply)
+	if strings.Contains(res.Reply, "PREAMBLE_BEFORE_TOOL") {
+		t.Errorf("reply leaked non-terminal step text: %q", res.Reply)
 	}
 }
 
@@ -213,15 +225,19 @@ func TestStreamRun_SingleStepTextSurvives(t *testing.T) {
 
 	events := parseLines(t, stepStart, textEv, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
-	if res.err != nil {
-		t.Fatalf("streamRun: %v", res.err)
+	if res.Err != nil {
+		t.Fatalf("streamRun: %v", res.Err)
 	}
-	if !strings.Contains(res.reply, "ONLY_ANSWER") {
-		t.Errorf("reply = %q, want contains 'ONLY_ANSWER'", res.reply)
+	if !strings.Contains(res.Reply, "ONLY_ANSWER") {
+		t.Errorf("reply = %q, want contains 'ONLY_ANSWER'", res.Reply)
 	}
 }
 
@@ -237,23 +253,27 @@ func TestStreamRun_ThinkingDoesNotPolluteReply(t *testing.T) {
 
 	events := parseLines(t, reasoningEv, textEv, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
-	if res.err != nil {
-		t.Fatalf("streamRun: %v", res.err)
+	if res.Err != nil {
+		t.Fatalf("streamRun: %v", res.Err)
 	}
-	if strings.Contains(res.reply, "SECRET_REASONING") {
-		t.Errorf("reply leaked reasoning text: %q", res.reply)
+	if strings.Contains(res.Reply, "SECRET_REASONING") {
+		t.Errorf("reply leaked reasoning text: %q", res.Reply)
 	}
-	if !strings.Contains(res.reply, "final answer") {
-		t.Errorf("reply = %q, want contains 'final answer'", res.reply)
+	if !strings.Contains(res.Reply, "final answer") {
+		t.Errorf("reply = %q, want contains 'final answer'", res.Reply)
 	}
 }
 
 // TestStreamRun_SessionIDPropagatedToResult verifies the sessionID captured
-// from the first event carrying it lands on the promptResult. This is the
+// from the first event carrying it lands on the bridgebase.PromptResult. This is the
 // bridge-side half of the E2 fix: stream_loop also synthesises a
 // TypeSessionInit at that moment so the frontend footer can render
 // Model + SessionID; the emit itself is a no-op when rpc is nil, but the
@@ -264,12 +284,16 @@ func TestStreamRun_SessionIDPropagatedToResult(t *testing.T) {
 
 	events := parseLines(t, stepStart, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "glm-5", nil)
-	if res.sessionID != "ses_test_123" {
-		t.Errorf("sessionID = %q, want ses_test_123", res.sessionID)
+	if res.SessionID != "ses_test_123" {
+		t.Errorf("sessionID = %q, want ses_test_123", res.SessionID)
 	}
 }
 
@@ -286,15 +310,19 @@ func TestStreamRun_StepStartDoesNotPanicOnEmptyProgress(t *testing.T) {
 
 	events := parseLines(t, stepStart, stepStart, stepStart, stopStep)
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
-	if res.err != nil {
-		t.Fatalf("streamRun: %v", res.err)
+	if res.Err != nil {
+		t.Fatalf("streamRun: %v", res.Err)
 	}
-	if res.steps != 3 {
-		t.Errorf("steps = %d, want 3 (one per step_start)", res.steps)
+	if res.Steps != 3 {
+		t.Errorf("steps = %d, want 3 (one per step_start)", res.Steps)
 	}
 }
 
@@ -315,7 +343,11 @@ func TestStreamRun_TodoWriteEmitsTypeTodoNotToolResult(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-todo", "", t.TempDir(), "", "", "")
 
@@ -367,7 +399,11 @@ func TestStreamRun_TodoWriteFailureFallsBackToToolResult(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-fail", "", t.TempDir(), "", "", "")
 
@@ -414,7 +450,11 @@ func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptOpencode{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-bash", "", t.TempDir(), "", "", "")
 
@@ -459,17 +499,21 @@ func TestStreamRun_IdleTimeoutMarked(t *testing.T) {
 	}()
 
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(ctx, "c1", "p1", events, "", func() {})
-	if !res.isIdleTimeout {
+	if !res.IsIdleTimeout {
 		t.Errorf("isIdleTimeout = false, want true (idle watchdog cause)")
 	}
-	if res.isCancelled {
+	if res.IsCancelled {
 		t.Errorf("isCancelled = true, want false; idle must not masquerade as user-cancel")
 	}
-	if res.err == nil {
+	if res.Err == nil {
 		t.Errorf("err = nil, want the cancelled ctx error")
 	}
 }
@@ -489,14 +533,18 @@ func TestStreamRun_UserCancelNotIdle(t *testing.T) {
 	}()
 
 	r, _ := router.New("", log.Nop())
-	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{StateDir: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
 	res := h.streamRun(ctx, "c1", "p1", events, "", func() {})
-	if !res.isCancelled {
+	if !res.IsCancelled {
 		t.Errorf("isCancelled = false, want true (user abort)")
 	}
-	if res.isIdleTimeout {
+	if res.IsIdleTimeout {
 		t.Errorf("isIdleTimeout = true, want false; a plain cancel must not look idle")
 	}
 }

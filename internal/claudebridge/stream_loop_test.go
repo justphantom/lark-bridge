@@ -104,7 +104,11 @@ func TestStreamRun_ToolResultNameCorrelatedByFeed(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-tool", "", t.TempDir(), "", "", "")
 
@@ -156,7 +160,11 @@ func TestStreamRun_TaskProgressFoldedIntoToolRow(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-task", "", t.TempDir(), "", "", "")
 
@@ -223,7 +231,11 @@ func TestStreamRun_UnknownEventNotFatal(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-unk", "", t.TempDir(), "", "", "")
 
@@ -279,7 +291,11 @@ func TestStreamRun_TodoWriteEmitsTypeTodoNotToolUse(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-todo", "", t.TempDir(), "", "", "")
 
@@ -345,7 +361,11 @@ func TestStreamRun_TodoWriteFailureFallsBackToToolResult(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-fail", "", t.TempDir(), "", "", "")
 
@@ -402,7 +422,11 @@ func TestStreamRun_OtherToolsUnaffectedByTodoRouting(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-bash", "", t.TempDir(), "", "", "")
 
@@ -462,7 +486,11 @@ func TestStreamRun_ServerToolUseResultCarriesName(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-srv", "", t.TempDir(), "", "", "")
 
@@ -516,7 +544,11 @@ func TestStreamRun_TaskKindStableAcrossLifecycle(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-shell", "", t.TempDir(), "", "", "")
 
@@ -569,7 +601,11 @@ func TestStreamRun_LocalAgentRoutesToSubagentSummary(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-sub", "", t.TempDir(), "", "", "")
 
@@ -662,7 +698,11 @@ func TestStreamRun_LocalBashKeepsLeafRow(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{events: events}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-bash", "", t.TempDir(), "", "", "")
 

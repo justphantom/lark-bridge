@@ -9,13 +9,12 @@ import (
 	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
-	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // streamRun consumes a Claude event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
-// to a promptResult.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan claude.Event, modelSpec string) promptResult {
+// to a bridgebase.PromptResult.
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan claude.Event, modelSpec string) bridgebase.PromptResult {
 	var (
 		// lastMsgID/lastText track only the most recent assistant message's
 		// text. The result envelope carries the final answer in its
@@ -73,11 +72,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 
 		// Stop early once the turn is cancelled.
 		if ctx.Err() != nil {
-			return promptResult{
-				err:         ctx.Err(),
-				isCancelled: true,
-				model:       firstNonEmpty(model, modelSpec),
-				sessionID:   sessionID,
+			return bridgebase.PromptResult{
+				Err:         ctx.Err(),
+				IsCancelled: true,
+				Model:       bridgebase.FirstNonEmpty(model, modelSpec),
+				SessionID:   sessionID,
 			}
 		}
 
@@ -108,11 +107,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// stream), but also any future internal signal — are ignored by
 			// falling through this case to the loop.
 			if ev.Subtype == claude.SubtypeInit && sessionID != "" {
-				h.emitAsync(promptID, &protocol.Control{
+				h.EmitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeSessionInit,
 					SessionInit: &protocol.SessionInitPayload{
 						SessionID: sessionID,
-						Model:     firstNonEmpty(model, modelSpec),
+						Model:     bridgebase.FirstNonEmpty(model, modelSpec),
 					},
 				})
 			}
@@ -129,7 +128,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// local_agent (true AI subagent) routes to the dedicated subagent
 			// zone via SubagentSummary; local_bash keeps the legacy leaf row.
 			if isLocalAgentKind(kind) {
-				h.emitAsync(promptID, &protocol.Control{
+				h.EmitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeToolUse,
 					ToolUse: &protocol.ToolUsePayload{
 						Name:       taskToolName(ev.TaskType, kind),
@@ -148,7 +147,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				break
 			}
 			// local_bash (or legacy missing kind): leaf-tool row, unchanged.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, kind), Input: ev.TaskDesc, IsSubagent: true, TaskID: ev.TaskID},
 			})
@@ -171,7 +170,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				// True AI subagent: progressive update carries the live
 				// description + cumulative usage so the subagent zone can
 				// scroll the current action ("正在 Read internal/...").
-				h.emitAsync(promptID, &protocol.Control{
+				h.EmitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeToolUse,
 					ToolUse: &protocol.ToolUsePayload{
 						Name:       taskToolName(ev.TaskType, kind),
@@ -196,7 +195,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			// local_bash: re-emit as a ToolUse so the existing same-TaskID
 			// row updates its description while staying running.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: taskToolName(ev.TaskType, kind), Input: taskProgressDesc(ev), IsSubagent: true, TaskID: ev.TaskID},
 			})
@@ -233,7 +232,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				if ev.IsToolError {
 					status = "failed"
 				}
-				h.emitAsync(promptID, &protocol.Control{
+				h.EmitAsync(promptID, &protocol.Control{
 					Type: protocol.TypeToolResult,
 					ToolResult: &protocol.ToolResultPayload{
 						Name:       taskToolName(ev.TaskType, kind),
@@ -261,7 +260,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				break
 			}
 			// local_bash: leaf-tool row, unchanged.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:       taskToolName(ev.TaskType, kind),
@@ -277,7 +276,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// mirrors opencode's reasoning handling: the thinking zone reflects
 			// the latest block instead of concatenating every step's trace into
 			// an unreadable wall.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:   protocol.TypeThinking,
 				ChatID: chatID,
 				Thinking: &protocol.ThinkingPayload{
@@ -304,7 +303,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				todoInputs[ev.ToolID] = ev.ToolInput
 				continue
 			}
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: ev.ToolName, Input: bridgebase.SummarizeToolInput(ev.ToolName, ev.ToolInput)},
 			})
@@ -320,8 +319,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// through to a TypeToolResult so the failure is still visible.
 			if name == "TodoWrite" && !ev.IsToolError {
 				if input, ok := todoInputs[ev.ToolID]; ok {
-					if items, parsed := parseTodoItems(input); parsed {
-						h.emitAsync(promptID, &protocol.Control{
+					if items, parsed := bridgebase.ParseTodoItems(input); parsed {
+						h.EmitAsync(promptID, &protocol.Control{
 							Type:   protocol.TypeTodo,
 							ChatID: chatID,
 							Todo:   &protocol.TodoPayload{Todos: items},
@@ -330,7 +329,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					}
 				}
 			}
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:    name,
@@ -343,11 +342,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case claude.EventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
-				"error_text", truncateForDebug(ev.Text, h.debugRedact()))
-			return promptResult{
-				err:       errors.New(nonEmpty(ev.Text, "Claude 运行出错")),
-				model:     firstNonEmpty(model, modelSpec),
-				sessionID: sessionID,
+				"error_text", bridgebase.TruncateForDebug(ev.Text, h.DebugRedact()))
+			return bridgebase.PromptResult{
+				Err:       errors.New(bridgebase.NonEmpty(ev.Text, "Claude 运行出错")),
+				Model:     bridgebase.FirstNonEmpty(model, modelSpec),
+				SessionID: sessionID,
 			}
 		default:
 			// Forward-compat: the parser forwards unknown line types verbatim
@@ -365,47 +364,47 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	// or prompt timeout), surface it as a cancellation rather than a generic
 	// error so emitTerminal shows the right notice.
 	if ctx.Err() != nil {
-		return promptResult{
-			err:         ctx.Err(),
-			isCancelled: true,
-			model:       firstNonEmpty(model, modelSpec),
-			sessionID:   sessionID,
+		return bridgebase.PromptResult{
+			Err:         ctx.Err(),
+			IsCancelled: true,
+			Model:       bridgebase.FirstNonEmpty(model, modelSpec),
+			SessionID:   sessionID,
 		}
 	}
-	return promptResult{
-		err:       errors.New("claude 流意外结束，未收到结果事件"),
-		model:     firstNonEmpty(model, modelSpec),
-		sessionID: sessionID,
+	return bridgebase.PromptResult{
+		Err:       errors.New("claude 流意外结束，未收到结果事件"),
+		Model:     bridgebase.FirstNonEmpty(model, modelSpec),
+		SessionID: sessionID,
 	}
 }
 
-// finalizeResult builds the promptResult from a result event. The reply is
+// finalizeResult builds the bridgebase.PromptResult from a result event. The reply is
 // the last assistant message's accumulated text (lastReply), which is the
 // real final answer; the result envelope's "result" field is only a fallback
 // when no assistant text arrived (e.g. an error result), because in
 // multi-turn runs that field can carry an early turn's text.
-func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, modelSpec, chatID string) promptResult {
+func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, modelSpec, chatID string) bridgebase.PromptResult {
 	h.Logger.Debug("bridge: result event",
 		log.FieldChatID, chatID,
 		"is_error", ev.IsError,
 		"cost_usd", ev.CostUSD,
 		log.FieldDuration, ev.DurationMs,
-		log.FieldModel, firstNonEmpty(model, modelSpec),
-		"result_preview", truncateForDebug(ev.Result, h.debugRedact()),
-		"reply_preview", truncateForDebug(lastReply, h.debugRedact()))
+		log.FieldModel, bridgebase.FirstNonEmpty(model, modelSpec),
+		"result_preview", bridgebase.TruncateForDebug(ev.Result, h.DebugRedact()),
+		"reply_preview", bridgebase.TruncateForDebug(lastReply, h.DebugRedact()))
 
-	result := promptResult{
-		model:         firstNonEmpty(model, modelSpec),
-		sessionID:     sessionID,
-		durationMs:    ev.DurationMs,
-		contextTokens: ev.InputTokens + ev.OutputTokens,
-		costUSD:       ev.CostUSD,
-		steps:         ev.NumTurns,
+	result := bridgebase.PromptResult{
+		Model:        bridgebase.FirstNonEmpty(model, modelSpec),
+		SessionID:    sessionID,
+		DurationMs:   ev.DurationMs,
+		ContextToken: ev.InputTokens + ev.OutputTokens,
+		CostUSD:      ev.CostUSD,
+		Steps:        ev.NumTurns,
 
-		inputTokens:   ev.InputTokens,
-		outputTokens:  ev.OutputTokens,
-		cacheRead:     ev.CacheRead,
-		cacheCreation: ev.CacheCreation,
+		InputTokens:   ev.InputTokens,
+		OutputTokens:  ev.OutputTokens,
+		CacheRead:     ev.CacheRead,
+		CacheCreation: ev.CacheCreation,
 	}
 
 	if ev.IsError {
@@ -413,8 +412,8 @@ func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, m
 		if strings.TrimSpace(msg) == "" {
 			msg = "Claude 返回错误"
 		}
-		result.err = errors.New(msg)
-		result.stale = claude.IsStaleSession(ev)
+		result.Err = errors.New(msg)
+		result.Stale = claude.IsStaleSession(ev)
 		return result
 	}
 
@@ -422,33 +421,10 @@ func (h *Handler) finalizeResult(ev claude.Event, lastReply, sessionID, model, m
 	if strings.TrimSpace(reply) == "" {
 		reply = ev.Result
 	}
-	result.reply = bridgebase.StripThinking(reply, "> 💭 ")
+	result.Reply = bridgebase.StripThinking(reply, "> 💭 ")
 	return result
 }
 
-// maxDebugTextLen caps the preview length used in debug logs.
-const maxDebugTextLen = 200
-
-func nonEmpty(s, fallback string) string {
-	if strings.TrimSpace(s) == "" {
-		return fallback
-	}
-	return s
-}
-
-// truncateForDebug returns a string for debug logging: optionally redacted
-// (replaced wholesale) and always truncated to a bounded length.
-func truncateForDebug(s string, redact bool) string {
-	if redact {
-		return "<redacted>"
-	}
-	return strutil.Truncate(s, maxDebugTextLen)
-}
-
-// firstNonEmpty returns the first non-empty string, or "" if all are empty.
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
+// Helpers nonEmpty / truncateForDebug / firstNonEmpty / parseTodoItems are
+// now shared from package bridgebase (util.go); the local copies were
+// byte-identical across claude/opencode/omp bridges.

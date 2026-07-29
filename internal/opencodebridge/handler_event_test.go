@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
@@ -160,7 +161,11 @@ func TestHandleEvent_PromptEmitsTerminal(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
@@ -195,7 +200,11 @@ func TestHandleEvent_SkillPromptBypassesSlashCommand(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamOpencode{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
@@ -220,8 +229,13 @@ func TestRunPrompt_TimeoutFires(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingOpencode{}, client, HandlerConfig{
-		StateDir:      t.TempDir(),
-		PromptTimeout: 100 * time.Millisecond,
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+
+			PromptTimeout: 100 * time.Millisecond,
+		},
 	}, log.Nop())
 	r.Bind("c-to", "", t.TempDir(), "", "", "")
 
@@ -254,7 +268,11 @@ func TestRunPrompt_UserCancelShowsCancelled(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingOpencode{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-cancel", "", t.TempDir(), "", "", "")
 

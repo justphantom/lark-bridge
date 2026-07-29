@@ -10,20 +10,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"path/filepath"
-	"syscall"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/claude"
-
+	"github.com/justphantom/lark-bridge/internal/backendhost"
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/claudebridge"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
-	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
 var version = "dev"
@@ -40,123 +36,61 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := run(*cfgPath); err != nil {
+	runner := buildClaudeRunner()
+	if err := runner.Run(*cfgPath, version); err != nil {
 		fmt.Fprintf(os.Stderr, "lark-claude-back: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfgPath string) error {
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
+// buildClaudeRunner assembles the CLIRunner used by main. Factored out so
+// tests can drive it without parsing flags.
+func buildClaudeRunner() *backendhost.CLIRunner[*claudebridge.Handler] {
+	return &backendhost.CLIRunner[*claudebridge.Handler]{
+		BackendType:         "claude",
+		UnitName:            "lark-claude-back.service",
+		UsageFile:           "usage-claude.json",
+		ProgramPrefix:       "lark-claude-back",
+		LoggerComponent:     "claude-back",
+		MetricsInterval:     func(cfg *config.Config) time.Duration { return time.Duration(cfg.StatusMonitor.Interval) },
+		EventHandlerFactory: func(h *claudebridge.Handler) backendhost.EventHandler { return h.HandleEvent },
+		CloserFactory:       func(h *claudebridge.Handler) func() { return h.Close },
+		ReadyCheck: func(ctx context.Context, cfg *config.Config, base *log.BaseLogger) error {
+			api := claude.New(claude.Options{
+				CLIPath:            cfg.Claude.CLIPath,
+				PermissionMode:     cfg.Claude.PermissionMode,
+				AppendSystemPrompt: cfg.Claude.AppendSystemPrompt,
+				MaxConcurrent:      cfg.Claude.MaxConcurrent,
+				SettingsDir:        cfg.Claude.SettingsDir,
+				SettingsCacheTTL:   time.Duration(cfg.Claude.SettingsCacheTTL) * time.Second,
+				Logger:             base.Logger,
+			})
+			return api.IsReady(ctx)
+		},
+		BuildHandler: func(r *router.Router, rpc *backendrpc.Client, cfg *config.Config, base *log.BaseLogger) (*claudebridge.Handler, error) {
+			api := claude.New(claude.Options{
+				CLIPath:            cfg.Claude.CLIPath,
+				PermissionMode:     cfg.Claude.PermissionMode,
+				AppendSystemPrompt: cfg.Claude.AppendSystemPrompt,
+				MaxConcurrent:      cfg.Claude.MaxConcurrent,
+				SettingsDir:        cfg.Claude.SettingsDir,
+				SettingsCacheTTL:   time.Duration(cfg.Claude.SettingsCacheTTL) * time.Second,
+				Logger:             base.Logger,
+			})
+			return claudebridge.NewWithLogger(r, api, rpc, claudebridge.HandlerConfig{
+				CoreConfig: bridgebase.CoreConfig{
+					DefaultDirectory:  cfg.Claude.DefaultDirectory,
+					PermissionDefault: cfg.Claude.PermissionMode,
+					StateDir:          cfg.StateDir,
+					StreamHistory:     cfg.Claude.StreamHistory,
+					PromptTimeout:     time.Duration(cfg.Timeouts.PromptTimeout),
+					DebugRedact:       cfg.LogDebugRedact,
+					WorkspaceRoot:     os.Getenv("WORKSPACE_ROOT"),
+				},
+				ModelOptions:      cfg.Claude.ModelOptions,
+				PermissionOptions: cfg.Claude.PermissionOptions,
+				EffortOptions:     cfg.Claude.EffortOptions,
+			}, base.ComponentLogger("bridge", "")), nil
+		},
 	}
-
-	logger, err := buildLogger(cfg)
-	if err != nil {
-		return err
-	}
-
-	// The frontend validates a shared bearer token on every SSE/POST; a
-	// backend without the matching secret cannot register or emit controls.
-	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
-		return err
-	}
-
-	// Claude-back uses a nil SessionCreator: sessions are bound lazily and
-	// only Bind/Lookup/Set* are exercised (never GetOrCreate).
-	r, err := router.New(cfg.RouterPath, logger)
-	if err != nil {
-		return fmt.Errorf("router: %w", err)
-	}
-	defer r.Close()
-
-	// Per-session usage store: accumulates token/cost totals keyed by
-	// claude session_id. Own file (usage-claude.json) so the opencode backend
-	// sharing this state_dir never contends on the write.
-	usageStore, err := usage.New(filepath.Join(cfg.StateDir, "usage-claude.json"), logger, time.Duration(cfg.Timeouts.UsageSessionTTL))
-	if err != nil {
-		return fmt.Errorf("usage store: %w", err)
-	}
-	defer usageStore.Close()
-
-	api := claude.New(claude.Options{
-		CLIPath:            cfg.Claude.CLIPath,
-		PermissionMode:     cfg.Claude.PermissionMode,
-		AppendSystemPrompt: cfg.Claude.AppendSystemPrompt,
-		MaxConcurrent:      cfg.Claude.MaxConcurrent,
-		SettingsDir:        cfg.Claude.SettingsDir,
-		SettingsCacheTTL:   time.Duration(cfg.Claude.SettingsCacheTTL) * time.Second,
-		Logger:             logger,
-	})
-
-	connOpts := backendrpc.ConnectOptions{
-		BackendID:   cfg.BackendID,
-		BackendType: "claude",
-		FrontendURL: cfg.FrontendURL,
-		Secret:      cfg.IPCSecret,
-		Version:     version,
-	}
-	rpc, err := backendrpc.Connect(connOpts)
-	if err != nil {
-		return fmt.Errorf("connect frontend: %w", err)
-	}
-	rpc.SetLogger(logger)
-	defer rpc.Close()
-
-	h := claudebridge.NewWithLogger(r, api, rpc, claudebridge.HandlerConfig{
-		DefaultDirectory:  cfg.Claude.DefaultDirectory,
-		PermissionDefault: cfg.Claude.PermissionMode,
-		StateDir:          cfg.StateDir,
-		StreamHistory:     cfg.Claude.StreamHistory,
-		PromptTimeout:     time.Duration(cfg.Timeouts.PromptTimeout),
-		ModelOptions:      cfg.Claude.ModelOptions,
-		PermissionOptions: cfg.Claude.PermissionOptions,
-		EffortOptions:     cfg.Claude.EffortOptions,
-		DebugRedact:       cfg.LogDebugRedact,
-		WorkspaceRoot:     os.Getenv("WORKSPACE_ROOT"),
-	}, logger)
-	h.SetUsage(usageStore)
-	defer h.Close()
-
-	// Health gate: fail fast if the Claude CLI is not installed.
-	readyCtx, readyCancel := context.WithCancel(context.Background())
-	defer readyCancel()
-	if err := api.IsReady(readyCtx); err != nil {
-		return fmt.Errorf("claude health: %w", err)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Host/process metrics push for the status-monitor overview card.
-	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
-		Interval: time.Duration(cfg.StatusMonitor.Interval),
-		StateDir: cfg.StateDir,
-		UnitName: "lark-claude-back.service",
-		Version:  version,
-		Logger:   logger,
-	})
-
-	// On signal, cancel ctx so backendrpc.Run's reconnect loop exits instead
-	// of hanging on a closed RecvEvent.
-	logger.Info("claude-back ready",
-		"backend_id", cfg.BackendID,
-		"frontend_url", cfg.FrontendURL)
-
-	eventErr := func(err error) {
-		logger.Warn("ipc", log.FieldError, err)
-	}
-	return backendrpc.Run(ctx, connOpts,
-		func(ctx context.Context, ev *protocol.Event) error {
-			if err := h.HandleEvent(ctx, ev); err != nil {
-				logger.Error("handle event", log.FieldEventType, ev.Type, log.FieldError, err)
-			}
-			return nil
-		}, eventErr)
-}
-
-// buildLogger builds the component logger from cfg.
-func buildLogger(cfg *config.Config) (*log.Logger, error) {
-	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "claude-back")
 }

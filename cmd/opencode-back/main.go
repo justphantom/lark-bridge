@@ -9,181 +9,23 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
-	"os/signal"
-	"path/filepath"
-	"syscall"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/backendhost"
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/opencodebridge"
-	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
-	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
 var version = "dev"
 
-func main() {
-	var (
-		cfgPath = flag.String("config", "./opencode-config.json", "path to JSON config file")
-		showVer = flag.Bool("version", false, "show version information")
-	)
-	flag.Parse()
-
-	if *showVer {
-		fmt.Printf("lark-opencode-back %s\n", version)
-		os.Exit(0)
-	}
-
-	if err := run(*cfgPath); err != nil {
-		fmt.Fprintf(os.Stderr, "lark-opencode-back: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func run(cfgPath string) error {
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-
-	baseLogger, baseLevel, output, err := buildBaseLogger(cfg)
-	if err != nil {
-		return err
-	}
-
-	// The frontend validates a shared bearer token on every SSE/POST; a
-	// backend without the matching secret cannot register or emit controls.
-	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
-		return err
-	}
-
-	client := opencode.New(opencode.Config{
-		CLIPath:          cfg.Opencode.CLIPath,
-		DefaultDirectory: cfg.Opencode.DefaultDirectory,
-		MaxConcurrent:    cfg.Opencode.MaxConcurrent,
-		ListCacheTTL:     cfg.Opencode.ListCacheTTL,
-	}, componentLogger(cfg, baseLevel, output, "opencode"))
-
-	// CLI mode never calls GetOrCreate (sessions are bound lazily from the
-	// first run's session event), so the router's SessionCreator is nil --
-	// mirroring claude-back.
-	r, err := router.New(cfg.RouterPath,
-		componentLogger(cfg, baseLevel, output, "router"))
-	if err != nil {
-		return fmt.Errorf("router: %w", err)
-	}
-	defer r.Close()
-
-	// Per-session usage store: accumulates token/cost totals keyed by
-	// opencode session id. Own file (usage-opencode.json) so the claude
-	// backend sharing this state_dir never contends on the write.
-	usageStore, err := usage.New(filepath.Join(cfg.StateDir, "usage-opencode.json"), componentLogger(cfg, baseLevel, output, "usage"), time.Duration(cfg.Timeouts.UsageSessionTTL))
-	if err != nil {
-		return fmt.Errorf("usage store: %w", err)
-	}
-	defer usageStore.Close()
-
-	// Startup health gate: fail fast if the opencode CLI is not installed.
-	if err := client.IsReady(context.Background()); err != nil {
-		return fmt.Errorf("opencode CLI health check: %w", err)
-	}
-
-	connOpts := backendrpc.ConnectOptions{
-		BackendID:   cfg.BackendID,
-		BackendType: "opencode",
-		FrontendURL: cfg.FrontendURL,
-		Secret:      cfg.IPCSecret,
-		Version:     version,
-	}
-	rpc, err := backendrpc.Connect(connOpts)
-	if err != nil {
-		return fmt.Errorf("connect frontend: %w", err)
-	}
-	rpc.SetLogger(componentLogger(cfg, baseLevel, output, "rpc"))
-	defer rpc.Close()
-
-	bridgeLogger := componentLogger(cfg, baseLevel, output, "bridge")
-	h := opencodebridge.NewWithLogger(r, client, rpc, opencodebridge.HandlerConfig{
-		DefaultDirectory: cfg.Opencode.DefaultDirectory,
-		StateDir:         cfg.StateDir,
-		StreamHistory:    cfg.Opencode.StreamHistory,
-		PromptTimeout:    time.Duration(cfg.Timeouts.PromptTimeout),
-		IdleTimeout:      time.Duration(cfg.Timeouts.IdleTimeout),
-		DebugRedact:      cfg.LogDebugRedact,
-		WorkspaceRoot:    os.Getenv("WORKSPACE_ROOT"),
-	}, bridgeLogger)
-	h.SetUsage(usageStore)
-	defer h.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Host/process metrics push for the status-monitor overview card.
-	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
-		Interval: time.Duration(cfg.StatusMonitor.Interval),
-		StateDir: cfg.StateDir,
-		UnitName: "lark-opencode-back.service",
-		Version:  version,
-		Logger:   baseLogger,
-	})
-
-	baseLogger.Info("opencode-back ready",
-		"backend_id", cfg.BackendID,
-		"frontend_url", cfg.FrontendURL,
-		"cli_path", cfg.Opencode.CLIPath)
-
-	eventErr := func(err error) {
-		baseLogger.Warn("ipc", log.FieldError, err)
-	}
-	return backendrpc.Run(ctx, connOpts,
-		func(ctx context.Context, ev *protocol.Event) error {
-			if err := h.HandleEvent(ctx, ev); err != nil {
-				baseLogger.Error("handle event", "event_type", ev.Type, log.FieldError, err)
-			}
-			return nil
-		}, eventErr)
-}
-
-// buildBaseLogger builds the base logger and level var shared by component
-// loggers.
-func buildBaseLogger(cfg *config.Config) (*log.Logger, *log.LevelVar, io.Writer, error) {
-	lvl, err := log.FromString(cfg.LogLevel)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var output io.Writer = os.Stderr
-	if cfg.LogOutput == "stdout" {
-		output = os.Stdout
-	}
-	if cfg.LogFormat == "json" {
-		return log.NewJSON(lvl, output, "opencode-back"), lvl, output, nil
-	}
-	return log.New(lvl, output, "opencode-back"), lvl, output, nil
-}
-
-// componentLogger builds a component-tagged logger, applying any per-component
-// level override from cfg; falls back to baseLevel on an invalid override.
-func componentLogger(cfg *config.Config, baseLevel *log.LevelVar, output io.Writer, component string) *log.Logger {
-	level := cfg.LogLevel
-	if override := getComponentLevel(cfg, component); override != "" {
-		level = override
-	}
-	levelVar, err := log.FromString(level)
-	if err != nil {
-		levelVar = baseLevel
-	}
-	if cfg.LogFormat == "json" {
-		return log.NewJSON(levelVar, output, component)
-	}
-	return log.New(levelVar, output, component)
-}
-
+// getComponentLevel maps a logical component name to its per-component log
+// level override (or "" when no override is set).
 func getComponentLevel(cfg *config.Config, component string) string {
 	switch component {
 	case "router":
@@ -198,5 +40,73 @@ func getComponentLevel(cfg *config.Config, component string) string {
 		return cfg.ComponentLogLevels.Dedup
 	default:
 		return ""
+	}
+}
+
+func main() {
+	var (
+		cfgPath = flag.String("config", "./opencode-config.json", "path to JSON config file")
+		showVer = flag.Bool("version", false, "show version information")
+	)
+	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("lark-opencode-back %s\n", version)
+		os.Exit(0)
+	}
+
+	runner := buildOpencodeRunner()
+	if err := runner.Run(*cfgPath, version); err != nil {
+		fmt.Fprintf(os.Stderr, "lark-opencode-back: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// buildOpencodeRunner assembles the CLIRunner used by main. Factored out so
+// tests can drive it without parsing flags.
+func buildOpencodeRunner() *backendhost.CLIRunner[*opencodebridge.Handler] {
+	return &backendhost.CLIRunner[*opencodebridge.Handler]{
+		BackendType:         "opencode",
+		UnitName:            "lark-opencode-back.service",
+		UsageFile:           "usage-opencode.json",
+		ProgramPrefix:       "lark-opencode-back",
+		LoggerComponent:     "opencode-back",
+		MetricsInterval:     func(cfg *config.Config) time.Duration { return time.Duration(cfg.StatusMonitor.Interval) },
+		EventHandlerFactory: func(h *opencodebridge.Handler) backendhost.EventHandler { return h.HandleEvent },
+		CloserFactory:       func(h *opencodebridge.Handler) func() { return h.Close },
+		ReadyCheck: func(ctx context.Context, cfg *config.Config, base *log.BaseLogger) error {
+			client := opencode.New(opencode.Config{
+				CLIPath:          cfg.Opencode.CLIPath,
+				DefaultDirectory: cfg.Opencode.DefaultDirectory,
+				MaxConcurrent:    cfg.Opencode.MaxConcurrent,
+				ListCacheTTL:     cfg.Opencode.ListCacheTTL,
+			}, base.ComponentLogger("opencode", getComponentLevel(cfg, "opencode")))
+			return client.IsReady(ctx)
+		},
+		BuildHandler: func(r *router.Router, rpc *backendrpc.Client, cfg *config.Config, base *log.BaseLogger) (*opencodebridge.Handler, error) {
+			client := opencode.New(opencode.Config{
+				CLIPath:          cfg.Opencode.CLIPath,
+				DefaultDirectory: cfg.Opencode.DefaultDirectory,
+				MaxConcurrent:    cfg.Opencode.MaxConcurrent,
+				ListCacheTTL:     cfg.Opencode.ListCacheTTL,
+			}, base.ComponentLogger("opencode", getComponentLevel(cfg, "opencode")))
+			return opencodebridge.NewWithLogger(r, client, rpc, opencodebridge.HandlerConfig{
+				CoreConfig: bridgebase.CoreConfig{
+					DefaultDirectory: cfg.Opencode.DefaultDirectory,
+					StateDir:         cfg.StateDir,
+					StreamHistory:    cfg.Opencode.StreamHistory,
+					PromptTimeout:    time.Duration(cfg.Timeouts.PromptTimeout),
+					IdleTimeout:      time.Duration(cfg.Timeouts.IdleTimeout),
+					DebugRedact:      cfg.LogDebugRedact,
+					WorkspaceRoot:    os.Getenv("WORKSPACE_ROOT"),
+				},
+			}, base.ComponentLogger("bridge", getComponentLevel(cfg, "bridge"))), nil
+		},
+		LoggerForRouter: func(cfg *config.Config, base *log.BaseLogger) *log.Logger {
+			return base.ComponentLogger("router", getComponentLevel(cfg, "router"))
+		},
+		LoggerForRPC: func(cfg *config.Config, base *log.BaseLogger) *log.Logger {
+			return base.ComponentLogger("rpc", "")
+		},
 	}
 }

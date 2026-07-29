@@ -16,8 +16,8 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/clibase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
-
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -123,7 +123,7 @@ type RunOptions struct {
 // IsReady verifies the CLI is installed and invocable by running
 // `<cliPath> --version`. Returns an error suitable for a startup health gate.
 func (c *Client) IsReady(ctx context.Context) error {
-	return checkVersion(ctx, c.cliPath, "omp", readyTimeout, c.logger)
+	return clibase.CheckVersion(ctx, c.cliPath, "omp", readyTimeout, c.logger)
 }
 
 // Run starts one omp CLI subprocess for opts and returns a channel of parsed

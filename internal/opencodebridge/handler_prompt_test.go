@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/router"
@@ -22,7 +23,11 @@ func newTestHandler(t *testing.T) *Handler {
 		t.Fatalf("router new: %v", err)
 	}
 	return NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 }
 
@@ -102,7 +107,11 @@ func TestRunPromptRecoversPanic(t *testing.T) {
 	}
 	var logBuf strings.Builder
 	h := NewWithLogger(r, panicOpencode{}, nil, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.New(&log.LevelVar{}, &logBuf, "test"))
 
 	binding, err := h.ensureBinding("chat-panic", "", "", "", "")

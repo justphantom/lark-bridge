@@ -1,17 +1,10 @@
 package claudebridge
 
 import (
-	"fmt"
-	"os"
-
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
-
-// dirPerm is the owner-only permission for per-chat session working
-// directories. The CLI runs git/subprocesses inside these dirs; 0o700 keeps
-// other local users out of session state.
-const dirPerm = 0o700
 
 // ensureBinding returns the binding for chatID, creating one on first use,
 // and applies any per-prompt overrides carried by the Event (sessionID,
@@ -26,10 +19,10 @@ const dirPerm = 0o700
 func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title string) (binding router.Binding, err error) {
 	// An Event may carry a directory override. Validate its shape before any
 	// MkdirAll so an untrusted source cannot make the subprocess CWD escape the
-	// intended tree (mirrors /cd's validateAbsDir, but without the existence
+	// intended tree (mirrors /cd's ValidateAbsDir, but without the existence
 	// check — the dir is created on demand below).
 	if directory != "" {
-		if err := validateSessionDirPath(directory); err != nil {
+		if err := bridgebase.ValidateSessionDirPath(directory); err != nil {
 			return router.Binding{}, err
 		}
 	}
@@ -39,8 +32,8 @@ func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title s
 			b.SessionID = sessionID
 		}
 		if directory != "" {
-			if err := os.MkdirAll(directory, dirPerm); err != nil {
-				return router.Binding{}, fmt.Errorf("create session dir: %w", err)
+			if err := bridgebase.CreateSessionDir(directory); err != nil {
+				return router.Binding{}, err
 			}
 			h.Router.SetDirectory(chatID, directory)
 			b.Directory = directory
@@ -54,8 +47,8 @@ func (h *Handler) ensureBinding(chatID, sessionID, directory, modelSpec, title s
 	// Create the binding without a directory: the user must /cd into a
 	// project before the first prompt runs, so no dir is created here.
 	if directory != "" {
-		if err := os.MkdirAll(directory, dirPerm); err != nil {
-			return router.Binding{}, fmt.Errorf("create session dir: %w", err)
+		if err := bridgebase.CreateSessionDir(directory); err != nil {
+			return router.Binding{}, err
 		}
 	}
 	// Empty session id → streamRun back-fills it after the first run.

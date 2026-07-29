@@ -282,7 +282,11 @@ func newPickerHandler(t *testing.T) (*Handler, *router.Router) {
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	h := NewWithLogger(r, nil, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, nil, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 	return h, r
 }
 
@@ -296,7 +300,11 @@ func newPickerHandlerWithAgent(t *testing.T, agent opencodeAPI) (*Handler, *rout
 	// nowhere. The test reads the requestID straight from h.Answers
 	// and delivers the answer itself, exercising the same routing the IPC
 	// path would.
-	h := NewWithLogger(r, agent, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, agent, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 	return h, r
 }
 

@@ -12,21 +12,16 @@ import (
 	"context"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// controlSender is the subset of *backendrpc.Client the handler needs to POST
-// a Control. Exists so tests substitute a fake instead of hitting a frontend.
-type controlSender interface {
-	SendControl(ctx context.Context, ctrl *protocol.Control) error
-}
-
-// statusQuerier is the subset of *backendrpc.Client the handler needs to read
-// the frontend's in-flight turn snapshot. Exists so tests substitute a fake.
-type statusQuerier interface {
-	Status(ctx context.Context) (*protocol.StatusSnapshot, error)
-}
+// controlSender / statusQuerier are lifted to internal/backendrpc (shared
+// with deploymonitor and miniagent). Local type aliases keep the call sites
+// readable.
+type controlSender = backendrpc.ControlSender
+type statusQuerier = backendrpc.StatusQuerier
 
 // Config carries the status-monitor runtime settings.
 type Config struct {

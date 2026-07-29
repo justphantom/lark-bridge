@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/clibase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
 
@@ -161,7 +162,7 @@ type RunOptions struct {
 // `<cliPath> --version`. Returns an error suitable for a startup health
 // gate.
 func (c *Client) IsReady(ctx context.Context) error {
-	return checkVersion(ctx, c.cliPath, "claude", readyTimeout, c.logger,
+	return clibase.CheckVersion(ctx, c.cliPath, "claude", readyTimeout, c.logger,
 		"permission_mode", c.permissionMode)
 }
 

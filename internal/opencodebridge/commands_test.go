@@ -54,7 +54,11 @@ func newCmdTestHandler(t *testing.T) (*Handler, *router.Router) {
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	h := NewWithLogger(r, nil, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, nil, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 	return h, r
 }
 

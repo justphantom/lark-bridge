@@ -244,6 +244,8 @@ type ComponentLogLevel struct {
 	Bridge        string `json:"bridge,omitempty"`
 	Dedup         string `json:"dedup,omitempty"`
 	DeployMonitor string `json:"deploy_monitor,omitempty"`
+	MiniAgent     string `json:"miniagent,omitempty"`
+	StatusMonitor string `json:"status_monitor,omitempty"`
 }
 
 // Duration is a time.Duration that JSON-encodes as a Go duration

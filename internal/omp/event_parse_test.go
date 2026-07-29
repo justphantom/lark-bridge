@@ -301,7 +301,7 @@ func TestParseEvent_FullSuccessFlow(t *testing.T) {
 	}
 	var (
 		gotSession, gotText, gotToolStart, gotToolEnd, gotUsage, gotTerminal bool
-		accInput, accOutput                                                 int
+		accInput, accOutput                                                  int
 	)
 	for _, line := range lines {
 		ev, ok, err := parseEvent(line)

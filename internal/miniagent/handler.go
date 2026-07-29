@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
@@ -15,10 +16,9 @@ import (
 )
 
 // controlSender is the subset of *backendrpc.Client the handler needs.
-// Exists so tests substitute a fake capturing Controls instead of POSTing.
-type controlSender interface {
-	SendControl(ctx context.Context, ctrl *protocol.Control) error
-}
+// Lifted to internal/backendrpc.ControlSender in phase 3.2; aliased here so
+// miniagent's existing call sites stay readable without a wide import sweep.
+type controlSender = backendrpc.ControlSender
 
 // Handler owns the per-process bridge state: the IPC sender, the CLI
 // subprocess client (one fork per turn), the per-chat binding router, and
@@ -37,7 +37,7 @@ type Handler struct {
 	rpc             controlSender
 	logger          *log.Logger
 	router          *router.Router // per-chat Directory/ModelSpec bindings; nil only in tests
-	answers         *answerBroker
+	answers         *bridgebase.AnswerBroker
 	workspaceRoot   string             // global default for the /cd picker scope
 	cfgModel        string             // global default model (from config)
 	client          *miniclient.Client // non-nil → CLI subprocess mode
@@ -45,9 +45,9 @@ type Handler struct {
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
-	cancelBy  map[string]*promptCancel // chatID → in-flight turn
-	closed    bool                     // set under cancelMu by Close; rejects new startTurn
-	wg        sync.WaitGroup           // tracks runTurn goroutines
+	cancelBy  map[string]*bridgebase.PromptCancel // chatID → in-flight turn
+	closed    bool                                // set under cancelMu by Close; rejects new startTurn
+	wg        sync.WaitGroup                      // tracks runTurn goroutines
 	closeOnce sync.Once
 }
 
@@ -65,12 +65,12 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		rpc:           rpc,
 		logger:        logger,
 		router:        r,
-		answers:       newAnswerBroker(),
+		answers:       bridgebase.NewAnswerBroker(),
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
 		client:        client,
 		git:           bridgebase.NewGitRunner(bridgebase.ExecCommander{}, logger, 0),
-		cancelBy:      make(map[string]*promptCancel),
+		cancelBy:      make(map[string]*bridgebase.PromptCancel),
 	}
 }
 

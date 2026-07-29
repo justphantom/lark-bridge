@@ -59,7 +59,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 
 	// Reject frontend-supplied override fields (see PromptPayload doc).
 	if field := p.HasFrontendOverride(); field != "" {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{
@@ -84,7 +84,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 
 	binding, err := h.ensureBinding(chatID, p.SessionID, "", "", "")
 	if err != nil {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "error", Title: "会话初始化失败", Message: err.Error()},
@@ -95,7 +95,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// project yet. Intercept before starting the CLI: running without a dir
 	// would execute in the process CWD, which is never what the user wants.
 	if binding.Directory == "" {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{
@@ -108,7 +108,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 
 	promptCtx, mine, ok := h.StartPrompt(ctx, chatID)
 	if !ok {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "warning", Title: "请稍后", Message: "正在处理上一个请求"},

@@ -60,7 +60,11 @@ func newGitTestHandler(t *testing.T, cmd *gitFakeCommander) (*Handler, *router.R
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	h := NewWithLogger(r, nil, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, nil, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 	h.Git = bridgebase.NewGitRunner(cmd, nil, 0)
 	return h, r
 }

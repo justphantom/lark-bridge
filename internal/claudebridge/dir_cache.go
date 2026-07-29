@@ -35,7 +35,7 @@ func (h *Handler) cmdDirectory(ctx context.Context, chatID string, args []string
 	if err := h.DirCache.Validate(dir); err != nil {
 		return cmdutil.ErrorResult("%v", err)
 	}
-	if err := validateAbsDir(dir); err != nil {
+	if err := bridgebase.ValidateAbsDir(dir); err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
@@ -61,11 +61,11 @@ func (h *Handler) cmdDirectory(ctx context.Context, chatID string, args []string
 func (h *Handler) runDirPicker(chatID, oldDir, replyToID string) commandResult {
 	dirs, err := h.DirCache.List()
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	if len(dirs) == 0 {
-		h.emitPromptNotice(chatID, replyToID, "warning", "无可选项",
+		h.EmitPromptNotice(chatID, replyToID, "warning", "无可选项",
 			"WORKSPACE_ROOT 下没有子目录。")
 		return commandResult{Body: "没有可用的目录", Handled: true}
 	}
@@ -80,21 +80,21 @@ func (h *Handler) runDirPicker(chatID, oldDir, replyToID string) commandResult {
 
 	choice, messageID, err := h.AskAndWait(chatID, replyToID, "目录", "选择工作目录", bridgebase.StaticOptions(options), false)
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 		return commandResult{Body: err.Error(), Handled: true}
 	}
 	// allowCustom=false → choice is a listed basename; resolve it to its full
 	// path. An unknown value is a defensive reject (it should not happen).
 	dir, ok := byName[choice]
 	if !ok {
-		h.emitCardUpdateLogged(chatID, messageID, "error", "选择无效", "未知的工作目录："+choice)
+		h.EmitCardUpdateLogged(chatID, messageID, "error", "选择无效", "未知的工作目录："+choice)
 		return commandResult{Body: "未知的工作目录：" + choice, Handled: true}
 	}
 	// Switching to the same directory is a no-op: skip the session reset so
 	// the user keeps their conversation context. Patch the picker card in
 	// place rather than emitting a standalone info card.
 	if dir == filepath.Clean(oldDir) {
-		h.emitCardUpdateLogged(chatID, messageID, "info", "目录未变化", "选中的目录与当前一致，会话保留。")
+		h.EmitCardUpdateLogged(chatID, messageID, "info", "目录未变化", "选中的目录与当前一致，会话保留。")
 		return commandResult{Handled: true}
 	}
 	old := oldDir
@@ -106,7 +106,7 @@ func (h *Handler) runDirPicker(chatID, oldDir, replyToID string) commandResult {
 	h.Router.SetSessionID(chatID, "")
 	cmdutil.LogSettingChange(h.Logger, chatID, "directory", dir)
 	res := cmdutil.ChangeResult("工作目录", old, dir, "会话已重置，下次提问生效。")
-	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
+	h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换目录", res.Body, res.Field, res.Before, res.After)
 	return commandResult{Handled: true}
 }
 

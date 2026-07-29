@@ -63,7 +63,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// a trusted source. Letting them through would expose
 	// validateSessionDirPath's IsAbs-only check as an attack surface.
 	if field := p.HasFrontendOverride(); field != "" {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{
@@ -88,7 +88,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 
 	binding, err := h.ensureBinding(chatID, p.SessionID, "", "", "")
 	if err != nil {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "error", Title: "会话初始化失败", Message: err.Error()},
@@ -100,7 +100,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 	// would execute in the process CWD (e.g. systemd WorkingDirectory=/),
 	// which is never what the user wants.
 	if binding.Directory == "" {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{
@@ -113,7 +113,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 
 	promptCtx, mine, ok := h.StartPrompt(ctx, chatID)
 	if !ok {
-		return h.emit(ctx, replyToID, &protocol.Control{
+		return h.Emit(ctx, replyToID, &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,
 			Notice: &protocol.NoticePayload{Level: "warning", Title: "请稍后", Message: "正在处理上一个请求"},

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -93,7 +94,11 @@ func newSessionTestHandler(t *testing.T, agent opencodeAPI) (*Handler, *router.R
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	h := NewWithLogger(r, agent, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	h := NewWithLogger(r, agent, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 	return h, r
 }
 

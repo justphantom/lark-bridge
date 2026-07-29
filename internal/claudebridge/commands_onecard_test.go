@@ -74,11 +74,10 @@ func (failingListClaude) ListSettings(context.Context) ([]string, error) {
 // that same card via UpdateMessageID. Net one card end-to-end.
 func TestCmdModel_Picker_OneCardFlow(t *testing.T) {
 	h, _, reg := newOneCardHandler(t, nil, HandlerConfig{
-		ModelOptions: []string{"haiku", "sonnet", "opus"},
-	})
+		ModelOptions: []string{"haiku", "sonnet", "opus"}})
 
 	// Dispatch blocks inside the picker until the answer arrives.
-	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/model", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/model", "om_cmd")
 
 	q := drainOfType(t, reg, protocol.TypeQuestion)
 	if q.PromptID != "om_cmd" {
@@ -104,10 +103,9 @@ func TestCmdModel_Picker_OneCardFlow(t *testing.T) {
 // would leave the "处理中" placeholder hanging.
 func TestCmdModel_Picker_AnswerFailureOneCard(t *testing.T) {
 	h, _, reg := newOneCardHandler(t, nil, HandlerConfig{
-		ModelOptions: []string{"haiku", "sonnet", "opus"},
-	})
+		ModelOptions: []string{"haiku", "sonnet", "opus"}})
 
-	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/model", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/model", "om_cmd")
 
 	q := drainOfType(t, reg, protocol.TypeQuestion)
 	// Empty answer: no choice, no custom → AskAndWait returns an error →
@@ -137,7 +135,7 @@ func TestCmdModel_Picker_AnswerFailureOneCard(t *testing.T) {
 func TestCmdSettings_Picker_PreAnswerFailureOneCard(t *testing.T) {
 	h, _, reg := newOneCardHandler(t, failingListClaude{}, HandlerConfig{})
 
-	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/settings", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/settings", "om_cmd")
 
 	n := drainOfType(t, reg, protocol.TypeNotice)
 	if n.PromptID != "om_cmd" {
@@ -166,7 +164,7 @@ func TestCmdDirectory_Picker_OneCardFlow(t *testing.T) {
 	}
 	h.DirCache = bridgebase.NewDirCache(workspace)
 
-	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/cd", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/cd", "om_cmd")
 
 	q := drainOfType(t, reg, protocol.TypeQuestion)
 	if q.PromptID != "om_cmd" {
@@ -200,7 +198,7 @@ func TestCmdDirectory_Picker_PreAnswerFailureOneCard(t *testing.T) {
 	// Empty WorkspaceRoot → DirCache.List errors ("未配置 WORKSPACE_ROOT").
 	h, _, reg := newOneCardHandler(t, nil, HandlerConfig{})
 
-	go commands.Dispatch(h, h.emit, h.Logger, context.Background(), "chat-1", "/cd", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/cd", "om_cmd")
 
 	n := drainOfType(t, reg, protocol.TypeNotice)
 	if n.PromptID != "om_cmd" {

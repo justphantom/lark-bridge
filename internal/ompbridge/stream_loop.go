@@ -11,7 +11,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/omp"
 	"github.com/justphantom/lark-bridge/internal/protocol"
-	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // errIdleTimeout is the cancel-cause set by the idle watchdog (see runPrompt)
@@ -22,9 +21,9 @@ var errIdleTimeout = errors.New("omp idle: no stdout event within idle_timeout")
 
 // streamRun consumes an omp event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
-// to a promptResult. onActivity (nil disables the watchdog) is invoked once
+// to a bridgebase.PromptResult. onActivity (nil disables the watchdog) is invoked once
 // per received event so runPrompt can reset its idle timer.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan omp.Event, modelSpec string, onActivity func()) promptResult {
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan omp.Event, modelSpec string, onActivity func()) bridgebase.PromptResult {
 	var (
 		text      strings.Builder
 		sessionID string
@@ -52,12 +51,12 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 
 		if ctx.Err() != nil {
 			idle := errors.Is(context.Cause(ctx), errIdleTimeout)
-			return promptResult{
-				err:           ctx.Err(),
-				isCancelled:   !idle,
-				isIdleTimeout: idle,
-				model:         resolveModel("", modelSpec),
-				sessionID:     sessionID,
+			return bridgebase.PromptResult{
+				Err:           ctx.Err(),
+				IsCancelled:   !idle,
+				IsIdleTimeout: idle,
+				Model:         bridgebase.ResolveModel("", modelSpec, "omp"),
+				SessionID:     sessionID,
 			}
 		}
 
@@ -73,11 +72,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			// Emit TypeSessionInit so the frontend footer renders Model +
 			// SessionID instead of leaving those fields blank for the turn.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeSessionInit,
 				SessionInit: &protocol.SessionInitPayload{
 					SessionID: sessionID,
-					Model:     resolveModel("", modelSpec),
+					Model:     bridgebase.ResolveModel("", modelSpec, "omp"),
 				},
 			})
 		}
@@ -98,7 +97,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// bumps stepCount (card title "第 N 轮"), but no banner is set —
 			// the title already conveys the step, and a banner would
 			// overwrite any standing gate/loading notice from a picker.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:     protocol.TypeProgress,
 				ChatID:   chatID,
 				Progress: &protocol.ProgressPayload{},
@@ -135,7 +134,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// whole block. Replace=true lets the renderer's thinking zone
 			// reflect the latest state instead of concatenating every chunk
 			// into an unreadable wall (claude/opencode parity).
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:   protocol.TypeThinking,
 				ChatID: chatID,
 				Thinking: &protocol.ThinkingPayload{
@@ -144,7 +143,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case omp.EventToolStart:
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{
 					Name:  ev.ToolName,
@@ -152,7 +151,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case omp.EventToolEnd:
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeToolResult,
 				ToolResult: &protocol.ToolResultPayload{
 					Name:    ev.ToolName,
@@ -164,7 +163,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// omp began an automatic retry; surface it so the card is not
 			// silent during the retry window. The turn continues (auto_retry
 			// is non-terminal).
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:     protocol.TypeProgress,
 				ChatID:   chatID,
 				Progress: &protocol.ProgressPayload{Description: fmt.Sprintf("自动重试 #%d", ev.Attempt)},
@@ -175,11 +174,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case omp.EventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
-				"error_text", truncateForDebug(ev.Text, h.debugRedact()))
-			return promptResult{
-				err:       errors.New(nonEmpty(ev.Text, "OMP 运行出错")),
-				model:     resolveModel("", modelSpec),
-				sessionID: sessionID,
+				"error_text", bridgebase.TruncateForDebug(ev.Text, h.DebugRedact()))
+			return bridgebase.PromptResult{
+				Err:       errors.New(bridgebase.NonEmpty(ev.Text, "OMP 运行出错")),
+				Model:     bridgebase.ResolveModel("", modelSpec, "omp"),
+				SessionID: sessionID,
 			}
 		default:
 			// Forward-compat: the parser forwards unknown line types verbatim.
@@ -197,78 +196,53 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	// than a generic error so emitTerminal shows the right notice.
 	if ctx.Err() != nil {
 		idle := errors.Is(context.Cause(ctx), errIdleTimeout)
-		return promptResult{
-			err:           ctx.Err(),
-			isCancelled:   !idle,
-			isIdleTimeout: idle,
-			model:         resolveModel("", modelSpec),
-			sessionID:     sessionID,
+		return bridgebase.PromptResult{
+			Err:           ctx.Err(),
+			IsCancelled:   !idle,
+			IsIdleTimeout: idle,
+			Model:         bridgebase.ResolveModel("", modelSpec, "omp"),
+			SessionID:     sessionID,
 		}
 	}
-	return promptResult{
-		err:       errors.New("omp 流意外结束，未收到结果事件"),
-		model:     resolveModel("", modelSpec),
-		sessionID: sessionID,
+	return bridgebase.PromptResult{
+		Err:       errors.New("omp 流意外结束，未收到结果事件"),
+		Model:     bridgebase.ResolveModel("", modelSpec, "omp"),
+		SessionID: sessionID,
 	}
 }
 
-// finalizeResult builds the promptResult from an agent_end event per §7.4.
+// finalizeResult builds the bridgebase.PromptResult from an agent_end event per §7.4.
 // agent_end carries no telemetry (§A.1), so usage is read entirely from the
 // acc* accumulators (filled by the EventMessageEnd case in streamRun). The
 // terminal round's text is the accumulated assistant text.
 func (h *Handler) finalizeResult(accText, sessionID, modelSpec, chatID string, stepCount int, startTime time.Time,
-	accInput, accOutput, accCacheRead, accCacheWrite int, accCost float64) promptResult {
+	accInput, accOutput, accCacheRead, accCacheWrite int, accCost float64) bridgebase.PromptResult {
 	var durationMs int64
 	if !startTime.IsZero() {
 		durationMs = time.Since(startTime).Milliseconds()
 	}
 
-	result := promptResult{
-		model:      resolveModel("", modelSpec),
-		sessionID:  sessionID,
-		durationMs: durationMs,
+	result := bridgebase.PromptResult{
+		Model:      bridgebase.ResolveModel("", modelSpec, "omp"),
+		SessionID:  sessionID,
+		DurationMs: durationMs,
 		// contextTokens = accInput + accOutput (non-cache), aligned with the
 		// claude/opencode result card so the token count stays comparable
 		// across backends.
-		contextTokens: accInput + accOutput,
-		costUSD:       accCost,
-		steps:         stepCount,
+		ContextToken: accInput + accOutput,
+		CostUSD:      accCost,
+		Steps:        stepCount,
 
-		inputTokens:  accInput,
-		outputTokens: accOutput,
-		cacheRead:    accCacheRead,
-		cacheWrite:   accCacheWrite,
+		InputTokens:  accInput,
+		OutputTokens: accOutput,
+		CacheRead:    accCacheRead,
+		CacheWrite:   accCacheWrite,
 	}
 
 	reply := bridgebase.StripThinking(accText, "> ")
-	result.reply = reply
+	result.Reply = reply
 	return result
 }
 
-// maxDebugTextLen caps the preview length used in debug logs.
-const maxDebugTextLen = 200
-
-func nonEmpty(s, fallback string) string {
-	if strings.TrimSpace(s) == "" {
-		return fallback
-	}
-	return s
-}
-
-func truncateForDebug(s string, redact bool) string {
-	if redact {
-		return "<redacted>"
-	}
-	return strutil.Truncate(s, maxDebugTextLen)
-}
-
-// resolveModel picks the model name for the result card. omp's NDJSON stream
-// does not carry the model name on the events the bridge consumes (it lives
-// on message_start.message.model, which the parser ignores), so when neither
-// the stream nor the user's modelSpec supplies one, fall back to "omp".
-func resolveModel(_, spec string) string {
-	if spec != "" {
-		return spec
-	}
-	return "omp"
-}
+// maxDebugTextLen / nonEmpty / truncateForDebug / resolveModel were local
+// copies of helpers now shared from package bridgebase (util.go).

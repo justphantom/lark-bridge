@@ -31,7 +31,7 @@ func (h *Handler) cmdSessionList(ctx context.Context, chatID string, _ []string)
 		return commandResult{Body: "尚未设置工作目录。发送 /cd 选择一个项目目录后再查看会话。"}, nil
 	}
 	replyToID := bridgebase.ReplyToID(ctx)
-	h.emitAsync(replyToID, &protocol.Control{
+	h.EmitAsync(replyToID, &protocol.Control{
 		Type:     protocol.TypeProgress,
 		ChatID:   chatID,
 		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取会话列表，请稍候（约半分钟）…"},
@@ -41,7 +41,7 @@ func (h *Handler) cmdSessionList(ctx context.Context, chatID string, _ []string)
 	bridgebase.GoSafe(h.Logger, "session-list:"+chatID, func() {
 		sessions, err := h.agent.ListSessions(h.AppCtx, dir)
 		if err != nil {
-			h.emitPromptNotice(chatID, replyToID, "error", "获取失败", "获取会话列表失败："+err.Error())
+			h.EmitPromptNotice(chatID, replyToID, "error", "获取失败", "获取会话列表失败："+err.Error())
 			return
 		}
 		level := "info"
@@ -50,7 +50,7 @@ func (h *Handler) cmdSessionList(ctx context.Context, chatID string, _ []string)
 			level = "info"
 			title = "无会话"
 		}
-		h.emitPromptNotice(chatID, replyToID, level, title, formatSessionList(sessions, curSession))
+		h.EmitPromptNotice(chatID, replyToID, level, title, formatSessionList(sessions, curSession))
 	})
 	return commandResult{Handled: true}, nil
 }
@@ -96,7 +96,7 @@ func (h *Handler) cmdSessionClean(ctx context.Context, chatID string, args []str
 	}
 
 	// Batch path: list, drop the current session, confirm, delete.
-	h.emitAsync(replyToID, &protocol.Control{
+	h.EmitAsync(replyToID, &protocol.Control{
 		Type:     protocol.TypeProgress,
 		ChatID:   chatID,
 		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取会话列表，请稍候（约半分钟）…"},
@@ -104,7 +104,7 @@ func (h *Handler) cmdSessionClean(ctx context.Context, chatID string, args []str
 	bridgebase.GoSafe(h.Logger, "session-clean-list:"+chatID, func() {
 		sessions, err := h.agent.ListSessions(h.AppCtx, dir)
 		if err != nil {
-			h.emitPromptNotice(chatID, replyToID, "error", "获取失败", "获取会话列表失败："+err.Error())
+			h.EmitPromptNotice(chatID, replyToID, "error", "获取失败", "获取会话列表失败："+err.Error())
 			return
 		}
 		targets := make([]string, 0, len(sessions))
@@ -115,7 +115,7 @@ func (h *Handler) cmdSessionClean(ctx context.Context, chatID string, args []str
 			targets = append(targets, s.ID)
 		}
 		if len(targets) == 0 {
-			h.emitPromptNotice(chatID, replyToID, "info", "无可清理会话",
+			h.EmitPromptNotice(chatID, replyToID, "info", "无可清理会话",
 				"当前目录下没有可清理的会话（当前绑定的会话已保留）。")
 			return
 		}
@@ -144,11 +144,11 @@ func (h *Handler) runSessionCleanConfirm(chatID, replyToID, dir string, targets 
 	choice, messageID, err := h.AskPermission(chatID, replyToID, "", "清理会话",
 		protocol.PermissionMessage{Message: msg}, opts, true)
 	if err != nil {
-		h.emitPromptNotice(chatID, replyToID, "error", "清理失败", err.Error())
+		h.EmitPromptNotice(chatID, replyToID, "error", "清理失败", err.Error())
 		return
 	}
 	if choice != "confirm" {
-		h.emitCardUpdateLogged(chatID, messageID, "info", "已取消", "已取消清理，没有任何会话被删除。")
+		h.EmitCardUpdateLogged(chatID, messageID, "info", "已取消", "已取消清理，没有任何会话被删除。")
 		return
 	}
 	var failed []string
@@ -162,7 +162,7 @@ func (h *Handler) runSessionCleanConfirm(chatID, replyToID, dir string, targets 
 		}
 	}
 	body, level := summarizeClean(count, failed)
-	h.emitCardUpdateLogged(chatID, messageID, level, "清理完成", body)
+	h.EmitCardUpdateLogged(chatID, messageID, level, "清理完成", body)
 }
 
 // summarizeClean renders the post-deletion summary line. Full success is
@@ -250,7 +250,7 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 	dir := b.Directory
 	curSession := b.SessionID
 	// Loading banner on the command's progress card.
-	h.emitAsync(replyToID, &protocol.Control{
+	h.EmitAsync(replyToID, &protocol.Control{
 		Type:     protocol.TypeProgress,
 		ChatID:   chatID,
 		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取会话列表，请稍候（约半分钟）…"},
@@ -258,16 +258,16 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 	bridgebase.GoSafe(h.Logger, "session-use:"+chatID, func() {
 		sessions, err := h.agent.ListSessions(h.AppCtx, dir)
 		if err != nil {
-			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
 			return
 		}
 		sorted := sortSessionsByUpdated(sessions)
 		if len(sorted) == 0 {
-			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
+			h.EmitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
 			return
 		}
 		if n < 1 || n > len(sorted) {
-			h.emitPromptNotice(chatID, replyToID, "error", "切换失败",
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败",
 				fmt.Sprintf("会话序号 %d 越界，有效范围 1-%d。", n, len(sorted)))
 			return
 		}
@@ -283,7 +283,7 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 // of the 1-based number prefix).
 func (h *Handler) runSessionUsePicker(ctx context.Context, chatID string) commandResult {
 	replyToID := bridgebase.ReplyToID(ctx)
-	h.emitAsync(replyToID, &protocol.Control{
+	h.EmitAsync(replyToID, &protocol.Control{
 		Type:     protocol.TypeProgress,
 		ChatID:   chatID,
 		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取当前目录的会话，请稍候…"},
@@ -291,17 +291,17 @@ func (h *Handler) runSessionUsePicker(ctx context.Context, chatID string) comman
 	bridgebase.GoSafe(h.Logger, "session-use-picker:"+chatID, func() {
 		b, ok := h.Router.Lookup(chatID)
 		if !ok || b.Directory == "" {
-			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "尚未设置工作目录。")
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "尚未设置工作目录。")
 			return
 		}
 		sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
 		if err != nil {
-			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "获取会话列表失败："+err.Error())
 			return
 		}
 		sorted := sortSessionsByUpdated(sessions)
 		if len(sorted) == 0 {
-			h.emitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
+			h.EmitPromptNotice(chatID, replyToID, "info", "无会话", "当前目录下没有任何会话。")
 			return
 		}
 		// Number prefix keeps every label unique so the choice maps to one
@@ -324,12 +324,12 @@ func (h *Handler) runSessionUsePicker(ctx context.Context, chatID string) comman
 		choice, messageID, err := h.AskAndWait(chatID, replyToID, "会话", "选择要切换的会话",
 			bridgebase.StaticOptions(options), false)
 		if err != nil {
-			h.emitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+			h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
 			return
 		}
 		sess, ok := candidates[choice]
 		if !ok {
-			h.emitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
 			return
 		}
 		h.applySessionSwitch(chatID, messageID, sess, b.SessionID, "")
@@ -351,7 +351,7 @@ func (h *Handler) applySessionSwitch(chatID, messageID string, sess opencode.Ses
 		if title == "" {
 			title = "(未命名会话)"
 		}
-		h.emitCardUpdateLogged(chatID, messageID, "info", "会话未切换",
+		h.EmitCardUpdateLogged(chatID, messageID, "info", "会话未切换",
 			fmt.Sprintf("已是当前会话「%s」。", title))
 		return
 	}
@@ -364,7 +364,7 @@ func (h *Handler) applySessionSwitch(chatID, messageID string, sess opencode.Ses
 	if title == "" {
 		title = "(未命名会话)"
 	}
-	h.emitCardUpdateLogged(chatID, messageID, "success", "已切换会话",
+	h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换会话",
 		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /session-use 切回（/session-clean 会清理未绑定的会话）。", title))
 }
 

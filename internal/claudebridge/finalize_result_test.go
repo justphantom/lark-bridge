@@ -3,6 +3,7 @@ package claudebridge
 import (
 	"testing"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/router"
@@ -20,7 +21,11 @@ func TestFinalizeResult_ReplySource(t *testing.T) {
 	defer cleanup()
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, &scriptClaude{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 
 	cases := []struct {
@@ -66,18 +71,18 @@ func TestFinalizeResult_ReplySource(t *testing.T) {
 			}
 			got := h.finalizeResult(ev, tc.lastReply, "s1", "glm-5.2", "", "c1")
 
-			if got.reply != tc.want {
-				t.Errorf("reply = %q, want %q", got.reply, tc.want)
+			if got.Reply != tc.want {
+				t.Errorf("reply = %q, want %q", got.Reply, tc.want)
 			}
 			// Regression guard for the multi-turn case: when a distinct
 			// lastReply exists, the reply must NOT be the early-turn
 			// result.result.
-			if tc.lastReply != "" && tc.result != tc.lastReply && got.reply == tc.result {
+			if tc.lastReply != "" && tc.result != tc.lastReply && got.Reply == tc.result {
 				t.Errorf("reply matched result.result %q; should prefer lastReply", tc.result)
 			}
 			// Result-event metadata is still parsed regardless of reply source.
-			if got.steps != 8 {
-				t.Errorf("steps = %d, want 8 (num_turns from result event)", got.steps)
+			if got.Steps != 8 {
+				t.Errorf("steps = %d, want 8 (num_turns from result event)", got.Steps)
 			}
 		})
 	}

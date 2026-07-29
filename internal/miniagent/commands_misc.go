@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
+
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
 
 // cmdHelp lists the surviving commands after the stateless migration.
@@ -45,30 +46,8 @@ func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title,
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "🔄 **运行中会话** (%d)\n\n", len(filtered))
 	for _, s := range filtered {
-		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, formatDuration(s.Duration))
+		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, bridgebase.FormatDuration(s.Duration))
 	}
 	sb.WriteString("\n💡 如需中止，请发送 `/session-abort`")
 	return "info", "运行中会话", sb.String()
-}
-
-// formatDuration formats elapsed time with Chinese suffixes.
-func formatDuration(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%d秒", int(d.Seconds()))
-	case d < time.Hour:
-		minutes := int(d.Minutes())
-		seconds := int(d.Seconds()) % 60
-		if seconds > 0 {
-			return fmt.Sprintf("%d分%d秒", minutes, seconds)
-		}
-		return fmt.Sprintf("%d分钟", minutes)
-	default:
-		hours := int(d.Hours())
-		minutes := int(d.Minutes()) % 60
-		if minutes > 0 {
-			return fmt.Sprintf("%d小时%d分", hours, minutes)
-		}
-		return fmt.Sprintf("%d小时", hours)
-	}
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
@@ -17,7 +18,11 @@ func newInteractiveTestHandler(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	return NewWithLogger(r, nil, nil, HandlerConfig{DefaultDirectory: t.TempDir()}, log.Nop())
+	return NewWithLogger(r, nil, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			DefaultDirectory: t.TempDir(),
+		},
+	}, log.Nop())
 }
 
 // TestRegisterDeliverCancel exercises the pending-answer routing: register →

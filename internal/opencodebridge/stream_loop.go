@@ -10,7 +10,6 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/protocol"
-	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // errIdleTimeout is the cancel-cause set by the idle watchdog (see
@@ -21,9 +20,9 @@ var errIdleTimeout = errors.New("opencode idle: no stdout event within idle_time
 
 // streamRun consumes an opencode event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
-// to a promptResult. onActivity (nil disables the watchdog) is invoked once
+// to a bridgebase.PromptResult. onActivity (nil disables the watchdog) is invoked once
 // per received event so runPrompt can reset its idle timer.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan opencode.Event, modelSpec string, onActivity func()) promptResult {
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan opencode.Event, modelSpec string, onActivity func()) bridgebase.PromptResult {
 	var (
 		text      strings.Builder
 		sessionID string
@@ -51,12 +50,12 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 
 		if ctx.Err() != nil {
 			idle := errors.Is(context.Cause(ctx), errIdleTimeout)
-			return promptResult{
-				err:           ctx.Err(),
-				isCancelled:   !idle,
-				isIdleTimeout: idle,
-				model:         resolveModel("", modelSpec),
-				sessionID:     sessionID,
+			return bridgebase.PromptResult{
+				Err:           ctx.Err(),
+				IsCancelled:   !idle,
+				IsIdleTimeout: idle,
+				Model:         bridgebase.ResolveModel("", modelSpec, "opencode"),
+				SessionID:     sessionID,
 			}
 		}
 
@@ -74,11 +73,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// TypeSessionInit here on first sight of the id lets the
 			// frontend footer render Model + SessionID instead of leaving
 			// those fields blank for the whole turn.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type: protocol.TypeSessionInit,
 				SessionInit: &protocol.SessionInitPayload{
 					SessionID: sessionID,
-					Model:     resolveModel("", modelSpec),
+					Model:     bridgebase.ResolveModel("", modelSpec, "opencode"),
 				},
 			})
 		}
@@ -102,7 +101,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// banner here would duplicate it as well as overwrite any
 			// standing gate/loading notice from a picker or permission
 			// card on the same prompt.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:     protocol.TypeProgress,
 				ChatID:   chatID,
 				Progress: &protocol.ProgressPayload{},
@@ -123,7 +122,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// complete block (not a delta), so Replace=true lets the
 			// renderer's thinking zone reflect the latest part instead of
 			// concatenating every step's reasoning into an unreadable wall.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:   protocol.TypeThinking,
 				ChatID: chatID,
 				Thinking: &protocol.ThinkingPayload{
@@ -136,7 +135,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// EventToolResult below), so this case is reached only if a
 			// future CLI change reintroduces a separate use event. Kept for
 			// forward-compat so the row still opens as running.
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:    protocol.TypeToolUse,
 				ToolUse: &protocol.ToolUsePayload{Name: ev.GetToolName(), Input: bridgebase.SummarizeToolInput(ev.GetToolName(), ev.GetToolInput())},
 			})
@@ -151,8 +150,8 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// unparseable input falls through to the generic tool row so the
 			// failure is still visible.
 			if ev.GetToolName() == "todowrite" && !ev.GetIsToolError() {
-				if items, ok := parseTodoItems(ev.GetToolInput()); ok {
-					h.emitAsync(promptID, &protocol.Control{
+				if items, ok := bridgebase.ParseTodoItems(ev.GetToolInput()); ok {
+					h.EmitAsync(promptID, &protocol.Control{
 						Type:   protocol.TypeTodo,
 						ChatID: chatID,
 						Todo:   &protocol.TodoPayload{Todos: items},
@@ -193,7 +192,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					Truncated:    meta.Truncated,
 				}
 			}
-			h.emitAsync(promptID, &protocol.Control{
+			h.EmitAsync(promptID, &protocol.Control{
 				Type:       protocol.TypeToolResult,
 				ToolResult: toolResult,
 			})
@@ -203,11 +202,11 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		case opencode.EventError:
 			h.Logger.Debug("bridge: error event",
 				log.FieldChatID, chatID,
-				"error_text", truncateForDebug(ev.GetText(), h.debugRedact()))
-			return promptResult{
-				err:       errors.New(nonEmpty(ev.GetText(), "opencode 运行出错")),
-				model:     resolveModel("", modelSpec),
-				sessionID: sessionID,
+				"error_text", bridgebase.TruncateForDebug(ev.GetText(), h.DebugRedact()))
+			return bridgebase.PromptResult{
+				Err:       errors.New(bridgebase.NonEmpty(ev.GetText(), "opencode 运行出错")),
+				Model:     bridgebase.ResolveModel("", modelSpec, "opencode"),
+				SessionID: sessionID,
 			}
 		default:
 			// Forward-compat: the parser forwards unknown line types verbatim.
@@ -225,24 +224,24 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 	// than a generic error so emitTerminal shows the right notice.
 	if ctx.Err() != nil {
 		idle := errors.Is(context.Cause(ctx), errIdleTimeout)
-		return promptResult{
-			err:           ctx.Err(),
-			isCancelled:   !idle,
-			isIdleTimeout: idle,
-			model:         resolveModel("", modelSpec),
-			sessionID:     sessionID,
+		return bridgebase.PromptResult{
+			Err:           ctx.Err(),
+			IsCancelled:   !idle,
+			IsIdleTimeout: idle,
+			Model:         bridgebase.ResolveModel("", modelSpec, "opencode"),
+			SessionID:     sessionID,
 		}
 	}
-	return promptResult{
-		err:       errors.New("opencode 流意外结束，未收到结果事件"),
-		model:     resolveModel("", modelSpec),
-		sessionID: sessionID,
+	return bridgebase.PromptResult{
+		Err:       errors.New("opencode 流意外结束，未收到结果事件"),
+		Model:     bridgebase.ResolveModel("", modelSpec, "opencode"),
+		SessionID: sessionID,
 	}
 }
 
-// finalizeResult builds the promptResult from a result event.
+// finalizeResult builds the bridgebase.PromptResult from a result event.
 func (h *Handler) finalizeResult(ev opencode.Event, accText, sessionID, modelSpec, chatID string, stepCount int, startTime time.Time,
-	accInput, accOutput, accCacheRead, accCacheWrite int, accCost float64) promptResult {
+	accInput, accOutput, accCacheRead, accCacheWrite int, accCost float64) bridgebase.PromptResult {
 	var durationMs int64
 	if !startTime.IsZero() {
 		durationMs = time.Since(startTime).Milliseconds()
@@ -255,23 +254,23 @@ func (h *Handler) finalizeResult(ev opencode.Event, accText, sessionID, modelSpe
 	totalCacheRead := accCacheRead + ev.GetCacheRead()
 	totalCacheWrite := accCacheWrite + ev.GetCacheWrite()
 
-	result := promptResult{
-		model:      resolveModel("", modelSpec),
-		sessionID:  sessionID,
-		durationMs: durationMs,
+	result := bridgebase.PromptResult{
+		Model:      bridgebase.ResolveModel("", modelSpec, "opencode"),
+		SessionID:  sessionID,
+		DurationMs: durationMs,
 		// contextTokens stays terminal-step input+output (non-cache) so the
 		// result card's token count remains claude-comparable and does not
 		// jump when usage accounting started summing every step. The full
 		// per-turn breakdown lives in inputTokens/outputTokens/cacheRead/
 		// cacheWrite below for the usage store.
-		contextTokens: ev.GetInputTokens() + ev.GetOutputTokens(),
-		costUSD:       accCost + ev.GetCost(),
-		steps:         stepCount,
+		ContextToken: ev.GetInputTokens() + ev.GetOutputTokens(),
+		CostUSD:      accCost + ev.GetCost(),
+		Steps:        stepCount,
 
-		inputTokens:  totalInput,
-		outputTokens: totalOutput,
-		cacheRead:    totalCacheRead,
-		cacheWrite:   totalCacheWrite,
+		InputTokens:  totalInput,
+		OutputTokens: totalOutput,
+		CacheRead:    totalCacheRead,
+		CacheWrite:   totalCacheWrite,
 	}
 
 	if ev.GetIsError() {
@@ -279,7 +278,7 @@ func (h *Handler) finalizeResult(ev opencode.Event, accText, sessionID, modelSpe
 		if strings.TrimSpace(msg) == "" {
 			msg = "opencode 返回错误"
 		}
-		result.err = errors.New(msg)
+		result.Err = errors.New(msg)
 		return result
 	}
 
@@ -289,33 +288,9 @@ func (h *Handler) finalizeResult(ev opencode.Event, accText, sessionID, modelSpe
 	} else {
 		reply = bridgebase.StripThinking(reply, "> ")
 	}
-	result.reply = reply
+	result.Reply = reply
 	return result
 }
 
-// maxDebugTextLen caps the preview length used in debug logs.
-const maxDebugTextLen = 200
-
-func nonEmpty(s, fallback string) string {
-	if strings.TrimSpace(s) == "" {
-		return fallback
-	}
-	return s
-}
-
-func truncateForDebug(s string, redact bool) string {
-	if redact {
-		return "<redacted>"
-	}
-	return strutil.Truncate(s, maxDebugTextLen)
-}
-
-// resolveModel picks the model name for the result card. opencode's NDJSON
-// stream does not carry the model name, so when neither the stream nor the
-// user's modelSpec supplies one, fall back to "opencode".
-func resolveModel(_, spec string) string {
-	if spec != "" {
-		return spec
-	}
-	return "opencode"
-}
+// maxDebugTextLen / nonEmpty / truncateForDebug / resolveModel were local
+// copies of helpers now shared from package bridgebase (util.go).

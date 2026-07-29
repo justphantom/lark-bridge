@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/claude"
 
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -39,7 +40,11 @@ func newTestHandler(t *testing.T) *Handler {
 		t.Fatalf("router new: %v", err)
 	}
 	return NewWithLogger(r, closedStreamClaude{}, nil, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 }
 
@@ -114,7 +119,11 @@ func TestRunPromptRecoversPanic(t *testing.T) {
 	}
 	var logBuf strings.Builder
 	h := NewWithLogger(r, panicClaude{}, nil, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.New(&log.LevelVar{}, &logBuf, "test"))
 
 	binding, err := h.ensureBinding("chat-panic", "", "", "", "")
@@ -154,8 +163,13 @@ func TestRunPrompt_TimeoutFires(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
-		StateDir:      t.TempDir(),
-		PromptTimeout: 100 * time.Millisecond,
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+
+			PromptTimeout: 100 * time.Millisecond,
+		},
 	}, log.Nop())
 	r.Bind("c-to", "", t.TempDir(), "", "", "")
 
@@ -188,7 +202,11 @@ func TestRunPrompt_UserCancelShowsCancelled(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c-cancel", "", t.TempDir(), "", "", "")
 

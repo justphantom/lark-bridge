@@ -2,24 +2,20 @@ package claudebridge
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"runtime/debug"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/claude"
-
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/claude"
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 	"github.com/justphantom/lark-bridge/internal/streamarchive"
 	"github.com/justphantom/lark-bridge/internal/strutil"
-	"github.com/justphantom/lark-bridge/internal/usage"
 )
 
-// cancelNoticeTimeout bounds the fresh context used to emit the "已取消"
-// notice after the prompt ctx is already cancelled.
+// cancelNoticeTimeout bounds the fresh context used to emit a fallback notice
+// when the prompt ctx is already cancelled. Used by runPrompt's panic recover;
+// the terminal emit itself uses bridgebase.CancelNoticeTimeout via Core.
 const cancelNoticeTimeout = 5 * time.Second
 
 // runPrompt drives one Claude turn for chatID: it starts a `claude` CLI
@@ -28,23 +24,7 @@ const cancelNoticeTimeout = 5 * time.Second
 // resumes it.
 func (h *Handler) runPrompt(parent context.Context, chatID string, binding router.Binding, prompt, replyToID string, mine *bridgebase.PromptCancel) {
 	// Recover so a panic in this goroutine never crashes the process.
-	defer func() {
-		if r := recover(); r != nil {
-			h.Logger.Error("panic in runPrompt",
-				log.FieldChatID, chatID,
-				log.FieldPanic, r,
-				log.FieldStack, debug.Stack())
-			// Gate on appCtx, not parent: parent is cancelled by mine.Cancel()
-			// below so reading it here would always see "cancelled".
-			if h.AppCtx.Err() == nil {
-				h.emitLogged(context.Background(), replyToID, chatID, &protocol.Control{
-					Type:   protocol.TypeNotice,
-					ChatID: chatID,
-					Notice: &protocol.NoticePayload{Level: "error", Title: "内部错误", Message: "⚠️ 内部错误，已恢复"},
-				})
-			}
-		}
-	}()
+	defer func() { bridgebase.RecoverPromptPanic(h.Core, chatID, replyToID, recover()) }()
 	// Mark the prompt done after endPrompt/cancel unwind (LIFO) and before the
 	// recover above, so Close's waitPrompts unblocks only when the goroutine
 	// has fully released its slot — including the subprocess kill on cancel.
@@ -64,20 +44,16 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	h.Logger.Debug("runPrompt start",
 		log.FieldChatID, chatID,
 		log.FieldSessionID, binding.SessionID,
-		"prompt", truncateForDebug(prompt, h.debugRedact()))
+		"prompt", bridgebase.TruncateForDebug(prompt, h.DebugRedact()))
 
-	// Wrap parent with WithCancelCause so emitTerminal can distinguish a
-	// user-initiated cancel (context.Canceled) from a prompt timeout
-	// (context.DeadlineExceeded) via context.Cause. PromptTimeout defaults
-	// to 0 (disabled) — the CLI exits on its own when the turn is done.
-	ctx, cancel := context.WithCancelCause(parent)
-	if h.PromptTimeout > 0 {
-		timer := time.AfterFunc(h.PromptTimeout, func() {
-			cancel(context.DeadlineExceeded)
-		})
-		defer timer.Stop()
-	}
-	defer cancel(nil)
+	// Wire the shared per-prompt prologue (WithCancelCause + PromptTimeout
+	// timer + optional idle watchdog). Claude has no idle watchdog (the CLI
+	// exits on its own per turn), so idleTimeout=0 makes OnActivity/Stop
+	// no-ops. See bridgebase.RunPromptScaffold for the rationale.
+	scaffold := h.RunPromptScaffold(parent, 0, nil)
+	defer scaffold.Stop()
+	defer scaffold.Cancel(nil)
+	ctx := scaffold.Ctx
 
 	modelSpec := binding.ModelSpec
 	opts := claude.RunOptions{
@@ -96,7 +72,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	// knows, drop the binding's sessionID and retry once with a fresh session.
 	// The stale match itself is centralised in claude.IsStaleSession (set on
 	// the result by finalizeResult) so a CLI rewording fixes in one place.
-	if result.err != nil && result.stale && binding.SessionID != "" &&
+	if result.Err != nil && result.Stale && binding.SessionID != "" &&
 		ctx.Err() == nil {
 		h.Logger.Warn("stale claude session, retrying without --resume",
 			log.FieldChatID, chatID,
@@ -106,38 +82,17 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		result = h.runClaude(ctx, chatID, replyToID, opts, modelSpec)
 	}
 
-	// recordUsage before emitTerminal: emitTerminal reads the store to fill
+	// RecordUsage before EmitTerminal: EmitTerminal reads the store to fill
 	// the cumulative TotalTokens on the result card, so this turn must be
 	// counted first. Add is an in-memory map update (the async save is
 	// non-blocking), so this does not delay the terminal emit.
-	h.recordUsage(chatID, result)
-	h.emitTerminal(ctx, chatID, replyToID, result)
-}
-
-// recordUsage feeds the turn's token breakdown to the usage store. A cancelled
-// turn is skipped: the subprocess was SIGKILLed and its result event (the only
-// source of these counts) typically did not arrive, so the numbers would be
-// zero or stale. Errors are still recorded — a failed run that consumed tokens
-// is real cost.
-func (h *Handler) recordUsage(chatID string, result promptResult) {
-	if h.Usage == nil || result.isCancelled || result.sessionID == "" {
-		return
-	}
-	h.Usage.Add(usage.Delta{
-		SessionID:  result.sessionID,
-		ChatID:     chatID,
-		Input:      result.inputTokens,
-		Output:     result.outputTokens,
-		CacheRead:  result.cacheRead,
-		CacheWrite: result.cacheCreation,
-		Cost:       result.costUSD,
-		Turns:      1,
-	})
+	h.RecordUsage(chatID, result)
+	h.EmitTerminal(ctx, chatID, replyToID, "Claude", 0, result)
 }
 
 // runClaude starts one Claude subprocess, streams its events into Controls,
-// and reduces the stream to a promptResult.
-func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts claude.RunOptions, modelSpec string) promptResult {
+// and reduces the stream to a bridgebase.PromptResult.
+func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts claude.RunOptions, modelSpec string) bridgebase.PromptResult {
 	// Archive the raw stream for this run before launching the subprocess so
 	// the sink is wired for the whole lifetime. Best-effort: nil sink = off.
 	// The sink is wrapped to drop thinking_tokens lines: the bridge never
@@ -153,64 +108,10 @@ func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts 
 
 	events, err := h.agent.Run(ctx, opts)
 	if err != nil {
-		return promptResult{
-			err:   fmt.Errorf("启动 Claude 失败: %w", err),
-			model: modelSpec,
+		return bridgebase.PromptResult{
+			Err:   fmt.Errorf("启动 Claude 失败: %w", err),
+			Model: modelSpec,
 		}
 	}
 	return h.streamRun(ctx, chatID, replyToID, events, modelSpec)
-}
-
-// emitTerminal renders the terminal control for a finished turn: cancelled
-// → info notice, error → error control, success → result control. All
-// branches use a fresh short-lived context (not the prompt ctx) so the
-// terminal control still reaches the frontend when the prompt ctx is
-// already cancelled (user abort, prompt timeout, or IPC blip during the
-// turn).
-func (h *Handler) emitTerminal(ctx context.Context, chatID, replyToID string, result promptResult) {
-	sendCtx, cancel := context.WithTimeout(context.Background(), cancelNoticeTimeout)
-	defer cancel()
-
-	switch {
-	case result.isCancelled:
-		title := "已取消"
-		msg := "本次请求已中止"
-		if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
-			title = "请求超时"
-			msg = "Claude 响应超时，已终止"
-		}
-		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
-			Type:   protocol.TypeNotice,
-			ChatID: chatID,
-			Notice: &protocol.NoticePayload{Level: "info", Title: title, Message: msg},
-		})
-	case result.err != nil:
-		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
-			Type:   protocol.TypeError,
-			ChatID: chatID,
-			Error:  &protocol.ErrorPayload{Message: result.err.Error()},
-		})
-	default:
-		// Cumulative input+output across this session's turns (including this
-		// one, already recorded by recordUsage above). 0 when no store or no
-		// history; the renderer hides the cumulative portion then.
-		var totalTokens int
-		if e, ok := h.Usage.Get(result.sessionID); ok {
-			totalTokens = e.Input + e.Output
-		}
-		h.emitLogged(sendCtx, replyToID, chatID, &protocol.Control{
-			Type:   protocol.TypeResult,
-			ChatID: chatID,
-			Result: &protocol.ResultPayload{
-				Text:        result.reply,
-				Model:       result.model,
-				Tokens:      result.contextTokens,
-				Duration:    time.Duration(result.durationMs) * time.Millisecond,
-				SessionID:   result.sessionID,
-				Cost:        result.costUSD,
-				Steps:       result.steps,
-				TotalTokens: totalTokens,
-			},
-		})
-	}
 }

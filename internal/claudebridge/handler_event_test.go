@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/claude"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
@@ -109,7 +110,11 @@ func TestHandleEvent_PromptEmitsTerminal(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
@@ -172,7 +177,11 @@ func TestHandleEvent_SkillPromptBypassesSlashCommand(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, closedStreamClaude{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
@@ -263,7 +272,11 @@ func TestClose_WaitsForInFlightPrompt(t *testing.T) {
 
 	r, _ := router.New("", log.Nop())
 	h := NewWithLogger(r, blockingClaude{}, client, HandlerConfig{
-		StateDir: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			StateDir: t.TempDir(),
+		},
 	}, log.Nop())
 
 	if err := h.HandleEvent(context.Background(), &protocol.Event{

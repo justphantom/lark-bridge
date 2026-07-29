@@ -26,11 +26,15 @@ func newPickerTestHandler(t *testing.T, modelOpts, permOpts, effortOpts []string
 		t.Fatalf("router new: %v", err)
 	}
 	h := NewWithLogger(r, nil, nil, HandlerConfig{
-		DefaultDirectory:  t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			DefaultDirectory: t.TempDir(),
+		},
+
 		ModelOptions:      modelOpts,
 		PermissionOptions: permOpts,
-		EffortOptions:     effortOpts,
-	}, log.Nop())
+		EffortOptions:     effortOpts}, log.Nop())
 	return h, r
 }
 
@@ -304,7 +308,11 @@ func newSettingsPickerHandler(t *testing.T, paths []string) (*Handler, *router.R
 		t.Fatalf("router new: %v", err)
 	}
 	h := NewWithLogger(r, settingsFakeAgent{paths: paths}, nil, HandlerConfig{
-		DefaultDirectory: t.TempDir(),
+
+		CoreConfig: bridgebase.CoreConfig{
+
+			DefaultDirectory: t.TempDir(),
+		},
 	}, log.Nop())
 	return h, r
 }

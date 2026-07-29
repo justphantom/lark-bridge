@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -15,66 +15,10 @@ import (
 // interactive cards expire on the frontend; this only needs to outlast that.
 const askWaitTimeout = 9 * time.Minute
 
-// answerBroker routes an interactive card's answer back to the goroutine that
-// emitted the TypeQuestion control. It is a minimal local copy of
-// bridgebase.AnswerBroker so miniagent stays independent of bridgebase.
-type answerBroker struct {
-	mu      sync.Mutex
-	pending map[string]chan *protocol.AnswerPayload
-}
-
-func newAnswerBroker() *answerBroker {
-	return &answerBroker{pending: make(map[string]chan *protocol.AnswerPayload)}
-}
-
-// Register reserves a slot for requestID and returns the channel that will
-// receive the answer. Fails if requestID is already pending.
-func (b *answerBroker) Register(requestID string) (<-chan *protocol.AnswerPayload, bool) {
-	ch := make(chan *protocol.AnswerPayload, 1)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, exists := b.pending[requestID]; exists {
-		return nil, false
-	}
-	b.pending[requestID] = ch
-	return ch, true
-}
-
-// Cancel removes a pending slot without delivering.
-func (b *answerBroker) Cancel(requestID string) {
-	b.mu.Lock()
-	delete(b.pending, requestID)
-	b.mu.Unlock()
-}
-
-// Deliver routes an inbound answer to the waiting goroutine.
-func (b *answerBroker) Deliver(requestID string, ans *protocol.AnswerPayload) bool {
-	b.mu.Lock()
-	ch, ok := b.pending[requestID]
-	if ok {
-		delete(b.pending, requestID)
-	}
-	b.mu.Unlock()
-	if !ok {
-		return false
-	}
-	select {
-	case ch <- ans:
-	default:
-	}
-	return true
-}
-
-// Drain closes every pending slot so blocked pickers return immediately.
-// Called by Handler.Close.
-func (b *answerBroker) Drain() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for id, ch := range b.pending {
-		close(ch)
-		delete(b.pending, id)
-	}
-}
+// The AnswerBroker lives in bridgebase (shared with the CLI agent bridges);
+// miniagent composes that part instead of duplicating it. Local helper
+// functions below (pickAnswerValue / newRequestID) wrap its API for the
+// picker flow.
 
 // askAndWait emits a TypeQuestion card with the given options, then blocks
 // until the user answers (via the frontend card → TypeAnswer event → broker
@@ -129,7 +73,7 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID, label string
 		if !ok {
 			return "", "", fmt.Errorf("服务正在关闭，请稍后重试")
 		}
-		choice := pickAnswerValue(ans)
+		choice := bridgebase.PickAnswerValue(ans)
 		if choice == "" {
 			return "", "", fmt.Errorf("未选择任何%s", label)
 		}
@@ -148,8 +92,7 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID, label string
 // second and later rounds of a multi-round picker (/send's directory browser):
 // it PATCHes updateMessageID (the round-1 card) with a fresh option list +
 // requestID instead of morphing the progress card or shipping a standalone
-// card. Blocks for the answer like askAndWait. Local copy because miniagent
-// keeps its picker independent of bridgebase.
+// card. Blocks for the answer like askAndWait.
 func (h *Handler) askCardUpdate(ctx context.Context, chatID, updateMessageID, label string, options []string) (string, string, error) {
 	if len(options) == 0 {
 		return "", "", fmt.Errorf("没有可选项")
@@ -180,7 +123,7 @@ func (h *Handler) askCardUpdate(ctx context.Context, chatID, updateMessageID, la
 		if !ok {
 			return "", "", fmt.Errorf("服务正在关闭，请稍后重试")
 		}
-		choice := pickAnswerValue(ans)
+		choice := bridgebase.PickAnswerValue(ans)
 		if choice == "" {
 			return "", "", fmt.Errorf("未选择任何%s", label)
 		}
@@ -193,21 +136,6 @@ func (h *Handler) askCardUpdate(ctx context.Context, chatID, updateMessageID, la
 		h.answers.Cancel(requestID)
 		return "", "", fmt.Errorf("选择超时（>%s），请重新发起", askWaitTimeout)
 	}
-}
-
-// pickAnswerValue extracts the user's selection. Custom input wins over a
-// listed pick; Choices[0] carries a single-select's value.
-func pickAnswerValue(ans *protocol.AnswerPayload) string {
-	if ans == nil {
-		return ""
-	}
-	if ans.Custom != "" {
-		return ans.Custom
-	}
-	if len(ans.Choices) > 0 {
-		return ans.Choices[0]
-	}
-	return ""
 }
 
 func newRequestID() (string, error) {

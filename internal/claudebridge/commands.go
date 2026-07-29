@@ -57,7 +57,7 @@ func init() {
 // Control. It is invoked by handlePromptEvent when the prompt text starts
 // with "/".
 func (h *Handler) dispatchCommand(parentCtx context.Context, chatID, prompt, replyToID string) {
-	commands.Dispatch(h, h.emit, h.Logger, parentCtx, chatID, prompt, replyToID)
+	commands.Dispatch(h, h.Emit, h.Logger, parentCtx, chatID, prompt, replyToID)
 }
 
 // renderCmdHelp is the source of /help's body.

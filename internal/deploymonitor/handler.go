@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -40,19 +41,11 @@ const confirmTimeout = cardkit.InteractiveTimeout + time.Minute
 // banner POST, and a failed banner used to strand h.running=true forever.
 const deployNoticeTimeout = 10 * time.Second
 
-// controlSender is the subset of *backendrpc.Client the handler needs. It
-// exists so tests can substitute a fake that captures Controls instead of
-// POSTing them.
-type controlSender interface {
-	SendControl(ctx context.Context, ctrl *protocol.Control) error
-}
-
-// statusQuerier is the subset of *backendrpc.Client the handler needs to read
-// the frontend's in-flight turn list for /running. Exists so tests substitute
-// a fake instead of hitting a real frontend.
-type statusQuerier interface {
-	Status(ctx context.Context) (*protocol.StatusSnapshot, error)
-}
+// controlSender / statusQuerier are lifted to internal/backendrpc (interfaces
+// shared with miniagent and statusmonitor). The local names are kept as
+// type aliases so existing call sites stay readable.
+type controlSender = backendrpc.ControlSender
+type statusQuerier = backendrpc.StatusQuerier
 
 // Commander runs a command (name with args) inside dir. The production
 // implementation (cmd/deploy-monitor's execCommander) shells out via os/exec;

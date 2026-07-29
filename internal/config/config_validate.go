@@ -56,12 +56,15 @@ func validate(cfg *Config) error {
 	}
 	// Validate component log levels.
 	for comp, level := range map[string]string{
-		"router":   cfg.ComponentLogLevels.Router,
-		"opencode": cfg.ComponentLogLevels.Opencode,
-		"omp":      cfg.ComponentLogLevels.Omp,
-		"feishu":   cfg.ComponentLogLevels.Feishu,
-		"bridge":   cfg.ComponentLogLevels.Bridge,
-		"dedup":    cfg.ComponentLogLevels.Dedup,
+		"router":         cfg.ComponentLogLevels.Router,
+		"opencode":       cfg.ComponentLogLevels.Opencode,
+		"omp":            cfg.ComponentLogLevels.Omp,
+		"feishu":         cfg.ComponentLogLevels.Feishu,
+		"bridge":         cfg.ComponentLogLevels.Bridge,
+		"dedup":          cfg.ComponentLogLevels.Dedup,
+		"deploy_monitor": cfg.ComponentLogLevels.DeployMonitor,
+		"miniagent":      cfg.ComponentLogLevels.MiniAgent,
+		"status_monitor": cfg.ComponentLogLevels.StatusMonitor,
 	} {
 		if level == "" || level == "debug" || level == "info" || level == "warn" || level == "error" {
 			continue
