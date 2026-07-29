@@ -95,7 +95,7 @@ func convertPptxTo(t *testing.T, c *Converter, src string) string {
 
 func TestConvertPptx_TitleAndBullets(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "t.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(titleShape("季度回顾") + bulletShape([]string{"增长 23%", "新增客户 1200"})),
@@ -110,7 +110,7 @@ func TestConvertPptx_TitleAndBullets(t *testing.T) {
 
 func TestConvertPptx_OrderedListNumbered(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "o.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(orderedShape([]string{"a", "b", "c"})),
@@ -123,7 +123,7 @@ func TestConvertPptx_OrderedListNumbered(t *testing.T) {
 
 func TestConvertPptx_TableExtracted(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "tbl.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml"}),
 		"ppt/slides/slide1.xml": slideXML(tableFrame([][]string{
@@ -142,7 +142,7 @@ func TestConvertPptx_TableExtracted(t *testing.T) {
 
 func TestConvertPptx_ChartPlaceholder(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "chart.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(titleShape("X") + chartFrame()),
@@ -155,7 +155,7 @@ func TestConvertPptx_ChartPlaceholder(t *testing.T) {
 
 func TestConvertPptx_SmartArtPlaceholder(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "dgm.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(smartArtFrame()),
@@ -170,7 +170,7 @@ func TestConvertPptx_SlideOrderFollowsSldIdLst(t *testing.T) {
 	// sldIdLst lists rId2 before rId1; slide1.xml=Alpha, slide2.xml=Beta.
 	// Output must follow sldIdLst (Beta then Alpha), not filename order.
 	src := filepath.Join(t.TempDir(), "order.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId2", "rId1"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml", "rId2": "slides/slide2.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(titleShape("Alpha")),
@@ -188,7 +188,7 @@ func TestConvertPptx_SlideOrderFollowsSldIdLst(t *testing.T) {
 
 func TestConvertPptx_MaxSlidesCap(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "cap.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML([]string{"rId1", "rId2"}),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(map[string]string{"rId1": "slides/slide1.xml", "rId2": "slides/slide2.xml"}),
 		"ppt/slides/slide1.xml":           slideXML(titleShape("One")),
@@ -210,7 +210,7 @@ func TestConvertPptx_MaxSlidesCap(t *testing.T) {
 
 func TestConvertPptx_EmptyPresentation(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "empty.pptx")
-	writeZipXlsx(t, src, map[string]string{
+	writeZip(t, src, map[string]string{
 		"ppt/presentation.xml":            presentationXML(nil),
 		"ppt/_rels/presentation.xml.rels": presRelsXML(nil),
 	})

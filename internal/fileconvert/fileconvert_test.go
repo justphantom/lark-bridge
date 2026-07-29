@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // helper: write a temp file and return its path + a clean dst path. dst is
@@ -72,51 +70,13 @@ func TestConvert_TextCopiedWithMdExtension(t *testing.T) {
 	}
 }
 
-func TestConvert_DocxViaPandoc(t *testing.T) {
-	if _, err := exec.LookPath("pandoc"); err != nil {
-		t.Skip("pandoc not installed in test environment")
-	}
-	// Build a minimal docx via pandoc itself (round-trip): write a .md source
-	// and convert to .docx, then back. This avoids hard-coding a binary
-	// fixture in the repo while exercising the real Convert path.
-	dir := t.TempDir()
-	md := filepath.Join(dir, "src.md")
-	if err := os.WriteFile(md, []byte("# title\n\nbody para\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	docx := filepath.Join(dir, "src.docx")
-	if err := exec.Command("pandoc", "-f", "gfm", "-t", "docx", "-o", docx, md).Run(); err != nil {
-		t.Skipf("pandoc unavailable to build fixture: %v", err)
-	}
-	dst := filepath.Join(dir, "out.md")
-	c := New(Options{Timeout: 30 * time.Second})
-	if err := c.Convert(context.Background(), docx, dst); err != nil {
-		t.Fatalf("convert docx: %v", err)
-	}
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read dst: %v", err)
-	}
-	if !strings.Contains(string(got), "title") || !strings.Contains(string(got), "body para") {
-		t.Fatalf("docx→md output lost content: %q", got)
-	}
-}
-
-func TestConvert_PandocTimeout(t *testing.T) {
-	if _, err := exec.LookPath("pandoc"); err != nil {
-		t.Skip("pandoc not installed")
-	}
-	// An empty/garbage .docx makes pandoc exit fast, not stall; to exercise
-	// the timeout path deterministically we point pandoc at a path that does
-	// not exist and assert we get a non-nil error wrapping ctx or pandoc
-	// itself. The real guarantee (ctx cancellation SIGKILLs) is covered by
-	// the cmdutil.ApplyGroupCancel regression tests; here we just assert the
-	// timeout path produces a contextualised error rather than a silent nil.
-	c := New(Options{Timeout: 5 * time.Millisecond})
-	err := c.Convert(context.Background(),
-		filepath.Join(t.TempDir(), "missing.docx"),
-		filepath.Join(t.TempDir(), "out.md"))
-	if err == nil {
-		t.Fatal("expected non-nil error for missing docx, got nil")
+func TestConvert_XlsxRejectedFromConvert(t *testing.T) {
+	// xlsx must go through ConvertXlsx (C-paradigm metadata return); the
+	// generic Convert entry refuses it so metadata is never silently dropped.
+	c := New(Options{})
+	src, _ := writeSrc(t, "data.xlsx", "x")
+	err := c.Convert(context.Background(), src, filepath.Join(t.TempDir(), "out.md"))
+	if err == nil || !strings.Contains(err.Error(), "ConvertXlsx") {
+		t.Fatalf("got err=%v, want ConvertXlsx guard", err)
 	}
 }

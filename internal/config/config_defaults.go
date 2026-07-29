@@ -107,12 +107,9 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	}
 	// FileConvert: only apply defaults when the operator has opted in
 	// (Enabled). An absent / disabled section keeps the legacy "reject file
-	// messages" behaviour; we do not synthesise inbox paths or pandoc paths
-	// the operator never asked for.
+	// messages" behaviour; we do not synthesise inbox paths the operator
+	// never asked for.
 	if cfg.FileConvert.Enabled {
-		if cfg.FileConvert.PandocPath == "" {
-			cfg.FileConvert.PandocPath = "pandoc"
-		}
 		if cfg.FileConvert.MaxFileSize <= 0 {
 			cfg.FileConvert.MaxFileSize = 30 << 20 // 30 MiB
 		}

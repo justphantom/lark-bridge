@@ -296,9 +296,10 @@ type Renderer struct {
 // FileConvert enables and tunes the inbound file-message pipeline in
 // feishu-front. When this section is present (even with all fields at their
 // defaults), the dispatcher accepts file-type Feishu messages, downloads the
-// binary via the IM resources API, converts docx→md via pandoc, and exposes
-// the resulting .md path in the prompt text so the bound backend can Read it.
-// When the section is absent, file-type messages are still rejected with the
+// binary via the IM resources API, converts docx→md with the built-in pure
+// Go parser (no external binary required), and exposes the resulting .md
+// path in the prompt text so the bound backend can Read it. When the
+// section is absent, file-type messages are still rejected with the
 // legacy "不支持的消息类型" notice — keeping the feature opt-in per deployment.
 //
 // Only consumed by feishu-front; backends ignore.
@@ -308,10 +309,6 @@ type FileConvert struct {
 	// section's mere presence so an operator can stage config (write the
 	// block with enabled:false) without flipping the feature on.
 	Enabled bool `json:"enabled,omitempty"`
-	// PandocPath is the pandoc binary invoked for .docx conversions. Empty
-	// → "pandoc" (PATH lookup). The deploy preflight must guarantee this is
-	// invocable, or conversions will fail with a friendly per-upload notice.
-	PandocPath string `json:"pandoc_path,omitempty"`
 	// InboxDir is the root directory the dispatcher writes uploaded files
 	// and converted .md into. Layout: {InboxDir}/{chatID}/{promptID}/… .
 	// Empty → {state_dir}/inbox. Created on startup with 0700 perms.
@@ -321,8 +318,8 @@ type FileConvert struct {
 	// attempt, so a 1 GiB accidental attachment cannot exhaust memory.
 	// <=0 → 30 MiB.
 	MaxFileSize int64 `json:"max_file_size,omitempty"`
-	// ConvertTimeout bounds one pandoc invocation. <=0 → 60s. A conversion
-	// exceeding this is SIGKILLed (process-group) and surfaced as a notice.
+	// ConvertTimeout bounds one file conversion. <=0 → 60s. A conversion
+	// exceeding this is cancelled (ctx) and surfaced as a notice.
 	ConvertTimeout Duration `json:"convert_timeout,omitempty"`
 	// Retention bounds how long an inbox entry stays on disk after the turn
 	// that produced it completed. <=0 → 7d. A background sweep at startup

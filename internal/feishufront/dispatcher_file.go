@@ -47,7 +47,8 @@ var supportedUploadExt = map[string]bool{
 //  2. Validate FileKey + extension from the parsed message content.
 //  3. Download to {inboxDir}/{chatID}/{promptID}/{original-name} via the
 //     FileDownloader (lark REST IM resources endpoint).
-//  4. Convert via the fileconvert.Converter (docx → pandoc, md/txt → copy).
+//  4. Convert via the fileconvert.Converter (docx → pure-Go parser,
+//     md/txt → copy).
 //  5. Build the prompt text: filename + absolute .md path + the user's
 //     accompanying text (if any) + a directive that points the agent at the
 //     file.
@@ -134,7 +135,7 @@ func (d *Dispatcher) handleFileMessage(ctx context.Context, msg *feishu.Incoming
 	// xlsx follows the C paradigm (office-extract-design.md §3.2): the full
 	// data body is written to dstPath AND sheet metadata flows back here so
 	// the prompt carries only path + column names + row counts. Every other
-	// type goes through Convert (docx→pandoc, pptx→pure-Go extractor, md/txt
+	// type goes through Convert (docx/pptx → pure-Go extractors, md/txt
 	// →copy), which returns only an error.
 	base := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	dstPath := filepath.Join(dir, sanitizePathElement(base+".md"))

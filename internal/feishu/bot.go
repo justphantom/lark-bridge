@@ -239,13 +239,13 @@ func (b *Bot) Stop(ctx context.Context) error {
 // returned reader MUST be closed by the caller. fileType selects the IM
 // resources endpoint's `type` query parameter ("file" or "image"); empty
 // defaults to "file". Used by the frontend dispatcher to materialise an
-// uploaded file for pandoc conversion.
+// uploaded file for conversion.
 
 // DownloadFile fetches a binary resource attached to a Feishu message. The
 // returned reader MUST be closed by the caller. fileType selects the IM
 // resources endpoint's `type` query parameter ("file" or "image"); empty
 // defaults to "file". Used by the frontend dispatcher to materialise an
-// uploaded file for pandoc conversion.
+// uploaded file for conversion.
 func (b *Bot) DownloadFile(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error) {
 	if fileType == "" {
 		fileType = "file"

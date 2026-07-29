@@ -1,14 +1,14 @@
 package fileconvert
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-
-	"github.com/xuri/excelize/v2"
 )
 
 // XlsxMeta is the metadata returned alongside an xlsx conversion and consumed
@@ -44,7 +44,7 @@ type SheetMeta struct {
 // dstPath (decision 5C*: no truncation, no sampling) and returns sheet
 // metadata so the dispatcher can build the path+schema+rows-only prompt.
 // xlsx deliberately does NOT go through Convert, which has no way to return
-// metadata without leaking the excelize dependency into the dispatcher.
+// metadata.
 func (c *Converter) ConvertXlsx(ctx context.Context, srcPath, dstPath string) (*XlsxMeta, error) {
 	if !strings.HasSuffix(dstPath, ".md") {
 		return nil, fmt.Errorf("fileconvert: dst must end in .md, got %q", dstPath)
@@ -52,27 +52,48 @@ func (c *Converter) ConvertXlsx(ctx context.Context, srcPath, dstPath string) (*
 	return c.convertXlsx(ctx, srcPath, dstPath)
 }
 
-// convertXlsx renders an .xlsx workbook into GFM Markdown. Multi-sheet is
-// always emitted in workbook order (decision 10A); formulas yield the cached
-// value by default (decision 6A); merged cells keep only the top-left value
-// (decision 7A, which GetRows already honours); charts/pivot tables emit
-// HTML-comment placeholders (decision 9A). Charts are localised per sheet;
-// pivot tables are detected globally (excelize has no read API and per-sheet
-// localisation via the OOXML relationship chain is disproportionate to its
-// rarity — see convert_xlsx_scan.go).
+// convertXlsx renders an .xlsx workbook into GFM Markdown in-process
+// (xlsx-extract-design.md): pure stdlib zip + streaming XML, no third-party
+// dependency. Multi-sheet is always emitted in workbook order (decision
+// 10A); formulas yield the cached value by default (decision 6A); merged
+// cells keep only the top-left value (decision 7A, which the OOXML storage
+// model honours naturally — non-anchor cells carry no <v>); charts/pivot
+// tables emit HTML-comment placeholders (decision 9A) via the unchanged
+// detectChartsAndPivots scanner. Per-part degradation follows §4.3: missing
+// sharedStrings/styles demote features, only a broken workbook.xml is fatal.
 func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*XlsxMeta, error) {
 	base := filepath.Base(srcPath)
 
 	// Chart/pivot detection runs on the raw zip and is best-effort: a parse
 	// failure here only means we lose a placeholder, so it must not block a
-	// conversion that excelize could otherwise complete.
+	// conversion that could otherwise complete.
 	chartCounts, hasPivot := detectChartsAndPivots(srcPath)
 
-	f, err := excelize.OpenFile(srcPath)
+	zr, err := zip.OpenReader(srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("fileconvert: open xlsx %s: %w", base, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = zr.Close() }()
+	parts := make(map[string]*zip.File, len(zr.File))
+	for _, zf := range zr.File {
+		parts[zf.Name] = zf
+	}
+
+	// Pre-pass (xlsx-extract-design.md §2.2): sheet list + date system from
+	// the workbook, then the shared-string pool and the numFmt index.
+	wbPart := parts["xl/workbook.xml"]
+	if wbPart == nil {
+		return nil, fmt.Errorf("fileconvert: xlsx %s missing xl/workbook.xml", base)
+	}
+	wbData, err := readZipPart(wbPart)
+	if err != nil {
+		return nil, fmt.Errorf("fileconvert: read workbook.xml of %s: %w", base, err)
+	}
+	sheets := parseWorkbookSheets(wbData)
+	date1904 := parseDate1904(wbData)
+	wbRels := relsMap(parts, "xl/_rels/workbook.xml.rels")
+	sst := parseSharedStrings(readPartOrNil(parts, "xl/sharedStrings.xml"))
+	fmts := parseNumFmts(readPartOrNil(parts, "xl/styles.xml"))
 
 	out, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -89,29 +110,30 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 		meta.Note = "workbook contains pivot table(s), not extracted"
 	}
 
-	sheets := f.GetSheetList()
 	for i, sheet := range sheets {
 		if c.xlsxMaxSheets > 0 && i >= c.xlsxMaxSheets {
 			break
 		}
-		// Cancellation check between sheets: a huge workbook's GetRows is
+		// Cancellation check between sheets: a huge worksheet's parse is
 		// synchronous, so this is the cheap place to honour ctx.
 		select {
 		case <-ctx.Done():
 			_ = out.Close()
+			_ = os.Remove(dstPath)
 			return nil, fmt.Errorf("fileconvert: xlsx %s cancelled: %w", base, ctx.Err())
 		default:
 		}
 
-		fmt.Fprintf(buf, "# Sheet: %s\n\n", sheet)
-		c.writeXlsxSheet(buf, f, sheet, chartCounts[sheet])
+		fmt.Fprintf(buf, "# Sheet: %s\n\n", sheet.Name)
+		res, perr := c.parseSheetByName(ctx, parts, wbRels, sheet, sst, fmts, date1904)
+		writeXlsxSheetBody(buf, sheet.Name, res, perr, chartCounts[sheet.Name])
 		buf.WriteString("---\n\n")
 
-		meta.Sheets = append(meta.Sheets, buildSheetMeta(f, sheet, chartCounts[sheet]))
+		meta.Sheets = append(meta.Sheets, buildSheetMeta(sheet.Name, res, perr, chartCounts[sheet.Name]))
 
 		if c.log != nil {
 			c.log.Debug("fileconvert: xlsx sheet converted",
-				"src", base, "sheet", sheet)
+				"src", base, "sheet", sheet.Name)
 		}
 	}
 
@@ -124,89 +146,86 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 
 	if _, err := buf.WriteTo(out); err != nil {
 		_ = out.Close()
+		_ = os.Remove(dstPath)
 		return nil, fmt.Errorf("fileconvert: write xlsx dst: %w", err)
 	}
 	if err := out.Close(); err != nil {
+		_ = os.Remove(dstPath)
 		return nil, fmt.Errorf("fileconvert: close xlsx dst: %w", err)
 	}
 	return meta, nil
 }
 
-// writeXlsxSheet renders one sheet's body into bw: the full data table (or a
-// placeholder when GetRows fails / the sheet is chart-only), followed by any
-// per-sheet chart placeholder. Row data is fetched once via GetRows, which
-// joins sharedStrings, formats dates by numFmt, resolves booleans, and — per
-// decision 7A — already returns only the top-left value of each merged range.
-func (c *Converter) writeXlsxSheet(buf *bytes.Buffer, f *excelize.File, sheet string, chartCount int) {
-	rows, err := f.GetRows(sheet)
-	if err != nil {
-		fmt.Fprintf(buf, "<!-- Sheet %q: 读取失败，未提取: %v -->\n\n", sheet, err)
-		return
+// parseSheetByName resolves one sheet's worksheet part through the workbook
+// rels and parses it. A missing/broken part is a per-sheet failure (the
+// caller renders a 读取失败 placeholder and continues), never fatal.
+func (c *Converter) parseSheetByName(ctx context.Context, parts map[string]*zip.File, wbRels map[string]relationship, sheet wbSheet, sst []string, fmts *numFmtIndex, date1904 bool) (*sheetResult, error) {
+	rel, ok := wbRels[sheet.RID]
+	if !ok || rel.External {
+		return nil, fmt.Errorf("sheet %q has no worksheet relationship", sheet.Name)
 	}
-	rows = c.applyFormulaMode(f, sheet, rows)
+	wsPath := path.Clean(path.Join("xl", rel.Target))
+	zf := parts[wsPath]
+	if zf == nil {
+		return nil, fmt.Errorf("worksheet part %s missing", wsPath)
+	}
+	data, err := readZipPart(zf)
+	if err != nil {
+		return nil, err
+	}
+	return parseSheet(ctx, data, sst, fmts, date1904, c.xlsxFormulaMode)
+}
 
+// writeXlsxSheetBody renders one sheet's body: the full data table (or a
+// placeholder when the parse failed / the sheet is chart-only / empty),
+// followed by the per-sheet chart placeholder and the aggregate caveats the
+// parser counted (unrecognised formats, unexpanded shared formulas, uncached
+// formula values, shared-string overruns — decisions Q4/Q5 and §4.3, never
+// silently skipped).
+func writeXlsxSheetBody(buf *bytes.Buffer, sheet string, res *sheetResult, perr error, chartCount int) {
 	switch {
-	case len(rows) == 0 && chartCount > 0:
+	case perr != nil:
+		fmt.Fprintf(buf, "<!-- Sheet %q: 读取失败，未提取: %v -->\n\n", sheet, perr)
+		return
+	case len(res.rows) == 0 && chartCount > 0:
 		fmt.Fprintf(buf, "<!-- Sheet %q: 含 %d 个图表（chart），未提取 -->\n\n", sheet, chartCount)
-	case len(rows) == 0:
+		return
+	case len(res.rows) == 0:
 		// Truly empty sheet: emit an honest marker rather than a bare heading
 		// so the agent knows there was nothing to read.
 		fmt.Fprintf(buf, "<!-- Sheet %q: 空 sheet -->\n\n", sheet)
+		return
 	default:
-		buf.WriteString(renderTable(rows))
+		buf.WriteString(renderTable(res.rows))
 		buf.WriteByte('\n')
 		if chartCount > 0 {
 			fmt.Fprintf(buf, "<!-- Sheet %q: 含 %d 个图表（chart），未提取 -->\n\n", sheet, chartCount)
 		}
 	}
-}
-
-// applyFormulaMode rewrites cells in-place for the formula/both modes. The
-// default "value" mode short-circuits and returns rows untouched — GetRows
-// already yields cached results (decision 6A) and avoids the O(cells) cost of
-// probing every cell for a formula, which matters on a 50k-row sheet. Only an
-// operator who opts into formula/both pays that cost.
-func (c *Converter) applyFormulaMode(f *excelize.File, sheet string, rows [][]string) [][]string {
-	if c.xlsxFormulaMode == "value" || c.xlsxFormulaMode == "" {
-		return rows
+	if res.unknownFmt > 0 {
+		fmt.Fprintf(buf, "<!-- %d 个单元格格式未识别，输出原始值 -->\n\n", res.unknownFmt)
 	}
-	both := c.xlsxFormulaMode == "both"
-	for r := range rows {
-		for col := range rows[r] {
-			cell, err := excelize.CoordinatesToCellName(col+1, r+1)
-			if err != nil {
-				continue
-			}
-			formula, err := f.GetCellFormula(sheet, cell)
-			if err != nil || formula == "" {
-				continue
-			}
-			val := rows[r][col]
-			if both {
-				if val != "" {
-					rows[r][col] = val + " (" + formula + ")"
-				} else {
-					rows[r][col] = "(" + formula + ")"
-				}
-			} else {
-				rows[r][col] = formula
-			}
-		}
+	if res.sharedFormula > 0 {
+		fmt.Fprintf(buf, "<!-- %d 个 shared 公式单元格未展开，输出缓存值 -->\n\n", res.sharedFormula)
 	}
-	return rows
+	if res.noCache > 0 {
+		fmt.Fprintf(buf, "<!-- 共 %d 个公式无缓存值 -->\n\n", res.noCache)
+	}
+	if res.sstOverrun > 0 {
+		fmt.Fprintf(buf, "<!-- %d 个单元格 sharedStrings 引用越界，输出空值 -->\n\n", res.sstOverrun)
+	}
 }
 
 // buildSheetMeta derives the prompt-facing metadata for one sheet from its
-// rows. Columns come from the first non-empty row (with trailing empties
-// trimmed); RowCount is the number of rows after that header.
-func buildSheetMeta(f *excelize.File, sheet string, chartCount int) SheetMeta {
+// parsed rows — the same rows that were just written to disk, so a large
+// sheet is parsed exactly once (the excelize implementation read it twice).
+func buildSheetMeta(sheet string, res *sheetResult, perr error, chartCount int) SheetMeta {
 	sm := SheetMeta{Name: sheet}
-	rows, err := f.GetRows(sheet)
-	if err != nil {
+	if perr != nil {
 		sm.Note = "读取失败，未提取"
 		return sm
 	}
-	sm.Columns, sm.RowCount = deriveColumnsAndRows(rows)
+	sm.Columns, sm.RowCount = deriveColumnsAndRows(res.rows)
 	if chartCount > 0 {
 		sm.Note = fmt.Sprintf("contains %d chart(s), not extracted", chartCount)
 	}
@@ -216,7 +235,7 @@ func buildSheetMeta(f *excelize.File, sheet string, chartCount int) SheetMeta {
 // deriveColumnsAndRows picks the first non-empty row as the header and counts
 // the data rows beneath it. Trailing empty column names are trimmed so the
 // prompt's "[c1, c2, …]" list does not trail with anonymous slots produced by
-// ragged row lengths from excelize.
+// ragged row lengths.
 func deriveColumnsAndRows(rows [][]string) ([]string, int) {
 	headerIdx := -1
 	for i, r := range rows {

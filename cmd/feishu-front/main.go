@@ -12,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -316,17 +315,14 @@ func buildLogger(cfg *config.Config) (*log.Logger, error) {
 // wireFilePipeline configures the dispatcher with the file-message pipeline:
 //   - resolves the inbox directory (defaulting to {state_dir}/inbox) and
 //     pre-creates it with 0700 perms;
-//   - constructs a fileconvert.Converter carrying the operator's pandoc path
-//     and convert_timeout;
+//   - constructs a fileconvert.Converter carrying the operator's
+//     convert_timeout (docx/pptx conversion is pure Go; no external binary
+//     preflight is needed);
 //   - hands both to the dispatcher alongside the bot's DownloadFile method;
 //   - runs a one-shot retention sweep so a long-lived deployment does not
 //     accumulate stale uploads.
 //
-// Returns an error only on unrecoverable setup (pandoc missing in PATH when
-// no explicit path was configured, inbox dir not creatable). A missing
-// default pandoc is treated as fatal because silent acceptance of file
-// messages followed by per-upload conversion failures would surprise users;
-// the operator must either install pandoc or set an explicit path.
+// Returns an error only on unrecoverable setup (inbox dir not creatable).
 func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufront.Dispatcher, logger *log.Logger) error {
 	inbox := cfg.FileConvert.InboxDir
 	if inbox == "" {
@@ -336,19 +332,7 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		return fmt.Errorf("file_convert: create inbox %s: %w", inbox, err)
 	}
 
-	pandocPath := cfg.FileConvert.PandocPath
-	if pandocPath == "" {
-		pandocPath = "pandoc"
-	}
-	// Preflight: pandoc must be invocable. The dispatcher still surfaces
-	// per-upload failures as notices, but a missing pandoc at startup is a
-	// deployment problem the operator should fix before flipping enabled.
-	if _, err := exec.LookPath(pandocPath); err != nil {
-		return fmt.Errorf("file_convert: pandoc not found in PATH (%s); install it or set file_convert.pandoc_path: %w", pandocPath, err)
-	}
-
 	converter := fileconvert.New(fileconvert.Options{
-		PandocPath:      pandocPath,
 		Timeout:         time.Duration(cfg.FileConvert.ConvertTimeout),
 		Logger:          logger,
 		PptxMaxSlides:   cfg.FileConvert.PptxMaxSlides,
@@ -394,7 +378,6 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
 	logger.Info("file pipeline enabled",
 		"inbox", inbox,
-		"pandoc", pandocPath,
 		"max_file_size", cfg.FileConvert.MaxFileSize,
 		"convert_timeout", time.Duration(cfg.FileConvert.ConvertTimeout),
 		"retention", time.Duration(cfg.FileConvert.Retention),

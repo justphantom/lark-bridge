@@ -143,8 +143,8 @@ func isDrawingRel(t string) bool { return strings.Contains(t, "/drawing") }
 func isChartRel(t string) bool { return strings.Contains(t, "/chart") }
 
 // parseWorkbookSheets extracts the ordered <sheet name= r:id=> list from
-// xl/workbook.xml. Order here is the presentation order GetSheetList also
-// returns, so names line up with the conversion output.
+// xl/workbook.xml. Order here is the presentation order, so names line up
+// with the conversion output.
 func parseWorkbookSheets(data []byte) []wbSheet {
 	var sheets []wbSheet
 	dec := xml.NewDecoder(bytes.NewReader(data))
@@ -167,6 +167,29 @@ func parseWorkbookSheets(data []byte) []wbSheet {
 			}
 		}
 		sheets = append(sheets, s)
+	}
+}
+
+// parseDate1904 reports whether the workbook uses the 1904 date system
+// (<workbookPr date1904="1"/>, old Mac exports). The serial→ISO conversion
+// switches its epoch on this flag (xlsx-extract-design.md §2.4).
+func parseDate1904(data []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "workbookPr" {
+			continue
+		}
+		for _, a := range se.Attr {
+			if a.Name.Local == "date1904" {
+				return a.Value == "1" || a.Value == "true"
+			}
+		}
+		return false
 	}
 }
 

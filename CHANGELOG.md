@@ -75,6 +75,52 @@
 - value 模式（默认）不对每个 cell 反查公式，避免大表 O(cells) 调用拖垮
   性能；公式文本/聚合注释仅在 `formula` / `both` 模式触发。
 
+### Changed
+
+- **docx 转换去 pandoc 化（breaking）**：docx → GFM 改为纯 Go 标准库进程内
+  解析（`archive/zip` + `encoding/xml`），不再调用外部 pandoc 子进程。
+  设计见 `docs/docx-extract-design.md`（推翻 office-extract-design.md 的
+  2026-07-28「不替换」结论）。
+  - 新增 `internal/fileconvert/convert_docx*.go`：`styles.xml`（标题 /
+    样式列表）与 `numbering.xml`（多级编号）两遍预解析 + `document.xml`
+    流式提取；支持标题 H1-H9（outlineLvl 优先、name 回退）、加粗 / 斜体 /
+    删除线 / 行内代码（等宽字体白名单 + code 样式启发式）、多级列表
+    （编号重启语义）、GFM 表格（宽表降 fenced CSV）、超链接
+    `[text](url)`、文末脚注；图片 / 图表 / SmartArt / OLE / 文本框 /
+    嵌套表格按决策 9A 输出 HTML 注释占位，不静默跳过。
+  - **配置 breaking**：`file_convert.pandoc_path` 字段删除。配置解析开启
+    `DisallowUnknownFields`，老配置携带该键会启动报错——升级前请从配置
+    中移除 `pandoc_path`。`convert_timeout` 语义变为单次转换的 ctx 预算
+    （纯 Go 解析，不再有子进程 SIGKILL）。
+  - 部署侧移除 pandoc 依赖：`deploy.sh` 软预检、feishu-front 启动
+    `exec.LookPath` 硬预检、`deploy/README.md` 安装章节全部删除；交付
+    恢复单静态二进制，无外部运行时。
+  - 降级面（vs pandoc）：非 decimal 编号（letter/roman/中文）统一按数字
+    渲染、合并单元格只留左上值、嵌套表格平铺、页眉页脚 / 批注 / 隐藏
+    文本不提取、编号模板 `lvlText` 不还原多级串。
+  - 测试 fixture 全部程序化生成（zip writer 内联 OOXML），CI 不再依赖
+    pandoc / MS Word；预取消 ctx 的确定性预算中止测试替代原子进程超时
+    测试。
+
+- **xlsx 转换去 excelize 化（输出 breaking）**：xlsx → GFM 改为纯 Go 标准库
+  进程内解析（`archive/zip` + `encoding/xml`），`go.mod` 恢复零第三方依赖
+  （excelize 及其 8 个间接依赖全部移除，office-extract-design.md §5.1 的
+  豁免随之撤销）。设计见 `docs/xlsx-extract-design.md`。
+  - 新增 `convert_xlsx_sst.go`（sharedStrings 含富文本拼接、注音跳过）、
+    `convert_xlsx_style.go`（numFmt L1：内建日期 ID 查表 + 保守自定义
+    模式识别 + 1900/1904 双纪元序列值转换）、`convert_xlsx_sheet.go`
+    （worksheet 流式解析，公式文本零成本提取）。`ConvertXlsx` / `XlsxMeta`
+    对外 API 不变，dispatcher 零改动。
+  - **输出 breaking**：日期/时间统一输出 ISO 8601（`yyyy年m月d日` →
+    `2026-07-01`）；数字不再应用显示格式（`15%` → `0.15`、`1,200` →
+    `1200`）；无法识别的自定义日期模式输出原始序列值 + 聚合占位注释。
+  - 附带收益：`formula`/`both` 模式消除 O(cells) 公式反查；每 sheet
+    元数据派生复用解析结果（excelize 时代每 sheet 读两次），大表 IO
+    减半；shared 公式从属单元格与无缓存值公式显式占位（原先依赖
+    excelize 隐式行为）。
+  - 测试 fixture 重写为内联 XML（与 docx/pptx 同模式），CI 无任何第三方
+    依赖。
+
 ## [1.5.0] - 2026-07-28
 
 v1.4.0 之后的增量完善。无协议层破坏性改动：`PromptPayload.CardMessageID` 为

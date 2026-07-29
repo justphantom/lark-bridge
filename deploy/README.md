@@ -24,7 +24,8 @@
 | opencode | `opencode` CLI 在 PATH 中（仅 opencode-back） |
 | miniagent | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；见 .env） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
-| pandoc | 可选；仅当启用 `file_convert.enabled=true` 时需要（处理 docx 上传） |
+
+文件上传（docx/pptx/xlsx → Markdown）由内置纯 Go 解析器完成，**无外部运行时依赖**。
 
 ### 飞书应用权限（启用文件上传时）
 
@@ -36,23 +37,6 @@
 
 缺权限时下载请求会返回 403 / 业务码 99991672，前端按 `下载失败` 通知用户，
 不影响文本对话。
-
-### pandoc 安装（启用文件上传时）
-
-仅当配置文件中 `file_convert.enabled=true` 时强制要求；未启用时前端对 file
-类型消息保持「不支持的消息类型」拒绝。
-
-```bash
-# Debian / Ubuntu
-sudo apt-get install -y pandoc
-# RHEL / CentOS / Fedora
-sudo dnf install -y pandoc
-# 校验
-pandoc --version
-```
-
-启动时会执行 `pandoc --version` 预检；缺失则 feishu-front 拒绝启动并在日志
-中提示安装命令。
 
 ### 提示词模板（启用文件上传时）
 

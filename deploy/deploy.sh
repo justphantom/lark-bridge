@@ -108,16 +108,6 @@ preflight_toolchain() {
         command -v go   >/dev/null || fail "Go is not installed"
         command -v make >/dev/null || fail "make is not installed"
     fi
-
-    # Optional: pandoc is required only when file_convert.enabled=true in the
-    # deployed feishu-front config. Best-effort soft check: if absent, we warn and
-    # tell the operator how to enable / disable file handling, but do not fail —
-    # feishu-front's own startup preflight will hard-fail if enabled and missing.
-    if command -v pandoc >/dev/null 2>&1; then
-        info "pandoc available ($(pandoc --version | head -1)) — file uploads supported"
-    else
-        warn "pandoc not found in PATH; set file_convert.enabled=false (default) or install pandoc to accept file uploads"
-    fi
 }
 
 # Health check: does RUN_USER have passwordless sudo? A remote /deploy (this

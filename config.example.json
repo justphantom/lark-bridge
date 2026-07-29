@@ -76,7 +76,6 @@
 
   "file_convert": {
     "enabled":          true,
-    "pandoc_path":      "pandoc",
     "inbox_dir":        "${STATE_DIR}/inbox",
     "max_file_size":    31457280,
     "convert_timeout":  "60s",
