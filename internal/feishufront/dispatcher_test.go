@@ -474,12 +474,20 @@ func TestParseQuestionFormValue(t *testing.T) {
 		t.Fatalf("got choices=%v custom=%q", choices, custom)
 	}
 
-	// multi-select: values arrive as []any and join with "," on one line
+	// multi-select: values arrive as []any; each picked option becomes its own choice
 	choices, _ = parseQuestionFormValue(map[string]any{
 		"q_0": []any{"a", "b"},
 	})
-	if len(choices) != 1 || choices[0] != "a,b" {
-		t.Fatalf("multi-select choices=%v, want [a,b]", choices)
+	if len(choices) != 2 || choices[0] != "a" || choices[1] != "b" {
+		t.Fatalf("multi-select choices=%v, want [a b]", choices)
+	}
+
+	// multi-select mixed with single-select: ordered by idx, multi expanded in place
+	choices, _ = parseQuestionFormValue(map[string]any{
+		"q_0": []any{"a", "b"}, "q_1": "c",
+	})
+	if len(choices) != 3 || choices[0] != "a" || choices[1] != "b" || choices[2] != "c" {
+		t.Fatalf("mixed choices=%v, want [a b c]", choices)
 	}
 
 	// multiple questions: ordered by idx
