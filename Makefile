@@ -92,8 +92,8 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
-# Note: deploy.sh manages the 4 business services (feishu / claude / opencode
-# / miniagent). lark-deploy-monitor is managed independently
+# Note: deploy.sh manages the 5 business services (feishu / claude / opencode
+# / omp / miniagent). lark-deploy-monitor is managed independently
 # by upgrade-monitor.sh (it triggers deploy, so self-managing would be a
 # circular dependency).
 deploy:

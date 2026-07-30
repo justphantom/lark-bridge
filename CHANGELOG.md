@@ -5,11 +5,90 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-30
+
+v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后端**——一个新的
+业务子系统 + 一次把四套 CLI 后端的共享代码下沉的重构。无 breaking change，新增功能 →
+按 semver 升 minor。**发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
+**升级既有部署**：`make deploy` 不需 `--init`；新增 omp-back 见 `deploy/README.md` 的 omp 段。
+
+### Added
+
+- **omp-back：Oh My Pi (omp) CLI agent 后端**（`3f07e05` / `dca1719` / `7b65459`）。第 7 个
+  二进制 `lark-omp-back`，第 5 个业务后端。每个 prompt fork 一次 `omp -p --mode json`
+  子进程，消费其 NDJSON 事件流。设计见 `docs/omp-back-design.md`，对接规范见
+  `OMP_INTEGRATION_SPEC.md`。
+  - 新增 `internal/omp`（CLI 子进程驱动 + models 列表缓存）、`internal/ompbridge`
+    （业务逻辑）。斜杠命令对齐 claude/opencode：`/running` `/session-new` `/session-abort`
+    `/session-del` `/current` `/model` `/perm` `/thinking` `/cd` `/send` `/pull` `/push` `/help`。
+  - 配置段 `omp.*`：`cli_path` / `default_directory` / `max_concurrent` / `stream_history` /
+    `append_system_prompt` / `approval_mode`（默认 `write`）/ `thinking_level`（默认 `auto`）/
+    `approval_options` / `thinking_options` / `model_options`。
+  - 安全对齐既有后端：`cmdutil.SanitizeChildEnv()`（剥离桥接自身 secret）+
+    `cmdutil.ApplyGroupCancel()`（进程组 + ctx 取消 + WaitDeadline）。
+  - **设计性缺失**：不支持 `/session-list` / `/session-use`——omp 的 session store 是
+    cwd-bound 且慢（见 `internal/ompbridge/deps.go` 注释），非缺陷。
+- **omp-back 动态 `/model` picker**（`39c849d`）：picker 选项改为 fork `omp models --json`
+  取真实 provider/id selector 列表（冷启动 ~100-150s，故带 TTL 缓存）；fetch 失败时回退
+  静态 `model_options`。新增配置 `omp.model_list_timeout`（默认 `300s`）与
+  `omp.list_cache_ttl`（默认 `3600`，负值禁用缓存）。
+- **deploy 流程纳入 omp-back**（`146db59`）：`deploy/deploy.sh` 现管理 5 个业务服务
+  （feishu / claude / opencode / omp / miniagent）；`make deploy` / `make pack` / Makefile
+  产物校验同步覆盖第 7 个二进制。
+- **`cmd/omp-back/main_test.go`**：补齐 `TestCLIRunner_BadConfigReturnsError`，使 7 个
+  cmd 入口对「坏 config fail-fast」契约的覆盖一致（修复 ARCHITECTURE.md「每个 cmd 含
+  `main_test.go`」的最后一处遗漏）。
+
+### Changed
+
+- **后端共享代码下沉重构**（`5e36e05`，`docs/backend-refactor-plan.md` phases 1-3）。
+  行为保持（behaviour-preserving），不改变对外协议。四套 CLI 后端（claude / opencode / omp /
+  miniagent）的重复 prologue / helper / emit-forwarder 收敛到共享包：
+  - `internal/bridgebase`：新增共享工具（`NonEmpty`/`TruncateForDebug`/`ResolveModel` 等）、
+    `ValidateAbsDir`/`CreateSessionDir`、`PromptResult`+`RecordUsage`+`EmitTerminal`、
+    `RunPromptScaffold`+`RecoverPromptPanic`（每 prompt 的 ctx/超时/看门狗装配）、
+    `MakeEnumPicker`（合并 claude `/effort` 与 omp `/thinking`）、
+    `SingleFlightJobRunner` / `PeriodicReporter` 抽象。
+  - `internal/clibase`：共享 `CheckVersion` + 常量（3 份字节级相同的 ready.go 合一）。
+  - `internal/backendhost`：`CLIRunner[H]` 统一 claude/opencode/omp 的 main 生命周期
+    （config → router → usage → backendrpc → metrics → Run）。
+  - `internal/log`：`BaseLogger` + `ComponentLogger` 取代每二进制各自的 buildBaseLogger。
+  - 回归保护：每个 CLI 后端新增 `testdata/*.jsonl` + replay 测试，把抓取的真实 NDJSON 流
+    灌过 `ParseEvent`+`streamRun` 断言 reply/usage/stale-shape（含 omp 三个经验性 bug 的
+    覆盖：turn_start reset、跨 message_end 的 usage 累积、未知事件前向兼容）。
+  - 净变化：约 +3290/−2630，每个后端减 80-120 行重复 prologue。
+- **配置默认值刷新**：`omp.model_list_timeout` / `omp.list_cache_ttl` 进入 deploy 配置表
+  与 `config.example.json`。
+
+### Fixed
+
+- **feishufront：confirm/cancel 卡片选项本地化 + 补 submitSummary 测试**（`39e3239`）。
+  opencode `/session-clean` 的确认卡片用 `Value:"confirm"/"cancel"`，提交回显经
+  `choiceLabel` 命中 default 分支，显示英文原文而非中文。`choiceLabel` 补
+  `confirm→确认`/`cancel→取消` 映射；`submitSummary`/`questionAnswerSummary`/`choiceLabel`/
+  `parseQuestionFormValue` 四个纯函数补单测覆盖。
+- **backends：cache 命中路径防御性拷贝 + 清 omp lint 回归**（`cb88f31`）。omp + opencode 的
+  `cachedList` 命中路径此前直接返回缓存内部切片，调用者改写会污染 TTL 窗口内的缓存；
+  改为返回拷贝，与未命中路径的「防御性拷贝」契约一致。同时修复 omp `client_list_test.go`
+  的 `ineffassign` + `intrange`（恢复 `golangci-lint run ./...` 0 issues）。
+
+### Notes
+
+- 内部：`.codegraph/` 索引目录加入 `.gitignore`（`8eef512`）。
+- 文档：`ARCHITECTURE.md` 统计刷新（7 二进制 / 28 内部包 / 行数）；`Makefile` deploy 注释
+  更正为 5 个业务服务；`deploy/README.md` 配置表补 `omp.model_list_timeout` /
+  `omp.list_cache_ttl`。
+
 ## [1.6.0] - 2026-07-29
 
 v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、配置字段
 `pandoc_path` 删除）+ 多个 feat，按 semver 升 minor。**发版顺序**：先 feishu-front
 后各 backend（deploy.sh 顺序天然满足）。升级前请从配置中移除 `pandoc_path`。
+
+> 修正（2026-07-30，随 v1.7.0）：本节早前曾误述 xlsx 「首次引入第三方依赖
+> `xuri/excelize/v2`、打破零依赖硬约束」。实际发布的 v1.6.0 xlsx/pptx 均为纯 Go
+> 标准库自研（`go.mod` 无 `require`、无 `go.sum`），零依赖硬约束从未被打破。
+> 相关条目已据实更正，详见 `docs/release-readiness-2026-07-30.md` R2。
 
 ### Added
 
@@ -20,10 +99,10 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
     全页提标题 / 正文 / 项目列表 / 简单表格；图表与 SmartArt 输出 HTML 注释
     占位（决策 9A）；图片完全忽略（决策 3A）。幻灯片顺序按
     `presentation.xml` 的 `sldIdLst`，不按文件名。
-  - xlsx 走 `xuri/excelize/v2`（C 范式）：数据本体全量 GFM 表格写盘（含
-    chart/pivot 占位、合并单元格只填左上角、公式提缓存值），递交 agent 的
-    prompt 只含路径 + 每 sheet 列名 + 每 sheet 总行数（决策 Q11），由 agent
-    用 Read 工具（支持 offset/limit）按需读取区间。
+  - xlsx 走纯 Go 标准库自研（`archive/zip` + `encoding/xml`，零第三方依赖）：
+    数据本体全量 GFM 表格写盘（含 chart/pivot 占位、合并单元格只填左上角、
+    公式提缓存值），递交 agent 的 prompt 只含路径 + 每 sheet 列名 + 每 sheet
+    总行数（决策 Q11），由 agent 用 Read 工具（支持 offset/limit）按需读取区间。
   - 新增 `internal/fileconvert/convert_pptx.go`、`convert_xlsx.go`、
     `convert_xlsx_scan.go`（chart/pivot 的 OOXML 关系链 zip 扫描）、
     `gfm.go`（GFM 表格渲染 + 宽表 >20 列降级为 fenced CSV）；新增
@@ -36,11 +115,9 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
     `pptx_text_only` / `xlsx_max_sheets` / `xlsx_formula_mode` /
     `xlsx_prompt_template`，`xlsx_formula_mode` 强制 `value|formula|both`
     枚举校验。
-  - **首次引入第三方直接依赖** `github.com/xuri/excelize/v2`（Apache-2.0），
-    打破 CODING_STANDARDS.md 的零依赖硬约束；豁免理由见
-    `docs/office-extract-design.md` §5.1（excelize 已覆盖 sharedStrings /
-    numFmt / merge / 公式缓存，自研即重复造轮子；纯 Go、无 cgo、单二进制
-    部署形态不变），接口面收敛在 `convert_xlsx.go` 单文件。
+  - **零第三方依赖硬约束保持不变**：xlsx 与 pptx 均为纯 Go 标准库自研解析
+    （`go.mod` 无 `require`、无 `go.sum`），与 `CODING_STANDARDS.md` 的
+    「直接依赖仅 Go 标准库」一致。设计权衡见 `docs/office-extract-design.md`。
 
 - **`/send` 指令：从绑定工作目录发送文件到飞书群**：三个业务后端
   （claude-back / opencode-back / miniagent-back）现支持 `/send` 与
@@ -88,11 +165,10 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
   命令对齐要求，供后续桥接新 agent（或回归对比）参考。纯文档，无代码影响。
   本批同时刷新了 `ARCHITECTURE.md` / `CODING_STANDARDS.md` 的包/接口统计数字。
 
-- chart 检测：excelize v2 无 chart 读取 API（设计 §5.4 所述 `GetCharts()`
-  实际不存在），改用 `archive/zip` 扫描 `xl/` 关系链（workbook→worksheet→
-  drawing→chart）按 sheet 计数；pivot 仅做 workbook 级检测（pivotTable 的
-  `<location>` 不含 sheet 名，精确 sheet 关联在 zip 层面成本过高），二者均
-  保留 HTML 注释占位以遵守"不静默跳过"契约。
+- chart 检测：纯 Go 实现下，chart 读取通过对 `xl/` 关系链做 `archive/zip`
+  扫描（workbook→worksheet→drawing→chart）按 sheet 计数；pivot 仅做 workbook
+  级检测（pivotTable 的 `<location>` 不含 sheet 名，精确 sheet 关联在 zip 层面
+  成本过高），二者均保留 HTML 注释占位以遵守"不静默跳过"契约。
 - value 模式（默认）不对每个 cell 反查公式，避免大表 O(cells) 调用拖垮
   性能；公式文本/聚合注释仅在 `formula` / `both` 模式触发。
 

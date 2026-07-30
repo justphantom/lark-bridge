@@ -31,8 +31,8 @@
 
 ### 1.3 规模
 
-- **268 个 Go 文件，49,830 行**，其中测试 **24,238 行（约 48.6%）**
-- `internal/` 下 **24 个子包**
+- **334 个 Go 文件，61,994 行**，其中测试 **29,301 行（约 47.3%）**
+- `internal/` 下 **28 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
 ---
@@ -63,14 +63,15 @@
 
 ```
 lark-bridge/
-├── cmd/                      # 6 个二进制入口
+├── cmd/                      # 7 个二进制入口
 │   ├── feishu-front/         # 前端：飞书 WS Bot + IPC server + 调度器
 │   ├── claude-back/          # Claude CLI 后端
 │   ├── opencode-back/        # opencode CLI 后端
+│   ├── omp-back/             # Oh My Pi (omp) CLI 后端
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
 │   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
 │   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
-├── internal/                 # 24 个内部包（详见第 5 节）
+├── internal/                 # 28 个内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
 │   ├── router/               # chatID ↔ 后端绑定持久化
 │   ├── config/               # JSON 配置加载/默认值/校验
@@ -79,15 +80,19 @@ lark-bridge/
 │   │   ├── websocket/        #   RFC 6455 WS 客户端
 │   │   └── ws/               #   帧编解码 + 重连 + 分片重组
 │   ├── feishu/               # lark.Client 的业务封装层（Bot/IncomingMessage）
-│   ├── feishufront/          # ★ 前端核心（9692 行，最大包）
+│   ├── feishufront/          # ★ 前端核心（14601 行，最大包）
 │   │   ├── cardkit/          #   飞书卡片元素 schema
 │   │   └── renderer/         #   progress/result/interactive 渲染器
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
+│   ├── backendhost/          # 各 CLI 后端 main 共享的 CLIRunner 脊梁
 │   ├── bridgebase/           # ★ 后端通用脊梁（router+rpc+cancel+emit+git）
+│   ├── clibase/              # CLI 子进程就绪探测（--version 健康检查）公共段
 │   ├── claude/               # claude CLI 子进程驱动（stream-json 解析）
 │   ├── claudebridge/         # claude-back 业务逻辑
 │   ├── opencode/             # opencode CLI 子进程驱动（NDJSON 解析）
 │   ├── opencodebridge/       # opencode-back 业务逻辑
+│   ├── omp/                  # omp CLI 子进程驱动（NDJSON 解析 + models 列表缓存）
+│   ├── ompbridge/            # omp-back 业务逻辑
 │   ├── miniagent/            # miniagent-back 业务逻辑
 │   ├── miniclient/           # miniagent CLI 子进程封装
 │   ├── deploymonitor/        # /deploy 单飞执行器
@@ -116,29 +121,30 @@ lark-bridge/
 
 | 目录 | 职责 | 备注 |
 |---|---|---|
-| `cmd/` | 6 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
-| `internal/` | 全部业务代码，24 个包 | 不对外暴露 |
-| `deploy/` | `deploy.sh`（业务 4 服务）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
+| `cmd/` | 7 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
+| `internal/` | 全部业务代码，28 个包 | 不对外暴露 |
+| `deploy/` | `deploy.sh`（业务 5 服务：feishu/claude/opencode/omp/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `docs/` | 设计文档与代码审查记录（本地不入仓） | 决策溯源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
-| `bin/` | `make build` 产物（6 个二进制） | gitignore |
+| `bin/` | `make build` 产物（7 个二进制） | gitignore |
 
 ---
 
 ## 4. `cmd/` 入口点
 
-6 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+7 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
 | **feishu-front** | `cmd/feishu-front/main.go:57` | `lark-feishu-front` | 持有飞书 WS Bot，提供 IPC server，分发消息与卡片回调 | `feishu.NewBotWithLogger` (:100) + `feishufront.NewLayer1Router` (:114) + `NewBackendRegistry` (:120) + `NewIPCServer` (:121) + `NewTurnManager` (:125) + `NewDispatcher` (:126) |
 | **claude-back** | `cmd/claude-back/main.go:31` | `lark-claude-back` | 每 prompt fork 一次 `claude` CLI | `claude.New` (:83) + `router.New` (:68) + `usage.New` (:77) + `backendrpc.Connect` (:93) + `claudebridge.NewWithLogger` (:100) + `backendrpc.Run` (:134) |
 | **opencode-back** | `cmd/opencode-back/main.go:31` | `lark-opencode-back` | 每 prompt fork 一次 `opencode run` | `opencode.New` (:66) + 其余同 claude-back（:97/:105/:127） |
+| **omp-back** | `cmd/omp-back/main.go:48` | `lark-omp-back` | 每 prompt fork 一次 `omp -p --mode json` | `buildOmpRunner` (:67) → `omp.New` + `ompbridge.NewWithLogger` + `backendhost.CLIRunner.Run` |
 | **miniagent-back** | `cmd/miniagent-back/main.go:37` | `lark-miniagent-back` | 每 prompt fork 一次 `miniagent` 二进制（独立项目） | `miniclient.New` (:105) + `miniagent.New` (:113) + `backendrpc.Run` (:129) |
 | **deploy-monitor** | `cmd/deploy-monitor/main.go:33` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` (:72) + `backendrpc.Run` (:96) + 优雅 drain (:110) |
 | **status-monitor** | `cmd/status-monitor/main.go:29` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` (:66) + `backendrpc.Run` (:82)（独立部署） |
 
-> **注意**：`cmd/` 下共 6 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 4 个业务服务（feishu / claude / opencode / miniagent）。
+> **注意**：`cmd/` 下共 7 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 5 个业务服务（feishu / claude / opencode / omp / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:32`），`git describe --tags --always --dirty`。
 
@@ -146,9 +152,9 @@ lark-bridge/
 
 ## 5. `internal/` 模块职责详述
 
-按规模（行数）降序，共 24 个包。
+按规模（行数）降序，共 28 个包。
 
-### 5.1 `feishufront/`（9692 行，32 文件）——前端核心
+### 5.1 `feishufront/`（14601 行，52 文件）——前端核心
 
 前端的所有业务逻辑集中地，是体量最大的包。
 
@@ -171,7 +177,7 @@ lark-bridge/
 | `cardkit/` | 飞书卡片 schema 的纯结构定义（Header/Footer/元素） |
 | `renderer/` | 四类卡片渲染：`progress.go`（流式进度，含工具行/todo/banner）、`result.go`（终态结果）、`interactive.go`（问答/权限）、`progress_snapshot.go`/`progress_category.go`（内部状态） |
 
-### 5.2 `lark/`（4385 行，19 文件）——自实现飞书客户端
+### 5.2 `lark/`（4622 行，19 文件）——自实现飞书客户端
 
 v1.3.0 的核心改动。
 
@@ -500,9 +506,9 @@ claude-back opencode-back miniagent-back           deploy-monitor
 
 | 命令 | 作用 | 范围 |
 |---|---|---|
-| `make build` | 编译 5 二进制到 `bin/`，注入 git 版本号 | 本机 |
+| `make build` | 编译 7 二进制到 `bin/`，注入 git 版本号 | 本机 |
 | `make pack [GOOS= GOARCH=]` | 交叉编译 + 打 tarball（`bin/lark-bridge-<ver>-<os>-<arch>.tar.gz`） | 分发 |
-| `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **4 个业务服务** | systemd |
+| `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **5 个业务服务** | systemd |
 | `make deploy ARGS=--init` | 首次：从示例生成 config.json + .env | systemd |
 | `make deploy ARGS=--services opencode` | 只部署子集 | systemd |
 | `make deploy ARGS=--binaries <tar>` | 从 tarball 部署（目标机免 Go） | systemd |
@@ -510,7 +516,7 @@ claude-back opencode-back miniagent-back           deploy-monitor
 
 ### 8.3 循环依赖规避（`README.md:18`, `deploy/README.md:194-208`）
 
-deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deploy-monitor 自己**，会形成"部署脚本管自己的触发者"。解法：deploy-monitor 由独立的 `upgrade-monitor.sh` 管理，deploy.sh 仅管 4 个业务服务。
+deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deploy-monitor 自己**，会形成"部署脚本管自己的触发者"。解法：deploy-monitor 由独立的 `upgrade-monitor.sh` 管理，deploy.sh 仅管 5 个业务服务。
 
 ### 8.4 分布式部署（`deploy/README.md:261-280`）
 

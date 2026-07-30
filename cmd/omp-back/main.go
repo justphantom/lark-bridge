@@ -57,7 +57,17 @@ func main() {
 		os.Exit(0)
 	}
 
-	runner := &backendhost.CLIRunner[*ompbridge.Handler]{
+	runner := buildOmpRunner()
+	if err := runner.Run(*cfgPath, version); err != nil {
+		fmt.Fprintf(os.Stderr, "lark-omp-back: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// buildOmpRunner assembles the CLIRunner used by main. Factored out so
+// tests can drive it without parsing flags.
+func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
+	return &backendhost.CLIRunner[*ompbridge.Handler]{
 		BackendType:         "omp",
 		UnitName:            "lark-omp-back.service",
 		UsageFile:           "usage-omp.json",
@@ -109,10 +119,5 @@ func main() {
 		LoggerForRPC: func(cfg *config.Config, base *log.BaseLogger) *log.Logger {
 			return base.ComponentLogger("rpc", "")
 		},
-	}
-
-	if err := runner.Run(*cfgPath, version); err != nil {
-		fmt.Fprintf(os.Stderr, "lark-omp-back: %v\n", err)
-		os.Exit(1)
 	}
 }
