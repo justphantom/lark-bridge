@@ -3,19 +3,31 @@ package claudebridge
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/log"
-	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// cmdListSessions lists every chat→session binding the router holds. The
-// Claude backend has no central session registry, so this is purely the
-// local binding table.
+// cmdListSessions lists every Claude session under the chat's bound directory
+// (filesystem scan of ~/.claude/projects/<encoded-cwd>), not just the local
+// binding table — so sessions created out-of-band (other chats, or directly
+// via the CLI) surface too. The bound directory MUST be set via /cd; a chat
+// with no binding or no directory pin has nothing to list. The scan is
+// sub-ms local I/O, so it runs synchronously (no async banner). The currently
+// bound session is marked ★ so the user sees which row /session-clean keeps.
 func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	body := formatBindings(h.Router.AllBindings(), chatID)
-	return commandResult{Body: body}, nil
+	b, ok := h.Router.Lookup(chatID)
+	if !ok {
+		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
+	}
+	if b.Directory == "" {
+		return commandResult{Body: "尚未设置工作目录。发送 /cd 选择一个项目目录后再查看会话。"}, nil
+	}
+	sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
+	if err != nil {
+		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil
+	}
+	return commandResult{Body: formatSessionList(sessions, b.SessionID)}, nil
 }
 
 // cmdSessionNew resets the bound session id so the next prompt starts a
@@ -94,37 +106,4 @@ func (h *Handler) cmdCurrent(_ context.Context, chatID string, _ []string) (comm
 	}
 	fmt.Fprintf(&sb, "  settings文件：%s\n", settingsFile)
 	return commandResult{Body: sb.String()}, nil
-}
-
-// formatBindings renders the binding map for /session-list, sorted by
-// title for stable output. The current chat is marked with ←.
-func formatBindings(bindings map[string]router.Binding, currentChat string) string {
-	if len(bindings) == 0 {
-		return "暂无会话绑定。"
-	}
-	keys := make([]string, 0, len(bindings))
-	for k := range bindings {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return bindings[keys[i]].Title < bindings[keys[j]].Title
-	})
-	var sb strings.Builder
-	for _, k := range keys {
-		b := bindings[k]
-		title := b.Title
-		if title == "" {
-			title = "(未命名)"
-		}
-		marker := ""
-		if k == currentChat {
-			marker = " ← 当前"
-		}
-		model := b.ModelSpec
-		if model == "" {
-			model = "默认"
-		}
-		fmt.Fprintf(&sb, "• %s [%s]%s\n", title, model, marker)
-	}
-	return sb.String()
 }

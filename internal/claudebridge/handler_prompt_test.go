@@ -21,6 +21,8 @@ import (
 type closedStreamClaude struct{}
 
 func (closedStreamClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
+func (closedStreamClaude) ListSessions(context.Context, string) ([]claude.Session, error) { return nil, nil }
+func (closedStreamClaude) DeleteSession(context.Context, string, string) error { return nil }
 
 func (closedStreamClaude) Run(_ context.Context, _ claude.RunOptions) (<-chan claude.Event, error) {
 	ch := make(chan claude.Event)
@@ -104,6 +106,8 @@ func TestStartPromptBusy(t *testing.T) {
 type panicClaude struct{}
 
 func (panicClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
+func (panicClaude) ListSessions(context.Context, string) ([]claude.Session, error) { return nil, nil }
+func (panicClaude) DeleteSession(context.Context, string, string) error { return nil }
 func (panicClaude) Run(context.Context, claude.RunOptions) (<-chan claude.Event, error) {
 	panic("simulated agent panic")
 }

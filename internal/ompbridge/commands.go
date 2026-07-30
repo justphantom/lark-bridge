@@ -30,6 +30,8 @@ func init() {
 			Level: "info"}, Handler: (*Handler).cmdSessionList},
 		{Spec: cmdutil.Spec{Name: "/session-use", Summary: "切换到同目录下其他会话；不带参数弹出选择",
 			Args: "[n]", Title: "已切换会话", Level: "success"}, Handler: (*Handler).cmdSessionUse},
+		{Spec: cmdutil.Spec{Name: "/session-new", Summary: "开启新的 omp 对话（保留工作目录，重置上下文）",
+			Title: "已开启新对话", Level: "success"}, Handler: (*Handler).cmdSessionNew},
 		{Spec: cmdutil.Spec{Name: "/session-clean", Summary: "清理会话：无参删当前目录除当前会话外的全部；带参仅删指定 ID",
 			Args: "[sessionID]", Title: "清理完成", Level: "success"}, Handler: (*Handler).cmdSessionClean},
 		{Spec: cmdutil.Spec{Name: "/session-gc", Summary: "运行 omp gc（归档冷会话并同步 history.db/FTS 索引）",

@@ -299,6 +299,14 @@ func (f settingsFakeAgent) ListSettings(context.Context) ([]string, error) {
 	return f.paths, nil
 }
 
+func (settingsFakeAgent) ListSessions(context.Context, string) ([]claude.Session, error) {
+	return nil, nil
+}
+
+func (settingsFakeAgent) DeleteSession(context.Context, string, string) error {
+	return nil
+}
+
 // newSettingsPickerHandler wires a Handler with a settingsFakeAgent so the
 // /settings picker can be exercised end to end.
 func newSettingsPickerHandler(t *testing.T, paths []string) (*Handler, *router.Router) {

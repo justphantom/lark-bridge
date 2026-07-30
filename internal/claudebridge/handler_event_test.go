@@ -25,6 +25,8 @@ type scriptClaude struct {
 }
 
 func (s *scriptClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
+func (s *scriptClaude) ListSessions(context.Context, string) ([]claude.Session, error) { return nil, nil }
+func (s *scriptClaude) DeleteSession(context.Context, string, string) error { return nil }
 
 func (s *scriptClaude) Run(_ context.Context, _ claude.RunOptions) (<-chan claude.Event, error) {
 	ch := make(chan claude.Event, len(s.events))
@@ -253,6 +255,8 @@ func TestHandleEvent_PromptRejectsFrontendOverride(t *testing.T) {
 type blockingClaude struct{}
 
 func (blockingClaude) ListSettings(context.Context) ([]string, error) { return nil, nil }
+func (blockingClaude) ListSessions(context.Context, string) ([]claude.Session, error) { return nil, nil }
+func (blockingClaude) DeleteSession(context.Context, string, string) error { return nil }
 
 func (blockingClaude) Run(ctx context.Context, _ claude.RunOptions) (<-chan claude.Event, error) {
 	ch := make(chan claude.Event)

@@ -68,6 +68,14 @@ func (failingListClaude) ListSettings(context.Context) ([]string, error) {
 	return nil, errors.New("settings list unavailable")
 }
 
+func (failingListClaude) ListSessions(context.Context, string) ([]claude.Session, error) {
+	return nil, nil
+}
+
+func (failingListClaude) DeleteSession(context.Context, string, string) error {
+	return nil
+}
+
 // TestCmdModel_Picker_OneCardFlow pins the single-card contract for /model:
 // the Question card carries the command message's promptID (so the frontend
 // morphs its progress card into the picker), and the result Notice patches
