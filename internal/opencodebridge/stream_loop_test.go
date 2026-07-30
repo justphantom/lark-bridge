@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -546,5 +547,35 @@ func TestStreamRun_UserCancelNotIdle(t *testing.T) {
 	}
 	if res.IsIdleTimeout {
 		t.Errorf("isIdleTimeout = true, want false; a plain cancel must not look idle")
+	}
+}
+
+// TestStreamRun_UnknownEventCountedNotFatal is the F8 forward-compat guard
+// for opencode: an unrecognised line type is forwarded by the parser, counted
+// via eventmetrics.UnknownEvent, and the turn still completes normally.
+func TestStreamRun_UnknownEventCountedNotFatal(t *testing.T) {
+	eventmetrics.ResetAll()
+	const unknown = `{"type":"some_future_event","sessionID":"s1","payload":{"anything":"here"}}`
+	const text = `{"type":"text","sessionID":"s1","part":{"type":"text","text":"ok"}}`
+	const stopStep = `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop","tokens":{"total":10,"input":5,"output":5,"cache":{"read":0,"write":0}},"cost":0.01}}`
+
+	events := parseLines(t, unknown, text, stopStep)
+	r, _ := router.New("", log.Nop())
+	h := NewWithLogger(r, closedStreamOpencode{}, nil, HandlerConfig{
+		CoreConfig: bridgebase.CoreConfig{
+			StateDir: t.TempDir(),
+		},
+	}, log.Nop())
+	r.Bind("c1", "", t.TempDir(), "", "", "")
+
+	res := h.streamRun(context.Background(), "c1", "p1", eventChan(events), "", nil)
+	if res.Err != nil {
+		t.Fatalf("streamRun must not error on unknown events: %v", res.Err)
+	}
+	if res.Reply != "ok" {
+		t.Errorf("reply = %q, want %q", res.Reply, "ok")
+	}
+	if got := eventmetrics.UnknownEvent("opencode", "some_future_event").Value(); got != 1 {
+		t.Errorf("UnknownEvent(opencode, some_future_event) = %d, want 1", got)
 	}
 }

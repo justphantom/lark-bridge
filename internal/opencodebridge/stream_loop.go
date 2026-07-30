@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/opencode"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -212,6 +213,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// Forward-compat: the parser forwards unknown line types verbatim.
 			// Log at debug so a schema change is observable without breaking
 			// the turn.
+			eventmetrics.UnknownEvent("opencode", ev.GetType()).Inc()
 			h.Logger.Debug("opencode: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.GetType())

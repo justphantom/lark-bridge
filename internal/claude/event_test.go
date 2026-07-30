@@ -5,6 +5,8 @@ package claude
 import (
 	"strings"
 	"testing"
+
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 )
 
 func TestParseEvent_EmptyAndGarbage(t *testing.T) {
@@ -110,6 +112,7 @@ func TestParseEvent_ResultWithUsage(t *testing.T) {
 }
 
 func TestParseEvent_ResultLenientOnBadNumeric(t *testing.T) {
+	eventmetrics.ResetAll()
 	// A malformed numeric field (total_cost_usd as a string) fails the
 	// strict lineHead decode. The lenient path must still surface the
 	// final answer so the user is never left without a reply; numeric
@@ -131,6 +134,27 @@ func TestParseEvent_ResultLenientOnBadNumeric(t *testing.T) {
 	}
 	if ev.CostUSD != 0 || ev.DurationMs != 0 {
 		t.Errorf("lenient numeric fields should be zero: cost=%v dur=%d", ev.CostUSD, ev.DurationMs)
+	}
+	if v := eventmetrics.ClaudeResultLenientHit.Value(); v != 1 {
+		t.Errorf("ClaudeResultLenientHit = %d, want 1", v)
+	}
+	if v := eventmetrics.ClaudeResultParseFail.Value(); v != 0 {
+		t.Errorf("ClaudeResultParseFail = %d, want 0", v)
+	}
+}
+
+// TestParseEvent_ResultParseFailCounted: a non-result bad line cannot be
+// rescued by the lenient path and must count ClaudeResultParseFail.
+func TestParseEvent_ResultParseFailCounted(t *testing.T) {
+	eventmetrics.ResetAll()
+	if _, err := parseEvent("{not json"); err == nil {
+		t.Fatal("garbage: want error, got nil")
+	}
+	if v := eventmetrics.ClaudeResultParseFail.Value(); v != 1 {
+		t.Errorf("ClaudeResultParseFail = %d, want 1", v)
+	}
+	if v := eventmetrics.ClaudeResultLenientHit.Value(); v != 0 {
+		t.Errorf("ClaudeResultLenientHit = %d, want 0", v)
 	}
 }
 

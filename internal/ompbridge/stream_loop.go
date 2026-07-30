@@ -240,6 +240,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// Forward-compat: the parser forwards unknown line types verbatim.
 			// Log at debug so a schema change is observable without breaking
 			// the turn.
+			eventmetrics.UnknownEvent("omp", ev.Type).Inc()
 			h.Logger.Debug("omp: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.Type)

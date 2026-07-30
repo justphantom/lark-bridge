@@ -153,6 +153,7 @@ const stringWidgetMsgEnd = `{"type":"message_end","message":{"role":"toolResult"
 // continues. Locks in §A.2's promise that an upstream schema addition does
 // not break the bridge.
 func TestStreamRun_UnknownEventTypeIsLoggedNotFatal(t *testing.T) {
+	eventmetrics.ResetAll()
 	const sessionHdr = `{"type":"session","id":"s1","cwd":"/tmp"}`
 	const agentStart = `{"type":"agent_start"}`
 	const unknown = `{"type":"some_future_event_type","payload":{"anything":"here"}}`
@@ -170,6 +171,9 @@ func TestStreamRun_UnknownEventTypeIsLoggedNotFatal(t *testing.T) {
 	}
 	if !strings.Contains(res.Reply, "ok") {
 		t.Errorf("reply lost terminal text: %q", res.Reply)
+	}
+	if got := eventmetrics.UnknownEvent("omp", "some_future_event_type").Value(); got != 1 {
+		t.Errorf("UnknownEvent(omp, some_future_event_type) = %d, want 1", got)
 	}
 }
 

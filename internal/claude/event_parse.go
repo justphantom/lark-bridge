@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 )
 
 // lineHead is the common envelope decoded from every stream-json line.
@@ -63,8 +65,10 @@ func parseEvent(line string) ([]Event, error) {
 		// silently dropped over a malformed statistic. Non-result lines
 		// keep the strict path.
 		if ev, ok := parseResultLenient(line); ok {
+			eventmetrics.ClaudeResultLenientHit.Inc()
 			return []Event{ev}, nil
 		}
+		eventmetrics.ClaudeResultParseFail.Inc()
 		return nil, fmt.Errorf("parse json: %w", err)
 	}
 

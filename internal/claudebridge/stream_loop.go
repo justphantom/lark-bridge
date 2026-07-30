@@ -7,6 +7,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/claude"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -352,6 +353,7 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// Forward-compat: the parser forwards unknown line types verbatim
 			// (raw retained). Log at debug so a schema change is observable
 			// without dropping the event silently or breaking the turn.
+			eventmetrics.UnknownEvent("claude", ev.Type).Inc()
 			h.Logger.Debug("claude: unhandled event type",
 				log.FieldChatID, chatID,
 				log.FieldEventType, ev.Type,
