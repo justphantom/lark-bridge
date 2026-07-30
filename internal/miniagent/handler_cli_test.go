@@ -15,7 +15,7 @@ import (
 func newCLIHandler(t *testing.T) (*Handler, *captureSender) {
 	t.Helper()
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", nil)
+	h := New(sender, log.Nop(), nil, "", "test-model", nil, 0, "", false)
 	return h, sender
 }
 
@@ -144,7 +144,7 @@ func TestActiveTurnConfig_BoundOverridesDefault(t *testing.T) {
 	r.SetModelSpec("c1", "kimi")
 	r.SetDirectory("c1", "/proj")
 
-	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", nil)
+	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", nil, 0, "", false)
 
 	if model, _ := h.activeTurnConfig("c1"); model != "kimi" {
 		t.Errorf("bound model = %q, want kimi", model)

@@ -79,13 +79,14 @@ func buildClaudeRunner() *backendhost.CLIRunner[*claudebridge.Handler] {
 			})
 			return claudebridge.NewWithLogger(r, api, rpc, claudebridge.HandlerConfig{
 				CoreConfig: bridgebase.CoreConfig{
-					DefaultDirectory:  cfg.Claude.DefaultDirectory,
-					PermissionDefault: cfg.Claude.PermissionMode,
-					StateDir:          cfg.StateDir,
-					StreamHistory:     cfg.Claude.StreamHistory,
-					PromptTimeout:     time.Duration(cfg.Timeouts.PromptTimeout),
-					DebugRedact:       cfg.LogDebugRedact,
-					WorkspaceRoot:     os.Getenv("WORKSPACE_ROOT"),
+					DefaultDirectory:    cfg.Claude.DefaultDirectory,
+					PermissionDefault:   cfg.Claude.PermissionMode,
+					StateDir:            cfg.StateDir,
+					StreamHistory:       cfg.Claude.StreamHistory,
+					StreamArchiveRedact: cfg.StreamArchiveRedact,
+					PromptTimeout:       time.Duration(cfg.Timeouts.PromptTimeout),
+					DebugRedact:         cfg.LogDebugRedact,
+					WorkspaceRoot:       os.Getenv("WORKSPACE_ROOT"),
 				},
 				ModelOptions:      cfg.Claude.ModelOptions,
 				PermissionOptions: cfg.Claude.PermissionOptions,

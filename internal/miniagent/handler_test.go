@@ -38,7 +38,7 @@ func (c *captureSender) Controls() []*protocol.Control {
 // handler_cli_test covers it.
 func newTestHandler() (*Handler, *captureSender) {
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", nil)
+	h := New(sender, log.Nop(), nil, "", "test-model", nil, 0, "", false)
 	return h, sender
 }
 

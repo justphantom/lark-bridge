@@ -41,6 +41,9 @@ type Handler struct {
 	workspaceRoot   string             // global default for the /cd picker scope
 	cfgModel        string             // global default model (from config)
 	client          *miniclient.Client // non-nil → CLI subprocess mode
+	streamHistory   int                // per-chat archive cap (0 = no archive)
+	archiveRedact   bool               // redact sensitive fields in stream archives
+	stateDir        string             // streams root dir
 	git             *bridgebase.GitRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
@@ -57,7 +60,7 @@ type Handler struct {
 // the global default model used when a chat has no ModelSpec pin;
 // workspaceRoot bounds the /cd picker and serves as the global default
 // workdir when a chat has no Directory pin.
-func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel string, client *miniclient.Client) *Handler {
+func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel string, client *miniclient.Client, streamHistory int, stateDir string, archiveRedact bool) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -69,6 +72,9 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
 		client:        client,
+		streamHistory: streamHistory,
+		archiveRedact: archiveRedact,
+		stateDir:      stateDir,
 		git:           bridgebase.NewGitRunner(bridgebase.ExecCommander{}, logger, 0),
 		cancelBy:      make(map[string]*bridgebase.PromptCancel),
 	}

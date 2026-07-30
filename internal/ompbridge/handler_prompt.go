@@ -96,7 +96,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 func (h *Handler) runOMP(ctx context.Context, chatID, promptID string, opts omp.RunOptions, modelSpec string, onActivity func()) bridgebase.PromptResult {
 	// Archive the raw stream for this run before launching the subprocess so
 	// the sink is wired for the whole lifetime. Best-effort: nil sink = off.
-	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "omp", chatID, promptID, h.StreamHistory)
+	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, "omp", chatID, promptID, h.StreamHistory, h.StreamArchiveRedact)
 	if sink != nil {
 		opts.LineSink = sink
 		defer func() { _ = closeSink() }() // archive already flushed

@@ -92,13 +92,14 @@ func buildOpencodeRunner() *backendhost.CLIRunner[*opencodebridge.Handler] {
 			}, base.ComponentLogger("opencode", getComponentLevel(cfg, "opencode")))
 			return opencodebridge.NewWithLogger(r, client, rpc, opencodebridge.HandlerConfig{
 				CoreConfig: bridgebase.CoreConfig{
-					DefaultDirectory: cfg.Opencode.DefaultDirectory,
-					StateDir:         cfg.StateDir,
-					StreamHistory:    cfg.Opencode.StreamHistory,
-					PromptTimeout:    time.Duration(cfg.Timeouts.PromptTimeout),
-					IdleTimeout:      time.Duration(cfg.Timeouts.IdleTimeout),
-					DebugRedact:      cfg.LogDebugRedact,
-					WorkspaceRoot:    os.Getenv("WORKSPACE_ROOT"),
+					DefaultDirectory:    cfg.Opencode.DefaultDirectory,
+					StateDir:            cfg.StateDir,
+					StreamHistory:       cfg.Opencode.StreamHistory,
+					StreamArchiveRedact: cfg.StreamArchiveRedact,
+					PromptTimeout:       time.Duration(cfg.Timeouts.PromptTimeout),
+					IdleTimeout:         time.Duration(cfg.Timeouts.IdleTimeout),
+					DebugRedact:         cfg.LogDebugRedact,
+					WorkspaceRoot:       os.Getenv("WORKSPACE_ROOT"),
 				},
 			}, base.ComponentLogger("bridge", getComponentLevel(cfg, "bridge"))), nil
 		},

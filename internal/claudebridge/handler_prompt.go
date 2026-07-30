@@ -94,7 +94,7 @@ func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts 
 	// they dominate the claude archive volume (~88% of lines), so keeping them
 	// bloats replay/debug material with no functional value. closeSink still
 	// targets the underlying file; the wrapper is transparent to its lifecycle.
-	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, backendTag, chatID, replyToID, h.StreamHistory)
+	sink, closeSink := streamarchive.NewSink(h.Logger, h.StateDir, backendTag, chatID, replyToID, h.StreamHistory, h.StreamArchiveRedact)
 	if sink != nil {
 		opts.LineSink = wrapThinkingFilter(sink)
 		defer func() { _ = closeSink() }() // archive already flushed

@@ -59,6 +59,14 @@ type Config struct {
 	StateDir string   `json:"state_dir,omitempty"`
 	Timeouts Timeouts `json:"timeouts,omitempty"` // 两源并集
 
+	// —— Stream archive redaction ——
+	// StreamArchiveRedact enables field-level redaction of sensitive content
+	// (prompt, text, content, input, output, file_text) in stream archives.
+	// Default false (keep existing behavior). When enabled, each NDJSON line
+	// written to the archive is parsed and sensitive fields are replaced with
+	// "[REDACTED]". Unparseable lines pass through verbatim.
+	StreamArchiveRedact bool `json:"stream_archive_redact,omitempty"`
+
 	// —— 防重放：feishu-front 用，后端忽略 ——
 	Dedup DedupConfig `json:"dedup,omitempty"`
 
@@ -246,6 +254,9 @@ type MiniAgent struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// StreamHistory caps how many recent per-run raw NDJSON captures
+	// are kept under {stateDir}/streams/miniagent/. <=0/unset → 50.
+	StreamHistory int `json:"stream_history,omitempty"`
 	// WorkspaceRoot bounds read_file to paths under this directory (after
 	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
 	// call it) and the /cd picker is disabled. Recommended: ${WORKSPACE_ROOT}

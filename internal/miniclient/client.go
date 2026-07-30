@@ -72,6 +72,7 @@ type RunOptions struct {
 	Prompt  string
 	Model   string
 	Workdir string
+	Sink    io.Writer // optional: tee raw NDJSON lines here
 }
 
 // BaseURL returns the configured OpenAI-compatible root. Exposed so the
@@ -134,7 +135,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 		"prompt_len", len(opts.Prompt))
 
 	out := make(chan Event, runEventChanBuf)
-	go c.pump(ctx, cmd, stdout, stderr, out)
+	go c.pump(ctx, cmd, stdout, stderr, out, opts.Sink)
 	return out, nil
 }
 
@@ -167,7 +168,7 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 // pump reads stdout lines, parses them into Events, and forwards to out.
 // It also tees stderr to the logger. After a terminal event (or EOF/error),
 // it waits for the subprocess and closes the channel.
-func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Reader, out chan<- Event) {
+func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Reader, out chan<- Event, sink io.Writer) {
 	defer func() {
 		<-c.sem
 		close(out)
@@ -197,6 +198,10 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		if truncated {
 			eventmetrics.LineTruncated("miniagent").Inc()
 			c.logger.Warn("miniagent stream line truncated", "kept_len", len(line), "max", maxLineLen)
+		}
+
+		if sink != nil {
+			_, _ = io.WriteString(sink, line+"\n") //nolint:gosec // G705: sink is a streamarchive file writer, not an HTTP response
 		}
 
 		ev, ok := parseEvent([]byte(line))

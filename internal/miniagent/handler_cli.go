@@ -3,11 +3,13 @@ package miniagent
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/streamarchive"
 )
 
 // runViaCLI forks miniagent per turn, pumps its NDJSON stdout into
@@ -22,10 +24,25 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		"model", model,
 		"workdir", workdir)
 
+	var sink io.Writer
+	var closeSink func() error
+	if h.streamHistory > 0 && h.stateDir != "" {
+		s, c := streamarchive.NewSink(h.logger, h.stateDir, "miniagent", chatID, promptID, h.streamHistory, h.archiveRedact)
+		sink = s
+		closeSink = c
+	}
+	if closeSink != nil {
+		// Closed after the events channel is drained below: the miniclient
+		// pump writes to sink and closes the channel before exiting, so by
+		// then no writer remains.
+		defer func() { _ = closeSink() }()
+	}
+
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
 		Prompt:  prompt,
 		Model:   model,
 		Workdir: workdir,
+		Sink:    sink,
 	})
 	if err != nil {
 		h.logger.Warn("miniagent start failed",

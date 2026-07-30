@@ -118,7 +118,7 @@ func run(cfgPath string) error {
 		MaxTokens:    cfg.MiniAgent.MaxTokens,
 	}, logger)
 
-	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client)
+	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.StreamArchiveRedact)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

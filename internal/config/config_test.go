@@ -739,3 +739,36 @@ func TestLoadFileConvert_XlsxPromptTemplateSyntaxChecked(t *testing.T) {
 		t.Errorf("error %q does not name xlsx_prompt_template", err)
 	}
 }
+
+// TestLoadOMPAndMiniAgentStreamDefaults pins the F4/F9 defaults: OMP's
+// auto-retry cap and both StreamHistory retention caps must survive a config
+// that leaves them unset.
+func TestLoadOMPAndMiniAgentStreamDefaults(t *testing.T) {
+	path := writeConfig(t, `{"omp":{},"miniagent":{}}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OMP.MaxAutoRetries != 3 {
+		t.Errorf("default omp max_auto_retries = %d, want 3", cfg.OMP.MaxAutoRetries)
+	}
+	if cfg.OMP.StreamHistory != 50 {
+		t.Errorf("default omp stream_history = %d, want 50", cfg.OMP.StreamHistory)
+	}
+	if cfg.MiniAgent.StreamHistory != 50 {
+		t.Errorf("default miniagent stream_history = %d, want 50", cfg.MiniAgent.StreamHistory)
+	}
+}
+
+// TestLoadOMPMaxAutoRetriesOverride: an explicit max_auto_retries survives
+// defaults application (and -1 disables the cap).
+func TestLoadOMPMaxAutoRetriesOverride(t *testing.T) {
+	path := writeConfig(t, `{"omp":{"max_auto_retries":7}}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OMP.MaxAutoRetries != 7 {
+		t.Errorf("max_auto_retries = %d, want 7", cfg.OMP.MaxAutoRetries)
+	}
+}

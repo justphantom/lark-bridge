@@ -121,6 +121,9 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.MiniAgent.MaxTokens <= 0 {
 		cfg.MiniAgent.MaxTokens = 4096
 	}
+	if cfg.MiniAgent.StreamHistory <= 0 {
+		cfg.MiniAgent.StreamHistory = 50
+	}
 	if cfg.StateDir == "" {
 		// Default to the directory holding the config file so state
 		// lands next to the config. Relative paths resolve to CWD.

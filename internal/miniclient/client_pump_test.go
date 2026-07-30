@@ -243,6 +243,36 @@ func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
 	}
 }
 
+// TestRun_SinkTeesRawLines verifies the F9 archive tee: every raw stdout
+// line reaches the sink verbatim (one per line, in order) before parsing.
+func TestRun_SinkTeesRawLines(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	lines := []string{
+		`{"type":"tool_use","name":"read_file","input":"{}"}`,
+		`{"type":"result","text":"done","model":"m","steps":1}`,
+	}
+	script := writeHelperScript(t, lines, 0)
+	var sink strings.Builder
+	c := New(Config{CLIPath: script}, nil)
+	ch, err := c.Run(context.Background(), RunOptions{Prompt: "hi", Sink: &sink})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for range ch {
+	}
+	got := strings.Split(strings.TrimSuffix(sink.String(), "\n"), "\n")
+	if len(got) != len(lines) {
+		t.Fatalf("sink lines = %d, want %d: %q", len(got), len(lines), sink.String())
+	}
+	for i, l := range lines {
+		if got[i] != l {
+			t.Errorf("sink line %d = %q, want %q", i, got[i], l)
+		}
+	}
+}
+
 // TestRun_OversizedLineDoesNotAbortTurn is the F1 guard for miniagent: a
 // stdout line larger than maxLineLen is truncated (turn continues) and the
 // following terminal event still arrives — the run is NOT aborted the way

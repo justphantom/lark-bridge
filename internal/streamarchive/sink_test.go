@@ -32,13 +32,13 @@ func TestSanitizeName(t *testing.T) {
 func TestNewSink_Disabled(t *testing.T) {
 	dir := t.TempDir()
 	lg := log.Nop()
-	if w, c := NewSink(lg, dir, "claude", "c", "r", 0); w != nil || c != nil {
+	if w, c := NewSink(lg, dir, "claude", "c", "r", 0, false); w != nil || c != nil {
 		t.Error("history=0 should disable")
 	}
-	if w, c := NewSink(lg, dir, "claude", "c", "r", -1); w != nil || c != nil {
+	if w, c := NewSink(lg, dir, "claude", "c", "r", -1, false); w != nil || c != nil {
 		t.Error("history<0 should disable")
 	}
-	if w, c := NewSink(lg, "", "claude", "c", "r", 50); w != nil || c != nil {
+	if w, c := NewSink(lg, "", "claude", "c", "r", 50, false); w != nil || c != nil {
 		t.Error("empty stateDir should disable")
 	}
 }
@@ -48,7 +48,7 @@ func TestNewSink_Disabled(t *testing.T) {
 func TestNewSink_CreatesPerBackendDir(t *testing.T) {
 	stateDir := t.TempDir()
 	lg := log.Nop()
-	w, closeSink := NewSink(lg, stateDir, "claude", "chat-1", "reply-9", 50)
+	w, closeSink := NewSink(lg, stateDir, "claude", "chat-1", "reply-9", 50, false)
 	if w == nil || closeSink == nil {
 		t.Fatal("NewSink returned nil with archiving enabled")
 	}
@@ -80,7 +80,7 @@ func TestNewSink_BackendIsolation(t *testing.T) {
 	stateDir := t.TempDir()
 	lg := log.Nop()
 	for _, b := range []string{"claude", "opencode"} {
-		w, c := NewSink(lg, stateDir, b, "c", "r", 50)
+		w, c := NewSink(lg, stateDir, b, "c", "r", 50, false)
 		if w == nil {
 			t.Fatalf("NewSink %s nil", b)
 		}
@@ -148,7 +148,7 @@ func TestPrune_NewSinkIntegration(t *testing.T) {
 	lg := log.Nop()
 	// history=3 → each NewSink prunes to keep 2 before adding 1 (net 3 cap).
 	for range 6 {
-		w, c := NewSink(lg, stateDir, "claude", "c", "r", 3)
+		w, c := NewSink(lg, stateDir, "claude", "c", "r", 3, false)
 		if w == nil {
 			t.Fatal("nil sink")
 		}

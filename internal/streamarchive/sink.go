@@ -48,7 +48,7 @@ const fileTimeLayout = "20060102T150405.000000000"
 // the file; callers defer it. backend is the subdirectory name (e.g. "claude",
 // "opencode"); it is sanitized so an unexpected value cannot escape the
 // streams root.
-func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, history int) (io.Writer, func() error) {
+func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, history int, redact bool) (io.Writer, func() error) {
 	if history <= 0 || stateDir == "" {
 		return nil, nil
 	}
@@ -70,6 +70,9 @@ func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, hi
 	if err != nil {
 		logger.Warn("stream archive: open", log.FieldError, err)
 		return nil, nil
+	}
+	if redact {
+		return NewRedactingWriter(f), f.Close
 	}
 	return f, f.Close
 }

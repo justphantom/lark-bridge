@@ -47,6 +47,10 @@ type CoreConfig struct {
 	StateDir          string
 	// StreamHistory caps raw stream-json captures kept under StateDir/streams.
 	StreamHistory int
+	// StreamArchiveRedact enables field-level redaction of sensitive content
+	// in stream archives (mirrors the top-level config field
+	// stream_archive_redact).
+	StreamArchiveRedact bool
 	// PromptTimeout is the per-prompt safety net. 0 disables it.
 	PromptTimeout time.Duration
 	// IdleTimeout is the idle watchdog: cancel the subprocess when no
@@ -87,6 +91,10 @@ type Core struct {
 	// StreamHistory caps how many raw stream-json captures are kept under
 	// {StateDir}/streams. <=0 disables archiving.
 	StreamHistory int
+
+	// StreamArchiveRedact mirrors CoreConfig.StreamArchiveRedact: when true,
+	// archives are written through a RedactingWriter.
+	StreamArchiveRedact bool
 
 	// PermissionDefault mirrors CoreConfig.PermissionDefault.
 	PermissionDefault string
@@ -149,20 +157,21 @@ func NewCore(r *router.Router, rpc *backendrpc.Client, cfg CoreConfig, logger *l
 		logger = log.Nop()
 	}
 	c := &Core{
-		Router:            r,
-		RPC:               rpc,
-		Logger:            logger,
-		DefaultDirectory:  cfg.DefaultDirectory,
-		PermissionDefault: cfg.PermissionDefault,
-		StateDir:          cfg.StateDir,
-		StreamHistory:     cfg.StreamHistory,
-		PromptTimeout:     cfg.PromptTimeout,
-		IdleTimeout:       cfg.IdleTimeout,
-		DirCache:          NewDirCache(cfg.WorkspaceRoot),
-		CancelByChat:      make(map[string]*PromptCancel),
-		Answers:           NewAnswerBroker(),
-		emitSem:           make(chan struct{}, emitConcurrency),
-		Git:               NewGitRunner(ExecCommander{}, logger, 0),
+		Router:              r,
+		RPC:                 rpc,
+		Logger:              logger,
+		DefaultDirectory:    cfg.DefaultDirectory,
+		PermissionDefault:   cfg.PermissionDefault,
+		StateDir:            cfg.StateDir,
+		StreamHistory:       cfg.StreamHistory,
+		StreamArchiveRedact: cfg.StreamArchiveRedact,
+		PromptTimeout:       cfg.PromptTimeout,
+		IdleTimeout:         cfg.IdleTimeout,
+		DirCache:            NewDirCache(cfg.WorkspaceRoot),
+		CancelByChat:        make(map[string]*PromptCancel),
+		Answers:             NewAnswerBroker(),
+		emitSem:             make(chan struct{}, emitConcurrency),
+		Git:                 NewGitRunner(ExecCommander{}, logger, 0),
 	}
 	c.AppCtx, c.AppCancel = context.WithCancel(context.Background())
 	c.logDebugRedact.Store(cfg.DebugRedact)
