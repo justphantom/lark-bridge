@@ -3,7 +3,6 @@
 package omp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -11,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/strutil"
 )
@@ -27,10 +28,6 @@ const maxLineLen = 1 << 24
 // exhaust memory. The head of stderr is where the actionable diagnostic
 // lives; 64 KiB is ample for that.
 const maxStderrBytes = 64 << 10
-
-// scannerInitBuf is the initial buffer for the stdout scanner. The scanner
-// grows this lazily up to maxLineLen, so it is a starting allocation, not a cap.
-const scannerInitBuf = 64 << 10
 
 // maxLogLineBytes caps how much of an unparseable line is written to the log
 // on a parse failure. A pathological line can be up to maxLineLen (16 MiB);
@@ -61,13 +58,24 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 
 	sawTerminal := false
 	lineCount := 0
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, scannerInitBuf), maxLineLen)
+	lr := linereader.New(stdout, maxLineLen)
 
 ScanLoop:
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, truncated, err := lr.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			c.logger.Warn("read omp stdout", log.FieldError, err)
+			break
+		}
 		lineCount++
+
+		if truncated {
+			eventmetrics.LineTruncated("omp").Inc()
+			c.logger.Warn("omp stream line truncated", "kept_len", len(line), "max", maxLineLen)
+		}
 
 		// Tee the raw line verbatim before parsing so the archive holds the
 		// complete CLI return stream, including lines parseEvent rejects.
@@ -100,16 +108,13 @@ ScanLoop:
 
 	<-stderrDone          // ensure stderr is fully captured before Wait
 	waitErr := cmd.Wait() // reaps the (possibly killed) subprocess
-	scanErr := scanner.Err()
+	// scanErr is always nil — linereader handles ErrTooLong internally
 
 	if !sawTerminal {
 		c.logger.Warn("omp exited without terminal event",
 			"stdout_lines", lineCount,
 			"stderr_len", stderrBuf.Len())
-		c.emitTerminal(ctx, waitErr, scanErr, &stderrBuf, out)
-	}
-	if scanErr != nil && ctx.Err() == nil {
-		c.logger.Warn("read omp stdout", log.FieldError, scanErr)
+		c.emitTerminal(ctx, waitErr, nil, &stderrBuf, out)
 	}
 }
 

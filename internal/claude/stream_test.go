@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"os/exec"
 	"strings"
 	"testing"
@@ -84,5 +85,50 @@ func TestPump_TeesRawLinesToSink(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "NOT-JSON-GARBAGE\n") {
 		t.Fatalf("each raw line must be followed by a newline, got %q", got)
+	}
+}
+
+// TestPump_OversizedLineDoesNotAbortTurn is the F1 guard: a stdout line
+// larger than maxLineLen is truncated and counted, and the turn continues —
+// the following result event still arrives instead of the run aborting with
+// bufio.ErrTooLong the way the old scanner-based pump did.
+func TestPump_OversizedLineDoesNotAbortTurn(t *testing.T) {
+	eventmetrics.ResetAll()
+	c := New(optionsForTest())
+	cmd := exec.Command("sh", "-c",
+		`{ head -c 17000000 /dev/zero | tr '\0' 'x'; printf '\n'; printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"survived","session_id":"s"}'; }`)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	out := make(chan Event, 16)
+	c.sem <- struct{}{} // balances pump's deferred release (Run acquires it)
+	c.pump(context.Background(), cmd, stdout, stderr, out, nil)
+
+	var sawResult bool
+	for ev := range out {
+		if ev.Type == EventError {
+			t.Fatalf("turn aborted on oversized line: %q", ev.Text)
+		}
+		if ev.Type == EventResult {
+			sawResult = true
+			if ev.Result != "survived" {
+				t.Errorf("result = %q, want %q", ev.Result, "survived")
+			}
+		}
+	}
+	if !sawResult {
+		t.Fatal("missing terminal result event after oversized line")
+	}
+	if got := eventmetrics.LineTruncated("claude").Value(); got < 1 {
+		t.Errorf("LineTruncated(claude) = %d, want >= 1", got)
 	}
 }

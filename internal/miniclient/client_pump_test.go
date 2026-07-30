@@ -242,3 +242,39 @@ func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
 		t.Errorf("env not propagated: %s", out)
 	}
 }
+
+// TestRun_OversizedLineDoesNotAbortTurn is the F1 guard for miniagent: a
+// stdout line larger than maxLineLen is truncated (turn continues) and the
+// following terminal event still arrives — the run is NOT aborted the way
+// bufio.ErrTooLong used to abort it.
+func TestRun_OversizedLineDoesNotAbortTurn(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	// One garbage line just over maxLineLen, then a normal terminal result.
+	huge := strings.Repeat("x", maxLineLen+1024)
+	script := writeHelperScript(t, []string{
+		huge,
+		`{"type":"result","text":"survived","model":"m","steps":1}`,
+	}, 0)
+	c := New(Config{CLIPath: script}, nil)
+	ch, err := c.Run(context.Background(), RunOptions{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var kinds []string
+	var lastText string
+	for ev := range ch {
+		kinds = append(kinds, ev.Kind)
+		lastText = ev.Text
+		if ev.Kind == KindError {
+			t.Fatalf("turn aborted on oversized line: %q", ev.Message)
+		}
+	}
+	if len(kinds) == 0 || kinds[len(kinds)-1] != KindResult {
+		t.Fatalf("events = %v, want terminal result", kinds)
+	}
+	if lastText != "survived" {
+		t.Errorf("result text = %q, want %q", lastText, "survived")
+	}
+}

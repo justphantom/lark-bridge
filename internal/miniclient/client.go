@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -180,11 +182,24 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		}
 	}()
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64<<10), maxLineLen)
+	lr := linereader.New(stdout, maxLineLen)
 	gotTerminal := false
-	for scanner.Scan() {
-		ev, ok := parseEvent(scanner.Bytes())
+	for {
+		line, truncated, err := lr.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			c.logger.Error("miniagent stdout read error", "error", err)
+			break
+		}
+
+		if truncated {
+			eventmetrics.LineTruncated("miniagent").Inc()
+			c.logger.Warn("miniagent stream line truncated", "kept_len", len(line), "max", maxLineLen)
+		}
+
+		ev, ok := parseEvent([]byte(line))
 		if !ok {
 			continue
 		}
