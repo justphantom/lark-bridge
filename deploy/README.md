@@ -187,6 +187,8 @@ set -a; source .env; set +a
 | `omp.stream_history` | `50` |
 | `omp.approval_mode` | `write` |
 | `omp.thinking_level` | `auto` |
+| `omp.model_list_timeout` | `300s` |
+| `omp.list_cache_ttl` | `3600` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}`（当前仅 opencode-back 生效） |

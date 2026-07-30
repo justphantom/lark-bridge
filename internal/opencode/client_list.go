@@ -132,7 +132,11 @@ func (c *Client) cachedList(
 	now := time.Now()
 	c.listMu.Lock()
 	if *cache != nil && now.Sub((*cache).fetchedAt) < c.listTTL {
-		out := (*cache).values
+		// Return a copy so a caller cannot mutate the cached slice (the
+		// miss path stores a copy too; both paths must hand back an
+		// independent slice for the contract to hold on every call).
+		out := make([]string, len((*cache).values))
+		copy(out, (*cache).values)
 		c.listMu.Unlock()
 		return out, nil
 	}

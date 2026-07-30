@@ -72,9 +72,25 @@ func TestCachedList_HitAndMiss(t *testing.T) {
 		t.Errorf("fetch calls after hit = %d, want 1 (cache should serve)", calls)
 	}
 
-	// Force expiry → fetch again.
+	// Hit-path defensive copy: mutating the cached return must not corrupt
+	// the cache for a later caller within the TTL.
+	got[0] = "MUTATED"
+	again, err := c.cachedList(context.Background(), &cache, fetch)
+	if err != nil {
+		t.Fatalf("cachedList post-mutation: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("fetch calls after mutation = %d, want 1 (still cached)", calls)
+	}
+	if again[0] == "MUTATED" {
+		t.Error("hit-path return shares the cached slice; mutation leaked into cache")
+	}
+
+	// Force expiry → fetch again. The returned slice is intentionally
+	// discarded: this branch asserts the fetch was re-invoked (calls below),
+	// not its value (already checked on the miss above).
 	cache.fetchedAt = time.Now().Add(-time.Hour)
-	got, err = c.cachedList(context.Background(), &cache, fetch)
+	_, err = c.cachedList(context.Background(), &cache, fetch)
 	if err != nil {
 		t.Fatalf("cachedList expiry: %v", err)
 	}
@@ -93,7 +109,7 @@ func TestCachedList_Disabled(t *testing.T) {
 	}
 	c := &Client{listTTL: 0} // disabled
 	cache := (*listCache)(nil)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := c.cachedList(context.Background(), &cache, fetch); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}

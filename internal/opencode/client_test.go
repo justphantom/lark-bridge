@@ -320,7 +320,10 @@ func TestListModels_CacheDisabledWhenTTLZeroOrNegative(t *testing.T) {
 }
 
 // TestCachedList_ReturnedSliceIsACopy verifies the caller cannot mutate the
-// cached values (the cache stores a defensive copy).
+// cached values on either path — miss (first call, cache stores a defensive
+// copy) AND hit (second call, cache returns a defensive copy). Without the
+// hit-path copy, mutating the second return would corrupt the cache for all
+// subsequent callers within the TTL.
 func TestCachedList_ReturnedSliceIsACopy(t *testing.T) {
 	bin, _ := countingFakeOpencode(t)
 	c := New(Config{CLIPath: bin, ListCacheTTL: 3600}, log.Nop())
@@ -336,6 +339,16 @@ func TestCachedList_ReturnedSliceIsACopy(t *testing.T) {
 		t.Fatalf("second ListModels: %v", err)
 	}
 	if again[0] == "MUTATED" {
-		t.Error("caller mutation leaked into cache; cache must store a copy")
+		t.Error("caller mutation leaked into cache via miss return; cache must store a copy")
+	}
+
+	// Mutate the HIT-path return: the next call must still see clean values.
+	again[0] = "MUTATED_HIT"
+	third, err := c.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("third ListModels: %v", err)
+	}
+	if third[0] == "MUTATED_HIT" {
+		t.Error("caller mutation leaked into cache via hit return; hit path must copy")
 	}
 }
