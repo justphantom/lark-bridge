@@ -12,7 +12,7 @@
 #                                # <dir>: already-extracted directory containing lark-* binaries.
 #   ./deploy/deploy.sh --services claude,opencode
 #                                # deploy only the given service subset (comma-separated; one of: feishu claude
-#                                # opencode miniagent). Default is all. For multi-host deployments each host
+#                                # opencode omp miniagent). Default is all. For multi-host deployments each host
 #                                # uses its own subset: front-end host --services feishu, back-end host --services claude,...
 #
 # Optional environment variables:
@@ -93,11 +93,11 @@ select_services() {
         local s
         IFS=',' read -ra _parts <<< "$SERVICES_ARG"
         for s in "${_parts[@]}"; do
-            svc_unit "$s" >/dev/null || fail "Unknown service: $s (valid: feishu claude opencode miniagent)"
+            svc_unit "$s" >/dev/null || fail "Unknown service: $s (valid: feishu claude opencode omp miniagent)"
             SELECTED+=("$s")
         done
     else
-        SELECTED=(feishu claude opencode miniagent)
+        SELECTED=(feishu claude opencode omp miniagent)
     fi
     rebuild_services
 }
@@ -218,7 +218,7 @@ preflight_inflight_check_legacy() {
     info "No in-flight sessions; safe to deploy"
 }
 
-# Probe whether the external CLI (claude/opencode/miniagent) binary is ready:
+# Probe whether the external CLI (claude/opencode/omp/miniagent) binary is ready:
 # `command -v` hits AND `<cli> --version` exits 0. The 30s timeout mirrors the
 # backend IsReady readyTimeout (internal/opencode/client.go:27) so a hang does
 # not block the deploy. Hard precondition for the corresponding backend: a
@@ -299,6 +299,7 @@ verify_artifacts() {
     [[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "Build artifact missing: lark-feishu-front"
     [[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "Build artifact missing: lark-claude-back"
     [[ -x "$BIN_DIR/lark-opencode-back" ]]        || fail "Build artifact missing: lark-opencode-back"
+    [[ -x "$BIN_DIR/lark-omp-back" ]]             || fail "Build artifact missing: lark-omp-back"
     [[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "Build artifact missing: lark-miniagent-back"
     # NOTE: the miniagent binary (github.com/justphantom/miniagent) is a separate
     # project; deploy it to /usr/local/bin/miniagent via its own Makefile. Not
@@ -318,8 +319,8 @@ check_env_placeholder() {
 
 # Per-service deploy readiness, based on placeholder values in repo-root .env
 # (placeholder = not ready). feishu needs real Feishu credentials; miniagent
-# needs a non-placeholder MINIAGENT_API_KEY; claude/opencode need no user
-# key -> always ready.
+# needs a non-placeholder MINIAGENT_API_KEY; claude/opencode/omp need no user
+# key -> always ready (their CLIs auth via ~/.claude / ~/.config / ~/.omp).
 svc_env_ready() {
     local envf="$PROJECT_ROOT/.env"
     case "$1" in
@@ -406,8 +407,8 @@ filter_env_ready() {
 }
 
 # Generate per-backend configs in a staging dir (no repo-source mutation).
-# Each of the four processes gets its own config:
-# claude/opencode/miniagent/feishu-config.json. All derived from the same base
+# Each of the five processes gets its own config:
+# claude/opencode/omp/miniagent/feishu-config.json. All derived from the same base
 # (each process reads only the fields it needs; extras are inert).
 # Each backend must use a distinct router_path (except feishu-front), otherwise
 # they overwrite each other's chat bindings.
@@ -478,6 +479,10 @@ stage_configs() {
     cp "$STAGE/claude-config.json" "$STAGE/opencode-config.json"
     inject_router_path "$STAGE/opencode-config.json" "$STATE_DIR/opencode-router.json" "opencode-1"
 
+    # omp-back: distinct backend_id + distinct router_path (same pattern as opencode)
+    cp "$STAGE/claude-config.json" "$STAGE/omp-config.json"
+    inject_router_path "$STAGE/omp-config.json" "$STATE_DIR/omp-router.json" "omp-1"
+
     # miniagent-back: distinct backend_id + distinct router_path (same pattern as opencode)
     cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
@@ -489,18 +494,18 @@ stage_configs() {
     # superset of the example fields; a schema drift would break all of them.
     cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
 
-    info "Generated claude-config / opencode-config / miniagent-config / feishu-config"
+    info "Generated claude-config / opencode-config / omp-config / miniagent-config / feishu-config"
 }
 
-# Each backend (claude/opencode/miniagent) gets its own router_path injected.
+# Each backend (claude/opencode/omp/miniagent) gets its own router_path injected.
 # They share one state_dir, so defaulting to the same router.v5.json would
 # overwrite each other's chat bindings. The deploy script explicitly splits
-# them into claude/opencode/miniagent-router.json (filename convention of this
-# script only; differs from the config default router.v5.json; the router_path
+# them into claude/opencode/omp/miniagent-router.json (filename convention of
+# this script only; differs from the config default router.v5.json; the router_path
 # field is configurable).
 #
 # Optional 3rd parameter backend_id: when non-empty, also rewrite backend_id
-# (opencode/miniagent derived from claude-config need it); empty preserves the
+# (opencode/omp/miniagent derived from claude-config need it); empty preserves the
 # base (claude/feishu).
 # router_path injection uses sed `/\"backend_id\"/a\...`: anchored on the
 # backend_id line, appended after it. If a user-customised config lacks
@@ -551,7 +556,7 @@ cleanup_legacy() {
 }
 
 # CLI binary readiness is a hard precondition for each of
-# claude/opencode/miniagent: a missing CLI -> backend crashes on startup
+# claude/opencode/omp/miniagent: a missing CLI -> backend crashes on startup
 # (IsReady runs `<cli> --version`), systemd retrying every 5s. We probe up
 # front, stop+disable+drop the service so the noise stays down. Runs before
 # stop_services: stop+disable ahead of this run's service restarts.
@@ -571,6 +576,7 @@ filter_cli_ready() {
         case "$s" in
             claude)    warn "  Install the Claude Code CLI and re-deploy to include it: https://github.com/anthropics/claude-code" ;;
             opencode)  warn "  Install the opencode CLI and re-deploy to include it: https://github.com/sst/opencode" ;;
+            omp)       warn "  Install the Oh My Pi (omp) CLI and re-deploy to include it" ;;
             miniagent) warn "  Install the miniagent CLI and re-deploy to include it: https://github.com/justphantom/miniagent" ;;
         esac
         sudo systemctl disable --now "$u" 2>/dev/null || true
@@ -579,11 +585,11 @@ filter_cli_ready() {
 }
 
 # Create directories, stop services, and copy binaries/configs into place.
-# STATE_DIR/{claude,opencode} are the two backends' default_directory;
+# STATE_DIR/{claude,opencode,omp} are the backends' default_directory;
 # per-chat working dirs are auto-created under them at runtime via MkdirAll.
 install_files() {
     info "Creating system directories..."
-    sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode"
+    sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude" "$STATE_DIR/opencode" "$STATE_DIR/omp"
 
     # Services must be stopped before binary overwrite, otherwise ETXTBSY.
     stop_services
@@ -679,7 +685,7 @@ write_unit() {
     # privileged=true drops the sandbox block entirely: units that need sudo
     # (deploy-monitor running `make deploy` -> systemctl/cp to /etc). The
     # sandbox's NoNewPrivileges would block sudo's setuid step, so privileged
-    # units must skip it. claude/opencode/miniagent backends also use
+    # units must skip it. claude/opencode/omp/miniagent backends also use
     # privileged=true: they spawn arbitrary external CLIs
     # (git/node/npm/bash and their children); a conservative sandbox
     # (NoNewPrivileges/RestrictSUIDSGID blocking setuid helpers,
@@ -691,7 +697,7 @@ write_unit() {
 # break backend fork/exec of CLIs):
 #   NoNewPrivileges      no setuid escalation (backends do not need it)
 #   ProtectSystem=full   /usr /boot read-only; /var/lib (state_dir) and /home stay writable
-#                        (not strict: claude writes ~/.claude, opencode reads ~/.config)
+#                        (not strict: claude writes ~/.claude, opencode reads ~/.config, omp writes ~/.omp)
 #   ProtectHome not set: backends depend on user-home CLI config and caches
 #   PrivateTmp           private /tmp namespace, not shared with system tmp
 #   ProtectKernel*       forbid changing kernel runtime/modules/logs/cgroup

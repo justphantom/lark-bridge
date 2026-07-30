@@ -46,7 +46,7 @@ init_status() {
     # 删 status-monitor 不消费的业务子块（含 deploy_monitor）。要求 base 2 空格缩进、
     # 块闭合行 ^  }, 独占——config.example.json 满足。删后显式校验，防 base 格式
     # 漂移时 sed 静默失败。
-    for block in claude opencode miniagent deploy_monitor; do
+    for block in claude opencode omp miniagent deploy_monitor; do
         sed -i '/^  "'"$block"'":/,/^  },/d' "$stage/$CONFIG_NAME"
         grep -q "\"$block\":" "$stage/$CONFIG_NAME" \
             && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"

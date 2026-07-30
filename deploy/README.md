@@ -5,14 +5,14 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-   ┌──────────┬──────────┬────────────────────┬──────────────┐    ┌──────────────┐
- claude-back opencode-back miniagent-back                        deploy-monitor
- (Claude CLI)(opencode CLI)(LLM API 直调)                       (make deploy)
+   ┌──────────┬──────────┬──────────┬──────────────────┬──────────────┐
+ claude-back opencode-back omp-back miniagent-back       deploy-monitor
+ (Claude CLI)(opencode CLI)(omp CLI)(LLM API 直调)       (make deploy)
                                                                 ↑ 独立部署
 ```
 
-前端 feishu-front + 三个 agent 后端（claude/opencode/miniagent）由 `make deploy`
-管理（默认 4 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
+前端 feishu-front + 四个 agent 后端（claude/opencode/omp/miniagent）由 `make deploy`
+管理（默认 5 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
 （`make upgrade-monitor`），避免「部署脚本管自己的触发者」循环依赖。
 
 ## 前置条件
@@ -22,6 +22,7 @@
 | Go | 1.25+ |
 | Claude CLI | `claude` 在 PATH 中（仅 claude-back） |
 | opencode | `opencode` CLI 在 PATH 中（仅 opencode-back） |
+| omp | `omp` CLI 在 PATH 中（仅 omp-back；对接 Oh My Pi，对接规范见 `OMP_INTEGRATION_SPEC.md`） |
 | miniagent | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；见 .env） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
 
@@ -83,9 +84,10 @@ prompt 模板。**可选**：留空时 post 消息降级为纯 Markdown 文本�
 
 ```bash
 make build
-# 产物（6 个二进制）：
+# 产物（7 个二进制）：
 #   bin/lark-feishu-front, bin/lark-claude-back, bin/lark-opencode-back,
-#   bin/lark-miniagent-back, bin/lark-deploy-monitor, bin/lark-status-monitor.
+#   bin/lark-omp-back, bin/lark-miniagent-back, bin/lark-deploy-monitor,
+#   bin/lark-status-monitor.
 # miniagent 是 miniagent-back fork 的子进程（独立项目，不在本仓库 make build 范围内）：
 # 每个 prompt fork 一次，跑完退出。类比 claude CLI 被 claude-back fork 的模式。
 ```
@@ -103,13 +105,13 @@ cp deploy/env.example .env
 # 或复制成每服务一份按需裁剪。
 cp config.example.json claude-config.json
 # 编辑 backend_id / frontend_url / state_dir
-# feishu/opencode/miniagent 各自再复制一份（或直接共用 claude-config.json）
+# feishu/opencode/omp/miniagent 各自再复制一份（或直接共用 claude-config.json）
 ```
 
 ## 3. 创建 state 目录
 
 ```bash
-mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode
+mkdir -p /var/lib/lark-bridge/claude /var/lib/lark-bridge/opencode /var/lib/lark-bridge/omp
 ```
 
 ## 4. 启动
@@ -127,6 +129,9 @@ set -a; source .env; set +a
 
 # opencode 后端（可选）
 ./bin/lark-opencode-back -config opencode-config.json &
+
+# omp 后端（可选）
+./bin/lark-omp-back -config omp-config.json &
 
 # miniagent 后端（可选）
 ./bin/lark-miniagent-back -config miniagent-config.json &
@@ -147,6 +152,7 @@ set -a; source .env; set +a
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `claude.default_directory` | claude-back | 每个群的工作目录基路径 |
 | `opencode.default_directory` | opencode-back | 每个群的工作目录基路径 |
+| `omp.default_directory` | omp-back | 每个群的工作目录基路径 |
 | `miniagent.api_key` | miniagent-back | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；`${MINIAGENT_API_KEY}`） |
 
 ### 机密字段
@@ -176,6 +182,11 @@ set -a; source .env; set +a
 | `opencode.max_concurrent` | `4` |
 | `opencode.stream_history` | `50` |
 | `opencode.list_cache_ttl` | `3600` |
+| `omp.cli_path` | `omp` |
+| `omp.max_concurrent` | `4` |
+| `omp.stream_history` | `50` |
+| `omp.approval_mode` | `write` |
+| `omp.thinking_level` | `auto` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}`（当前仅 opencode-back 生效） |
@@ -234,7 +245,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-miniagent-back
+sudo systemctl enable --now lark-feishu-front lark-claude-back lark-opencode-back lark-omp-back lark-miniagent-back
 ```
 
 ## 6.5. deploy-monitor 部署（独立）
@@ -311,6 +322,7 @@ curl -s localhost:6060/v1/events  # 应返回 401（鉴权拦截）
 journalctl -u lark-feishu-front -f
 journalctl -u lark-claude-back -f
 journalctl -u lark-opencode-back -f
+journalctl -u lark-omp-back -f
 journalctl -u lark-miniagent-back -f
 journalctl -u lark-status-monitor -f
 
@@ -322,7 +334,7 @@ journalctl -u lark-status-monitor -f
 deploy.sh 支持三种正交维度，组合使用：
 
 - `--binaries <tar|dir>`：从已编译产物部署，目标机无需 Go/repo。
-- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode miniagent`）。
+- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude opencode omp miniagent`）。
 - `--init` / `--force`：首次生成配置 / 跳过运行中会话检查。
 
 **运行中会话检查（preflight）**：部署前 deploy.sh 调用 feishu-front 的
@@ -338,7 +350,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 6 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 7 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机
