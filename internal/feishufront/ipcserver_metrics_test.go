@@ -113,22 +113,33 @@ func TestMetrics_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestMetrics_SelfMergeByIP verifies a self-report replaces a same-IP backend
-// host row instead of duplicating it.
-func TestMetrics_SelfMergeByIP(t *testing.T) {
-	hosts := []protocol.HostStats{{IP: "10.0.0.1", Hostname: "backend-view"}}
-	out := mergeHostByIP(hosts, protocol.HostStats{IP: "10.0.0.1", Hostname: "self-view"})
+// TestMergeHostByKey locks the self-row merge under the machine-id-first
+// priority: same machine-id collapses (frontend + co-located backend), the
+// (IP, Hostname) fallback collapses two rows that share both, and a real
+// mismatch (same IP, different hostname, no machine-id) stays distinct.
+func TestMergeHostByKey(t *testing.T) {
+	// machine-id match: different IP/hostname but same machine → replace.
+	hosts := []protocol.HostStats{{IP: "10.0.0.1", Hostname: "backend-view", MachineID: "M"}}
+	out := mergeHostByKey(hosts, protocol.HostStats{IP: "10.0.0.2", Hostname: "self-view", MachineID: "M"})
 	if len(out) != 1 || out[0].Hostname != "self-view" {
-		t.Errorf("merge = %+v", out)
+		t.Errorf("machine-id merge = %+v", out)
 	}
-	out = mergeHostByIP(out, protocol.HostStats{IP: "10.0.0.2"})
+	// (IP, Hostname) fallback: no machine-id, both fields equal → replace.
+	out = mergeHostByKey([]protocol.HostStats{{IP: "10.0.0.9", Hostname: "host-A"}},
+		protocol.HostStats{IP: "10.0.0.9", Hostname: "host-A", MemTotalBytes: 1})
+	if len(out) != 1 || out[0].MemTotalBytes != 1 {
+		t.Errorf("(IP,Hostname) fallback merge = %+v", out)
+	}
+	// mismatch: same IP, different hostname, no machine-id → append (NAT, distinct hosts).
+	out = mergeHostByKey([]protocol.HostStats{{IP: "10.0.0.1", Hostname: "host-A"}},
+		protocol.HostStats{IP: "10.0.0.1", Hostname: "host-B"})
 	if len(out) != 2 {
-		t.Errorf("append = %+v", out)
+		t.Errorf("distinct hosts collapsed = %+v", out)
 	}
 }
 
-// TestRegistrySnapshot_DedupesHostsByIP locks the same-host dedup rule: two
-// backends on one IP collapse to the latest report.
+// TestRegistrySnapshot_DedupesHostsByIP locks the (IP, Hostname) fallback:
+// two backends on one IP with no machine-id collapse to the latest report.
 func TestRegistrySnapshot_DedupesHostsByIP(t *testing.T) {
 	reg := NewBackendRegistry()
 	reg.Register("a", "claude")
@@ -147,6 +158,45 @@ func TestRegistrySnapshot_DedupesHostsByIP(t *testing.T) {
 	}
 	if len(services) != 2 {
 		t.Errorf("services = %d, want 2", len(services))
+	}
+}
+
+// TestRegistrySnapshot_DedupesByMachineID locks the primary dedup path: two
+// backends reporting the same machine-id fold to one row even if their IPs
+// differ (a host with multiple NICs / a re-probed outbound IP).
+func TestRegistrySnapshot_DedupesByMachineID(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("a", "claude")
+	reg.Register("b", "opencode")
+	_ = reg.SetMetrics("a", &protocol.MetricsReport{IP: "10.0.0.1", MachineID: "mid-1", ReportedAt: 100,
+		Host: protocol.HostStats{Load1: 1}})
+	_ = reg.SetMetrics("b", &protocol.MetricsReport{IP: "10.0.0.2", MachineID: "mid-1", ReportedAt: 200,
+		Host: protocol.HostStats{Load1: 2}})
+
+	hosts, _ := reg.Snapshot()
+	if len(hosts) != 1 {
+		t.Fatalf("hosts = %d, want 1 (same machine-id): %+v", len(hosts), hosts)
+	}
+	if hosts[0].Load1 != 2 {
+		t.Errorf("latest push did not win: %+v", hosts[0])
+	}
+}
+
+// TestRegistrySnapshot_NATSameIPDistinctMachines locks the NAT fix: two
+// backends behind one public IP but with different machine-ids stay as two
+// rows (the bug the IP-only dedup had collapsed into one).
+func TestRegistrySnapshot_NATSameIPDistinctMachines(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("a", "claude")
+	reg.Register("b", "opencode")
+	_ = reg.SetMetrics("a", &protocol.MetricsReport{IP: "203.0.113.1", MachineID: "mid-1", ReportedAt: 100,
+		Host: protocol.HostStats{Hostname: "host-A", Load1: 1}})
+	_ = reg.SetMetrics("b", &protocol.MetricsReport{IP: "203.0.113.1", MachineID: "mid-2", ReportedAt: 200,
+		Host: protocol.HostStats{Hostname: "host-B", Load1: 2}})
+
+	hosts, _ := reg.Snapshot()
+	if len(hosts) != 2 {
+		t.Fatalf("hosts = %d, want 2 (distinct machines behind NAT): %+v", len(hosts), hosts)
 	}
 }
 

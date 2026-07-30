@@ -218,10 +218,16 @@ func (r *BackendRegistry) SetMetrics(id string, m *protocol.MetricsReport) error
 	return nil
 }
 
-// Snapshot aggregates the registry's metrics into per-host (deduped by IP —
-// same-host backends overwrite with the latest report) and per-service rows.
-// feishu-front itself is NOT included; the status handler merges its own row
-// separately (it does not POST to itself).
+// Snapshot aggregates the registry's metrics into per-host rows deduped by a
+// host identity key, and per-service rows. feishu-front itself is NOT
+// included; the status handler merges its own row separately (it does not
+// POST to itself).
+//
+// Dedup key priority: machine-id (stable per physical host, identical for
+// every backend on it) → (IP, Hostname) for hosts without a machine-id (rare:
+// non-systemd / stripped image) → backendID when both are empty (keeps rows
+// distinct instead of collapsing unrelated backends). Same key = same host:
+// the latest push wins, matching the old IP-only behavior on a single host.
 func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []protocol.ServiceStat) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -245,13 +251,13 @@ func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []pro
 			if h.Hostname == "" {
 				h.Hostname = m.Hostname
 			}
+			if h.MachineID == "" {
+				h.MachineID = m.MachineID // 顶层与 Host 同值；防御性回填
+			}
 			if h.ReportedAt == 0 {
 				h.ReportedAt = m.ReportedAt
 			}
-			key := h.IP
-			if key == "" {
-				key = id // no probe result: keep rows distinct rather than collapsing
-			}
+			key := hostDedupKey(h.IP, h.Hostname, h.MachineID, id)
 			if i, ok := hostIdx[key]; ok {
 				hosts[i] = h // same host: latest push wins
 			} else {
@@ -262,6 +268,20 @@ func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []pro
 		services = append(services, svc)
 	}
 	return hosts, services
+}
+
+// hostDedupKey derives the per-host dedup key. machine-id wins (stable per
+// physical host); absent → (IP, Hostname); both empty → backendID so distinct
+// backends never collapse into one row. Shared with mergeHostByKey so the
+// frontend's self-row uses the identical priority.
+func hostDedupKey(ip, hostname, machineID, backendID string) string {
+	if machineID != "" {
+		return machineID
+	}
+	if ip != "" || hostname != "" {
+		return ip + "|" + hostname
+	}
+	return backendID
 }
 
 // SendEvent pushes an Event to the named backend.

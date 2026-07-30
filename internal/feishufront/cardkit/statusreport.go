@@ -32,6 +32,7 @@ type TurnRow struct {
 // without the import). ReportedAt drives the "(stale)" marker.
 type HostRow struct {
 	IP             string
+	Hostname       string // 仅在同 IP 多行时追加到身份行作区分
 	Load1          float64
 	Load5          float64
 	Load15         float64
@@ -102,7 +103,7 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 	var b strings.Builder
 	// Summary: two short lines — the one-line form (~30 chars) already hugs
 	// the right edge on a phone, so 在线/会话 gets its own line.
-	fmt.Fprintf(&b, "更新 %s", time.Unix(in.GeneratedAt, 0).Format("15:04:05"))
+	fmt.Fprintf(&b, "更新 %s", time.Unix(in.GeneratedAt, 0).Format("2006-01-02 15:04:05"))
 	if in.IntervalS > 0 {
 		fmt.Fprintf(&b, " · 周期 %s", formatPeriod(in.IntervalS))
 	}
@@ -141,24 +142,44 @@ func StatusReport(in StatusReportInput) ([]byte, error) {
 }
 
 // writeHostSection renders the ▸ 主机 block: one group per host, sorted by
-// IP for deterministic output. Layout is grouped + one-metric-per-line (an
-// identity line in bold carrying the stale mark, then load/mem/disk each on
-// its own indented line) because Feishu markdown uses a proportional font —
-// space-padded columns never align, and a ~70-char single line wraps at
-// arbitrary points on mobile, splitting numbers mid-token. Empty IP renders
-// "?" — a missing probe is display-only and must not blank the group.
+// (IP, hostname) for deterministic output — hostname breaks ties so multiple
+// hosts behind one NAT IP (same IP, different machine-id) keep a stable order.
+// Layout is grouped + one-metric-per-line (an identity line in bold carrying
+// the stale mark, then load/mem/disk each on its own indented line) because
+// Feishu markdown uses a proportional font — space-padded columns never align,
+// and a ~70-char single line wraps at arbitrary points on mobile, splitting
+// numbers mid-token. Empty IP renders "?" — a missing probe is display-only
+// and must not blank the group.
+//
+// When two or more rows share an IP (the NAT case: distinct machine-ids behind
+// one public IP), the identity line appends " · <hostname>" so each row stays
+// distinguishable; a unique-IP row renders the bare IP as before.
 func writeHostSection(b *strings.Builder, hosts []HostRow, now int64, intervalS int) {
 	if len(hosts) == 0 {
 		return
 	}
 	sorted := make([]HostRow, len(hosts))
 	copy(sorted, hosts)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].IP < sorted[j].IP })
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].IP != sorted[j].IP {
+			return sorted[i].IP < sorted[j].IP
+		}
+		return sorted[i].Hostname < sorted[j].Hostname
+	})
+	// Ambiguous IPs (≥2 rows) get a hostname suffix on the identity line.
+	ipCount := make(map[string]int, len(sorted))
+	for _, h := range sorted {
+		ipCount[h.IP]++
+	}
 	b.WriteString("\n\n▸ 主机")
 	for _, h := range sorted {
 		ip := h.IP
 		if ip == "" {
 			ip = "?"
+		}
+		identity := ip
+		if ipCount[h.IP] > 1 && h.Hostname != "" {
+			identity = ip + " · " + h.Hostname
 		}
 		memPct, diskPct := 0, 0
 		if h.MemTotalBytes > 0 {
@@ -167,7 +188,7 @@ func writeHostSection(b *strings.Builder, hosts []HostRow, now int64, intervalS 
 		if h.DiskTotalBytes > 0 {
 			diskPct = int(h.DiskUsedBytes * 100 / h.DiskTotalBytes) //nolint:gosec // G115: 比值 ∈ [0,100]
 		}
-		fmt.Fprintf(b, "\n\n　**%s**%s", ip, staleMark(h.ReportedAt, now, intervalS))
+		fmt.Fprintf(b, "\n\n　**%s**%s", identity, staleMark(h.ReportedAt, now, intervalS))
 		fmt.Fprintf(b, "\n　　load  %.2f / %.2f / %.2f", h.Load1, h.Load5, h.Load15)
 		fmt.Fprintf(b, "\n　　内存  %s / %s (%d%%)",
 			formatBytes(h.MemTotalBytes-h.MemAvailBytes), formatBytes(h.MemTotalBytes), memPct)

@@ -2,6 +2,7 @@ package hostmetrics
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,5 +94,42 @@ func TestPrimaryIPv4(t *testing.T) {
 	ip := PrimaryIPv4()
 	if ip == "" {
 		t.Errorf("empty ip")
+	}
+}
+
+// TestMachineID_LinuxSmoke reads the real /etc/machine-id (linux). It is
+// best-effort: a stripped container image may lack the file, in which case
+// MachineID returns "" and the test skips. When present, the value must be
+// trimmed of the trailing newline (it would corrupt the dedup key).
+func TestMachineID_LinuxSmoke(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	mid := MachineID()
+	if mid == "" {
+		t.Skip("no machine-id on this host")
+	}
+	if strings.ContainsAny(mid, "\n\r \t") {
+		t.Errorf("machine-id not trimmed: %q", mid)
+	}
+}
+
+// TestCollectHost_PopulatesMachineID verifies CollectHost carries the
+// machine-id into HostStats, so the dedup layer can read it without a second
+// syscall. Skips when the host has no machine-id.
+func TestCollectHost_PopulatesMachineID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	mid := MachineID()
+	if mid == "" {
+		t.Skip("no machine-id on this host")
+	}
+	h, err := CollectHost(t.TempDir(), time.Unix(1700000000, 0))
+	if err != nil {
+		t.Fatalf("CollectHost: %v", err)
+	}
+	if h.MachineID != mid {
+		t.Errorf("HostStats.MachineID = %q, want %q", h.MachineID, mid)
 	}
 }

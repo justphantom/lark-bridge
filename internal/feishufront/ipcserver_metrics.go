@@ -44,12 +44,23 @@ func (s *IPCServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("{}"))
 }
 
-// mergeHostByIP inserts self into hosts, replacing an existing row with the
-// same IP (the frontend host may also run a backend that self-reported).
-// An empty-IP self row is appended only when no empty-IP row exists.
-func mergeHostByIP(hosts []protocol.HostStats, self protocol.HostStats) []protocol.HostStats {
+// mergeHostByKey inserts the frontend's self row into the backend-aggregated
+// hosts, replacing an existing row that represents the same physical host
+// (the frontend host typically also runs a backend that self-reported).
+//
+// Matching uses the same priority as Snapshot's dedup (hostDedupKey):
+// machine-id first, then (IP, Hostname). HostStats carries no backendID, so a
+// row that deduped purely by backendID (no machine-id, no IP, no hostname)
+// yields key "" and only matches a self that is equally empty — a degenerate
+// case that falls through to append. This keeps the self-merge consistent with
+// the per-backend dedup so a co-located frontend+backend collapse to one row.
+func mergeHostByKey(hosts []protocol.HostStats, self protocol.HostStats) []protocol.HostStats {
+	selfKey := hostDedupKey(self.IP, self.Hostname, self.MachineID, "")
 	for i, h := range hosts {
-		if h.IP == self.IP {
+		if selfKey == "" {
+			break
+		}
+		if hostDedupKey(h.IP, h.Hostname, h.MachineID, "") == selfKey {
 			hosts[i] = self
 			return hosts
 		}

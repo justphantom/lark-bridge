@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,12 @@ const (
 	loadavgPath = "/proc/loadavg"
 	meminfoPath = "/proc/meminfo"
 	cgroupRoot  = "/sys/fs/cgroup/system.slice"
+
+	// machineID 的候选路径：systemd 机器写 /etc/machine-id，dbus 旧式写
+	// /var/lib/dbus/machine-id；二者内容一致，任一存在即可。都缺失返回空
+	// （非 systemd/容器精简镜像），由去重层回退到 (IP, Hostname)。
+	machineIDPrimaryPath = "/etc/machine-id"
+	machineIDDBusPath    = "/var/lib/dbus/machine-id"
 )
 
 // CollectHost reads one host load snapshot. diskPath is the state_dir whose
@@ -34,6 +41,7 @@ func CollectHost(diskPath string, now time.Time) (protocol.HostStats, error) {
 	if hn, err := os.Hostname(); err == nil {
 		h.Hostname = hn
 	}
+	h.MachineID = MachineID()
 
 	lb, err := os.ReadFile(loadavgPath)
 	if err != nil {
@@ -89,6 +97,28 @@ func SelfCgroupMem(unitName string) (bytes uint64, ok bool, err error) {
 		return 0, false, fmt.Errorf("parse cgroup mem: %w", err)
 	}
 	return v, true, nil
+}
+
+// MachineID returns this host's stable machine identifier (systemd
+// /etc/machine-id, falling back to the dbus /var/lib/dbus/machine-id).
+// The value is generated at install time, stable across reboots, and identical
+// for every process on the same host — the property the status-monitor dedup
+// keys on. A missing file (non-systemd, stripped container image) is NOT an
+// error: it returns ("", nil) so the caller's dedup falls back to (IP, Hostname).
+// A present-but-unreadable file is a real error. Trailing whitespace (the file
+// holds a trailing newline) is trimmed.
+func MachineID() string {
+	for _, p := range []string{machineIDPrimaryPath, machineIDDBusPath} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "" // unreadable: best-effort, let dedup fall back
+		}
+		return strings.TrimSpace(string(b))
+	}
+	return ""
 }
 
 // OutboundIP probes which local address a connection to frontendAddr would

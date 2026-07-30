@@ -400,6 +400,7 @@ func (d *Dispatcher) sendStatusReport(ctx context.Context, rc RoutedControl) err
 	for i, h := range p.Hosts {
 		hosts[i] = cardkit.HostRow{
 			IP:             h.IP,
+			Hostname:       h.Hostname,
 			Load1:          h.Load1,
 			Load5:          h.Load5,
 			Load15:         h.Load15,

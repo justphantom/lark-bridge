@@ -111,7 +111,7 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	hosts, services := s.registry.Snapshot()
 	if fn := s.selfMetrics.Load(); fn != nil {
 		selfHost, selfSvc := (*fn)()
-		hosts = mergeHostByIP(hosts, selfHost)
+		hosts = mergeHostByKey(hosts, selfHost)
 		services = append(services, selfSvc)
 	}
 	w.Header().Set("Content-Type", "application/json")

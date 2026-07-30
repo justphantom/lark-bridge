@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStatusReport_RenderAndGroups(t *testing.T) {
@@ -260,5 +261,62 @@ func TestFormatBytes(t *testing.T) {
 		if got := formatBytes(in); got != want {
 			t.Errorf("formatBytes(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestStatusReport_SummaryTimeFormat locks the "更新" line to the full
+// yyyy-mm-dd HH:MM:ss form (it was HH:MM:SS only), computed via the same
+// time.Unix().Format call the renderer uses so the assertion is TZ-independent.
+func TestStatusReport_SummaryTimeFormat(t *testing.T) {
+	const generatedAt = 1700000000
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: generatedAt, IntervalS: 60,
+		Backends: []string{"a"},
+	})
+	if err != nil {
+		t.Fatalf("StatusReport: %v", err)
+	}
+	md, _ := cardBody(t, card)
+	want := "更新 " + time.Unix(generatedAt, 0).Format("2006-01-02 15:04:05")
+	if !strings.Contains(md, want) {
+		t.Errorf("summary time %q missing; body=%q", want, md)
+	}
+	// The old HH:MM:SS-only form must not appear bare (it would if the format
+	// string regressed). The full form contains it as a substring, so check the
+	// update prefix specifically.
+	if strings.Contains(md, "更新 "+time.Unix(generatedAt, 0).Format("15:04:05")+"\n") {
+		t.Errorf("summary regressed to time-only format; body=%q", md)
+	}
+}
+
+// TestStatusReport_HostSectionNATDisambiguation locks the display enhancement:
+// two hosts sharing one IP (the NAT case) each get a " · <hostname>" suffix on
+// the identity line, while a unique-IP host renders the bare IP as before.
+func TestStatusReport_HostSectionNATDisambiguation(t *testing.T) {
+	card, err := StatusReport(StatusReportInput{
+		Footer: FooterInfo{BackendType: "status-monitor"}, GeneratedAt: 1700000000, IntervalS: 60,
+		Backends: []string{"a"},
+		Hosts: []HostRow{
+			{IP: "203.0.113.1", Hostname: "host-A", MemTotalBytes: 8 << 30, MemAvailBytes: 4 << 30},
+			{IP: "203.0.113.1", Hostname: "host-B", MemTotalBytes: 8 << 30, MemAvailBytes: 4 << 30},
+			{IP: "10.0.0.9", Hostname: "lonely", MemTotalBytes: 8 << 30, MemAvailBytes: 4 << 30},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StatusReport: %v", err)
+	}
+	md, _ := cardBody(t, card)
+	if !strings.Contains(md, "**203.0.113.1 · host-A**") {
+		t.Errorf("NAT host A identity missing hostname suffix; body=%q", md)
+	}
+	if !strings.Contains(md, "**203.0.113.1 · host-B**") {
+		t.Errorf("NAT host B identity missing hostname suffix; body=%q", md)
+	}
+	// Unique-IP host renders the bare IP, no hostname suffix.
+	if !strings.Contains(md, "**10.0.0.9**") {
+		t.Errorf("unique-IP identity should be bare; body=%q", md)
+	}
+	if strings.Contains(md, "10.0.0.9 · lonely") {
+		t.Errorf("unique-IP host should not carry hostname; body=%q", md)
 	}
 }

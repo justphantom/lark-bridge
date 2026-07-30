@@ -80,6 +80,7 @@ func collectMetrics(opts MetricsOptions, ip string) *protocol.MetricsReport {
 	return &protocol.MetricsReport{
 		Hostname:       host.Hostname,
 		IP:             ip,
+		MachineID:      host.MachineID, // 置于顶层：去重层直接取用，与 Host.MachineID 同值
 		ReportedAt:     now.Unix(),
 		Host:           host,
 		Version:        opts.Version,

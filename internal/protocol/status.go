@@ -28,6 +28,7 @@ type TurnInfo struct {
 type HostStats struct {
 	IP             string  `json:"ip"`
 	Hostname       string  `json:"hostname"`
+	MachineID      string  `json:"machineId,omitempty"` // 主机去重键（/etc/machine-id），不在卡片展示
 	Load1          float64 `json:"load1"`
 	Load5          float64 `json:"load5"`
 	Load15         float64 `json:"load15"`
@@ -56,6 +57,7 @@ type ServiceStat struct {
 type MetricsReport struct {
 	Hostname       string    `json:"hostname"`
 	IP             string    `json:"ip"`
+	MachineID      string    `json:"machineId,omitempty"` // 与 Host.MachineID 同值；置于顶层便于去重层直接取用
 	ReportedAt     int64     `json:"reportedAt"`
 	Host           HostStats `json:"host"`
 	Version        string    `json:"version"` // redundant with the handshake; lets the frontend cross-check/fall back
