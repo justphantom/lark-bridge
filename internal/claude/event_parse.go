@@ -144,8 +144,8 @@ func parseResultLenient(line string) (Event, bool) {
 	}, true
 }
 
-// parseContentBlocks, stringifyContent and stringifyJSON live in
-// event_parse_content.go — they form the content-block extraction group.
+// parseContentBlocks lives in event_parse_content.go. stringifyContent and
+// stringifyJSON are now in the shared strutil package.
 
 // parseSystemEvents decodes a system line. init populates the session/model;
 // task_* subtypes (subagent lifecycle) are decoded into EventTask* carrying

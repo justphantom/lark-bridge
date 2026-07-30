@@ -5,6 +5,8 @@ package opencode
 import (
 	"strings"
 	"testing"
+
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 func TestParseEvent_EmptyAndGarbage(t *testing.T) {
@@ -519,26 +521,26 @@ func TestParseEvent_NoPartIsFine(t *testing.T) {
 
 func TestStringifyContent(t *testing.T) {
 	// plain string
-	if got := stringifyContent([]byte(`"hello"`)); got != "hello" {
+	if got := strutil.StringifyContent([]byte(`"hello"`)); got != "hello" {
 		t.Errorf("string = %q", got)
 	}
 	// content-block array
 	arr := []byte(`[{"type":"text","text":"a"},{"type":"text","text":"b"}]`)
-	if got := stringifyContent(arr); got != "ab" {
+	if got := strutil.StringifyContent(arr); got != "ab" {
 		t.Errorf("array = %q", got)
 	}
 	// empty
-	if got := stringifyContent(nil); got != "" {
+	if got := strutil.StringifyContent(nil); got != "" {
 		t.Errorf("empty = %q", got)
 	}
 }
 
 func TestStringifyJSON(t *testing.T) {
 	// compacted JSON
-	if got := stringifyJSON([]byte(`{"a": 1}`)); got != `{"a":1}` {
+	if got := strutil.StringifyJSON([]byte(`{"a": 1}`)); got != `{"a":1}` {
 		t.Errorf("compact = %q", got)
 	}
-	if got := stringifyJSON(nil); got != "" {
+	if got := strutil.StringifyJSON(nil); got != "" {
 		t.Errorf("empty = %q", got)
 	}
 }

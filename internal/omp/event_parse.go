@@ -3,10 +3,11 @@
 package omp
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // ndjsonLine is the flexible envelope decoded from every omp stdout line.
@@ -141,7 +142,7 @@ func parseEvent(line string) (Event, bool, error) {
 		// "Input" column matches the start row (the end event carries only
 		// result + isError, not args/intent). When absent, the bridge's
 		// SummarizeToolInput still produces a readable row from ToolName.
-		base.ToolOutput = stringifyContent(head.Result)
+		base.ToolOutput = strutil.StringifyContentEnvelope(head.Result)
 		base.IsToolError = head.IsError
 		return base, true, nil
 
@@ -277,63 +278,5 @@ func summariseToolInput(intent string, args json.RawMessage) string {
 	if intent != "" {
 		return intent
 	}
-	return stringifyJSON(args)
-}
-
-// stringifyContent normalises a tool result field ({content:[{type:"text",
-// text:"..."}]}) to its concatenated text. omp's tool_execution_end.result
-// has this shape (§A.6).
-func stringifyContent(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	// result: {content:[{type:"text",text:"..."}]}
-	var envelope struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(raw, &envelope) == nil && len(envelope.Content) > 0 {
-		var b strings.Builder
-		for _, blk := range envelope.Content {
-			if blk.Type == "text" || blk.Type == "" {
-				b.WriteString(blk.Text)
-			}
-		}
-		if b.Len() > 0 {
-			return b.String()
-		}
-	}
-	// Fallback: maybe a bare string or content-block array without envelope.
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		var b strings.Builder
-		for _, blk := range blocks {
-			if blk.Type == "text" || blk.Type == "" {
-				b.WriteString(blk.Text)
-			}
-		}
-		return b.String()
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-// stringifyJSON returns a compacted JSON string for a raw input payload.
-func stringifyJSON(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	return buf.String()
+	return strutil.StringifyJSON(args)
 }

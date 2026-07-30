@@ -3,10 +3,10 @@
 package claude
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
+
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // parseContentBlocks extracts the content[] blocks from an assistant or
@@ -50,11 +50,11 @@ func parseContentBlocks(lineType, sessionID string, msgRaw json.RawMessage, rawL
 			ev.Type = EventToolUse
 			ev.ToolID = b.ID
 			ev.ToolName = b.Name
-			ev.ToolInput = stringifyJSON(b.Input)
+			ev.ToolInput = strutil.StringifyJSON(b.Input)
 		case "tool_result":
 			ev.Type = EventToolResult
 			ev.ToolID = b.ToolUseID
-			ev.Text = stringifyContent(b.Content)
+			ev.Text = strutil.StringifyContent(b.Content)
 			ev.IsToolError = b.IsError
 		case "thinking":
 			ev.Type = EventThinking
@@ -69,47 +69,4 @@ func parseContentBlocks(lineType, sessionID string, msgRaw json.RawMessage, rawL
 		out = append(out, ev)
 	}
 	return out, nil
-}
-
-// stringifyContent normalises a tool_result "content" field, which the
-// CLI emits as either a plain string or an array of content blocks
-// (e.g. [{"type":"text","text":"..."}]). Returns "" for nil/empty.
-func stringifyContent(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		var b strings.Builder
-		for _, blk := range blocks {
-			if blk.Type == "text" || blk.Type == "" {
-				b.WriteString(blk.Text)
-			}
-		}
-		return b.String()
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-// stringifyJSON returns a compacted JSON string for a raw input payload,
-// or "" when empty. Used for tool_use input so the caller can render it
-// without re-marshalling. json.Compact preserves the payload verbatim
-// (key order, integer precision) where an unmarshal+marshal round trip
-// would drop large ints to float64 and reorder keys.
-func stringifyJSON(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	return buf.String()
 }

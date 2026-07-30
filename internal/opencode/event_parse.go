@@ -3,10 +3,11 @@
 package opencode
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // ndjsonLine is the flexible envelope decoded from every opencode stdout line.
@@ -219,7 +220,7 @@ func parseToolEvent(base Event, p partShape) []Event {
 		result.toolInput = p.Title
 	} else if len(p.State.Input) > 0 {
 		// opencode does not always populate part.title (notably edit on
-		// some versions), and dumping the whole input via stringifyJSON
+		// some versions), and dumping the whole input via StringifyJSON
 		// pollutes the row — edit's oldString/newString can run to hundreds
 		// of runes. Pick the most informative single field instead, mirroring
 		// bridgebase.SummarizeToolInput's priority table. The helper lives
@@ -227,10 +228,10 @@ func parseToolEvent(base Event, p partShape) []Event {
 		if s := extractToolInputField(p.State.Input); s != "" {
 			result.toolInput = s
 		} else {
-			result.toolInput = stringifyJSON(p.State.Input)
+			result.toolInput = strutil.StringifyJSON(p.State.Input)
 		}
 	}
-	result.text = stringifyContent(p.State.Output)
+	result.text = strutil.StringifyContent(p.State.Output)
 	// Three failure signals, any one of which flags the result as an error:
 	//   - status "error"/"failed": the tool framework itself failed
 	//     (timeout, permission denied, missing file, ...)
@@ -238,6 +239,17 @@ func parseToolEvent(base Event, p partShape) []Event {
 	//     status="completed" even when bash returns 1, so without this
 	//     check a failed `cat /nonexistent` renders identically to a
 	//     successful `ls` on the card.
+	//
+	// Empirical findings (2026-07-30, 1508 tool_use lines):
+	//   - tool_use state.status: only "completed"(1500) / "error"(8)
+	//     No intermediate states (pending/in_progress) appear at this level.
+	//   - metadata.exit != 0: 21 cases (19×1, 1×2, 1×128). 13 of those 21
+	//     had status="completed" — the Exit!=0 guard is essential.
+	//   - "failed" status: 0 hits; kept as defensive dead code.
+	// The three-signal enumeration is preferred over a catch-all
+	// "!= completed" because opencode could start emitting intermediate
+	// states (pending/in_progress) at the tool_use level in the future,
+	// which a catch-all rule would wrongly classify as failures.
 	if p.State.Status == "error" || p.State.Status == "failed" || p.State.Metadata.Exit != 0 {
 		result.isToolError = true
 		// On failure opencode swaps state.output for state.error; the
@@ -272,7 +284,7 @@ func parseToolEvent(base Event, p partShape) []Event {
 		if len(p.State.Input) > 0 {
 			_ = json.Unmarshal(p.State.Input, &ti)
 		}
-		rawOutput := stringifyContent(p.State.Output)
+		rawOutput := strutil.StringifyContent(p.State.Output)
 		inner := UnwrapTaskResult(rawOutput)
 		result.subagent = &SubagentMeta{
 			Type:         ti.SubagentType,
@@ -309,9 +321,9 @@ func UnwrapTaskResult(s string) string {
 // extractToolInputField picks the most informative single string field from a
 // tool input JSON, mirroring bridgebase.SummarizeToolInput's priority list.
 // Used when opencode did not populate part.title, so a fallback to
-// stringifyJSON does not dump the whole input (notably edit's oldString/
+// StringifyJSON does not dump the whole input (notably edit's oldString/
 // newString, which can run to hundreds of runes). Returns "" when no priority
-// field is present; the caller falls back to stringifyJSON for unknown tool
+// field is present; the caller falls back to StringifyJSON for unknown tool
 // shapes.
 func extractToolInputField(raw json.RawMessage) string {
 	var m map[string]any
@@ -324,43 +336,6 @@ func extractToolInputField(raw json.RawMessage) string {
 		}
 	}
 	return ""
-}
-
-// stringifyContent normalises a tool output field (string or content-block array).
-func stringifyContent(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		var b strings.Builder
-		for _, blk := range blocks {
-			if blk.Type == "text" || blk.Type == "" {
-				b.WriteString(blk.Text)
-			}
-		}
-		return b.String()
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-// stringifyJSON returns a compacted JSON string for a raw input payload.
-func stringifyJSON(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	return buf.String()
 }
 
 // extractErrorMessage decodes the "error" field of an error event, which
