@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -111,21 +112,26 @@ ScanLoop:
 	// scanErr is always nil — linereader handles ErrTooLong internally
 
 	if !sawTerminal {
+		exitCode := -1
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
 		c.logger.Warn("omp exited without terminal event",
 			"stdout_lines", lineCount,
-			"stderr_len", stderrBuf.Len())
-		c.emitTerminal(ctx, waitErr, nil, &stderrBuf, out)
+			"stderr_len", stderrBuf.Len(),
+			"exit_code", exitCode)
+		c.emitTerminal(ctx, waitErr, nil, &stderrBuf, exitCode, out)
 	}
 }
 
 // emitTerminal synthesises an EventError when the CLI exited without emitting
 // an agent_end/error event (e.g. crashed, killed on cancellation). scanErr is
 // the stdout reader error, if any; a too-long line (huge tool output) is
-// surfaced here as the real cause rather than the generic message. The send
-// is guarded by ctx so a cancelled consumer cannot deadlock the pump; if the
-// consumer is gone the error is logged instead of dropped silently.
-func (c *Client) emitTerminal(ctx context.Context, waitErr, scanErr error, stderrBuf *bytes.Buffer, out chan<- Event) {
-	msg := "omp exited without a terminal event"
+// surfaced here as the real cause rather than the generic message. exitCode is
+// the CLI's exit code when known (-1 if unavailable). The send is guarded by
+// ctx so a cancelled consumer cannot deadlock the pump.
+func (c *Client) emitTerminal(ctx context.Context, waitErr, scanErr error, stderrBuf *bytes.Buffer, exitCode int, out chan<- Event) {
+	msg := fmt.Sprintf("omp exited (code=%d) without a terminal event", exitCode)
 	switch {
 	case ctx.Err() != nil:
 		msg = "omp run cancelled: " + ctx.Err().Error()

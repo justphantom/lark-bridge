@@ -1,6 +1,8 @@
 package ompbridge
 
 import (
+	"time"
+
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -32,6 +34,11 @@ type Handler struct {
 	// maxAutoRetries caps how many consecutive auto_retry_start events are
 	// tolerated before the bridge aborts the turn. <=0 means unlimited.
 	maxAutoRetries int
+	// gcColdArchiveAfterDays / gcRetainNewestPerCwd / gcTimeout feed
+	// /session-gc's invocation of `omp gc --apply --archive`.
+	gcColdArchiveAfterDays int
+	gcRetainNewestPerCwd   int
+	gcTimeout              time.Duration
 }
 
 // HandlerConfig carries the scalar runtime config the Handler reads. It is
@@ -62,18 +69,28 @@ type HandlerConfig struct {
 	// tolerated before the bridge aborts the turn. <=0 means unlimited
 	// (default: 3 from config defaults).
 	MaxAutoRetries int
+
+	// GCColdArchiveAfterDays / GCRetainNewestPerCwd / GCTimeout feed
+	// /session-gc's invocation of `omp gc --apply --archive`. Zero values
+	// are filled by config applyDefaults.
+	GCColdArchiveAfterDays int
+	GCRetainNewestPerCwd   int
+	GCTimeout              time.Duration
 }
 
 // NewWithLogger builds a Handler. rpc is the backend IPC client used to emit
 // Control messages; logger is the main component logger.
 func NewWithLogger(r *router.Router, api ompAPI, rpc *backendrpc.Client, cfg HandlerConfig, logger *log.Logger) *Handler {
 	return &Handler{
-		Core:            bridgebase.NewCore(r, rpc, cfg.CoreConfig, logger),
-		agent:           api,
-		thinkingDefault: cfg.ThinkingDefault,
-		modelOptions:    cfg.ModelOptions,
-		approvalOptions: cfg.ApprovalOptions,
-		thinkingOptions: cfg.ThinkingOptions,
-		maxAutoRetries:  cfg.MaxAutoRetries,
+		Core:                   bridgebase.NewCore(r, rpc, cfg.CoreConfig, logger),
+		agent:                  api,
+		thinkingDefault:        cfg.ThinkingDefault,
+		modelOptions:           cfg.ModelOptions,
+		approvalOptions:        cfg.ApprovalOptions,
+		thinkingOptions:        cfg.ThinkingOptions,
+		maxAutoRetries:         cfg.MaxAutoRetries,
+		gcColdArchiveAfterDays: cfg.GCColdArchiveAfterDays,
+		gcRetainNewestPerCwd:   cfg.GCRetainNewestPerCwd,
+		gcTimeout:              cfg.GCTimeout,
 	}
 }

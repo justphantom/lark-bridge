@@ -110,6 +110,22 @@ func validate(cfg *Config) error {
 	if cfg.OMP.MaxConcurrent < 1 {
 		return fmt.Errorf("omp.max_concurrent must be >= 1, got %d", cfg.OMP.MaxConcurrent)
 	}
+	if cfg.OMP.AgentDir != "" {
+		if !filepath.IsAbs(cfg.OMP.AgentDir) {
+			return fmt.Errorf("omp.agent_dir must be an absolute path, got %q", cfg.OMP.AgentDir)
+		}
+		if err := ensureDir("omp.agent_dir", cfg.OMP.AgentDir, false); err != nil {
+			return err
+		}
+	}
+	if cfg.OMP.GCColdArchiveAfterDays < 0 {
+		return fmt.Errorf("omp.gc_cold_archive_after_days must be >= 0, got %d", cfg.OMP.GCColdArchiveAfterDays)
+	}
+	if cfg.OMP.GCRetainNewestPerCwd < 0 {
+		return fmt.Errorf("omp.gc_retain_newest_per_cwd must be >= 0, got %d", cfg.OMP.GCRetainNewestPerCwd)
+	}
+	// GCTimeout is a Duration: UnmarshalJSON already rejects non-positive
+	// explicit values; applyDefaults fills zero to 300s, so no extra check.
 
 	// StateDir writability.
 	if cfg.StateDir != "" {

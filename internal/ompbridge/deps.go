@@ -20,8 +20,9 @@ import (
 //
 // Run drives agent turns; ListModels runs `omp models --json` for the
 // interactive /model picker (provider catalog fetch, ~100-150s cold; cached
-// in the client). Session list/delete remain unsupported (omp's store is
-// cwd-bound and slow); pickers fall back to static config option lists.
+// in the client). ListSessions reads the omp session store from disk so
+// /session-list, /session-use and /session-clean can be implemented without
+// forking the slow CLI.
 type ompAPI interface {
 	// Run starts one agent turn and returns the event stream. The caller
 	// drains the channel until it is closed; a terminal event (agent_end /
@@ -30,4 +31,16 @@ type ompAPI interface {
 	// ListModels runs `omp models --json` for the interactive /model picker.
 	// Returns one `provider/id` selector per model.
 	ListModels(ctx context.Context) ([]string, error)
+	// ListSessions enumerates omp sessions whose cwd equals dir. Empty dir
+	// returns all sessions under the agent directory. It reads the filesystem
+	// directly and is fast enough to call synchronously.
+	ListSessions(ctx context.Context, dir string) ([]omp.Session, error)
+	// DeleteSession removes the omp session file (and sidecar directory) whose
+	// id equals id and whose cwd equals dir.
+	DeleteSession(ctx context.Context, dir, id string) error
+	// CleanSessions deletes every session whose cwd equals dir except keepID.
+	CleanSessions(ctx context.Context, dir, keepID string) ([]string, error)
+	// RunGC forks `omp gc --apply --archive --json` to reconcile the session
+	// store and the history.db/FTS index.
+	RunGC(ctx context.Context, opts omp.GCOptions) (omp.GCResult, error)
 }

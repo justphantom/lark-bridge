@@ -83,6 +83,7 @@ func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
 				MaxConcurrent:      cfg.OMP.MaxConcurrent,
 				ListTimeout:        time.Duration(cfg.OMP.ModelListTimeout),
 				ListCacheTTL:       time.Duration(cfg.OMP.ListCacheTTL) * time.Second,
+				AgentDir:           cfg.OMP.AgentDir,
 				Logger:             base.ComponentLogger("omp", getComponentLevel(cfg, "omp")),
 			})
 			return client.IsReady(ctx)
@@ -94,6 +95,7 @@ func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
 				MaxConcurrent:      cfg.OMP.MaxConcurrent,
 				ListTimeout:        time.Duration(cfg.OMP.ModelListTimeout),
 				ListCacheTTL:       time.Duration(cfg.OMP.ListCacheTTL) * time.Second,
+				AgentDir:           cfg.OMP.AgentDir,
 				Logger:             base.ComponentLogger("omp", getComponentLevel(cfg, "omp")),
 			})
 			return ompbridge.NewWithLogger(r, client, rpc, ompbridge.HandlerConfig{
@@ -108,11 +110,14 @@ func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
 					DebugRedact:         cfg.LogDebugRedact,
 					WorkspaceRoot:       os.Getenv("WORKSPACE_ROOT"),
 				},
-				ThinkingDefault: cfg.OMP.ThinkingLevel,
-				MaxAutoRetries:  cfg.OMP.MaxAutoRetries,
-				ModelOptions:    cfg.OMP.ModelOptions,
-				ApprovalOptions: cfg.OMP.ApprovalOptions,
-				ThinkingOptions: cfg.OMP.ThinkingOptions,
+				ThinkingDefault:        cfg.OMP.ThinkingLevel,
+				MaxAutoRetries:         cfg.OMP.MaxAutoRetries,
+				GCColdArchiveAfterDays: cfg.OMP.GCColdArchiveAfterDays,
+				GCRetainNewestPerCwd:   cfg.OMP.GCRetainNewestPerCwd,
+				GCTimeout:              time.Duration(cfg.OMP.GCTimeout),
+				ModelOptions:           cfg.OMP.ModelOptions,
+				ApprovalOptions:        cfg.OMP.ApprovalOptions,
+				ThinkingOptions:        cfg.OMP.ThinkingOptions,
 			}, base.ComponentLogger("bridge", getComponentLevel(cfg, "bridge"))), nil
 		},
 		LoggerForRouter: func(cfg *config.Config, base *log.BaseLogger) *log.Logger {

@@ -18,18 +18,22 @@ type commandResult = cmdutil.Result
 // initialization cycle.
 //
 // OMP's axes are model/approval/thinking (no agent concept, unlike opencode),
-// so /agent is dropped and /perm /thinking are added. /session-list/use/clean
-// are dropped too: omp's `session list` equivalent is cwd-bound and slow, and
-// v1 does not expose ListSessions/DeleteSession on ompAPI (§10.6). /settings
-// is claude-specific and omitted.
+// so /agent is dropped and /perm /thinking are added. /settings is
+// claude-specific and omitted.
 var commands *bridgebase.Commands[*Handler]
 
 func init() {
 	commands = bridgebase.NewCommands([]bridgebase.CommandSpec[*Handler]{
 		{Spec: cmdutil.Spec{Name: "/running", Summary: "显示所有运行中的 omp 会话",
 			Level: "info"}, Handler: (*Handler).cmdRunning},
-		{Spec: cmdutil.Spec{Name: "/session-new", Summary: "开启新的 omp 对话（保留工作目录，重置上下文）",
-			Title: "已开启新对话", Level: "success"}, Handler: (*Handler).cmdSessionNew},
+		{Spec: cmdutil.Spec{Name: "/session-list", Summary: "列出当前工作目录下的所有 omp 会话",
+			Level: "info"}, Handler: (*Handler).cmdSessionList},
+		{Spec: cmdutil.Spec{Name: "/session-use", Summary: "切换到同目录下其他会话；不带参数弹出选择",
+			Args: "[n]", Title: "已切换会话", Level: "success"}, Handler: (*Handler).cmdSessionUse},
+		{Spec: cmdutil.Spec{Name: "/session-clean", Summary: "清理会话：无参删当前目录除当前会话外的全部；带参仅删指定 ID",
+			Args: "[sessionID]", Title: "清理完成", Level: "success"}, Handler: (*Handler).cmdSessionClean},
+		{Spec: cmdutil.Spec{Name: "/session-gc", Summary: "运行 omp gc（归档冷会话并同步 history.db/FTS 索引）",
+			Title: "GC 完成", Level: "success"}, Handler: (*Handler).cmdSessionGC},
 		{Spec: cmdutil.Spec{Name: "/session-abort", Summary: "中止当前正在执行的 omp 调用",
 			Title: "已请求中止", Level: "success"}, Handler: (*Handler).cmdSessionAbort},
 		{Spec: cmdutil.Spec{Name: "/session-del", Summary: "删除当前群绑定的会话（下次提问会重建）",

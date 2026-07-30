@@ -82,6 +82,12 @@ type Options struct {
 	// makes repeated /model pickers instant); <0 disables caching (every
 	// call forks).
 	ListCacheTTL time.Duration
+	// AgentDir overrides the directory where omp persists sessions.
+	// Empty uses omp's default (~/.omp/agent), which is also what the
+	// CLI uses when neither PI_CODING_AGENT_DIR nor --session-dir is set.
+	// ListSessions enumerates {AgentDir}/sessions to find sessions for a
+	// given working directory.
+	AgentDir string
 	// Logger receives debug/warn lines. nil defaults to a no-op logger.
 	Logger *log.Logger
 }
@@ -92,6 +98,7 @@ type Options struct {
 type Client struct {
 	cliPath            string
 	appendSystemPrompt string
+	agentDir           string
 	logger             *log.Logger
 	sem                chan struct{}
 
@@ -130,6 +137,7 @@ func New(opts Options) *Client {
 	return &Client{
 		cliPath:            cliPath,
 		appendSystemPrompt: opts.AppendSystemPrompt,
+		agentDir:           opts.AgentDir,
 		logger:             logger,
 		sem:                make(chan struct{}, n),
 		listTimeout:        listTimeout,

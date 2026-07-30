@@ -44,7 +44,12 @@
     "approval_options":    ["always-ask", "write", "yolo"],
     "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"],
     "model_list_timeout":  "300s",
-    "list_cache_ttl":      3600
+    "list_cache_ttl":      3600,
+
+    "agent_dir":                  "",
+    "gc_cold_archive_after_days": 30,
+    "gc_retain_newest_per_cwd":   5,
+    "gc_timeout":                 "300s"
   },
 
   "miniagent": {

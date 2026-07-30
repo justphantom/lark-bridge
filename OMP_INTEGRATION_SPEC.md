@@ -40,6 +40,10 @@ lark-omp-back -version
 | `model_options` | []string | nil | `/model` 选择器的**静态兜底**列表；动态 `omp models --json` 失败或为空时使用（模型可用性部署相关，无编译期默认） |
 | `model_list_timeout` | duration | `300s` | `omp models --json` 获取超时。该子命令需联网拉取 provider catalog，实测冷启动 ~137s。picker 外层另有 bridgebase `listFnTimeout`(300s) 兜底，设小于此值可让 omp 提前失败而非等满预算 |
 | `list_cache_ttl` | int | `3600` | `omp models --json` 结果缓存秒数。0/未设→3600(1h)，负值禁用缓存（每次 fork，~100s+） |
+| `agent_dir` | string | `""` | 覆盖 omp 的 session/agent 目录；空值使用 omp 默认（`~/.omp/agent` 或 `PI_CODING_AGENT_DIR`）。仅当需要与 omp 默认路径隔离时显式设置，且必须是已存在的绝对路径 |
+| `gc_cold_archive_after_days` | int | `30` | `/session-gc` 调用 `omp gc --cold-archive-after-days`：超过该天数的非当前会话会被归档/清理 |
+| `gc_retain_newest_per_cwd` | int | `5` | `/session-gc` 调用 `omp gc --retain-newest-per-cwd`：每个工作目录至少保留的最新的会话数 |
+| `gc_timeout` | duration | `300s` | `/session-gc` 执行 `omp gc` 的最大等待时间 |
 | `approval_options` | []string | `["always-ask","write","yolo"]` | `/perm` 选择器选项 |
 | `thinking_options` | []string | `["off","minimal","low","medium","high","xhigh","max","auto"]` | `/thinking` 选择器选项 |
 
@@ -107,7 +111,10 @@ omp -p --mode json \
 
 ### 4.1 会话操作注意事项
 
-- OMP 的 session 存储/列表命令是 **cwd-bound** 且冷启动极慢，v1 不在 `ompAPI` 暴露 `ListSessions`/`DeleteSession`，因此**不提供** `/session-list` / `/session-use` / `/session-clean`（与 claude/opencode 的差异，见设计 §10.6）。（`omp models --json` 动态列表**已支持**，见 §8 `/model`：实测冷启动 ~137s，靠 300s 超时 + 1h 缓存兜底，失败回退静态 `model_options`。）
+- OMP 的 session 文件以 `{agent_dir}/sessions/<encoded-cwd>/<base>.jsonl` 形式落盘，并附带可选的 `<base>`  sidecar 目录。bridge 直接读取文件头来实现 `/session-list` / `/session-use` / `/session-clean`，无需 fork omp CLI，因此**不会**受 `omp models --json` 那种 ~100s 冷启动的影响。
+- `/session-list` 列出当前绑定目录下的所有会话；`/session-use` 切换当前群绑定的会话 ID；`/session-clean` 删除指定或当前目录下的会话（保留当前绑定），并通过权限卡片确认。
+- `/session-gc` 调用官方 `omp gc --apply --archive --json` 来整理 session 文件、重建 `history.db` 与 FTS 索引；配置项 `gc_cold_archive_after_days`、`gc_retain_newest_per_cwd`、`gc_timeout` 控制其行为。
+- `--resume <id>` 若 id 不存在，omp 以 exit 1 + stderr `Error: Session "<id>" not found.` 退出；bridge 判定为**过期会话**，清空 `sessionID` 重试一次。
 
 ## 5. 消息/事件流
 
@@ -185,6 +192,10 @@ omp-back 支持以下斜杠命令：
 |---|---|
 | `/running` | 显示运行中的 omp 会话 |
 | `/session-new` | 开启新对话（保留目录，重置上下文） |
+| `/session-list` | 列出当前目录下的 omp 会话 |
+| `/session-use [n]` | 切换当前群绑定的会话 |
+| `/session-clean [id]` | 删除当前目录下其他会话（或指定 id），需确认 |
+| `/session-gc` | 调用 `omp gc` 整理归档会话并重建索引 |
 | `/session-abort` | 中止当前调用 |
 | `/session-del` | 删除当前群绑定的会话 |
 | `/current` | 显示当前会话/目录/模型/审批/思考级别 |

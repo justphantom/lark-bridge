@@ -109,6 +109,15 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.OMP.MaxAutoRetries == 0 {
 		cfg.OMP.MaxAutoRetries = 3
 	}
+	if cfg.OMP.GCColdArchiveAfterDays <= 0 {
+		cfg.OMP.GCColdArchiveAfterDays = 30
+	}
+	if cfg.OMP.GCRetainNewestPerCwd <= 0 {
+		cfg.OMP.GCRetainNewestPerCwd = 5
+	}
+	if cfg.OMP.GCTimeout == 0 {
+		cfg.OMP.GCTimeout = Duration(300 * time.Second)
+	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}

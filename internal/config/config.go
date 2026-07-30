@@ -166,6 +166,11 @@ type OMP struct {
 	StreamHistory int `json:"stream_history,omitempty"`
 	// AppendSystemPrompt is passed verbatim as --append-system-prompt.
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
+	// AgentDir overrides the directory where omp persists sessions. Empty
+	// uses omp's default (~/.omp/agent), matching the CLI when neither
+	// PI_CODING_AGENT_DIR nor --session-dir is set. ListSessions enumerates
+	// {AgentDir}/sessions for /session-list, /session-use and /session-clean.
+	AgentDir string `json:"agent_dir,omitempty"`
 	// ApprovalMode is the default --approval-mode. Empty defaults to "write"
 	// (≈ claude acceptEdits): the CLI's "always-ask" mode prompts
 	// interactively, which stalls the non-interactive -p stream; "yolo"
@@ -205,6 +210,15 @@ type OMP struct {
 	// tolerated before the bridge aborts the turn. <=0/unset -> 3 (the
 	// default). Set to a negative value to disable the limit entirely.
 	MaxAutoRetries int `json:"max_auto_retries,omitempty"`
+	// GCColdArchiveAfterDays is passed to `omp gc --cold-archive-after-days`
+	// when /session-gc runs. <=0/unset -> 30.
+	GCColdArchiveAfterDays int `json:"gc_cold_archive_after_days,omitempty"`
+	// GCRetainNewestPerCwd is passed to `omp gc --retain-newest-per-cwd`
+	// when /session-gc runs. <=0/unset -> 5.
+	GCRetainNewestPerCwd int `json:"gc_retain_newest_per_cwd,omitempty"`
+	// GCTimeout bounds the `omp gc --apply ...` fork for /session-gc. Measured
+	// at ~16-26s on a warm cache; 300s gives headroom. 0/unset -> 300s.
+	GCTimeout Duration `json:"gc_timeout,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which

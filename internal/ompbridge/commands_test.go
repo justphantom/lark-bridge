@@ -30,6 +30,22 @@ func (a fakeAgent) ListModels(context.Context) ([]string, error) {
 	return a.models, nil
 }
 
+func (fakeAgent) ListSessions(context.Context, string) ([]omp.Session, error) {
+	return nil, nil
+}
+
+func (fakeAgent) DeleteSession(context.Context, string, string) error {
+	return nil
+}
+
+func (fakeAgent) CleanSessions(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+
+func (fakeAgent) RunGC(context.Context, omp.GCOptions) (omp.GCResult, error) {
+	return omp.GCResult{}, nil
+}
+
 // newTestHandler builds a Handler with the default fakeAgent (dynamic model
 // list empty → /model picker falls back to static ModelOptions) and nil rpc
 // (emits are no-ops) so tests can drive pickers via h.Answers and assert on

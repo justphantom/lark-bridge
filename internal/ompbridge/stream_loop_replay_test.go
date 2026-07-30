@@ -23,7 +23,17 @@ func (closedStreamOmp) Run(context.Context, omp.RunOptions) (<-chan omp.Event, e
 	return ch, nil
 }
 func (closedStreamOmp) ListModels(context.Context) ([]string, error) { return nil, nil }
-func (closedStreamOmp) IsReady(context.Context) error                { return nil }
+func (closedStreamOmp) ListSessions(context.Context, string) ([]omp.Session, error) {
+	return nil, nil
+}
+func (closedStreamOmp) DeleteSession(context.Context, string, string) error { return nil }
+func (closedStreamOmp) CleanSessions(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+func (closedStreamOmp) RunGC(context.Context, omp.GCOptions) (omp.GCResult, error) {
+	return omp.GCResult{}, nil
+}
+func (closedStreamOmp) IsReady(context.Context) error { return nil }
 
 // ompEventChan buffers events into a closed channel the way a real omp Run
 // would, so streamRun can be driven directly without a subprocess.

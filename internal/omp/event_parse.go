@@ -88,6 +88,13 @@ func parseEvent(line string) (Event, bool, error) {
 
 	var head ndjsonLine
 	if err := json.Unmarshal([]byte(line), &head); err != nil {
+		// Defensive terminal detection: if a malformed line is recognisably
+		// an agent_end event, treat it as terminal rather than dropping it.
+		// This covers truncated/invalid-agent_end lines that would otherwise
+		// trigger the generic "exited without a terminal event" message.
+		if looksLikeAgentEnd(line) {
+			return Event{Type: EventAgentEnd, Raw: line}, true, nil
+		}
 		return Event{}, false, fmt.Errorf("parse json: %w", err)
 	}
 
@@ -177,8 +184,17 @@ func parseEvent(line string) (Event, bool, error) {
 	}
 }
 
+// looksLikeAgentEnd is a cheap heuristic for recognising an agent_end line
+// that JSON decoding could not parse (truncated or otherwise malformed). It
+// checks for the literal `"type":"agent_end"` marker so the bridge still
+// reaches a terminal event instead of synthesising a vague error.
+func looksLikeAgentEnd(line string) bool {
+	return strings.Contains(line, `"type":"agent_end"`)
+}
+
 // parseMessageEnd extracts usage from a role=assistant message_end, or
-// synthesises a terminal EventError when stopReason=="error" (§10.10).
+// synthesises a terminal EventError when stopReason indicates failure
+// ("error" or other terminal reasons like "aborted"/"stopped").
 func parseMessageEnd(base Event, raw json.RawMessage) (Event, bool, error) {
 	if len(raw) == 0 {
 		// No message envelope: degrade to a bare EventMessageEnd so the
@@ -192,11 +208,17 @@ func parseMessageEnd(base Event, raw json.RawMessage) (Event, bool, error) {
 	}
 	// §10.10: a model error surfaces as assistant message with
 	// stopReason="error" + errorMessage; there is no standalone error event.
-	// Synthesise EventError so the bridge's terminal path fires.
-	if msg.StopReason == "error" {
+	// Also treat other terminal stopReasons as errors so the bridge's terminal
+	// path fires instead of falling through to the generic "no terminal event"
+	// message.
+	switch msg.StopReason {
+	case "error", "aborted", "stopped", "cancelled":
 		m := msg.ErrorMessage
 		if strings.TrimSpace(m) == "" {
 			m = "OMP 运行出错"
+			if msg.StopReason != "error" {
+				m = "OMP 运行中断（" + msg.StopReason + "）"
+			}
 		}
 		base.Type = EventError
 		base.IsError = true
