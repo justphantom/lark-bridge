@@ -12,7 +12,7 @@ import (
 // isLocalAgentKind reports whether kind is claude's true AI subagent class.
 // local_bash (background shell wrapped as a task) returns false so the
 // renderer keeps it as a leaf Bash row; only local_agent gets the dedicated
-// subagent zone (see docs/subagent-rendering-design.md §6.4).
+// subagent zone.
 func isLocalAgentKind(kind string) bool { return kind == "local_agent" }
 
 // extractTaskLastToolName parses last_tool_name from a task_progress system

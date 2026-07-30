@@ -2,7 +2,6 @@
 
 > 本文档归纳 `lark-bridge` 与 Oh My Pi（omp）CLI 的对接协议、事件格式、配置项、生命周期与接入方式。
 > 对应实现：`cmd/omp-back/`、`internal/omp/`、`internal/ompbridge/`。
-> 配套文档：`docs/omp-back-design.md`（设计）、`docs/omp-integration.md`（CLI 调研）。
 
 ## 1. 整体架构
 

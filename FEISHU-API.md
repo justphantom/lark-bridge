@@ -3,7 +3,7 @@
 **最后更新**：2026-07-27
 **代码基线**：`main`（含 status-monitor 改动）
 **范围**：lark-bridge 对飞书开放平台的**全部**接口调用——REST 发消息/更新消息、tenant_access_token 鉴权、WebSocket 长连接（事件接收/卡片回调/心跳/ACK/重连）。
-**实现说明**：本项目**未使用任何第三方飞书 SDK**（已移除 `oapi-sdk-go`、`gorilla/websocket`、`gogo/protobuf`）。全部接口在 `internal/lark/`（客户端核心）+ `internal/feishu/`（业务封装）自实现：手写 RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + REST 收发。背景见 `docs/lark-client-rewrite.md`。
+**实现说明**：本项目**未使用任何第三方飞书 SDK**（已移除 `oapi-sdk-go`、`gorilla/websocket`、`gogo/protobuf`）。全部接口在 `internal/lark/`（客户端核心）+ `internal/feishu/`（业务封装）自实现：手写 RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + REST 收发。
 
 > 所有断言带 `file:line`，精确到源行。仅 `internal/lark/` 与 `internal/feishu/` 直接调飞书 API；`backendrpc`/`miniagent` 中的 HTTP 调用目标是项目自有后端，不属于飞书接口。
 

@@ -10,8 +10,6 @@ import (
 // most recent detail. Far smaller than maxExpandedTodos (10) because a
 // subagent block spans 3-4 lines (type+title+meta+preview) vs a todo's 1 —
 // 10 subagents would consume the card's whole element budget.
-//
-// See docs/subagent-rendering-design.md §4.6.1 for the threshold rationale.
 const maxExpandedSubagents = 3
 
 // maxSubagentPreviewRunes caps the preview shown on the card. The full
@@ -151,7 +149,7 @@ func (s *ProgressState) AddSubagentResult(info SubagentInfo) {
 }
 
 // renderSubagentZone builds the subagent zone markdown, or "" when no
-// subagents exist. Layout (see docs/subagent-rendering-design.md §4.2/§4.6.1):
+// subagents exist. Layout:
 //
 //   - ≤ maxExpandedSubagents active (running+completed): each renders as a
 //     multi-line block (type + status + duration, title, live desc or

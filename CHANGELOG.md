@@ -16,8 +16,7 @@ v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后�
 
 - **omp-back：Oh My Pi (omp) CLI agent 后端**（`3f07e05` / `dca1719` / `7b65459`）。第 7 个
   二进制 `lark-omp-back`，第 5 个业务后端。每个 prompt fork 一次 `omp -p --mode json`
-  子进程，消费其 NDJSON 事件流。设计见 `docs/omp-back-design.md`，对接规范见
-  `OMP_INTEGRATION_SPEC.md`。
+  子进程，消费其 NDJSON 事件流。对接规范见 `OMP_INTEGRATION_SPEC.md`。
   - 新增 `internal/omp`（CLI 子进程驱动 + models 列表缓存）、`internal/ompbridge`
     （业务逻辑）。斜杠命令对齐 claude/opencode：`/running` `/session-new` `/session-abort`
     `/session-del` `/current` `/model` `/perm` `/thinking` `/cd` `/send` `/pull` `/push` `/help`。
@@ -41,7 +40,7 @@ v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后�
 
 ### Changed
 
-- **后端共享代码下沉重构**（`5e36e05`，`docs/backend-refactor-plan.md` phases 1-3）。
+- **后端共享代码下沉重构**（`5e36e05`）。
   行为保持（behaviour-preserving），不改变对外协议。四套 CLI 后端（claude / opencode / omp /
   miniagent）的重复 prologue / helper / emit-forwarder 收敛到共享包：
   - `internal/bridgebase`：新增共享工具（`NonEmpty`/`TruncateForDebug`/`ResolveModel` 等）、
@@ -88,13 +87,13 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
 > 修正（2026-07-30，随 v1.7.0）：本节早前曾误述 xlsx 「首次引入第三方依赖
 > `xuri/excelize/v2`、打破零依赖硬约束」。实际发布的 v1.6.0 xlsx/pptx 均为纯 Go
 > 标准库自研（`go.mod` 无 `require`、无 `go.sum`），零依赖硬约束从未被打破。
-> 相关条目已据实更正，详见 `docs/release-readiness-2026-07-30.md` R2。
+> 相关条目已据实更正。
 
 ### Added
 
 - **pptx / xlsx 文件上传 → markdown 管线**：feishu-front 现可接收群聊上传的
   `.pptx` / `.xlsx` 文件，转成 GitHub-flavoured Markdown 落到 inbox，agent
-  走与 docx 完全相同的 Read 路径。设计见 `docs/office-extract-design.md`。
+  走与 docx 完全相同的 Read 路径。
   - pptx 走纯 Go 标准库自研（`archive/zip` + `encoding/xml`），L1 档位：
     全页提标题 / 正文 / 项目列表 / 简单表格；图表与 SmartArt 输出 HTML 注释
     占位（决策 9A）；图片完全忽略（决策 3A）。幻灯片顺序按
@@ -117,13 +116,13 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
     枚举校验。
   - **零第三方依赖硬约束保持不变**：xlsx 与 pptx 均为纯 Go 标准库自研解析
     （`go.mod` 无 `require`、无 `go.sum`），与 `CODING_STANDARDS.md` 的
-    「直接依赖仅 Go 标准库」一致。设计权衡见 `docs/office-extract-design.md`。
+    「直接依赖仅 Go 标准库」一致。
 
 - **`/send` 指令：从绑定工作目录发送文件到飞书群**：三个业务后端
   （claude-back / opencode-back / miniagent-back）现支持 `/send` 与
   `/send <relative-path>`。后端读文件并 emit `TypeFile` Control，**前端**完成
   飞书上传 + 发送（凭证与网络出口集中在前端，后端不持飞书凭证）；**不经过
-  agent LLM**。设计见 `docs/send-file-design.md`。
+  agent LLM**。
   - 协议新增 `TypeFile` Control + `FilePayload`（base64 内容，30 MiB 上限），
     validate 要求 payload + chatID。
   - `internal/lark`：新增 `Client.UploadFile`（multipart POST `/im/v1/files`）；
@@ -176,8 +175,7 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
 
 - **docx 转换去 pandoc 化（breaking）**：docx → GFM 改为纯 Go 标准库进程内
   解析（`archive/zip` + `encoding/xml`），不再调用外部 pandoc 子进程。
-  设计见 `docs/docx-extract-design.md`（推翻 office-extract-design.md 的
-  2026-07-28「不替换」结论）。
+  该方案推翻了 2026-07-28 的「不替换 pandoc」结论。
   - 新增 `internal/fileconvert/convert_docx*.go`：`styles.xml`（标题 /
     样式列表）与 `numbering.xml`（多级编号）两遍预解析 + `document.xml`
     流式提取；支持标题 H1-H9（outlineLvl 优先、name 回退）、加粗 / 斜体 /
@@ -201,8 +199,7 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
 
 - **xlsx 转换去 excelize 化（输出 breaking）**：xlsx → GFM 改为纯 Go 标准库
   进程内解析（`archive/zip` + `encoding/xml`），`go.mod` 恢复零第三方依赖
-  （excelize 及其 8 个间接依赖全部移除，office-extract-design.md §5.1 的
-  豁免随之撤销）。设计见 `docs/xlsx-extract-design.md`。
+  （excelize 及其 8 个间接依赖全部移除，此前的依赖豁免随之撤销）。
   - 新增 `convert_xlsx_sst.go`（sharedStrings 含富文本拼接、注音跳过）、
     `convert_xlsx_style.go`（numFmt L1：内建日期 ID 查表 + 保守自定义
     模式识别 + 1900/1904 双纪元序列值转换）、`convert_xlsx_sheet.go`
@@ -224,7 +221,7 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
   10 分钟失效，后端 `confirmTimeout` 只等 5 分钟，5–10 分钟窗口内的提交因
   `AnswerBroker` 槽已取消而被静默丢弃。`confirmTimeout` 改为单源派生
   `cardkit.InteractiveTimeout + time.Minute`（leaf pkg 引入无环依赖，杜绝再次
-  漂移）。审查见 `docs/deploy-some-review-2026-07-29.md` P1。`/deploy-force`
+  漂移）。`/deploy-force`
   共用 `confirmTimeout`，同步受益。
   - 附带 P2：`acquireAndRun` 不再吃 caller 的 picker-wait ctx，notify/notifyProgress
     自派 `deployNoticeTimeout`（10s），避免 deadline 临近时 banner POST 因 ctx
@@ -240,8 +237,7 @@ v1.5.0 之后的增量。含 2 处 breaking change（fileconvert 输出语义、
 
 ### Removed
 
-- 死代码清理（全仓 deadcode + 交叉核对，审查记录见
-  `docs/repo-audit-2026-07-29.md`）：
+- 死代码清理（全仓 deadcode + 交叉核对，2026-07-29 仓库审计）：
   - `bridgebase.WithReplyToID`（零调用，`Dispatch` 直接 `context.WithValue`）
   - `bridgebase/throttle.go` 整文件（`ControlThrottle`/`TextThrottle`，
     生产无调用方，连同其测试）
@@ -264,9 +260,7 @@ omitempty 新字段（非 frontend-override），`/v1/metrics/<id>` 与
 
 - **总览卡主机/进程监控（多机部署）**：status-monitor 总览卡新增「主机」
   （load / 内存 / state_dir 磁盘占用）与「进程」（各 backend 版本号 +
-  systemd cgroup 内存）两个 section。设计文档见
-  `docs/status-monitor-metrics-design.md`（push-via-frontend 方案，D1/D2
-  已定）。
+  systemd cgroup 内存）两个 section。采用 push-via-frontend 方案（D1/D2 已定）。
   - 新增 `internal/hostmetrics` 包：纯函数采集 `/proc/loadavg`、
     `/proc/meminfo`、`statfs`（state_dir 挂载点，失败 fallback `/`）、
     cgroup v2 `memory.current`（读不到 → 卡片显示 `—`），6 个 binary 共用；
@@ -356,8 +350,7 @@ cgroup 内存回收。所有改动 opt-in：缺依赖 / 权限时降级通知，
 
 - **飞书富文本消息（post）支持 + 内联图片下载（opt-in）**：feishu-front
   现可接收 `MsgType=post` 的富文本消息，转换成 Markdown 物化到 inbox。
-  设计文档见 `docs/post-rich-text-design.md`（方案 C，已按推荐定档全部
-  5 个决策点）。
+  采用方案 C（已按推荐定档全部 5 个决策点）。
   - 新增 `internal/feishu/post.go`：`Post` / `PostNode` AST +
     `ParsePost(content)`（locale 兜底）+ `RenderNodeToMarkdown`（纯函数）+
     `RenderPostToMarkdown`（含占位符完整渲染）+ `StripBotMentionsFromPost`

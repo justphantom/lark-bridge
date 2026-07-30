@@ -258,7 +258,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// Zone 0.5: live reasoning. The model thinks before it acts, so the
 	// thinking zone sits between the banner and the tool zones — above the
 	// action it is reasoning about. Grey + dimmed to read as context, not
-	// output; capped to the trailing maxThinkingRunes (default 50) so a long
+	// output; capped to the trailing maxThinkingRunes (default 100) so a long
 	// reasoning block cannot crowd the action zones off the card.
 	maxThinking := s.maxThinkingRunes
 	if maxThinking <= 0 {
@@ -308,7 +308,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// leaf actions. Only local_agent / opencode task subagents land here
 	// (claude local_bash stays in the leaf zones via IsSubagent). When no
 	// subagents exist, the zone is omitted entirely rather than rendering
-	// an empty header. See docs/subagent-rendering-design.md §4.2/§4.6.1.
+	// an empty header.
 	if body := renderSubagentZone(s.subagents); body != "" {
 		zones = append(zones, cardkit.MarkdownElement(body))
 	}
@@ -362,12 +362,12 @@ func appendZones(zones []cardkit.Element) []cardkit.Element {
 
 // defaultMaxThinkingRunes is the fallback cap on the reasoning shown in the
 // progress card's "思考中" zone when no override is wired via
-// SetMaxThinkingRunes. The card is a live dashboard: only the trailing ~50
+// SetMaxThinkingRunes. The card is a live dashboard: only the trailing ~100
 // runes of the model's current reasoning are useful as a "what it's doing
 // right now" hint, not a reading surface — showing more crowds the action
 // zones without adding value. The full reasoning stays in the session for
 // later review.
-const defaultMaxThinkingRunes = 50
+const defaultMaxThinkingRunes = 100
 
 // renderThinkingZone returns the reasoning zone element, or nil when thinking
 // is empty. The body is grey-dimmed markdown under a "💭 思考中" header, capped

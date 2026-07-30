@@ -116,8 +116,7 @@ type ToolResultPayload struct {
 // ToolResultPayload.Subagent (terminal). It lifts a subagent out of the
 // leaf-tool-row rendering into a dedicated zone on the progress card.
 //
-// Field sourcing differs per backend (see docs/subagent-rendering-design.md
-// §5.6, §6.2): opencode inlines all of this in its single completed task
+// Field sourcing differs per backend: opencode inlines all of this in its single completed task
 // event; claude local_agent distributes it across task_started (Type/Title/
 // TaskType/ChildSession) + task_progress (Description/ToolUses/DurationMs/
 // LastToolName/TotalTokens) + task_notification (Preview/OutputBytes/Status).

@@ -84,7 +84,6 @@ lark-bridge/
 │   ├── log/  protocol/  router/  streamarchive/  strutil/  usage/
 │   └── ...
 ├── deploy/                      # systemd 部署脚本与配置模板
-├── docs/                        # 设计/审查文档（.gitignore 内，本地）
 ├── scripts/                     # 辅助脚本（.gitignore 内）
 ├── bin/                         # 编译产物（.gitignore 内）
 ├── config.example.json
@@ -518,7 +517,7 @@ func TestControlRoundTrip(t *testing.T) {
 | `feishufront.TurnManager.TurnsByBackend` | `feishufront/turn.go` | 仅同包测试 | 零生产调用（原服务 `OnBackendOffline` 清理，该路径已废弃）；保留作外部诊断接口 |
 | `usage.Store.Snapshot` | `usage/usage.go` | 仅同包测试 | 同包测试断言用量快照；保留供未来跨包诊断/CLI 复用 |
 
-> 触发于 `docs/repo-audit-2026-07-29.md` §1.2 的「保留 vs 收口」决策项；本节即该决策的持久化记录（`docs/` 在 `.gitignore` 内，不入版本控制）。后两项（仅同包使用）可在后续维护中改为未导出收口，不阻塞发版。
+> 触发于 2026-07-29 仓库审计 §1.2 的「保留 vs 收口」决策项；本节即该决策的持久化记录。后两项（仅同包使用）可在后续维护中改为未导出收口，不阻塞发版。
 
 ---
 
@@ -600,7 +599,7 @@ make upgrade-monitor         # ~2s 离线升级 deploy-monitor
 - 允许「补记」（`> 本段同时补记 v1.1.0 期间合入但当时未在 CHANGELOG 注明的两项`）。
 
 ### 10.5 .gitignore 约定（`.gitignore`）
-不入库的：`/bin/`、`/scripts/`、`/docs/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。**`/docs/` 被 gitignore**——设计文档本地保留、不入仓。
+不入库的：`/bin/`、`/scripts/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。
 
 ---
 

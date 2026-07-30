@@ -105,7 +105,6 @@ lark-bridge/
 │   ├── atomicwrite/          # tmp+fsync+rename 原子写
 │   └── strutil/              # 截断/脱敏/环境变量工具
 ├── deploy/                   # 部署脚本 + 配置模板 + systemd 示例
-├── docs/                     # 15 篇设计/审查文档（.gitignore，本地）
 ├── scripts/                  # openapi_to_md.py（外部工具，.gitignore）
 ├── bin/                      # 编译产物（gitignore）
 ├── config.example.json       # 配置模板
@@ -124,7 +123,6 @@ lark-bridge/
 | `cmd/` | 7 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
 | `internal/` | 全部业务代码，28 个包 | 不对外暴露 |
 | `deploy/` | `deploy.sh`（业务 5 服务：feishu/claude/opencode/omp/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
-| `docs/` | 设计文档与代码审查记录（本地不入仓） | 决策溯源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
 | `bin/` | `make build` 产物（7 个二进制） | gitignore |
 

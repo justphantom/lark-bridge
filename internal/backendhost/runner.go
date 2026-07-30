@@ -9,8 +9,7 @@
 // It deliberately does NOT cover deploy-monitor / status-monitor /
 // miniagent-back — those have no router, no usage store, no CLI client, and
 // structurally different `run()` shapes. Forcing them into the same Runner
-// would make every field "optional" and the abstraction non-binding. See
-// docs/backend-refactor-plan.md §3.3 for the rationale.
+// would make every field "optional" and the abstraction non-binding.
 package backendhost
 
 import (

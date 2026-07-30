@@ -18,7 +18,7 @@ import (
 // body.md on disk, downloading inline images into the prompt inbox, then
 // forwards a prompt naming body.md's absolute path to the bound backend.
 //
-// Behaviour matrix (matches docs/post-rich-text-design.md §7):
+// Behaviour matrix:
 //   - Post nil (parse failed at feishu layer) → caller (handlePostIncoming)
 //     surfaces a notice; this func is only called when Post != nil.
 //   - 0 images → body.md written, prompt sent.

@@ -33,8 +33,7 @@ type PromptScaffold struct {
 // EndPrompt / mine.Cancel) in their own runPrompt — the scaffold only
 // centralises the ctx+timer plumbing that was byte-identical across
 // claude/opencode/omp. The divergent middle logic (opts construction, stale
-// retry, streamRun dispatch, RecordUsage / EmitTerminal) stays local; see
-// §3.2.6 of docs/backend-refactor-plan.md for why.
+// retry, streamRun dispatch, RecordUsage / EmitTerminal) stays local.
 //
 // idleTimeout > 0 wires the idle watchdog: each OnActivity() call resets the
 // timer; when no event arrives for idleTimeout the timer fires

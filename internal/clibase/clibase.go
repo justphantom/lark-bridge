@@ -7,7 +7,7 @@
 // shared Pump — the per-backend pump is concurrency-sensitive (process group
 // kill, stderr goroutine, sem release), and merging three independent fault
 // domains into one shared loop would make a bug in one backend take down all
-// three. See docs/backend-refactor-plan.md §3.1 for the rationale.
+// three.
 package clibase
 
 import (
