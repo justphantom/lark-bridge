@@ -184,12 +184,21 @@ func questionAnswerSummary(choices []string, custom string) string {
 
 // choiceLabel turns the machine choice value into the button label the user
 // actually clicked, so the confirmation echo matches what was on screen.
+// "allow"/"deny" come from allow/deny permission cards; "confirm"/"cancel"
+// come from confirmation-style permission cards (e.g. opencode /session-clean).
+// The exact button Label (e.g. "确认删除") is not carried back in the action,
+// so these map to the generic word; any unmapped value is returned verbatim
+// rather than swallowed.
 func choiceLabel(c string) string {
 	switch c {
 	case "allow":
 		return "允许"
 	case "deny":
 		return "拒绝"
+	case "confirm":
+		return "确认"
+	case "cancel":
+		return "取消"
 	}
 	return c
 }
