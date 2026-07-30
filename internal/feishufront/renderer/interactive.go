@@ -106,10 +106,14 @@ func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer 
 		opts = opts[:maxPermissionOptions]
 	}
 	actions := make([]cardkit.Action, 0, len(opts))
-	for _, opt := range opts {
+	for i, opt := range opts {
+		// The first option is the positive/confirm action. Mark it primary so
+		// RenderInteractiveSubmitted shows "已提交" instead of "处理中" after the
+		// user clicks, making the disabled state unambiguous.
+		primary := i == 0
 		actions = append(actions, cardkit.ButtonAction(
 			truncateRunes(opt.Label, maxInteractiveBodyRunes), "permission",
-			map[string]any{"requestID": p.RequestID, "choice": opt.Value}, false, false))
+			map[string]any{"requestID": p.RequestID, "choice": opt.Value}, primary, false))
 	}
 	return cardkit.Card(header, footer, elements, actions)
 }

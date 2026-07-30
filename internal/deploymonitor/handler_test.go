@@ -141,15 +141,27 @@ func TestHandleEvent_TerminalNoticeCarriesCardMessageID(t *testing.T) {
 	if err := h.HandleEvent(context.Background(), promptEventWithCard("cc", "/deploy", "om_progress")); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}
+	// /deploy now requires confirmation; deliver it so the deploy runs.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if findPermission(rpc.snapshot()) == nil {
+		t.Fatalf("expected a TypePermission confirm card, got %+v", rpc.snapshot())
+	}
+	if err := h.HandleEvent(context.Background(), answerEvent("cc", "msg-cc", "confirm")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+
 	for range 100 {
-		if len(rpc.snapshot()) >= 2 {
+		if len(rpc.snapshot()) >= 3 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	all := rpc.snapshot()
-	if len(all) < 2 {
-		t.Fatalf("want banner + terminal notice, got %d controls", len(all))
+	if len(all) < 3 {
+		t.Fatalf("want permission + banner + terminal notice, got %d controls", len(all))
 	}
 	terminal := all[len(all)-1]
 	if terminal.Type != protocol.TypeNotice || terminal.Notice == nil {
@@ -172,22 +184,34 @@ func TestHandleEvent_DeployTriggersAndNotices(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	// Immediate emit is now a non-terminal TypeProgress banner bound to the
-	// promptID (single-card lifecycle: no separate "triggered" card).
-	immediate := rpc.snapshot()
-	if len(immediate) != 1 || immediate[0].Type != protocol.TypeProgress {
-		t.Fatalf("expected one immediate TypeProgress banner, got %+v", immediate)
+	// /deploy now emits a TypePermission confirm card first.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
 	}
-	if immediate[0].PromptID != "msg-c1" {
-		t.Errorf("banner PromptID = %q, want msg-c1", immediate[0].PromptID)
+	perm := findPermission(rpc.snapshot())
+	if perm == nil {
+		t.Fatalf("expected a TypePermission confirm card, got %+v", rpc.snapshot())
 	}
-	if immediate[0].Progress == nil || !strings.Contains(immediate[0].Progress.Description, "部署") {
-		t.Errorf("banner description = %+v, want contains '部署'", immediate[0].Progress)
+	if perm.PromptID != "msg-c1" {
+		t.Errorf("confirm card PromptID = %q, want msg-c1", perm.PromptID)
+	}
+	if !perm.Permission.TakeOverProgress {
+		t.Errorf("deploy confirm card must TakeOverProgress")
+	}
+	// The deploy must NOT start before the user confirms.
+	if cmd.callCount() != 0 {
+		t.Fatalf("deploy ran before confirm: calls=%d", cmd.callCount())
+	}
+
+	// Deliver the confirm click.
+	if err := h.HandleEvent(context.Background(), answerEvent("c1", "msg-c1", "confirm")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
 	}
 
 	// Terminal notice arrives after the async deploy; poll up to 1s.
-	deadline := time.Now().Add(time.Second)
-	for cmd.callCount() != 1 || len(rpc.snapshot()) < 2 {
+	deadline = time.Now().Add(time.Second)
+	for cmd.callCount() != 1 || len(rpc.snapshot()) < 3 {
 		if time.Now().After(deadline) {
 			t.Fatalf("deploy did not complete: calls=%d notices=%d",
 				cmd.callCount(), len(rpc.snapshot()))
@@ -219,16 +243,22 @@ func TestHandleEvent_FailureEmitsError(t *testing.T) {
 	h := newHandler(rpc, cmd)
 
 	_ = h.HandleEvent(context.Background(), promptEvent("c2", "/deploy"))
-
+	// Wait for confirm card and confirm so the deploy actually runs and fails.
 	deadline := time.Now().Add(time.Second)
-	for len(rpc.snapshot()) < 2 {
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = h.HandleEvent(context.Background(), answerEvent("c2", "msg-c2", "confirm"))
+
+	deadline = time.Now().Add(time.Second)
+	for len(rpc.snapshot()) < 3 {
 		if time.Now().After(deadline) {
 			t.Fatalf("no terminal notice, got %+v", rpc.snapshot())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	terminal := rpc.snapshot()[1]
+	terminal := rpc.snapshot()[len(rpc.snapshot())-1]
 	if terminal.Notice.Level != "error" {
 		t.Errorf("want error level, got %s", terminal.Notice.Level)
 	}
@@ -266,12 +296,23 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 	cmd := &fakeCommander{cancelCh: release}
 	h := newHandler(rpc, cmd)
 
-	// First /deploy starts a deploy that blocks until we close `release`.
+	// First /deploy emits a confirm card. Confirm it, then the deploy blocks
+	// until we close `release`.
 	if err := h.HandleEvent(context.Background(), promptEvent("c4", "/deploy")); err != nil {
 		t.Fatalf("first HandleEvent: %v", err)
 	}
-	// Wait for the first deploy to enter run().
 	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if findPermission(rpc.snapshot()) == nil {
+		t.Fatalf("confirm card never emitted")
+	}
+	if err := h.HandleEvent(context.Background(), answerEvent("c4", "msg-c4", "confirm")); err != nil {
+		t.Fatalf("confirm answer: %v", err)
+	}
+	// Wait for the first deploy to enter run().
+	deadline = time.Now().Add(time.Second)
 	for cmd.callCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -279,10 +320,27 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 		t.Fatalf("first deploy did not start, calls=%d", cmd.callCount())
 	}
 
-	// Second /deploy while the first is still in flight must be rejected
-	// synchronously without launching a second deploy.
-	if err := h.HandleEvent(context.Background(), promptEvent("c4", "/deploy")); err != nil {
+	// Second /deploy from a different message while the first is still in
+	// flight must be rejected synchronously without launching a second deploy.
+	if err := h.HandleEvent(context.Background(), promptEvent("c4b", "/deploy")); err != nil {
 		t.Fatalf("second HandleEvent: %v", err)
+	}
+	// It emits its own confirm card; confirming it should hit the busy slot.
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		perms := 0
+		for _, c := range rpc.snapshot() {
+			if c.Type == protocol.TypePermission {
+				perms++
+			}
+		}
+		if perms >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := h.HandleEvent(context.Background(), answerEvent("c4b", "msg-c4b", "confirm")); err != nil {
+		t.Fatalf("second confirm answer: %v", err)
 	}
 	if cmd.callCount() != 1 {
 		t.Fatalf("second /deploy must not start another deploy, calls=%d", cmd.callCount())
@@ -290,10 +348,15 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 
 	// The second call should have produced an "in progress" warning notice.
 	var sawInProgress bool
-	for _, c := range rpc.snapshot() {
-		if c.Notice != nil && strings.Contains(c.Notice.Title, "进行中") {
-			sawInProgress = true
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && !sawInProgress {
+		for _, c := range rpc.snapshot() {
+			if c.Notice != nil && strings.Contains(c.Notice.Title, "进行中") {
+				sawInProgress = true
+				break
+			}
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if !sawInProgress {
 		t.Errorf("expected a 'in progress' notice, got %+v", rpc.snapshot())
@@ -302,15 +365,21 @@ func TestHandleEvent_SingleFlightRejectsConcurrent(t *testing.T) {
 	// Release the first deploy; running flag must clear so a later /deploy works.
 	close(release)
 	deadline = time.Now().Add(time.Second)
-	for (cmd.callCount() != 1 || len(rpc.snapshot()) < 3) && time.Now().Before(deadline) {
+	for (cmd.callCount() != 1 || len(rpc.snapshot()) < 5) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
 	// After completion, a new /deploy should be accepted (single-flight cleared).
+	// It will emit another confirm card; confirm it so the deploy runs.
 	beforeCalls := cmd.callCount()
-	if err := h.HandleEvent(context.Background(), promptEvent("c4", "/deploy")); err != nil {
+	if err := h.HandleEvent(context.Background(), promptEvent("c4c", "/deploy")); err != nil {
 		t.Fatalf("third HandleEvent after completion: %v", err)
 	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = h.HandleEvent(context.Background(), answerEvent("c4c", "msg-c4c", "confirm"))
 	deadline = time.Now().Add(time.Second)
 	for cmd.callCount() == beforeCalls && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -483,8 +552,13 @@ func TestHandleEvent_JobsShareSingleFlightSlot(t *testing.T) {
 	cmd := &fakeCommander{cancelCh: release}
 	h := newHandler(rpc, cmd)
 
+	// /deploy needs confirmation before it can grab the slot.
 	_ = h.HandleEvent(context.Background(), promptEvent("c8", "/deploy"))
 	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = h.HandleEvent(context.Background(), answerEvent("c8", "msg-c8", "confirm"))
 	for cmd.callCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -556,6 +630,9 @@ func TestHandleEvent_DeployForce_ConfirmRuns(t *testing.T) {
 		t.Errorf("confirm card requestID/promptID = %q/%q, want msg-cf/msg-cf",
 			perm.Permission.RequestID, perm.PromptID)
 	}
+	if !perm.Permission.TakeOverProgress {
+		t.Errorf("deploy-force confirm card must TakeOverProgress")
+	}
 
 	// Deliver the confirm click; the deploy should run with ARGS=--force.
 	if err := h.HandleEvent(context.Background(), answerEvent("cf", "msg-cf", "confirm")); err != nil {
@@ -568,6 +645,79 @@ func TestHandleEvent_DeployForce_ConfirmRuns(t *testing.T) {
 	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy ARGS=--force" {
 		t.Errorf("confirm should run `make deploy ARGS=--force`, got %q", got)
 	}
+}
+
+// TestHandleEvent_Deploy_ConfirmRuns waits for the /deploy confirm card,
+// delivers a "confirm" click, and asserts make deploy runs normally.
+func TestHandleEvent_Deploy_ConfirmRuns(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cd", "/deploy")); err != nil {
+		t.Fatalf("HandleEvent /deploy: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	perm := findPermission(rpc.snapshot())
+	if perm == nil {
+		t.Fatalf("expected a TypePermission confirm card, got %+v", rpc.snapshot())
+	}
+	if perm.Permission.RequestID != "msg-cd" || perm.PromptID != "msg-cd" {
+		t.Errorf("confirm card requestID/promptID = %q/%q, want msg-cd/msg-cd",
+			perm.Permission.RequestID, perm.PromptID)
+	}
+	if !perm.Permission.TakeOverProgress {
+		t.Errorf("deploy confirm card must TakeOverProgress")
+	}
+	if cmd.callCount() != 0 {
+		t.Fatalf("deploy ran before confirm: calls=%d", cmd.callCount())
+	}
+
+	if err := h.HandleEvent(context.Background(), answerEvent("cd", "msg-cd", "confirm")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for cmd.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy" {
+		t.Errorf("confirm should run `make deploy`, got %q", got)
+	}
+}
+
+// TestHandleEvent_Deploy_CancelDoesNotRun verifies a "cancel" click on the
+// /deploy confirm card releases the wait WITHOUT running make.
+func TestHandleEvent_Deploy_CancelDoesNotRun(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{out: []byte("deployed")}
+	h := newHandler(rpc, cmd)
+
+	if err := h.HandleEvent(context.Background(), promptEvent("cx2", "/deploy")); err != nil {
+		t.Fatalf("HandleEvent /deploy: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := h.HandleEvent(context.Background(), answerEvent("cx2", "msg-cx2", "cancel")); err != nil {
+		t.Fatalf("HandleEvent answer: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cmd.callCount() > 0 {
+			t.Fatalf("cancel must NOT run make, got calls=%d", cmd.callCount())
+		}
+		if strings.Contains(lastNoticeMessage(rpc.snapshot()), "已取消") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected 已取消 notice and zero make calls; calls=%d notices=%+v",
+		cmd.callCount(), rpc.snapshot())
 }
 
 // TestHandleEvent_DeployForce_CancelDoesNotRun verifies a "cancel" click
@@ -665,8 +815,11 @@ func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
 	if !item.Multiple {
 		t.Errorf("question item must be Multiple=true for /deploy-some")
 	}
-	if got := strings.Join(item.Options, ","); got != "feishu,claude,opencode,miniagent" {
-		t.Errorf("options = %q, want feishu,claude,opencode,miniagent", got)
+	if got := strings.Join(item.Options, ","); got != "feishu,claude,opencode,omp,miniagent" {
+		t.Errorf("options = %q, want feishu,claude,opencode,omp,miniagent", got)
+	}
+	if !q.Question.TakeOverProgress {
+		t.Errorf("deploy-some picker must TakeOverProgress")
 	}
 	// Deploy must NOT run before the user submits.
 	if cmd.callCount() > 0 {
@@ -809,6 +962,10 @@ func TestHandleEvent_DeploySome_BusyOnSubmit(t *testing.T) {
 		t.Fatalf("HandleEvent /deploy: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && findPermission(rpc.snapshot()) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = h.HandleEvent(context.Background(), answerEvent("cb", "msg-cb", "confirm"))
 	for cmd.callCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}

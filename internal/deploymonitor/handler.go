@@ -128,7 +128,9 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 
 	switch prompt {
 	case "/deploy":
-		return h.acquireAndRun(chatID, promptID, cardMsgID, "make", h.deployArgs(false, nil), "部署")
+		// /deploy now requires explicit confirmation before starting the full
+		// deploy, matching /deploy-force's confirmation gate.
+		return h.confirmAndDeploy(ctx, chatID, promptID, cardMsgID)
 	case "/deploy-some":
 		// /deploy-some pops a multi-select card; the deploy runs only after
 		// the user submits a non-empty subset, which becomes --services=<csv>.

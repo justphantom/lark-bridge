@@ -3,6 +3,7 @@ package deploymonitor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -17,7 +18,7 @@ import (
 // deployServices is the fixed business-service short-name set, matching
 // deploy.sh select_services (deploy.sh:98). Validated up front so an invalid
 // pick fails fast here instead of after a wasted make run.
-var deployServices = []string{"feishu", "claude", "opencode", "miniagent"}
+var deployServices = []string{"feishu", "claude", "opencode", "omp", "miniagent"}
 
 func isKnownService(s string) bool {
 	for _, k := range deployServices {
@@ -49,8 +50,9 @@ func (h *Handler) confirmAndDeploySome(ctx context.Context, chatID, promptID, ca
 		PromptID: promptID,
 		ChatID:   chatID,
 		Question: &protocol.QuestionPayload{
-			RequestID: requestID,
-			PromptID:  promptID,
+			RequestID:        requestID,
+			PromptID:         promptID,
+			TakeOverProgress: true,
 			Questions: []protocol.QuestionItem{{
 				Label:    "选择本次部署的服务（可多选）",
 				Options:  deployServices,
@@ -83,7 +85,7 @@ func (h *Handler) awaitDeploySome(chatID, promptID, cardMsgID string, ch <-chan 
 		for _, s := range ans.Choices {
 			if !isKnownService(s) {
 				h.notifyWithRetry(chatID, promptID, cardMsgID, "error", "选择无效",
-					"包含未知服务："+s+"（有效：feishu claude opencode miniagent）")
+					"包含未知服务："+s+"（有效："+strings.Join(deployServices, " ")+"）")
 				return
 			}
 		}
