@@ -134,27 +134,36 @@ func rewriteFooterStatus(card map[string]any, newStatus string) {
 	}
 }
 
-// disableButtons recursively walks node["elements"] disabling every button
-// it finds. The card root itself carries elements (schema 1.0 layout).
+// disableButtons recursively walks node["elements"] AND node["actions"],
+// disabling every button it finds. Schema 1.0 cards place buttons in two
+// layouts: loose inside a form container's "elements" (dropdown+submit
+// question cards), or grouped under an action container's "actions"
+// (permission / picker / immediate-click question cards). Walking only
+// "elements" left the action-container cards' option buttons clickable after
+// submit — defeating the "翻灰禁用" guarantee — so both keys are traversed.
+// The card root itself carries elements (schema 1.0 layout).
 func disableButtons(node map[string]any) {
-	elements, _ := node["elements"].([]any)
-	for _, el := range elements {
-		elem, ok := el.(map[string]any)
-		if !ok {
-			continue
-		}
-		if tag, _ := elem["tag"].(string); tag == "button" {
-			elem["disabled"] = true
-			if text, _ := elem["text"].(map[string]any); text != nil {
-				if t, _ := elem["type"].(string); t == "primary" {
-					text["content"] = "已提交"
-				} else {
-					text["content"] = "处理中"
-				}
+	for _, key := range []string{"elements", "actions"} {
+		children, _ := node[key].([]any)
+		for _, el := range children {
+			elem, ok := el.(map[string]any)
+			if !ok {
+				continue
 			}
-			continue
+			if tag, _ := elem["tag"].(string); tag == "button" {
+				elem["disabled"] = true
+				if text, _ := elem["text"].(map[string]any); text != nil {
+					if t, _ := elem["type"].(string); t == "primary" {
+						text["content"] = "已提交"
+					} else {
+						text["content"] = "处理中"
+					}
+				}
+				continue
+			}
+			// Recurse into containers (form/column/action/...) that hold
+			// their own elements or actions.
+			disableButtons(elem)
 		}
-		// Recurse into containers (form/column/...) that hold their own elements.
-		disableButtons(elem)
 	}
 }

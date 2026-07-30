@@ -322,6 +322,43 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			if orig != nil {
 				if sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action)); err == nil {
 					_ = d.bot.UpdateCard(ctx, messageID, sub)
+					// Delayed fallback PATCH: Feishu's card.action.trigger has a
+					// ~3-5s click-handling window that silently reverts an
+					// immediate PatchMessage, so the submitted card may visually
+					// stay clickable (buttons un-greyed) even though actionIDs
+					// already de-duped the click server-side. Re-send the same
+					// submitted bytes past the window to guarantee the grey-out
+					// + "已提交" land — the same delayed-PATCH pattern the picker
+					// (handleBackendChoice) and the question-refresh path already
+					// use. WithoutCancel: the sleep crosses the click-handler
+					// request's lifetime. Guarded: if the turn finalized during
+					// the sleep the binding is gone and the card already shows
+					// the terminal green frame — re-PATCHing the grey submitted
+					// bytes would regress it, so skip.
+					fbDelay := d.cardPatchDelay
+					if fbDelay <= 0 {
+						fbDelay = cardPatchDelayDefault
+					}
+					fbMsgID := messageID
+					fbBytes := sub
+					fbReqID := requestID
+					fbChatID := action.ChatID
+					go func() {
+						time.Sleep(fbDelay)
+						if _, ok := d.turns.InteractiveMessageID(fbReqID); !ok {
+							return
+						}
+						patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
+						defer cancel()
+						if err := d.bot.UpdateCard(patchCtx, fbMsgID, fbBytes); err != nil {
+							if l := d.logger.Load(); l != nil {
+								l.Warn("delayed submit UpdateCard failed",
+									log.FieldChatID, fbChatID,
+									log.FieldMessageID, fbMsgID,
+									log.FieldError, err.Error())
+							}
+						}
+					}()
 					// Cache the SUBMITTED bytes (replacing the original) so a
 					// later finalize renders finalized-from-submitted and
 					// preserves the "✓ 已回答" echo (C5) — but ONLY if the

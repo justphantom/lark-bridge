@@ -710,6 +710,19 @@ func lastUpdateFor(updates []updatedCard, messageID string) []byte {
 	return nil
 }
 
+// countUpdatesFor reports how many UpdateCard calls targeted messageID. Used
+// by the submit double-PATCH test to assert both the immediate and the
+// delayed fallback PATCH landed on the same card.
+func countUpdatesFor(updates []updatedCard, messageID string) int {
+	n := 0
+	for _, u := range updates {
+		if u.messageID == messageID {
+			n++
+		}
+	}
+	return n
+}
+
 // TestInteractiveSubmittedThenFinalized pins the full mid-turn gate lifecycle:
 // emit → submit (✓ echo + 处理中) → turn result → the SAME card advances to
 // finalized (✓ echo PRESERVED + 已完成). Prior to the fix, submit deleted the
@@ -794,6 +807,140 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	// Binding released after finalize.
 	if _, ok := disp.turns.InteractiveMessageID("req-fin"); ok {
 		t.Error("binding should be released after finalize")
+	}
+}
+
+// TestSubmit_DelayedFallbackPatchResends pins the double-PATCH hardening (R3):
+// the submit path PATCHes the submitted card immediately AND re-sends the same
+// bytes past Feishu's click-handling window, so an immediate PATCH silently
+// reverted by the platform still lands the grey-out + "已提交". Asserts both
+// PATCHes target the same card and the delayed frame keeps buttons disabled.
+func TestSubmit_DelayedFallbackPatchResends(t *testing.T) {
+	const backendID = "opencode-fb2"
+	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+	go func() { _, _ = client.RecvEvent() }() // drain the forwarded answer
+
+	// Shrink the click-handling window so the test does not wait 5s.
+	disp.cardPatchDelay = 10 * time.Millisecond
+
+	chatID := "oc_chat_fb2"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress-fb2"
+	disp.turns.Start("msg-fb2", chatID, progressMID, backendID)
+
+	permCtrl := &protocol.Control{
+		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb2",
+		Permission: &protocol.PermissionPayload{
+			RequestID: "req-fb2", PromptID: "msg-fb2",
+			Message: "执行 make test？",
+			Options: []protocol.PermissionOption{
+				{Label: "允许", Value: "allow"},
+				{Label: "拒绝", Value: "deny"},
+			},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("permission emit: %v", err)
+	}
+	mid, _ := disp.turns.InteractiveMessageID("req-fb2")
+	if mid == "" {
+		t.Fatal("interactive card not bound after emit")
+	}
+
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: mid,
+		Value: map[string]any{"requestID": "req-fb2", "kind": "permission", "choice": "allow"},
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	// Wait well past the click-handling window so the delayed fallback fires.
+	waitFor(t, func() bool {
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		return countUpdatesFor(sink.updates, mid) >= 2
+	})
+
+	sink.mu.Lock()
+	last := lastUpdateFor(sink.updates, mid)
+	sink.mu.Unlock()
+	if last == nil {
+		t.Fatal("no update recorded for the submitted card")
+	}
+	if !strings.Contains(string(last), "你选择了") {
+		t.Errorf("delayed PATCH should carry the submitted echo; got %s", last)
+	}
+	if !strings.Contains(string(last), `"disabled":true`) {
+		t.Errorf("delayed PATCH should leave buttons disabled; got %s", last)
+	}
+}
+
+// TestSubmit_DelayedFallbackSkippedAfterFinalize verifies the delayed-PATCH
+// guard: when the turn finalises before the fallback fires, the binding is
+// gone and the delayed PATCH is skipped so it cannot regress the terminal
+// green frame back to the grey submitted card.
+func TestSubmit_DelayedFallbackSkippedAfterFinalize(t *testing.T) {
+	const backendID = "opencode-fb3"
+	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+	go func() { _, _ = client.RecvEvent() }()
+
+	// Finalise lands synchronously well before this window elapses.
+	disp.cardPatchDelay = 40 * time.Millisecond
+
+	chatID := "oc_chat_fb3"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+	const progressMID = "om-progress-fb3"
+	disp.turns.Start("msg-fb3", chatID, progressMID, backendID)
+
+	permCtrl := &protocol.Control{
+		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb3",
+		Permission: &protocol.PermissionPayload{
+			RequestID: "req-fb3", PromptID: "msg-fb3",
+			Message: "执行 make test？",
+			Options: []protocol.PermissionOption{
+				{Label: "允许", Value: "allow"},
+				{Label: "拒绝", Value: "deny"},
+			},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("permission emit: %v", err)
+	}
+	mid, _ := disp.turns.InteractiveMessageID("req-fb3")
+	if mid == "" {
+		t.Fatal("interactive card not bound after emit")
+	}
+
+	// Submit schedules the delayed fallback at +40ms.
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: mid,
+		Value: map[string]any{"requestID": "req-fb3", "kind": "permission", "choice": "allow"},
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	// Finalise NOW (synchronous) — before the 40ms window elapses.
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
+		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-fb3",
+		Result: &protocol.ResultPayload{Text: "done"},
+	}}); err != nil {
+		t.Fatalf("result emit: %v", err)
+	}
+
+	// Wait past the window so the delayed goroutine runs (and must skip).
+	time.Sleep(120 * time.Millisecond)
+
+	sink.mu.Lock()
+	last := lastUpdateFor(sink.updates, mid)
+	sink.mu.Unlock()
+	if last == nil || !strings.Contains(string(last), "已完成") {
+		t.Errorf("finalized card must remain terminal; delayed PATCH regressed it: %s", last)
 	}
 }
 

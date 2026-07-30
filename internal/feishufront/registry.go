@@ -259,7 +259,14 @@ func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []pro
 			}
 			key := hostDedupKey(h.IP, h.Hostname, h.MachineID, id)
 			if i, ok := hostIdx[key]; ok {
-				hosts[i] = h // same host: latest push wins
+				// Same host: the push with the highest ReportedAt wins.
+				// r.conns is a map (random iteration order), so "latest" must
+				// be decided by ReportedAt, not by which backend the range
+				// happens to visit last — otherwise the dedup winner is
+				// nondeterministic across runs.
+				if h.ReportedAt >= hosts[i].ReportedAt {
+					hosts[i] = h
+				}
 			} else {
 				hostIdx[key] = len(hosts)
 				hosts = append(hosts, h)

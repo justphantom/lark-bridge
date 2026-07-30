@@ -378,7 +378,7 @@ type Renderer struct {
 	// "… （前略）" when the trace is longer. The card is a live dashboard,
 	// not a reading surface, so only the tail is useful as a "what it's doing
 	// right now" hint; the full trace stays in the session archive for later
-	// review. <=0/absent → 50.
+	// review. <=0/absent → 100.
 	MaxThinkingRunes int `json:"max_thinking_runes,omitempty"`
 }
 

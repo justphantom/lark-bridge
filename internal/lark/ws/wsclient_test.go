@@ -113,32 +113,95 @@ func (f *fakeServer) handle(c net.Conn) {
 	if _, err := c.Write([]byte(resp)); err != nil {
 		return
 	}
-	// Drain client frames until close; capture them.
+	// Drain client frames until close; capture them. A single TCP read may
+	// return multiple coalesced frames OR split one frame across reads, so we
+	// buffer the unread tail and parse every complete frame in the buffer
+	// (the old loop parsed only the frame at offset 0 and silently dropped
+	// any frame that shared a read with another — the source of the
+	// "client did not write a code:200 ACK" flake under load).
+	var pending []byte
 	buf := make([]byte, 8192)
 	for {
 		n, err := c.Read(buf)
+		if n > 0 {
+			pending = append(pending, buf[:n]...)
+		}
+		// Parse every fully-contained client frame currently buffered.
+		for {
+			consumed, frame, ok := decodeClientFrame(pending)
+			if !ok {
+				break
+			}
+			f.mu.Lock()
+			if frame != nil {
+				f.clientRx = append(f.clientRx, frame)
+			}
+			f.mu.Unlock()
+			pending = pending[consumed:]
+		}
 		if err != nil {
 			return
 		}
-		// Minimal server-side unmask to record the payload.
-		if n >= 2 && buf[1]&0x80 != 0 {
-			plen := int(buf[1] & 0x7f)
-			maskIdx := 2
-			mask := [4]byte{}
-			if plen < 126 {
-				copy(mask[:], buf[2:6])
-				maskIdx = 6
-			}
-			payload := make([]byte, plen)
-			copy(payload, buf[maskIdx:maskIdx+plen])
-			for i := range payload {
-				payload[i] ^= mask[i%4]
-			}
-			f.mu.Lock()
-			f.clientRx = append(f.clientRx, payload)
-			f.mu.Unlock()
+	}
+}
+
+// decodeClientFrame parses one client-originated websocket frame from the
+// front of buf (clients always mask). Returns (bytesConsumed, unmaskedPayload,
+// ok); ok is false when buf does not yet hold a complete frame, in which case
+// the caller waits for more bytes. Control frames (close/ping/pong) yield a
+// nil payload so the caller records nothing but still advances past them —
+// only data/binary frames carry the ACK / event bodies the tests assert on.
+// Supports the 7-bit, 16-bit, and 64-bit payload-length encodings (RFC 6455
+// §5.2); the test client never writes a >64-bit frame.
+func decodeClientFrame(buf []byte) (int, []byte, bool) {
+	if len(buf) < 2 {
+		return 0, nil, false
+	}
+	b1 := buf[0]
+	payloadLen := int(buf[1] & 0x7f)
+	masked := buf[1]&0x80 != 0
+	headerLen := 2
+	switch payloadLen {
+	case 126:
+		if len(buf) < 4 {
+			return 0, nil, false
+		}
+		payloadLen = int(buf[2])<<8 | int(buf[3])
+		headerLen = 4
+	case 127:
+		if len(buf) < 10 {
+			return 0, nil, false
+		}
+		payloadLen = 0
+		for i := range 8 {
+			payloadLen = payloadLen<<8 | int(buf[2+i])
+		}
+		headerLen = 10
+	}
+	var mask [4]byte
+	if masked {
+		if len(buf) < headerLen+4 {
+			return 0, nil, false
+		}
+		copy(mask[:], buf[headerLen:headerLen+4])
+		headerLen += 4
+	}
+	if len(buf) < headerLen+payloadLen {
+		return 0, nil, false
+	}
+	total := headerLen + payloadLen
+	// Control frames (opcode & 0x8 != 0): record nothing, just consume.
+	if b1&0x8 != 0 {
+		return total, nil, true
+	}
+	payload := make([]byte, payloadLen)
+	copy(payload, buf[headerLen:total])
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
 		}
 	}
+	return total, payload, true
 }
 
 // sendFrame writes a single unmasked binary server frame with the given
@@ -330,13 +393,20 @@ func TestWSClient_DeliversCardAction(t *testing.T) {
 	bsrv := bootstrapServer(t, fs.URL(), clientConfig{PingInterval: 600 * time.Second})
 	defer bsrv.Close()
 	h := &recordingHandler{}
-	wc := newWSClient("a", "s", bsrv.URL, bsrv.Client(), Lifecycle{}, h)
+	var ready atomic.Bool
+	wc := newWSClient("a", "s", bsrv.URL, bsrv.Client(), Lifecycle{
+		OnReady: func() { ready.Store(true) },
+	}, h)
 	wc.cfg = clientConfig{PingInterval: 600 * time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = wc.Start(ctx) }()
-	if !waitUntil(func() bool { return fs.connCount() > 0 }, 3*time.Second) {
-		t.Fatal("server never saw a connection")
+	// Wait for OnReady (not just connCount): the bootstrap/handshake must
+	// finish before sendFrame or the client's reader is not yet draining, and
+	// under -race the gap can exceed the 3s delivery timeout. Mirrors the
+	// ACK test's gate.
+	if !waitUntil(func() bool { return ready.Load() }, 3*time.Second) {
+		t.Fatal("OnReady never fired")
 	}
 
 	ev := mustMarshal(t, map[string]any{
