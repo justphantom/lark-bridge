@@ -82,19 +82,30 @@ func TestParseEvent_MessageUpdateThinkingEnd(t *testing.T) {
 	}
 }
 
-// TestParseEvent_MessageUpdateTextEndIgnored verifies text_end is ignored:
-// it carries the whole block redundantly (the text_delta events already
-// streamed it), and emitting it again doubled the reply (verified against
-// agnes-2.0-flash). thinking_delta is ignored for the symmetric reason
-// (Replace=true would clobber the zone with each partial).
-func TestParseEvent_MessageUpdateTextEndIgnored(t *testing.T) {
-	for _, line := range []string{
-		`{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"whole block"}}`,
-		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"partial"}}`,
-	} {
-		if _, ok, err := parseEvent(line); err != nil || ok {
-			t.Errorf("parseEvent(%q) → ok=%v err=%v, want ok=false err=nil", line, ok, err)
-		}
+// TestParseEvent_MessageUpdateTextEndNowEvent verifies text_end now returns
+// EventTextEnd (used as fallback by the bridge when no text_delta was
+// received, preventing empty assistant replies). thinking_delta is still
+// ignored (Replace=true would clobber the zone with each partial).
+func TestParseEvent_MessageUpdateTextEndNowEvent(t *testing.T) {
+	line := `{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"whole block"}}`
+	ev, ok, err := parseEvent(line)
+	if err != nil {
+		t.Fatalf("parseEvent(text_end) → err=%v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("parseEvent(text_end) → ok=false, want ok=true (EventTextEnd)")
+	}
+	if ev.Type != EventTextEnd {
+		t.Errorf("parseEvent(text_end) → Type=%q, want %q", ev.Type, EventTextEnd)
+	}
+	if ev.Text != "whole block" {
+		t.Errorf("parseEvent(text_end) → Text=%q, want %q", ev.Text, "whole block")
+	}
+
+	// thinking_delta still ignored.
+	line2 := `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"partial"}}`
+	if _, ok2, err2 := parseEvent(line2); err2 != nil || ok2 {
+		t.Errorf("parseEvent(thinking_delta) → ok=%v err=%v, want ok=false err=nil", ok2, err2)
 	}
 }
 

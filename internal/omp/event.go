@@ -32,14 +32,21 @@ const (
 	// so usage comes from the accumulated message_end events instead.
 	EventAgentEnd = "agent_end"
 	// EventMessageUpdate: an assistant text delta. Emitted ONLY for
-	// assistantMessageEvent.type text_delta (the `delta` field). text_end is
-	// intentionally dropped: it carries the whole block in `content`, but the
-	// text_delta events already streamed the full text, so emitting it here
-	// doubled the reply (verified against agnes-2.0-flash: a single "pong"
-	// reply produced "pongpong"). toolcall_* deltas are dropped here
-	// (tool_execution_* events are the authoritative source); done/error are
-	// dropped (terminal is decided by message_end/agent_end).
+	// assistantMessageEvent.type text_delta (the `delta` field). The bridge
+	// appends each delta to the text accumulator. EventTextEnd is the
+	// fallback channel for text_end content (see below); under normal
+	// operation the bridge ignores EventTextEnd and only emits it when
+	// no text_delta was received in the round, avoiding the "pongpong"
+	// duplication bug (verified against agnes-2.0-flash).
 	EventMessageUpdate = "message_update"
+	// EventTextEnd: a candidate full-text block from a text_end event.
+	// Under normal flow (text_delta events precede text_end), the bridge
+	// ignores this event because the deltas already accumulated the full
+	// text. On the rare path where text_delta is absent, the bridge uses
+	// EventTextEnd's content as a fallback to prevent empty assistant
+	// replies. The "deltaSeen" guard in the bridge guarantees this event
+	// never causes the "pongpong" duplication bug.
+	EventTextEnd = "text_end"
 	// EventMessageEnd: a message completed. Usage (input/output/cacheRead/
 	// cacheWrite/cost) is carried ONLY on role=assistant message_end events
 	// (role=toolResult message_end has none); the bridge accumulates the

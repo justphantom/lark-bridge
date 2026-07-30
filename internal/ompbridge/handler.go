@@ -29,6 +29,9 @@ type Handler struct {
 	modelOptions    []string
 	approvalOptions []string
 	thinkingOptions []string
+	// maxAutoRetries caps how many consecutive auto_retry_start events are
+	// tolerated before the bridge aborts the turn. <=0 means unlimited.
+	maxAutoRetries int
 }
 
 // HandlerConfig carries the scalar runtime config the Handler reads. It is
@@ -54,6 +57,11 @@ type HandlerConfig struct {
 	ModelOptions    []string
 	ApprovalOptions []string
 	ThinkingOptions []string
+
+	// MaxAutoRetries caps how many consecutive auto_retry_start events are
+	// tolerated before the bridge aborts the turn. <=0 means unlimited
+	// (default: 3 from config defaults).
+	MaxAutoRetries int
 }
 
 // NewWithLogger builds a Handler. rpc is the backend IPC client used to emit
@@ -66,5 +74,6 @@ func NewWithLogger(r *router.Router, api ompAPI, rpc *backendrpc.Client, cfg Han
 		modelOptions:    cfg.ModelOptions,
 		approvalOptions: cfg.ApprovalOptions,
 		thinkingOptions: cfg.ThinkingOptions,
+		maxAutoRetries:  cfg.MaxAutoRetries,
 	}
 }

@@ -224,11 +224,9 @@ func parseMessageEnd(base Event, raw json.RawMessage) (Event, bool, error) {
 // assistantMessageEvent.type per §6.3's分流 table:
 //
 //	text_delta               → EventMessageUpdate (delta appended by bridge)
-//	text_end                 → IGNORED. Carries the whole block in `content`,
-//	                           but the text_delta events already streamed the
-//	                           full text; emitting it here doubled the reply
-//	                           (verified against agnes-2.0-flash: a single
-//	                           "pong" reply produced "pongpong").
+//	text_end                 → EventTextEnd (content = full block; bridge uses
+//	                           this as fallback when no text_delta was received,
+//	                           preventing empty assistant replies)
 //	thinking_delta           → IGNORED. The bridge emits TypeThinking with
 //	                           Replace=true, which would clobber the zone with
 //	                           each partial; only thinking_end (full block) is
@@ -250,9 +248,14 @@ func parseMessageUpdate(base Event, raw json.RawMessage) (Event, bool, error) {
 		base.Text = inner.Delta
 		return base, true, nil
 	case "text_end":
-		// Redundant: the deltas already accumulated the full text. Emitting
-		// the whole-block content again would double the reply.
-		return Event{}, false, nil
+		// Return the full text block as EventTextEnd. The bridge normally
+		// ignores this event (deltaSeen=true cases skip it) and only uses
+		// it as fallback when no text_delta was received, preventing empty
+		// assistant replies without reintroducing the "pongpong" duplication
+		// bug (verified against agnes-2.0-flash).
+		base.Type = EventTextEnd
+		base.Text = inner.Content
+		return base, true, nil
 	case "thinking_delta":
 		// Drop partials: the bridge uses Replace=true, so each partial would
 		// clobber the zone. thinking_end carries the definitive full block.

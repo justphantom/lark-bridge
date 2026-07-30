@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/omp"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -36,6 +37,18 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// (§A.1), so message_end is the sole source (§7.4).
 		accInput, accOutput, accCacheRead, accCacheWrite int
 		accCost                                          float64
+
+		// F3 text_end fallback: deltaSeen tracks whether any text_delta was
+		// received in the current round. lastTextEnd holds the full text from
+		// a text_end event. If EventMessageEnd(role=assistant) arrives with
+		// !deltaSeen && lastTextEnd != "", the text_end content is used as
+		// fallback to prevent empty assistant replies.
+		deltaSeen   bool
+		lastTextEnd string
+
+		// F4 auto_retry limit: the highest attempt number seen so far in this
+		// turn, used to detect when the limit is exceeded.
+		maxAttempt int
 	)
 
 	for ev := range events {
@@ -106,15 +119,26 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			// New assistant round begins: discard any text accumulated in the
 			// previous round. A tool-call turn streams one assistant message
 			// per round — round N's preamble (for agnes/glm: inline thinking
-			// text ending in a stray `</think>` before the toolcall) must not
+			// text ending in a stray ` response` before the toolcall) must not
 			// be concatenated onto round N+1's final answer. StripThinking
-			// cannot rescue this because OMP emits the closing `</think>`
+			// cannot rescue this because OMP emits the closing ` response`
 			// without a matching open tag; turn_start is the only clean
 			// boundary. (The first turn_start fires on an empty accumulator,
 			// so the reset is harmless there.)
 			text.Reset()
+			// F3: reset per-round text_end fallback state.
+			deltaSeen = false
+			lastTextEnd = ""
 		case omp.EventMessageUpdate:
 			text.WriteString(ev.Text)
+			// F3: any text_delta means the bridge has the full text via the
+			// streaming path; text_end should not be used as fallback.
+			deltaSeen = true
+			lastTextEnd = ""
+		case omp.EventTextEnd:
+			// F3: record the full text block as fallback candidate. The
+			// bridge only uses it if EventMessageEnd arrives with !deltaSeen.
+			lastTextEnd = ev.Text
 		case omp.EventMessageEnd:
 			// Usage (input/output/cacheRead/cacheWrite/cost) appears ONLY on
 			// role=assistant message_end events (camelCase fields, §A.6);
@@ -128,6 +152,15 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				accCacheRead += ev.CacheRead
 				accCacheWrite += ev.CacheWrite
 				accCost += ev.CostUSD
+
+				// F3: if no text_delta was received in this round, use the
+				// text_end block as fallback to prevent empty assistant replies.
+				if !deltaSeen && lastTextEnd != "" {
+					h.Logger.Warn("omp: text_end fallback used — no text_delta in assistant round",
+						log.FieldChatID, chatID)
+					eventmetrics.OMPTextEndFallback.Inc()
+					text.WriteString(lastTextEnd)
+				}
 			}
 		case omp.EventThinking:
 			// omp streams thinking_delta increments; thinking_end carries the
@@ -160,6 +193,29 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 				},
 			})
 		case omp.EventAutoRetry:
+			// F4: track the highest attempt number and check the limit.
+			if ev.Attempt > maxAttempt {
+				maxAttempt = ev.Attempt
+			}
+			if h.maxAutoRetries > 0 && maxAttempt >= h.maxAutoRetries {
+				h.Logger.Warn("omp: auto_retry exceeded limit, aborting turn",
+					log.FieldChatID, chatID,
+					"attempt", maxAttempt,
+					"limit", h.maxAutoRetries)
+				eventmetrics.OMPAutoRetryLimit.Inc()
+				h.EmitAsync(promptID, &protocol.Control{
+					Type:   protocol.TypeNotice,
+					ChatID: chatID,
+					Notice: &protocol.NoticePayload{Level: "warning", Message: fmt.Sprintf("自动重试已达上限（%d次），终止回合", maxAttempt)},
+				})
+				h.AbortChat(chatID)
+				return bridgebase.PromptResult{
+					Err:         fmt.Errorf("OMP 自动重试超过上限（%d次）", maxAttempt),
+					IsCancelled: true,
+					Model:       bridgebase.ResolveModel("", modelSpec, "omp"),
+					SessionID:   sessionID,
+				}
+			}
 			// omp began an automatic retry; surface it so the card is not
 			// silent during the retry window. The turn continues (auto_retry
 			// is non-terminal).

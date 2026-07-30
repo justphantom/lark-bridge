@@ -39,6 +39,7 @@
     "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
     "approval_mode":       "write",
     "thinking_level":      "auto",
+    "max_auto_retries":    3,
     "model_options":       ["claude-haiku", "claude-sonnet", "opus", "glm-5.2"],
     "approval_options":    ["always-ask", "write", "yolo"],
     "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"],

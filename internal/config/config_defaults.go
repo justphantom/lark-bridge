@@ -106,6 +106,9 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.OMP.ThinkingOptions == nil {
 		cfg.OMP.ThinkingOptions = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
 	}
+	if cfg.OMP.MaxAutoRetries == 0 {
+		cfg.OMP.MaxAutoRetries = 3
+	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}

@@ -193,6 +193,10 @@ type OMP struct {
 	// repeated /model pickers instant. 0/unset -> 3600 (1h); negative
 	// disables caching entirely (every call forks).
 	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
+	// MaxAutoRetries caps how many consecutive auto_retry_start events are
+	// tolerated before the bridge aborts the turn. <=0/unset -> 3 (the
+	// default). Set to a negative value to disable the limit entirely.
+	MaxAutoRetries int `json:"max_auto_retries,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which
