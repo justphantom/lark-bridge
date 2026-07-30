@@ -22,6 +22,25 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
 UNIT_NAME="lark-deploy-monitor"
 CONFIG_NAME="deploy-monitor-config.json"
 
+# guard_pro_mode skips deploy-monitor installation in pro mode. A clean dev→pro
+# transition disables any previously-installed unit so "no deploy backend" is
+# actually true; otherwise a stale monitor would keep responding to /deploy.
+guard_pro_mode() {
+    local mode; mode="$(run_mode)"
+    case "$mode" in
+        dev)  return 0 ;;
+        pro)
+            info "LARK_RUN_MODE=pro：跳过 $UNIT_NAME 部署（deploy 后端不部署）"
+            if systemctl is-enabled --quiet "$UNIT_NAME" 2>/dev/null; then
+                info "停用已存在的 $UNIT_NAME（dev→pro 切换）..."
+                sudo systemctl disable --now "$UNIT_NAME" 2>/dev/null || true
+            fi
+            exit 0 ;;
+        *)  fail "LARK_RUN_MODE 非法值：$mode（仅支持 dev / pro）" ;;
+    esac
+}
+guard_pro_mode
+
 # ── 构建 ──────────────────────────────────────────────
 build_monitor() {
     info "构建 $UNIT_NAME..."
@@ -191,8 +210,15 @@ upgrade_monitor() {
 }
 
 # ── main ──────────────────────────────────────────────
-case "${1:-}" in
-    --init) init_monitor ;;
-    "")     upgrade_monitor ;;
-    *)      fail "未知参数：$1。用法：$0 [--init]" ;;
-esac
+main() {
+    case "${1:-}" in
+        --init) init_monitor ;;
+        "")     upgrade_monitor ;;
+        *)      fail "未知参数：$1。用法：$0 [--init]" ;;
+    esac
+}
+
+# Source guard: allow sourcing for tests without executing the deploy flow.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "${1:-}"
+fi

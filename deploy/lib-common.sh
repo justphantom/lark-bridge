@@ -60,6 +60,14 @@ env_get() {
     grep -E "^${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
+# run_mode returns the effective LARK_RUN_MODE value: env var > repo-root .env >
+# default "dev". Used by upgrade-monitor.sh to decide whether deploy-monitor
+# should be installed/started. Invalid values are rejected by the caller.
+run_mode() {
+    local mode="${LARK_RUN_MODE:-$(env_get LARK_RUN_MODE)}"
+    echo "${mode:-dev}"
+}
+
 # update_env_key idempotently updates one key: in-place sed if present, append
 # otherwise.
 update_env_key() {

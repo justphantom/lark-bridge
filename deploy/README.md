@@ -263,6 +263,15 @@ make upgrade-monitor ARGS=--init
 make upgrade-monitor
 ```
 
+运行模式 `LARK_RUN_MODE` 控制是否部署 deploy-monitor：
+
+| 模式 | 行为 |
+|------|------|
+| `dev`（默认） | 正常安装/升级 deploy-monitor |
+| `pro` | `make upgrade-monitor` 为 no-op，不部署 deploy-monitor；若从 dev 切换而来，会停用已有的 unit |
+
+配置源优先级：环境变量 `LARK_RUN_MODE` > repo 根 `.env` > 默认 `dev`。
+
 升级时 monitor 短暂离线（systemd restart 期间无法响应 `/deploy`）。monitor 代码
 极少变更，这个代价可接受。
 

@@ -60,6 +60,62 @@ check "update_env_key escapes & | \\" "$(cat "$tmp")" 'KEY=/a&b|c\d'
 update_env_key NEWKEY "v" "$tmp"
 check "update_env_key appends" "$(tail -1 "$tmp")" "NEWKEY=v"
 
+# -- run_mode: env var > .env > default dev ----------------------------------
+# Save any pre-existing env value to restore after tests.
+_saved_run_mode="${LARK_RUN_MODE:-}"
+unset LARK_RUN_MODE 2>/dev/null || true
+# No .env key, no env var.
+check "run_mode defaults to dev" "$(run_mode)" "dev"
+# .env value wins when env var is absent.
+_proj_root_bak="$PROJECT_ROOT"
+PROJECT_ROOT="$(mktemp -d)"
+echo "LARK_RUN_MODE=pro" > "$PROJECT_ROOT/.env"
+check "run_mode reads .env" "$(run_mode)" "pro"
+# Env var wins over .env.
+export LARK_RUN_MODE=dev
+check "run_mode env overrides .env" "$(run_mode)" "dev"
+# Restore.
+rm -rf "$PROJECT_ROOT"
+PROJECT_ROOT="$_proj_root_bak"
+if [[ -n "$_saved_run_mode" ]]; then export LARK_RUN_MODE="$_saved_run_mode"; else unset LARK_RUN_MODE 2>/dev/null || true; fi
+
+# -- guard_pro_mode: dev passes, pro skips, invalid fails ----------------------
+# Source upgrade-monitor.sh (source guard prevents auto-execution) and call the
+# guard directly. Stub systemctl so the pro-mode disable branch is exercised.
+systemctl() {
+    if [[ "$1" == "is-enabled" && "$2" == "lark-deploy-monitor" ]]; then
+        return 0
+    fi
+    return 0
+}
+export -f systemctl
+# shellcheck source=deploy/upgrade-monitor.sh
+source "$DEPLOY_DIR_SRC/upgrade-monitor.sh"
+# dev: guard returns 0 and does not exit.
+(
+    LARK_RUN_MODE=dev
+    guard_pro_mode
+    echo "dev-passed"
+) >/dev/null 2>&1
+check "guard_pro_mode dev passes" "$?" "0"
+# pro: guard calls exit 0 after disabling the unit.
+_pro_out="$(
+    LARK_RUN_MODE=pro
+    guard_pro_mode 2>&1
+    echo "should-not-reach"
+)"
+check "guard_pro_mode pro skips" "$(grep -c "跳过" <<<"$_pro_out" || true)" "1"
+check "guard_pro_mode pro no build" "$(grep -c "构建 lark-deploy-monitor" <<<"$_pro_out" || true)" "0"
+check "guard_pro_mode pro exits before main" "$(grep -c "should-not-reach" <<<"$_pro_out" || true)" "0"
+if (
+    LARK_RUN_MODE=bogus
+    guard_pro_mode 2>/dev/null
+); then
+    bad "guard_pro_mode bogus should fail"
+else
+    ok "guard_pro_mode bogus fails"
+fi
+
 # -- source guard: sourcing deploy.sh must define functions without deploying --
 out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
     source deploy/deploy.sh

@@ -101,6 +101,8 @@ deploy:
 
 # upgrade-monitor builds and restarts ONLY lark-deploy-monitor, decoupled
 # from deploy.sh. Use --init for first-time install (creates config + unit).
+# In pro mode (LARK_RUN_MODE=pro) this target is a no-op: deploy-monitor is
+# intentionally not deployed.
 upgrade-monitor:
 	./deploy/upgrade-monitor.sh $(ARGS)
 
