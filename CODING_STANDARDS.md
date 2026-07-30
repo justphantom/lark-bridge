@@ -599,7 +599,7 @@ make upgrade-monitor         # ~2s 离线升级 deploy-monitor
 - 允许「补记」（`> 本段同时补记 v1.1.0 期间合入但当时未在 CHANGELOG 注明的两项`）。
 
 ### 10.5 .gitignore 约定（`.gitignore`）
-不入库的：`/bin/`、`/scripts/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。
+不入库的：`/bin/`、`/scripts/`、`/docs/`、`.env`、`.zcode/`、`*.log`、二进制副本、AI 工具缓存（`.agents/`、`.claude/skills/`、`.goose/` 等）。
 
 ---
 
