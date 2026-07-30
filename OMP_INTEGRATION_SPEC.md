@@ -37,7 +37,9 @@ lark-omp-back -version
 | `append_system_prompt` | string | `"你的回答应该简洁，通常不超过1000字"` | 每轮追加 system prompt |
 | `approval_mode` | string | `"write"` | 默认审批模式（always-ask/write/yolo） |
 | `thinking_level` | string | `"auto"` | 默认思考级别（off/minimal/low/medium/high/xhigh/max/auto） |
-| `model_options` | []string | nil | `/model` 选择器选项（模型可用性部署相关，无编译期默认） |
+| `model_options` | []string | nil | `/model` 选择器的**静态兜底**列表；动态 `omp models --json` 失败或为空时使用（模型可用性部署相关，无编译期默认） |
+| `model_list_timeout` | duration | `300s` | `omp models --json` 获取超时。该子命令需联网拉取 provider catalog，实测冷启动 ~137s。picker 外层另有 bridgebase `listFnTimeout`(300s) 兜底，设小于此值可让 omp 提前失败而非等满预算 |
+| `list_cache_ttl` | int | `3600` | `omp models --json` 结果缓存秒数。0/未设→3600(1h)，负值禁用缓存（每次 fork，~100s+） |
 | `approval_options` | []string | `["always-ask","write","yolo"]` | `/perm` 选择器选项 |
 | `thinking_options` | []string | `["off","minimal","low","medium","high","xhigh","max","auto"]` | `/thinking` 选择器选项 |
 
@@ -105,7 +107,7 @@ omp -p --mode json \
 
 ### 4.1 会话操作注意事项
 
-- OMP 的 session 存储/列表命令是 **cwd-bound** 且冷启动极慢（实测 `omp models --json` 30s+ 超时），v1 不在 `ompAPI` 暴露 `ListSessions`/`DeleteSession`，因此**不提供** `/session-list` / `/session-use` / `/session-clean`（与 claude/opencode 的差异，见设计 §10.6）。
+- OMP 的 session 存储/列表命令是 **cwd-bound** 且冷启动极慢，v1 不在 `ompAPI` 暴露 `ListSessions`/`DeleteSession`，因此**不提供** `/session-list` / `/session-use` / `/session-clean`（与 claude/opencode 的差异，见设计 §10.6）。（`omp models --json` 动态列表**已支持**，见 §8 `/model`：实测冷启动 ~137s，靠 300s 超时 + 1h 缓存兜底，失败回退静态 `model_options`。）
 
 ## 5. 消息/事件流
 
@@ -198,7 +200,7 @@ omp-back 支持以下斜杠命令：
 
 ### 8.1 交互卡片机制
 
-- `/model`、`/cd` 无参数时发送 `Question` 卡片；`/perm` 发送 `Permission` 卡片；`/thinking` 经 `bridgebase.MakeEnumPicker` 发送 `Question` 卡片。均通过 `AnswerBroker` 阻塞等待用户选择。
+- `/model` 无参数时先发加载横幅（TypeProgress——`omp models --json` 冷启动需联网拉取 provider catalog，实测 ~137s），再异步发 `Question` 卡片；选项首选动态获取的 `provider/id` selector，获取失败/为空时回退 `model_options` 静态列表（仍带自定义输入框）。`/cd` 发送 `Question` 卡片；`/perm` 发送 `Permission` 卡片；`/thinking` 经 `bridgebase.MakeEnumPicker` 发送 `Question` 卡片。均通过 `AnswerBroker` 阻塞等待用户选择。
 - `/perm`、`/thinking` 的卡片选择在回写 router 前再次校验值合法性（防 option 列表误配污染 binding）。
 - 等待超时约 9 分钟。
 - `/pull`、`/push`、`/send` 每 chat 单飞执行。
@@ -324,5 +326,5 @@ omp -p --mode json --model glm-5.2 --approval-mode write --thinking auto "ping"
 - `omp.default_directory` 是否作为首次 prompt 的默认目录使用，当前仍需用户先 `/cd` 选择（待确认）。
 - OMP 冷启动慢，health check / 首条 prompt 可能贴近 `PromptTimeout`；硬性兜底靠 ctx + `ApplyGroupCancel`（不用 `--max-time`，见 §3.1）。
 - `message.usage` 字段随版本可能变动；`agent_end.telemetry` 实测不存在（§A.1），用量唯一来源是 role=assistant 的 `message_end`。
-- `--add-dir` / 动态 `ListModels` / todo-subagent `TypeTodo` 渲染为 v1 未支持项（设计 §5.2 / §10.6 / §6.4）。
+- `--add-dir` / todo-subagent `TypeTodo` 渲染为 v1 未支持项（设计 §5.2 / §6.4）。（动态 `ListModels` **已支持**，见 §8。）
 - 文件上传由 `feishu-front` 的 `file_convert` 处理并转为文本 prompt，omp 后端仅接收文本。

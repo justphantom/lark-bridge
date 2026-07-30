@@ -167,10 +167,11 @@ type OMP struct {
 	// ThinkingLevel is the default --thinking level (e.g. "auto"). Empty
 	// defaults to "auto".
 	ThinkingLevel string `json:"thinking_level,omitempty"`
-	// ModelOptions lists the models offered in the interactive /model picker
-	// card. nil/unset leaves the picker without a static list (the user can
-	// still type a custom model id). Model availability is deployment-
-	// dependent, so no default list is compiled in.
+	// ModelOptions is the static fallback for the /model picker card, used
+	// when the dynamic `omp models --json` fetch fails or returns nothing.
+	// nil/unset leaves the picker with dynamic options only (plus the
+	// custom-input box). Model availability is deployment-dependent, so no
+	// default list is compiled in.
 	ModelOptions []string `json:"model_options,omitempty"`
 	// ApprovalOptions lists the modes offered in the interactive /perm
 	// picker card. nil/unset -> [always-ask, write, yolo].
@@ -179,6 +180,19 @@ type OMP struct {
 	// picker card. nil/unset -> [off, minimal, low, medium, high, xhigh,
 	// max, auto].
 	ThinkingOptions []string `json:"thinking_options,omitempty"`
+	// ModelListTimeout bounds the `omp models --json` fork that backs the
+	// dynamic /model picker. The subcommand fetches the provider catalog
+	// over the network and was measured at ~137s on omp/17.1.8, so the
+	// default "300s" gives headroom. The picker's outer cap
+	// (bridgebase.listFnTimeout, also 300s) caps any value above that, so
+	// setting this lower makes omp fail fast rather than wait the full
+	// budget. Empty/unset -> 300s.
+	ModelListTimeout Duration `json:"model_list_timeout,omitempty"`
+	// ListCacheTTL bounds how long ListModels results stay cached
+	// (seconds). The catalog fetch is minutes-long, so caching makes
+	// repeated /model pickers instant. 0/unset -> 3600 (1h); negative
+	// disables caching entirely (every call forks).
+	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which

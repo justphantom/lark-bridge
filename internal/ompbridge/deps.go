@@ -18,12 +18,16 @@ import (
 // implementation is *omp.Client; the interface exists so handler tests can
 // substitute a fake that replays canned event streams.
 //
-// Only Run is required: omp's `models --json` is too slow to drive a dynamic
-// /model picker (§A.4 observed 30s+ timeout), and session list/delete are not
-// supported in v1. Pickers fall back to static config option lists.
+// Run drives agent turns; ListModels runs `omp models --json` for the
+// interactive /model picker (provider catalog fetch, ~100-150s cold; cached
+// in the client). Session list/delete remain unsupported (omp's store is
+// cwd-bound and slow); pickers fall back to static config option lists.
 type ompAPI interface {
 	// Run starts one agent turn and returns the event stream. The caller
 	// drains the channel until it is closed; a terminal event (agent_end /
 	// error) precedes close.
 	Run(ctx context.Context, opts omp.RunOptions) (<-chan omp.Event, error)
+	// ListModels runs `omp models --json` for the interactive /model picker.
+	// Returns one `provider/id` selector per model.
+	ListModels(ctx context.Context) ([]string, error)
 }

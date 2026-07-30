@@ -21,7 +21,8 @@ func (closedStreamOmp) Run(context.Context, omp.RunOptions) (<-chan omp.Event, e
 	close(ch)
 	return ch, nil
 }
-func (closedStreamOmp) IsReady(context.Context) error { return nil }
+func (closedStreamOmp) ListModels(context.Context) ([]string, error) { return nil, nil }
+func (closedStreamOmp) IsReady(context.Context) error                { return nil }
 
 // ompEventChan buffers events into a closed channel the way a real omp Run
 // would, so streamRun can be driven directly without a subprocess.

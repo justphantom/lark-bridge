@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/clibase"
@@ -70,6 +71,17 @@ type Options struct {
 	AppendSystemPrompt string
 	// MaxConcurrent caps parallel subprocesses. <=0 defaults to 4.
 	MaxConcurrent int
+	// ListTimeout bounds the `omp models --json` fork (ListModels). <=0
+	// defaults to 300s (the subcommand fetches the provider catalog over
+	// the network and was measured at ~137s). The picker path also wraps
+	// listFn in bridgebase.listFnTimeout as an outer cap, so the effective
+	// deadline is the shorter of the two; set this lower to fail fast.
+	ListTimeout time.Duration
+	// ListCacheTTL bounds how long ListModels results stay cached. 0
+	// defaults to 1h (omp cold-starts the listing at 100s+, so caching
+	// makes repeated /model pickers instant); <0 disables caching (every
+	// call forks).
+	ListCacheTTL time.Duration
 	// Logger receives debug/warn lines. nil defaults to a no-op logger.
 	Logger *log.Logger
 }
@@ -82,6 +94,13 @@ type Client struct {
 	appendSystemPrompt string
 	logger             *log.Logger
 	sem                chan struct{}
+
+	// listTimeout bounds the `omp models --json` fork. listTTL bounds its
+	// cache (<=0 disables). listMu guards modelsCache.
+	listTimeout time.Duration
+	listTTL     time.Duration
+	listMu      sync.Mutex
+	modelsCache *listCache
 }
 
 // New builds a Client from opts, applying the documented defaults for any
@@ -99,11 +118,22 @@ func New(opts Options) *Client {
 	if n <= 0 {
 		n = defaultMaxConcurrent
 	}
+	listTimeout := opts.ListTimeout
+	if listTimeout <= 0 {
+		listTimeout = defaultListTimeout
+	}
+	// 0 → default 1h; <0 → disabled (cachedList treats <=0 as disabled).
+	listTTL := opts.ListCacheTTL
+	if listTTL == 0 {
+		listTTL = defaultListCacheTTL
+	}
 	return &Client{
 		cliPath:            cliPath,
 		appendSystemPrompt: opts.AppendSystemPrompt,
 		logger:             logger,
 		sem:                make(chan struct{}, n),
+		listTimeout:        listTimeout,
+		listTTL:            listTTL,
 	}
 }
 

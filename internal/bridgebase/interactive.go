@@ -23,10 +23,11 @@ const (
 	emitNoticeTimeout = 10 * time.Second
 
 	// listFnTimeout bounds a backend's models/agent list subcommand invoked by
-	// the picker. A CLI's heavy startup (provider/config load) makes these
-	// take 25–50s observed on opencode; 90s covers the worst seen while still
-	// bounding a hang.
-	listFnTimeout = 90 * time.Second
+	// the picker. CLI startups are heavy: opencode's provider/config load takes
+	// 25–50s, and omp's `models --json` was measured at ~137s (it fetches the
+	// provider catalog over the network before printing). 300s covers the worst
+	// observed case with headroom while still bounding a genuinely hung fork.
+	listFnTimeout = 300 * time.Second
 
 	// maxQuestionOptions caps the number of options shown in a single picker
 	// card. Feishu rejects oversized cards with ErrCode 11310 "element

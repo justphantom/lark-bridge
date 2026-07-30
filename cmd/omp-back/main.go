@@ -71,6 +71,8 @@ func main() {
 				CLIPath:            cfg.OMP.CLIPath,
 				AppendSystemPrompt: cfg.OMP.AppendSystemPrompt,
 				MaxConcurrent:      cfg.OMP.MaxConcurrent,
+				ListTimeout:        time.Duration(cfg.OMP.ModelListTimeout),
+				ListCacheTTL:       time.Duration(cfg.OMP.ListCacheTTL) * time.Second,
 				Logger:             base.ComponentLogger("omp", getComponentLevel(cfg, "omp")),
 			})
 			return client.IsReady(ctx)
@@ -80,6 +82,8 @@ func main() {
 				CLIPath:            cfg.OMP.CLIPath,
 				AppendSystemPrompt: cfg.OMP.AppendSystemPrompt,
 				MaxConcurrent:      cfg.OMP.MaxConcurrent,
+				ListTimeout:        time.Duration(cfg.OMP.ModelListTimeout),
+				ListCacheTTL:       time.Duration(cfg.OMP.ListCacheTTL) * time.Second,
 				Logger:             base.ComponentLogger("omp", getComponentLevel(cfg, "omp")),
 			})
 			return ompbridge.NewWithLogger(r, client, rpc, ompbridge.HandlerConfig{

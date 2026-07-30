@@ -7,6 +7,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
+	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -45,8 +46,9 @@ func isSettableThinkingLevel(level string) bool {
 
 // cmdModel pins, clears, or interactively selects the model for the current
 // chat. Forms:
-//   - /model            → pop a selection card (options from config; with a
-//     custom-input box for a model not listed)
+//   - /model            → pop a selection card (options from `omp models --json`,
+//     falling back to config model_options on failure; with a custom-input
+//     box for a model not listed)
 //   - /model clear      → clear the pin (fall back to omp's default)
 //   - /model <spec>     → pin <spec> directly (e.g. /model glm-5.2)
 //
@@ -74,24 +76,62 @@ func (h *Handler) cmdModel(ctx context.Context, chatID string, args []string) (c
 	return cmdutil.ChangeResult("模型", old, spec, "下次提问生效。"), nil
 }
 
-// runModelPicker drives the interactive model selection using the static
-// config list (omp's `models --json` is too slow to drive a dynamic picker,
-// §A.4). allowCustom=true so the user can type a model id not listed.
+// runModelPicker drives the interactive model selection in a background
+// goroutine. omp's `models --json` fetches the provider catalog over the
+// network and takes ~100-150s cold, so the command's progress card first
+// morphs into a loading banner (EmitAsync via TypeProgress); a GoSafe
+// goroutine then runs AskAndWait with the dynamic list. replyToID rides
+// TakeOverProgress so the picker card replaces that banner in place, and the
+// result patches the same card via UpdateMessageID. oldSpec is captured by
+// value so concurrent /model calls do not race on the binding snapshot.
 func (h *Handler) runModelPicker(chatID, oldSpec, replyToID string) commandResult {
-	choice, messageID, err := h.AskAndWait(chatID, replyToID, "模型", "选择模型", bridgebase.StaticOptions(h.modelOptions), true)
-	if err != nil {
-		h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
-		return commandResult{Body: err.Error(), Handled: true}
-	}
-	old := oldSpec
-	if old == "" {
-		old = "默认"
-	}
-	h.Router.SetModelSpec(chatID, choice)
-	cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
-	res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
-	h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
+	// Loading banner on the progress card the dispatcher opened for this
+	// command. Rides TypeProgress (rendered as the banner slot) rather than
+	// TypeText, which the dispatcher drops. omp's catalog fetch is
+	// minutes-long, so the copy sets that expectation.
+	h.EmitAsync(replyToID, &protocol.Control{
+		Type:     protocol.TypeProgress,
+		ChatID:   chatID,
+		Progress: &protocol.ProgressPayload{Description: "🔍 正在获取可用模型，首次较慢（约 2~3 分钟），请稍候…"},
+	})
+	bridgebase.GoSafe(h.Logger, "model-picker:"+chatID, func() {
+		choice, messageID, err := h.AskAndWait(chatID, replyToID, "模型", "选择模型", h.modelListFn, true)
+		if err != nil {
+			h.EmitPromptNotice(chatID, replyToID, "error", "选择失败", err.Error())
+			return
+		}
+		old := oldSpec
+		if old == "" {
+			old = "默认"
+		}
+		h.Router.SetModelSpec(chatID, choice)
+		cmdutil.LogSettingChange(h.Logger, chatID, "model", choice)
+		res := cmdutil.ChangeResult("模型", old, choice, "下次提问生效。")
+		h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换模型", res.Body, res.Field, res.Before, res.After)
+	})
 	return commandResult{Handled: true}
+}
+
+// modelListFn drives the /model picker's option list: it tries the dynamic
+// `omp models --json` first and falls back to the static config list
+// (model_options) when the fetch errors or returns nothing. The static list is
+// the only source of options when the provider catalog is unreachable; with
+// neither available it returns the underlying error so the picker surfaces it.
+func (h *Handler) modelListFn(ctx context.Context) ([]string, error) {
+	models, err := h.agent.ListModels(ctx)
+	if err == nil && len(models) > 0 {
+		return models, nil
+	}
+	if len(h.modelOptions) > 0 {
+		h.Logger.Warn("omp model list fell back to static config options",
+			log.FieldError, err,
+			"static_count", len(h.modelOptions))
+		return h.modelOptions, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("获取模型列表失败：%w", err)
+	}
+	return nil, fmt.Errorf("没有可用的模型")
 }
 
 // clearModelSpec is the /model clear path.

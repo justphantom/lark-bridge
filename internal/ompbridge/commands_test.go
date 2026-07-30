@@ -13,10 +13,12 @@ import (
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// fakeAgent satisfies ompAPI for command tests. Run is the interface's only
-// method and none of the commands under test invoke it; the closed channel
-// keeps the fake honest if a future command does.
-type fakeAgent struct{}
+// fakeAgent satisfies ompAPI for command tests. Run is unused by the command
+// paths under test; ListModels returns models (nil by default, so the /model
+// picker exercises its static-config fallback).
+type fakeAgent struct {
+	models []string
+}
 
 func (fakeAgent) Run(context.Context, omp.RunOptions) (<-chan omp.Event, error) {
 	ch := make(chan omp.Event)
@@ -24,16 +26,28 @@ func (fakeAgent) Run(context.Context, omp.RunOptions) (<-chan omp.Event, error) 
 	return ch, nil
 }
 
-// newTestHandler builds a Handler with nil rpc (emits are no-ops) so tests can
-// drive interactive pickers straight through h.Answers and assert on router
-// state. Option lists mirror config.example.json's omp defaults.
+func (a fakeAgent) ListModels(context.Context) ([]string, error) {
+	return a.models, nil
+}
+
+// newTestHandler builds a Handler with the default fakeAgent (dynamic model
+// list empty → /model picker falls back to static ModelOptions) and nil rpc
+// (emits are no-ops) so tests can drive pickers via h.Answers and assert on
+// router state. Option lists mirror config.example.json's omp defaults.
 func newTestHandler(t *testing.T) (*Handler, *router.Router) {
+	t.Helper()
+	return newTestHandlerWith(t, fakeAgent{})
+}
+
+// newTestHandlerWith is newTestHandler with a custom fakeAgent, for tests that
+// need to seed ListModels (e.g. the /model dynamic path).
+func newTestHandlerWith(t *testing.T, agent fakeAgent) (*Handler, *router.Router) {
 	t.Helper()
 	r, err := router.New("", log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	h := NewWithLogger(r, fakeAgent{}, nil, HandlerConfig{
+	h := NewWithLogger(r, agent, nil, HandlerConfig{
 		CoreConfig: bridgebase.CoreConfig{
 			PermissionDefault: "write",
 		},
@@ -217,6 +231,64 @@ func TestCmdModel_Clear(t *testing.T) {
 	}
 	if !strings.Contains(res.Body, "清除") && !strings.Contains(res.Body, "默认") {
 		t.Errorf("body = %q, want contains 清除/默认", res.Body)
+	}
+}
+
+// TestCmdModel_PickerFallsBackToStatic verifies that when the dynamic
+// `omp models --json` fetch yields nothing (fakeAgent.models is nil), the
+// /model picker falls back to the static config ModelOptions and pins the
+// user's choice. Covers the modelListFn fallback path.
+func TestCmdModel_PickerFallsBackToStatic(t *testing.T) {
+	h, r := newTestHandler(t)
+
+	res, err := h.cmdModel(context.Background(), "c1", nil) // picker path
+	if err != nil {
+		t.Fatalf("cmdModel picker: %v", err)
+	}
+	if !res.Handled {
+		t.Fatal("expected Handled=true from async picker")
+	}
+	// runModelPicker dispatches AskAndWait in a GoSafe goroutine; wait for
+	// it to register an answer waiter before delivering a canned choice.
+	if !waitCond(time.Second, func() bool { return len(h.Answers.PendingIDs()) > 0 }) {
+		t.Fatal("model picker did not register a waiter")
+	}
+	reqID := h.Answers.PendingIDs()[0]
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"glm-5.2"}}) // a static option
+
+	if !waitCond(time.Second, func() bool {
+		b, ok := r.Lookup("c1")
+		return ok && b.ModelSpec == "glm-5.2"
+	}) {
+		b, _ := r.Lookup("c1")
+		t.Fatalf("ModelSpec = %q, want glm-5.2", b.ModelSpec)
+	}
+}
+
+// TestCmdModel_PickerUsesDynamic verifies the happy dynamic path: ListModels
+// returns a non-empty list and the picker pins the user's pick from it.
+func TestCmdModel_PickerUsesDynamic(t *testing.T) {
+	h, r := newTestHandlerWith(t, fakeAgent{models: []string{"nvidia/z-ai/glm5", "autoapi/agnes-2.0-flash"}})
+
+	res, err := h.cmdModel(context.Background(), "c1", nil)
+	if err != nil {
+		t.Fatalf("cmdModel picker: %v", err)
+	}
+	if !res.Handled {
+		t.Fatal("expected Handled=true from async picker")
+	}
+	if !waitCond(time.Second, func() bool { return len(h.Answers.PendingIDs()) > 0 }) {
+		t.Fatal("model picker did not register a waiter")
+	}
+	reqID := h.Answers.PendingIDs()[0]
+	h.Answers.Deliver(reqID, &protocol.AnswerPayload{Choices: []string{"nvidia/z-ai/glm5"}})
+
+	if !waitCond(time.Second, func() bool {
+		b, ok := r.Lookup("c1")
+		return ok && b.ModelSpec == "nvidia/z-ai/glm5"
+	}) {
+		b, _ := r.Lookup("c1")
+		t.Fatalf("ModelSpec = %q, want nvidia/z-ai/glm5", b.ModelSpec)
 	}
 }
 

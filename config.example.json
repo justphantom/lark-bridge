@@ -41,7 +41,9 @@
     "thinking_level":      "auto",
     "model_options":       ["claude-haiku", "claude-sonnet", "opus", "glm-5.2"],
     "approval_options":    ["always-ask", "write", "yolo"],
-    "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+    "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"],
+    "model_list_timeout":  "300s",
+    "list_cache_ttl":      3600
   },
 
   "miniagent": {
