@@ -27,12 +27,9 @@ STATE_DIR="${STATE_DIR:-/var/lib/lark-bridge}"
 # HTTP_TIMEOUT       upper bound for curl IPC probes (local/LAN)
 # WAIT_RETRIES       systemctl cold-start poll retries (1s each, ~15s cap)
 # STOP_TIMEOUT       systemctl stop deadline; SIGKILL fallback beyond it (default TimeoutStopSec=90s is too long)
-# CLI_PROBE_TIMEOUT  external CLI --version probe cap; mirrors backend readyTimeout
-#                    (internal/opencode/client.go:27)
 HTTP_TIMEOUT=3
 WAIT_RETRIES=15
 STOP_TIMEOUT=15
-CLI_PROBE_TIMEOUT=30
 
 # -- Colors ---------------------------------------------------------------------
 RED='\033[0;31m'

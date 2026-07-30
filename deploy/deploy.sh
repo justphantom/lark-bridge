@@ -218,24 +218,26 @@ preflight_inflight_check_legacy() {
     info "No in-flight sessions; safe to deploy"
 }
 
-# Probe whether the external CLI (claude/opencode/omp/miniagent) binary is ready:
-# `command -v` hits AND `<cli> --version` exits 0. The 30s timeout mirrors the
-# backend IsReady readyTimeout (internal/opencode/client.go:27) so a hang does
-# not block the deploy. Hard precondition for the corresponding backend: a
-# missing CLI -> backend crashes on startup, systemd Restart=on-failure retries
-# every 5s. We probe up front, stop+disable and drop the service so the
-# operator can install the CLI and re-deploy.
+# Probe whether the external CLI (claude/opencode/omp/miniagent) binary exists
+# and is executable. We deliberately do NOT run `<cli> --version` here: some
+# CLIs (opencode/omp) can hang or fail without credentials, which would silently
+# drop the backend from this deploy run. Real CLI health is checked by each
+# backend's own IsReady systemd probe (Restart=on-failure). We only need to
+# avoid deploying a backend whose binary is genuinely missing, because a missing
+# CLI will crash-loop the service immediately.
 probe_cli() {
     local cli="$1"
     if ! command -v "$cli" >/dev/null 2>&1; then
         warn "$cli binary not ready: command -v not found (install it onto PATH)"
         return 1
     fi
-    if ! timeout "$CLI_PROBE_TIMEOUT" "$cli" --version >/dev/null 2>&1; then
-        warn "$cli binary not ready: $cli --version non-zero exit or timeout (${CLI_PROBE_TIMEOUT}s)"
+    local cli_path
+    cli_path="$(command -v "$cli")"
+    if [[ ! -x "$cli_path" ]]; then
+        warn "$cli binary not ready: $cli_path is not executable"
         return 1
     fi
-    info "$cli binary ready ($(command -v "$cli"))"
+    info "$cli binary ready ($cli_path)"
     return 0
 }
 
@@ -582,6 +584,7 @@ filter_cli_ready() {
         sudo systemctl disable --now "$u" 2>/dev/null || true
         drop_service "$s"
     done
+    [[ ${#SELECTED[@]} -gt 0 ]] || fail "所选服务均因 CLI 未就绪被跳过，无服务可部署"
 }
 
 # Create directories, stop services, and copy binaries/configs into place.
