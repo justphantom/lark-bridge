@@ -64,6 +64,10 @@ func run(cfgPath string) error {
 		FrontendURL: cfg.FrontendURL,
 		Secret:      cfg.IPCSecret,
 		Version:     version,
+		// 进程级钉扎一个后端令牌：本进程所有 client（含重连派生的）与所有
+		// POST 携带同一令牌，否则 SSE 握手注册的令牌会与 POST 令牌互异，
+		// 被前端 validateBackendToken 以 403 拒绝（见 docs/STATUS_CARD_BACKEND_METRICS_FIX.md）。
+		BackendToken: backendrpc.NewBackendToken(),
 		// M10-1: TLS client config for https frontend_url (CA pinning +
 		// optional mTLS client certificate).
 		TLSCAFile:         cfg.IPCTLSCAFile,
@@ -104,7 +108,10 @@ func run(cfgPath string) error {
 	})
 
 	eventErr := func(err error) { logger.Warn("ipc", log.FieldError, err) }
-	runErr := backendrpc.Run(ctx, connOpts,
+	// RunWithClient（而非 Run）：复用上方已 Connect 出的 rpc 作为 SSE +
+	// control/metrics POST 的唯一 client，避免再建一个令牌互异的 client
+	// 导致 403（见 docs/STATUS_CARD_BACKEND_METRICS_FIX.md）。
+	runErr := backendrpc.RunWithClient(ctx, rpc, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			if err := h.HandleEvent(ctx, ev); err != nil {
 				logger.Error("handle event", "event_type", ev.Type, log.FieldError, err)
