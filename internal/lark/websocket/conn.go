@@ -76,8 +76,6 @@ type Conn struct {
 	// Close handshake bookkeeping.
 	closeSent bool
 	closeMu   sync.Mutex
-
-	readDeadline time.Time
 }
 
 func newConn(nc net.Conn, br *bufio.Reader, isTLS bool) *Conn {
@@ -91,7 +89,6 @@ func (c *Conn) Underlying() net.Conn { return c.nc }
 // SetReadDeadline sets the deadline for future ReadMessage calls. A zero time
 // clears it. The lark WS client uses this to bound idle reads.
 func (c *Conn) SetReadDeadline(t time.Time) error {
-	c.readDeadline = t
 	return c.nc.SetReadDeadline(t)
 }
 
@@ -162,8 +159,16 @@ func (c *Conn) handleControl(opcode int, payload []byte) error {
 	switch opcode {
 	case OpcodeClose:
 		code, text := parseClosePayload(payload)
-		// Echo the close so the peer sees the handshake complete.
-		_ = c.writeControl(OpcodeClose, makeClosePayload(code))
+		// Echo the close so the peer sees the handshake complete, and mark
+		// closeSent (W2): our close frame IS now sent, so a later
+		// WriteMessage must fail with ErrCloseSent and Close must not send
+		// a second close frame. Same closeMu→writeMu order as Close.
+		c.closeMu.Lock()
+		if !c.closeSent {
+			c.closeSent = true
+			_ = c.writeControl(OpcodeClose, makeClosePayload(code))
+		}
+		c.closeMu.Unlock()
 		return &CloseError{Code: code, Text: text}
 	case OpcodePing:
 		return c.writeControl(OpcodePong, payload)
@@ -174,8 +179,12 @@ func (c *Conn) handleControl(opcode int, payload []byte) error {
 	}
 }
 
-// readFrame decodes a single WebSocket frame from the wire. Server frames are
-// never masked; we reject a masked server frame as a protocol error.
+// readFrame decodes a single WebSocket frame from the wire. RFC 6455 says
+// server frames are never masked, but lark's gateway has been observed to
+// mask some frames; we therefore ACCEPT a masked server frame and unmask it
+// (the mask key is read and XORed below) rather than rejecting it as a
+// protocol error — tolerance here costs nothing and avoids spurious
+// disconnects against a non-conformant peer.
 func (c *Conn) readFrame() (op int, payload []byte, fin bool, err error) {
 	hdr := make([]byte, 2)
 	if _, err = io.ReadFull(c.br, hdr); err != nil {

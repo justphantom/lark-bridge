@@ -338,3 +338,37 @@ func TestRand_ReadSucceeds(t *testing.T) {
 		t.Fatalf("rand.Read: %v", err)
 	}
 }
+
+// TestEchoClose_SetsCloseSent (W2): after the peer's close is echoed, the
+// conn must be marked closeSent — a later WriteMessage fails with
+// ErrCloseSent and Close does not send a second close frame.
+func TestEchoClose_SetsCloseSent(t *testing.T) {
+	url := startTestServer(t, func(s *serverSession) {
+		s.mu.Lock()
+		s.steps = append(s.steps, func(c net.Conn, _ *bufio.Reader) {
+			payload := make([]byte, 2)
+			binary.BigEndian.PutUint16(payload, uint16(StatusNormalClosure))
+			writeServerFrame(c, OpcodeClose, payload)
+		})
+		s.mu.Unlock()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, resp, err := Dial(ctx, url, nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
+
+	_, _, err = conn.ReadMessage()
+	var ce *CloseError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected CloseError, got %v", err)
+	}
+	if err := conn.WriteMessage(OpcodeText, []byte("late")); !errors.Is(err, ErrCloseSent) {
+		t.Errorf("WriteMessage after echo-close = %v, want ErrCloseSent", err)
+	}
+}

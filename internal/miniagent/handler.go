@@ -137,6 +137,14 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		}
 		return nil
 	}
+	// TypePing: the frontend's C2 app-level health probe. Answer on this
+	// dispatch loop itself — a wedged loop never pongs and gets evicted.
+	if ev.Type == protocol.TypePing {
+		bridgebase.GoSafe(h.logger, "pong", func() {
+			h.sendCtrl(&protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}})
+		})
+		return nil
+	}
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
 		h.logger.Debug("miniagent ignore non-prompt event", "event_type", ev.Type)
 		return nil

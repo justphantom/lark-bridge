@@ -36,3 +36,41 @@ func TestValidateTodoControl(t *testing.T) {
 		t.Fatalf("TypeTodo with payload should pass, got %v", err)
 	}
 }
+
+// TestValidateEnums (C11): gate kind, task type, and the C2 pong control
+// are pinned to their known enum sets; unknown values fail loudly instead
+// of being silently mis-rendered.
+func TestValidateEnums(t *testing.T) {
+	okGate := &Control{Type: TypeProgress, Progress: &ProgressPayload{
+		Gate: &GateInfo{State: "waiting", Kind: "permission"},
+	}}
+	if err := okGate.Validate(); err != nil {
+		t.Errorf("valid gate: %v", err)
+	}
+	badGate := &Control{Type: TypeProgress, Progress: &ProgressPayload{
+		Gate: &GateInfo{State: "waiting", Kind: "banana"},
+	}}
+	if err := badGate.Validate(); err == nil {
+		t.Error("gate.kind banana should fail")
+	}
+
+	okSub := &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{
+		Name: "Task", Subagent: &SubagentSummary{Status: "running", TaskType: "local_agent"},
+	}}
+	if err := okSub.Validate(); err != nil {
+		t.Errorf("valid subagent: %v", err)
+	}
+	badSub := &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{
+		Name: "Task", Subagent: &SubagentSummary{Status: "running", TaskType: "warp_drive"},
+	}}
+	if err := badSub.Validate(); err == nil {
+		t.Error("taskType warp_drive should fail")
+	}
+
+	if err := (&Control{Type: TypePong}).Validate(); err == nil {
+		t.Error("TypePong without payload should fail")
+	}
+	if err := (&Control{Type: TypePong, Pong: &PongPayload{}}).Validate(); err != nil {
+		t.Errorf("TypePong with payload should pass (no chatID needed), got %v", err)
+	}
+}

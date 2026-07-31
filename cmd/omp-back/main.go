@@ -71,6 +71,7 @@ func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
 		BackendType:         "omp",
 		UnitName:            "lark-omp-back.service",
 		UsageFile:           "usage-omp.json",
+		RouterFile:          "router-omp.v5.json",
 		ProgramPrefix:       "lark-omp-back",
 		LoggerComponent:     "omp-back",
 		MetricsInterval:     func(cfg *config.Config) time.Duration { return time.Duration(cfg.StatusMonitor.Interval) },

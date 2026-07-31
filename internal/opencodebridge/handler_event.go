@@ -40,6 +40,9 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		}
 		return nil
 	case protocol.TypePing:
+		// C2 app-level heartbeat: answer on the dispatch loop itself so a
+		// wedged consumer never pongs and the frontend evicts this backend.
+		h.ReplyPong()
 		return nil
 	default:
 		return fmt.Errorf("unknown event type %q", ev.Type)

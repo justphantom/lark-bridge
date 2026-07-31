@@ -69,6 +69,7 @@ func buildOpencodeRunner() *backendhost.CLIRunner[*opencodebridge.Handler] {
 		BackendType:         "opencode",
 		UnitName:            "lark-opencode-back.service",
 		UsageFile:           "usage-opencode.json",
+		RouterFile:          "router-opencode.v5.json",
 		ProgramPrefix:       "lark-opencode-back",
 		LoggerComponent:     "opencode-back",
 		MetricsInterval:     func(cfg *config.Config) time.Duration { return time.Duration(cfg.StatusMonitor.Interval) },

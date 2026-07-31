@@ -82,6 +82,15 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		result = h.runOMP(ctx, chatID, replyToID, opts, modelSpec, onActivity)
 	}
 
+	// Kill the process group NOW that the stream has ended: the CLI may keep
+	// trailing output (post-agent_end tail lines) and EmitTerminal below can
+	// block on a slow IPC ACK budget — without this cancel the subprocess
+	// (and any grandchildren) lingers as a zombie for the whole emit window
+	// (S3). Idempotent with the deferred Cancel above; the first cause wins,
+	// so an idle-timeout cause recorded earlier is preserved. EmitTerminal
+	// sends on AppCtx, so this does not affect terminal delivery.
+	scaffold.Cancel(nil)
+
 	// RecordUsage before EmitTerminal: EmitTerminal reads the store to fill
 	// the cumulative TotalTokens on the result card, so this turn must be
 	// counted first. Add is an in-memory map update (the async save is

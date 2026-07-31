@@ -181,16 +181,18 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			}
 			// role=custom carries a system-injected nudge (e.g. customType
 			// "mid-run-todo-nudge" — "Gentle reminder: N todos still open").
-			// Surface it as an info notice so the in-run reminder is visible
-			// instead of silently dropped. It has no usage, so no accumulate.
+			// Route through TypeProgress (NOT TypeNotice): a mid-run notice
+			// shares the per-PromptID terminals dedup key with TypeResult
+			// (dispatcher_control.go) and would finalise the turn, silently
+			// dropping the real TypeResult. Same root cause
+			// ThinkingLevelChanged already avoids (B2 regression). Surfaces
+			// the reminder on the progress card instead of a terminal notice.
 			if ev.Role == "custom" && ev.Text == "mid-run-todo-nudge" {
 				h.EmitAsync(promptID, &protocol.Control{
-					Type:   protocol.TypeNotice,
+					Type:   protocol.TypeProgress,
 					ChatID: chatID,
-					Notice: &protocol.NoticePayload{
-						Level:   "info",
-						Title:   "待办提醒",
-						Message: "当前仍有未完成的 todo 项，可在适当时机更新状态。",
+					Progress: &protocol.ProgressPayload{
+						Description: "当前仍有未完成的 todo 项，可在适当时机更新状态。",
 					},
 				})
 			}
@@ -209,14 +211,16 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			})
 		case omp.EventNotice:
 			// Runtime notice (e.g. "xd://: mounted mcp__codegraph_explore").
-			// Forward the message + level as a TypeNotice so CLI/runtime
-			// notices reach the user instead of being dropped into unknown.
+			// Forward via TypeProgress (NOT TypeNotice): a mid-run notice
+			// shares the per-PromptID terminals dedup key with TypeResult
+			// (dispatcher_control.go) and would finalise the turn, dropping
+			// the real reply. Surfaces the message on the progress card so
+			// CLI/runtime notices reach the user instead of being dropped.
 			h.EmitAsync(promptID, &protocol.Control{
-				Type:   protocol.TypeNotice,
+				Type:   protocol.TypeProgress,
 				ChatID: chatID,
-				Notice: &protocol.NoticePayload{
-					Level:   ev.NoticeLevel,
-					Message: ev.NoticeMessage,
+				Progress: &protocol.ProgressPayload{
+					Description: ev.NoticeMessage,
 				},
 			})
 		case omp.EventThinkingLevelChanged:
@@ -353,14 +357,14 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 					"attempt", maxAttempt,
 					"limit", h.maxAutoRetries)
 				eventmetrics.OMPAutoRetryLimit.Inc()
-				h.EmitAsync(promptID, &protocol.Control{
-					Type:   protocol.TypeNotice,
-					ChatID: chatID,
-					Notice: &protocol.NoticePayload{Level: "warning", Message: fmt.Sprintf("自动重试已达上限（%d次），终止回合", maxAttempt)},
-				})
 				h.AbortChat(chatID)
+				// No mid-run TypeNotice here (B2/S1): it would share the
+				// frontend's per-PromptID terminal dedup with the real
+				// terminal control and could drop the final card. The limit
+				// message rides PromptResult.Err and is rendered once by
+				// EmitTerminal's cancel branch.
 				return bridgebase.PromptResult{
-					Err:         fmt.Errorf("OMP 自动重试超过上限（%d次）", maxAttempt),
+					Err:         fmt.Errorf("自动重试已达上限（%d次），终止回合", maxAttempt),
 					IsCancelled: true,
 					Model:       bridgebase.ResolveModel("", modelSpec, "omp"),
 					SessionID:   sessionID,

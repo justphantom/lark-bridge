@@ -2,6 +2,7 @@ package bridgebase
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -80,5 +81,36 @@ func TestRecordUsage_CacheWriteWinsWhenBothSet(t *testing.T) {
 	}
 	if e.CacheWrite != 7 {
 		t.Errorf("CacheWrite = %d, want 7 (explicit CacheWrite wins)", e.CacheWrite)
+	}
+}
+
+// TestBuildTerminalControl_CancelledWithReason (S2): a backend-initiated
+// abort carrying a specific Err (e.g. omp's auto-retry limit) renders ONE
+// terminal notice whose message is the reason, not the generic cancel copy.
+func TestBuildTerminalControl_CancelledWithReason(t *testing.T) {
+	core, _, _ := newResultCore(t)
+	ctrl := core.buildTerminalControl(context.Background(), "c1", "omp", 0, PromptResult{
+		IsCancelled: true,
+		Err:         errors.New("自动重试已达上限（3次），终止回合"),
+	})
+	if ctrl.Type != protocol.TypeNotice || ctrl.Notice == nil {
+		t.Fatalf("type = %v, want TypeNotice", ctrl.Type)
+	}
+	if ctrl.Notice.Message != "自动重试已达上限（3次），终止回合" {
+		t.Errorf("message = %q, want the abort reason", ctrl.Notice.Message)
+	}
+}
+
+// TestBuildTerminalControl_CancelledCtxErrKeepsGenericCopy: a plain ctx
+// error (user abort / prompt timeout) must NOT leak "context canceled"
+// into the user-facing notice — the generic copy stays.
+func TestBuildTerminalControl_CancelledCtxErrKeepsGenericCopy(t *testing.T) {
+	core, _, _ := newResultCore(t)
+	ctrl := core.buildTerminalControl(context.Background(), "c1", "omp", 0, PromptResult{
+		IsCancelled: true,
+		Err:         context.Canceled,
+	})
+	if ctrl.Notice == nil || ctrl.Notice.Message != "本次请求已中止" {
+		t.Errorf("message = %q, want generic cancel copy", ctrl.Notice.Message)
 	}
 }

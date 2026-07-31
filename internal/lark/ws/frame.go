@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 )
 
 // Frame is the lark WebSocket frame, encoded as protobuf on the wire. The
@@ -59,15 +60,13 @@ func (h Headers) GetString(key string) string {
 }
 
 // GetInt returns the first value for key parsed as a decimal int, or 0.
+// strconv.Atoi gives overflow protection for free (W5): a hostile/buggy
+// multi-hundred-digit header returns an error → 0, where the old hand-rolled
+// n = n*10+d loop silently wrapped.
 func (h Headers) GetInt(key string) int {
-	v := h.GetString(key)
-	n := 0
-	for i := range v {
-		c := v[i]
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int(c-'0')
+	n, err := strconv.Atoi(h.GetString(key))
+	if err != nil {
+		return 0
 	}
 	return n
 }

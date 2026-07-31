@@ -30,7 +30,9 @@ func newCardDebouncer(ctx context.Context, bot CardSink, interval time.Duration)
 		flushInterval: interval,
 		ctx:           ctx,
 	}
-	go d.flushLoop() //nolint:gosec // G118: ctx is the app-lifetime ctx from main, not request-scoped
+	// flushLoop runs for the frontend's whole lifetime; wrap it in goSafe so
+	// a panic cannot crash the bot (matching dedupSet/Layer1Router pruners).
+	goSafe(d.flushLoop) //nolint:gosec // G118: ctx is the app-lifetime ctx from main, not request-scoped
 	return d
 }
 

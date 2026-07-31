@@ -141,3 +141,11 @@ func (s *dedupSet) Configure(ttl time.Duration, maxEntries int) {
 	s.maxEntries = maxEntries
 	s.mu.Unlock()
 }
+
+// Config returns the current TTL and entry cap under the same lock Configure
+// writes with (C5: SetDedupConfig previously read the fields unlocked).
+func (s *dedupSet) Config() (time.Duration, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ttl, s.maxEntries
+}

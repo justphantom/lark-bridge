@@ -66,12 +66,16 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		d.ackTerminal(rc.BackendID, ctrl.PromptID, ctrl.Type)
 		return rerr
 	case protocol.TypeStatusReport:
-		// Periodic broadcast from the status-monitor backend. Deliberately NOT
-		// routed through the terminal dedup set (it is keyed by PromptID and
-		// would swallow every tick after the first) nor the card debouncer
-		// (which coalesces high-frequency progress frames, not whole-card
-		// periodic replacements).
-		return d.sendStatusReport(ctx, rc)
+		// Periodic broadcast from the status-monitor backend. Asynchronous
+		// (like TypeFile): sendStatusReport does O(bound chats) synchronous
+		// Feishu PATCH calls per tick and must not head-of-line block this
+		// serial pump. Status is periodic + unordered + droppable, so async
+		// with bounded concurrency is safe. Deliberately NOT routed through
+		// the terminal dedup set (keyed by PromptID, would swallow every
+		// tick after the first) nor the card debouncer (coalesces
+		// high-frequency progress frames, not whole-card replacements).
+		d.sendStatusReportAsync(ctx, rc)
+		return nil
 	case protocol.TypeQuestion, protocol.TypePermission:
 		return d.sendInteractive(ctx, ctrl, backendType)
 	case protocol.TypeFile:

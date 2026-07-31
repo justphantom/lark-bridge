@@ -22,6 +22,15 @@ const sseWriteTimeout = 15 * time.Second
 // before the eviction pass.
 const healthPingWait = 50 * time.Millisecond
 
+// maxMissedPongs is the app-level liveness budget (C2): a backend that
+// acknowledges this many consecutive health pings at the network layer
+// (SSE flush succeeds) without its consumer loop ever answering a TypePong
+// is wedged — its handler goroutine is deadlocked even though the pipe is
+// writable. Three pings at the default 30s interval evicts a wedged backend
+// in ~60-90s while tolerating one slow turn (a healthy backend answering
+// during a long CLI call resets the counter between ticks).
+const maxMissedPongs = 3
+
 // StartHealthCheck spawns a goroutine that, every interval, pings every
 // registered backend (driving an SSE flush that updates lastSeen) and evicts
 // any backend whose lastSeen is older than timeout. Blocks the caller until
@@ -62,31 +71,45 @@ func (s *IPCServer) healthTick(ctx context.Context, timeout time.Duration) {
 		types = append(types, c.Type)
 	})
 
-	// Ping every backend whose lastSeen predates the deadline. A failed send
-	// (closed/full channel) means the backend is unreachable now.
+	// Ping every backend whose lastSeen predates the deadline OR that has an
+	// outstanding unanswered ping. The missed-pong branch is the C2 app-level
+	// check: a wedged consumer loop keeps lastSeen fresh (its own ping's
+	// flush refreshes it), so lastSeen alone can NEVER evict it — only an
+	// accumulating missed-pong count can. A failed send (closed/full
+	// channel) means the backend is unreachable now.
 	for _, id := range ids {
-		if c, ok := s.registry.Get(id); ok && c.LastSeen().After(deadline) {
-			continue // still fresh from prior traffic; no ping needed
+		c, ok := s.registry.Get(id)
+		if !ok {
+			continue
 		}
-		_ = s.registry.SendEvent(id, &protocol.Event{Type: protocol.TypePing, Ping: &protocol.PingPayload{}})
+		if c.LastSeen().After(deadline) && c.MissedPongs() == 0 {
+			continue // fresh from prior traffic and no outstanding ping
+		}
+		if err := s.registry.SendEvent(id, &protocol.Event{Type: protocol.TypePing, Ping: &protocol.PingPayload{}}); err == nil {
+			c.BumpMissedPongs()
+		}
 	}
 
 	// Give the ping a moment to flush through the SSE handler (which updates
-	// lastSeen synchronously), then re-check the live lastSeen values.
+	// lastSeen synchronously) and the pong a moment to come back, then
+	// re-check the live values.
 	select {
 	case <-time.After(healthPingWait):
 	case <-ctx.Done():
 		return
 	}
 
-	// Evict: read the live lastSeen so a successful ping is not misjudged.
+	// Evict: read the live lastSeen so a successful ping is not misjudged,
+	// and the live missed-pong count so a wedged backend cannot hide behind
+	// a writable pipe. Both conditions must pass for survival: the flush
+	// works (lastSeen fresh) AND the consumer loop answers pongs.
 	for i, id := range ids {
 		c, ok := s.registry.Get(id)
 		if !ok {
 			continue // already removed (e.g. by its own SSE handler exit)
 		}
-		if c.LastSeen().After(deadline) {
-			continue // ping flushed; still healthy
+		if c.LastSeen().After(deadline) && c.MissedPongs() < maxMissedPongs {
+			continue // ping flushed and pongs arrive; still healthy
 		}
 		typ := types[i]
 		// Unregister returns false when the SSE handler already removed it;

@@ -391,6 +391,12 @@ cd /opt/lark-bridge
 
 前后端分机部署：前端机跑 feishu-front（持有飞书长连接 + IPC server），backend 机跑 CLI 后端，通过 IPC 连前端。代码层无需改动——`ipc_addr` 经标准 `ListenAndServe` 监听，`frontend_url` 是 backend 拨号地址。
 
+> **反代限流提示（C10）**：若在 feishu-front 前再架一层反向代理（nginx/caddy），
+> IPC 的 per-IP 鉴权失败锁定会退化为"全部来源 = 反代 IP"——单个 backend 的
+> 失败会锁定所有 backend。反代模式下请把限流/锁定上移到反代层（按 backendID
+> 路径维度，如 `/v1/control/(.*)` 分别计数），或保持 backend 直连不走反代。
+> IPC 认证本身不依赖 X-Forwarded-For（防伪造），这是有意设计。
+
 ```bash
 # ── 前端机（192.168.1.10）──────────────────────────
 # .env: IPC_ADDR 监听非 loopback；FRONTEND_URL 留空（前端不用）

@@ -78,7 +78,7 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 	} else {
 		armedGen := st.generation
 		st.timer = time.AfterFunc(d.offlineNoticeDebounce, func() {
-			d.fireOfflineNotice(backendID, armedGen)
+			goSafe(func() { d.fireOfflineNotice(backendID, armedGen) })
 		})
 	}
 	d.flapMu.Unlock()
@@ -306,7 +306,7 @@ func (d *Dispatcher) armPickerExpiry(messageID string, card []byte) {
 	d.pickerCards[messageID] = card
 	msgID := messageID
 	d.pickerTimers[messageID] = time.AfterFunc(cardkit.InteractiveTimeout, func() {
-		d.expirePicker(msgID)
+		goSafe(func() { d.expirePicker(msgID) })
 	})
 }
 
@@ -407,7 +407,7 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 		delay = cardPatchDelayDefault
 	}
 	msgID := action.MessageID
-	go func() {
+	goSafe(func() {
 		time.Sleep(delay)
 		// WithoutCancel: this PATCH must outlive the click-handler request
 		// (the 3-5s sleep crosses the handler's return). A request-scoped
@@ -422,7 +422,7 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 				log.FieldMessageID, msgID,
 				log.FieldError, err.Error())
 		}
-	}()
+	})
 	return nil
 }
 

@@ -4,6 +4,7 @@ package cmdutil
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"sync"
@@ -39,10 +40,24 @@ const MaxCombinedOutput = 1 << 20 // 1 MiB
 func ApplyGroupCancel(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
+		// P2: do NOT read cmd.ProcessState here — watchCtx calls Cancel
+		// concurrently with Wait, and ProcessState is written by Wait
+		// without synchronisation (the race detector flags the naive
+		// ProcessState != nil check). Instead probe the group: once the
+		// whole group is gone, Kill(-pgid) fails ESRCH, which maps to
+		// os.ErrProcessDone — the same "already done" signal without the
+		// data race. Process == nil guards "not started" (exec only calls
+		// Cancel after Start, but tests and defensive callers may not).
 		if cmd.Process == nil {
 			return os.ErrProcessDone
 		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		return nil
 	}
 	cmd.WaitDelay = GroupKillTimeout
 }

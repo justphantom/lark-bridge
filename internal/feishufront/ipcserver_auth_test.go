@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,5 +195,47 @@ func TestIPCAuth_NoSecretAllowsAll(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("no-secret SSE: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestIPCAuth_ConcurrentFailuresTriggerLockout (C8): hammer authGate with
+// concurrent bad tokens; the per-IP counter must reach the cap exactly and
+// every subsequent request — even one with the CORRECT token — is rejected
+// during the lockout window. With the old TOCTOU (check and count under
+// separate lock acquisitions) concurrent requests could slip past the cap.
+func TestIPCAuth_ConcurrentFailuresTriggerLockout(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "s3cr3t")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	const workers = 8
+	const perWorker = 3 // 24 failures > authMaxFailures
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range perWorker {
+				req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/status", nil)
+				req.Header.Set("Authorization", "Bearer wrong")
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					resp.Body.Close()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer s3cr3t")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 during lockout even with correct token", resp.StatusCode)
 	}
 }

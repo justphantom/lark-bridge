@@ -219,6 +219,9 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		<-c.sem
+		// Close the already-open stdout pipe: with Start never called,
+		// exec never gets to close it (P4 fd leak).
+		_ = stdout.Close()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {

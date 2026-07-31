@@ -49,6 +49,18 @@ const (
 	scannerMaxLine = 1 << 20
 )
 
+// sseSendTimeout bounds how long readSSE blocks pushing a decoded Event onto
+// eventCh before declaring the consumer stalled and forcing a reconnect. Must
+// be >> the normal per-event processing time but << the frontend's health-
+// eviction window (90s) so the reconnect lands while the backend is still
+// registered. A var (not const) so tests can shrink it; the production value
+// of 30s gives a 2× margin over a slow CLI turn while leaving ~60s for
+// reconnect+re-register before eviction.
+var sseSendTimeout = 30 * time.Second
+
+// errEventChStall is logged when readSSE gives up pushing onto eventCh.
+var errEventChStall = fmt.Errorf("backendrpc: sse eventCh consumer stalled")
+
 // maxErrBody caps how much of a peer's non-2xx response body is read into an
 // error message. The frontend writes only short fixed strings via http.Error,
 // but a bounded read keeps a misbehaving peer from OOM-ing the backend on an
@@ -101,6 +113,13 @@ type Client struct {
 	// instead of hanging forever on scanner.Scan() when the client shuts
 	// down locally (vs. a server-side EOF, which readSSE already handles).
 	sseBody io.ReadCloser
+
+	// sseCancel cancels the handshake context (C13). It is deliberately NOT
+	// called when Connect succeeds: the request context governs the body for
+	// its whole lifetime, so cancelling early would kill the SSE stream. It
+	// only fires on Close (where killing the stream is the goal) or on a
+	// handshake failure (nothing to keep alive).
+	sseCancel context.CancelFunc
 
 	// logger surfaces unreadable SSE frames (oversized or malformed) so a
 	// dropped event is observable. Defaults to a no-op; main.go wires the
@@ -177,27 +196,35 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 		q.Set("version", opts.Version)
 	}
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
+	// C13: bound the handshake with a timeout context instead of
+	// context.Background — a frontend that accepts TCP but never answers
+	// would otherwise hang Connect (and backend startup) until systemd's
+	// TimeoutStartSec. The cancel is retained on the Client (see sseCancel):
+	// it must NOT fire on success, because this context also governs the
+	// response body — cancelling it after Connect returns would close the
+	// SSE stream.
+	handshakeCtx, handshakeCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	c.sseCancel = handshakeCancel
+	req, err := http.NewRequestWithContext(handshakeCtx, http.MethodGet, u.String(), nil)
 	if err != nil {
+		handshakeCancel()
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	c.setAuth(req)
-	// The Transport's ResponseHeaderTimeout bounds the handshake; we do NOT
-	// attach a deadline-carrying context to the request because that context
-	// also governs the response body — cancelling it after Connect returns
-	// would close the SSE stream.
 	resp, err := httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
+		handshakeCancel()
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		_ = resp.Body.Close()
+		handshakeCancel()
 		return nil, fmt.Errorf("sse handshake %d: %s", resp.StatusCode, body)
 	}
 	c.sseBody = resp.Body
-	go c.readSSE(resp.Body)
+	goSafe(c.logger.Load(), "sse-reader", func() { c.readSSE(resp.Body) })
 	return c, nil
 }
 
@@ -229,6 +256,17 @@ func (c *Client) readSSE(r io.ReadCloser) {
 						select {
 						case c.eventCh <- &ev:
 						case <-c.closeCh:
+							return
+						case <-time.After(sseSendTimeout):
+							// A full eventCh for this long means the handler
+							// loop stopped draining (e.g. a hung CLI child).
+							// Closing the client forces a reconnect so a
+							// fresh SSE stream + a reset receive loop can
+							// recover, instead of leaking this goroutine and
+							// its held resp.Body forever.
+							c.logger.Load().Warn("sse eventCh stalled, forcing reconnect",
+								log.FieldError, errEventChStall)
+							_ = c.Close()
 							return
 						}
 					}
@@ -391,6 +429,9 @@ func (c *Client) Status(ctx context.Context) (*protocol.StatusSnapshot, error) {
 // shared with unrelated goroutines.
 func (c *Client) Close() error {
 	if atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
+		if c.sseCancel != nil {
+			c.sseCancel() // also unblocks readSSE if the body close races it
+		}
 		if c.sseBody != nil {
 			_ = c.sseBody.Close()
 		}

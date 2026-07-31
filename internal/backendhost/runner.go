@@ -52,6 +52,12 @@ type CLIRunner[H any] struct {
 	// usage store. Each backend keeps its own file to avoid write contention
 	// when multiple backends share a state_dir.
 	UsageFile string
+	// RouterFile is the filename (relative to cfg.StateDir) of this backend's
+	// router persistence file. Each backend keeps its own file to avoid
+	// lost-update when multiple backends share a state_dir — mirroring the
+	// per-backend UsageFile split. Empty falls back to the shared
+	// cfg.RouterPath (legacy behaviour, kept only for backward compat).
+	RouterFile string
 	// DefaultConfigPath is the -config default if the user supplies none.
 	DefaultConfigPath string
 	// ProgramPrefix is the binary's display prefix (e.g. "lark-claude-back")
@@ -125,7 +131,17 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 			routerLogger = l
 		}
 	}
-	rr, err := router.New(cfg.RouterPath, routerLogger)
+	// Per-backend router file (R2): each backend owns its own
+	// router-<backend>.v5.json under state_dir so co-located backends stop
+	// clobbering one shared file. RouterFile empty falls back to the shared
+	// cfg.RouterPath for backward compat. MigrateLegacyBindings carries an
+	// existing deployment's bindings forward on the first run after the split.
+	routerPath := cfg.RouterPath
+	if r.RouterFile != "" {
+		routerPath = filepath.Join(cfg.StateDir, r.RouterFile)
+		router.MigrateLegacyBindings(routerPath, routerLogger)
+	}
+	rr, err := router.New(routerPath, routerLogger)
 	if err != nil {
 		return fmt.Errorf("router: %w", err)
 	}
@@ -186,12 +202,14 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 	if r.MetricsInterval != nil {
 		interval := r.MetricsInterval(cfg)
 		if interval > 0 {
-			go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
-				Interval: interval,
-				StateDir: cfg.StateDir,
-				UnitName: r.UnitName,
-				Version:  version,
-				Logger:   base.Logger,
+			bridgebase.GoSafe(base.Logger, "metrics-loop", func() {
+				backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+					Interval: interval,
+					StateDir: cfg.StateDir,
+					UnitName: r.UnitName,
+					Version:  version,
+					Logger:   base.Logger,
+				})
 			})
 		}
 	}

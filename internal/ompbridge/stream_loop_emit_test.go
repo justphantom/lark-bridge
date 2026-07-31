@@ -170,27 +170,36 @@ const (
 	ompAgentEnd   = `{"type":"agent_end","messages":[],"isTerminal":true}`
 )
 
-// TestEmit_NoticeForwardsMessage verifies a notice event reaches the frontend
-// as a TypeNotice carrying the CLI's level + message (previously dropped into
-// the unknown-event default).
-func TestEmit_NoticeForwardsMessage(t *testing.T) {
+// TestEmit_NoticeRoutesToProgress verifies a notice event reaches the frontend
+// as a TypeProgress carrying the CLI's message (NOT a TypeNotice). Since S1 a
+// mid-run notice is routed through the non-terminal TypeProgress channel so it
+// cannot collide with the per-PromptID terminal dedup and drop the real
+// TypeResult.
+func TestEmit_NoticeRoutesToProgress(t *testing.T) {
 	controls := runOmpLines(t, ompSessionHdr, ompAgentStart, ompTurnStart,
 		`{"type":"notice","level":"info","message":"xd://: mounted mcp__codegraph_explore","source":"xdev"}`,
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"ok"}}`,
 		ompMsgEnd, ompAgentEnd)
 
-	c := findControl(controls, protocol.TypeNotice)
-	if c == nil {
-		t.Fatalf("no TypeNotice emitted; got %v", ompControlTypes(controls))
+	// A TypeNotice must NEVER be emitted for a mid-run notice now (terminal
+	// dedup collision with TypeResult).
+	if c := findControl(controls, protocol.TypeNotice); c != nil {
+		t.Fatalf("mid-run notice must not emit TypeNotice (terminal dedup); got %v", ompControlTypes(controls))
 	}
-	if c.Notice == nil {
-		t.Fatal("Notice payload nil")
+	var noticeProg *protocol.Control
+	for _, c := range controls {
+		if c.Type == protocol.TypeProgress && c.Progress != nil &&
+			strings.Contains(c.Progress.Description, "mounted mcp__codegraph_explore") {
+			noticeProg = c
+		}
 	}
-	if c.Notice.Level != "info" {
-		t.Errorf("Notice.Level = %q, want info", c.Notice.Level)
+	if noticeProg == nil {
+		t.Fatalf("no TypeProgress carrying the notice message; got %v", ompControlTypes(controls))
 	}
-	if c.Notice.Message != "xd://: mounted mcp__codegraph_explore" {
-		t.Errorf("Notice.Message = %q", c.Notice.Message)
+	// The real terminal must still land — this is the regression the routing
+	// fixes (B2: notice swallowed the result).
+	if findControl(controls, protocol.TypeResult) == nil {
+		t.Fatalf("final TypeResult missing after notice; got %v", ompControlTypes(controls))
 	}
 }
 
@@ -313,22 +322,33 @@ func TestEmit_TaskToolLiftsToSubagent(t *testing.T) {
 }
 
 // TestEmit_CustomRoleNudge verifies a role=custom message_end with
-// customType=mid-run-todo-nudge emits an info notice (not dropped silently, not
-// routed to the error path).
+// customType=mid-run-todo-nudge emits a TypeProgress (not a terminal
+// TypeNotice). Since S1 the nudge is non-terminal so it cannot collide with
+// the per-PromptID terminal dedup and drop the real TypeResult.
 func TestEmit_CustomRoleNudge(t *testing.T) {
 	controls := runOmpLines(t, ompSessionHdr, ompAgentStart, ompTurnStart,
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"ok"}}`,
 		`{"type":"message_end","message":{"role":"custom","customType":"mid-run-todo-nudge","content":"<system-reminder>10 todos open</system-reminder>","stopReason":"stop"}}`,
 		ompMsgEnd, ompAgentEnd)
 
-	var saw bool
+	// A TypeNotice must NEVER be emitted for the mid-run nudge (terminal dedup).
 	for _, c := range controls {
-		if c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.Title == "待办提醒" {
-			saw = true
+		if c.Type == protocol.TypeNotice {
+			t.Fatalf("mid-run nudge must not emit TypeNotice (terminal dedup); got %v", ompControlTypes(controls))
 		}
 	}
-	if !saw {
-		t.Fatalf("no 待办提醒 notice for custom role; got %v", ompControlTypes(controls))
+	var prog *protocol.Control
+	for _, c := range controls {
+		if c.Type == protocol.TypeProgress && c.Progress != nil && strings.Contains(c.Progress.Description, "todo") {
+			prog = c
+		}
+	}
+	if prog == nil {
+		t.Fatalf("no todo TypeProgress for custom-role nudge; got %v", ompControlTypes(controls))
+	}
+	// The real terminal must still land — B2 regression guard.
+	if findControl(controls, protocol.TypeResult) == nil {
+		t.Fatalf("final TypeResult missing after nudge; got %v", ompControlTypes(controls))
 	}
 }
 

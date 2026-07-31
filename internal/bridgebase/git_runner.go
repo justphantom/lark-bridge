@@ -53,7 +53,10 @@ type GitRunner struct {
 	cmd     GitCommander
 	logger  *log.Logger
 	timeout time.Duration
-	slots   sync.Map // chatID -> *sync.Mutex
+	// slots grows by one *sync.Mutex per distinct chatID, never pruned —
+	// same C4 tradeoff as SingleFlightJobRunner.chatSlots (bounded by chat
+	// count; safe deletion is not expressible over sync.Map).
+	slots sync.Map // chatID -> *sync.Mutex
 }
 
 // NewGitRunner builds a runner. timeout <=0 → defaultGitTimeout. A nil

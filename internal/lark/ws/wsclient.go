@@ -141,6 +141,14 @@ func (c *Client) Start(ctx context.Context) error {
 			c.fireError(err)
 		} else {
 			c.fireReady()
+			// A non-zero reconnects means we got here AFTER at least one
+			// reconnect cycle — i.e. the connection was restored, not the
+			// initial dial. OnReconnected fires here (not on the first
+			// connect) so the high-level client can re-subscribe / replay
+			// state exactly once per recovery.
+			if reconnects > 0 {
+				c.fireReconnected()
+			}
 			reconnects = 0 // healthy session resets the per-session budget
 			c.runSession(ctx, conn)
 			// Only surface OnDisconnected when the connection actually broke.
@@ -152,7 +160,13 @@ func (c *Client) Start(ctx context.Context) error {
 			}
 		}
 		if !c.reconnectStep(ctx, &reconnects) {
-			return ctx.Err()
+			if ctx.Err() != nil {
+				return ctx.Err() // intentional cancellation (Stop)
+			}
+			// Budget exhausted without ctx cancel: return an explicit error so
+			// a supervisor (systemd Restart=on-failure) restarts us, instead
+			// of the pre-fix silent nil that left the bot dead with no signal.
+			return ErrReconnectBudgetExhausted
 		}
 	}
 }

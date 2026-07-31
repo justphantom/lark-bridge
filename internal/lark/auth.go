@@ -1,12 +1,12 @@
 package lark
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -109,8 +109,9 @@ func (t *tokenManager) fetch(ctx context.Context) (*tokenResponse, error) {
 		"app_id":     t.appID,
 		"app_secret": t.appSecret,
 	})
+	// bytes.NewReader (W7): body is already a []byte; strings.NewReader(string(body)) copied it needlessly.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		t.baseURL+"/open-apis/auth/v3/tenant_access_token/internal", strings.NewReader(string(body)))
+		t.baseURL+"/open-apis/auth/v3/tenant_access_token/internal", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("lark: token request: %w", err)
 	}

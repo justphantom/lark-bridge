@@ -61,10 +61,17 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 	case <-firstExit: // a loop exited → conn is broken or being torn down
 	case <-ctx.Done():
 	}
-	// Force-close so the other loops reading on this conn unblock, then wait
-	// for ALL three to return. Without the WaitGroup the surviving loops
-	// would outlive runSession as short-lived orphans piling up per reconnect.
+	// Force-close so the other loops reading on this conn unblock.
 	_ = conn.Close()
+	// Cancel the derived ctx so the sweep goroutine (which does NOT touch
+	// the conn and therefore is NOT unblocked by conn.Close) also returns;
+	// otherwise <-exitCh below blocks forever on a non-ctx disconnect.
+	// cancel() is idempotent — the deferred cancel() on line 24 is a no-op
+	// after this (context contract).
+	cancel()
+	// Wait for ALL three loops to return. Without the WaitGroup the
+	// surviving loops would outlive runSession as short-lived orphans
+	// piling up per reconnect.
 	<-exitCh
 }
 
@@ -215,10 +222,15 @@ func (c *Client) pingLoop(ctx context.Context, conn *websocket.Conn) {
 		if interval <= 0 {
 			interval = 90 * time.Second
 		}
+		// NewTimer (not time.After) so the timer is stopped on the ctx-done
+		// path — time.After's timer lives until it fires, needlessly pinning
+		// up to `interval` of timer heap on every reconnect (W3).
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(interval):
+		case <-timer.C:
 		}
 		frame := NewPingFrame(serviceID)
 		bs, err := frame.Marshal()

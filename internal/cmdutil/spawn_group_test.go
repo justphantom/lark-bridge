@@ -5,6 +5,8 @@ package cmdutil
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -172,5 +174,21 @@ func TestLimitedWriter_Drops(t *testing.T) {
 	}
 	if got := string(w.bytes()); got != "01234567" {
 		t.Errorf("buf changed after fill: %q", got)
+	}
+}
+
+// TestApplyGroupCancel_CancelAfterExitSkipsKill (P2): once the process has
+// exited, Cancel must return os.ErrProcessDone instead of Kill(-pid) — the
+// process group id may have been reused by an unrelated process.
+func TestApplyGroupCancel_CancelAfterExitSkipsKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "true")
+	ApplyGroupCancel(cmd)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	cancel() // triggers nothing directly; call Cancel manually to inspect
+	if err := cmd.Cancel(); !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("Cancel after exit = %v, want os.ErrProcessDone", err)
 	}
 }

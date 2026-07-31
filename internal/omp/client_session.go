@@ -319,6 +319,9 @@ func (c *Client) RunGC(ctx context.Context, opts GCOptions) (GCResult, error) {
 	}
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
 	cmd.Env = cmdutil.SanitizeChildEnv()
+	// Group-kill on timeout: gc can fork helper subprocesses that would
+	// otherwise outlive the 5m budget and hold the stdout pipe open.
+	cmdutil.ApplyGroupCancel(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return GCResult{}, fmt.Errorf("omp gc: %w", err)

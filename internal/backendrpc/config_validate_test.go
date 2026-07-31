@@ -7,8 +7,30 @@ import (
 
 // TestValidateBackendConfig_OK: a fully populated config passes.
 func TestValidateBackendConfig_OK(t *testing.T) {
-	if err := ValidateBackendConfig("s", "b", "u"); err != nil {
+	if err := ValidateBackendConfig("s", "b", "http://localhost:6060"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestValidateBackendConfig_URLScheme (C12): frontend_url must be an
+// absolute http(s) URL with a host; scheme-less and exotic-scheme values
+// are rejected at startup with a clear error.
+func TestValidateBackendConfig_URLScheme(t *testing.T) {
+	bad := []string{
+		"localhost:6060",  // no scheme — parses with empty Scheme
+		"ftp://host:6060", // exotic scheme
+		"http://",         // no host
+		"://garbage",      // unparseable
+	}
+	for _, u := range bad {
+		if err := ValidateBackendConfig("s", "b", u); err == nil {
+			t.Errorf("frontend_url %q accepted, want rejection", u)
+		}
+	}
+	for _, u := range []string{"http://localhost:6060", "https://front.example.com"} {
+		if err := ValidateBackendConfig("s", "b", u); err != nil {
+			t.Errorf("frontend_url %q rejected: %v", u, err)
+		}
 	}
 }
 
@@ -18,8 +40,8 @@ func TestValidateBackendConfig_BlankFields(t *testing.T) {
 	cases := []struct {
 		secret, id, url, want string
 	}{
-		{"", "b", "u", "ipc_secret"},
-		{"s", "", "u", "backend_id"},
+		{"", "b", "http://h", "ipc_secret"},
+		{"s", "", "http://h", "backend_id"},
 		{"s", "b", "", "frontend_url"},
 	}
 	for _, c := range cases {

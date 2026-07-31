@@ -207,8 +207,17 @@ func run(cfgPath, addr string) error {
 	bot.OnIncoming(dispatcher.DispatchIncoming)
 	bot.OnCardAction(dispatcher.DispatchCardAction)
 
-	// Health checker evicts silent backends.
-	go ipc.StartHealthCheck(ctx, healthInterval, time.Duration(cfg.Timeouts.BackendHealth))
+	// Health checker evicts silent backends. Recover so a panic in the tick
+	// (EachConn / onOffline) cannot kill the loop and let dead backends rot.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("panic in health check",
+					log.FieldPanic, r, log.FieldStack, string(debug.Stack()))
+			}
+		}()
+		ipc.StartHealthCheck(ctx, healthInterval, time.Duration(cfg.Timeouts.BackendHealth))
+	}()
 
 	// Control pump: drain registry.Controls() and dispatch each.
 	// Recover per-message so a panic in DispatchControl (nil deref, slice

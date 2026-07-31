@@ -2,6 +2,7 @@ package miniclient
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,11 @@ const maxLineLen = 8 << 20 // 8 MB
 
 // runEventChanBuf is the buffer size of the per-Run Event output channel.
 const runEventChanBuf = 64
+
+// maxStderrBytes bounds the stderr capture so a pathological miniagent run
+// cannot exhaust memory. The head of stderr holds the actionable diagnostic
+// (missing API key, bad model, panic stack); 64 KiB is ample for that.
+const maxStderrBytes = 64 << 10
 
 // defaultMaxConcurrent is the fallback concurrency cap.
 const defaultMaxConcurrent = 4
@@ -123,6 +129,9 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		<-c.sem
+		// Close the already-open stdout pipe: with Start never called,
+		// exec never gets to close it (P4 fd leak).
+		_ = stdout.Close()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
@@ -166,22 +175,42 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	return a
 }
 
-// pump reads stdout lines, parses them into Events, and forwards to out.
-// It also tees stderr to the logger. After a terminal event (or EOF/error),
-// it waits for the subprocess and closes the channel.
+// pump reads stdout lines, parses them into Events, and forwards to out. It
+// captures stderr into a bounded buffer (for the error-event message) while
+// teeing each line to the debug log. After a terminal event (or EOF/error) it
+// waits — with stderr fully drained first — for the subprocess and closes the
+// channel.
+//
+// Alignment with the claude/opencode/omp pump (P1B): (1) the stderr copier is
+// synced to cmd.Wait via stderrDone so the os/exec pipe contract holds (no
+// racing a Wait that may close the read end); (2) the captured stderr is
+// appended to the synthesized error event so a startup failure ("missing API
+// key", panic stack) reaches the user instead of vanishing; (3) the
+// fire-and-forget stdout drain goroutine is removed — ApplyGroupCancel's
+// WaitDelay (set in Run) SIGKILLs the process group and bounds Wait so a
+// stuck grandchild cannot keep the stdout pipe open forever.
 func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Reader, out chan<- Event, sink io.Writer) {
 	defer func() {
 		<-c.sem
 		close(out)
 	}()
 
-	// Tee stderr to debug log (miniagent writes structured logs there).
+	// Capture stderr into a bounded buffer for the error-event message AND tee
+	// each line to the debug log. Bounded by maxStderrBytes so a misbehaving
+	// miniagent cannot OOM us. stderrDone syncs the copier to cmd.Wait below.
+	var stderrBuf bytes.Buffer
+	stderrDone := make(chan struct{})
 	go func() {
-		sc := bufio.NewScanner(stderr)
+		tee := io.TeeReader(io.LimitReader(stderr, maxStderrBytes), &stderrBuf)
+		sc := bufio.NewScanner(tee)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
 		for sc.Scan() {
 			c.logger.Debug("miniagent stderr", "line", sc.Text())
 		}
+		// Drain anything past the LimitReader cap so the subprocess is not
+		// blocked writing stderr (it would then never exit). Discard silently.
+		_, _ = io.Copy(io.Discard, stderr)
+		close(stderrDone)
 	}()
 
 	lr := linereader.New(stdout, maxLineLen)
@@ -216,19 +245,23 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		}
 	}
 
-	// Drain unread stdout so cmd.Wait does not block on the pipe reader.
-	// Covers both the terminal-event early break and a cancel mid-stream.
-	go func() {
-		_, _ = io.Copy(io.Discard, stdout)
-	}()
+	// Wait for the stderr copier to finish before cmd.Wait: Wait may close
+	// the pipe read end, and a concurrent copy would race it (os/exec
+	// contract: the caller must not use StderrPipe after Wait).
+	<-stderrDone
 
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
 		// Non-zero exit without ctx cancel: if we already emitted a terminal
 		// event, the consumer has it and this is just the exit code reflecting
 		// an error-path result. If we did NOT (process crashed before writing
-		// one), synthesize one so the consumer's drain-loop terminates.
+		// one), synthesize one so the consumer's drain-loop terminates — and
+		// fold the captured stderr in so the actionable diagnostic surfaces.
 		if !gotTerminal {
-			out <- Event{Kind: KindError, Message: fmt.Sprintf("miniagent exited: %v", err), IsTerminal: true}
+			msg := fmt.Sprintf("miniagent exited: %v", err)
+			if s := strings.TrimSpace(stderrBuf.String()); s != "" {
+				msg += "; stderr: " + s
+			}
+			out <- Event{Kind: KindError, Message: msg, IsTerminal: true}
 		}
 	}
 }

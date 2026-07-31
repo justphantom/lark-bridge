@@ -339,7 +339,7 @@ func TestLoadOpencodeListCacheTTLNegativeSurvives(t *testing.T) {
 }
 
 // TestLoadStreamHistoryOverride ensures an explicit stream_history survives
-// applyDefaults (the <=0 coercion only fills unset/non-positive values).
+// applyDefaults (the ==0 coercion only fills the unset value).
 func TestLoadStreamHistoryOverride(t *testing.T) {
 	path := writeConfig(t, `{"claude":{"stream_history":7}}`)
 	cfg, err := Load(path)
@@ -348,6 +348,35 @@ func TestLoadStreamHistoryOverride(t *testing.T) {
 	}
 	if cfg.Claude.StreamHistory != 7 {
 		t.Errorf("stream_history = %d, want 7", cfg.Claude.StreamHistory)
+	}
+}
+
+// TestLoadStreamHistoryNegativeDisables pins D1: a negative stream_history is
+// an explicit "disable archiving" signal that must survive applyDefaults
+// (previously <=0 was coerced to 50, making streamarchive.NewSink's
+// history<=0 disable branch unreachable). The negative value must reach the
+// sink so the disable branch fires.
+func TestLoadStreamHistoryNegativeDisables(t *testing.T) {
+	for _, backend := range []string{"claude", "opencode", "omp", "miniagent"} {
+		path := writeConfig(t, `{"`+backend+`":{"stream_history":-1}}`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("%s: Load: %v", backend, err)
+		}
+		var got int
+		switch backend {
+		case "claude":
+			got = cfg.Claude.StreamHistory
+		case "opencode":
+			got = cfg.Opencode.StreamHistory
+		case "omp":
+			got = cfg.OMP.StreamHistory
+		case "miniagent":
+			got = cfg.MiniAgent.StreamHistory
+		}
+		if got != -1 {
+			t.Errorf("%s: stream_history = %d, want -1 (negative must disable, not coerce to 50)", backend, got)
+		}
 	}
 }
 

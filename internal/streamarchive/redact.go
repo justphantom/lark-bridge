@@ -23,6 +23,14 @@ var sensitiveFields = map[string]struct{}{
 // in each NDJSON line before writing. Best-effort: unparseable lines pass
 // through verbatim (matching the archive's "never block a run" contract).
 // Each line is written with a trailing newline.
+//
+// D2 note: redacted lines are SEMANTICALLY equivalent JSON, not byte
+// identical to the CLI's original stdout — the unmarshal→marshal round trip
+// normalises key order, whitespace, unicode escapes and number formatting.
+// Tools that diff archives byte-for-byte against raw CLI output must run
+// with archiving unredacted; this is a deliberate privacy-over-verbatim
+// tradeoff (an in-place byte-substitution redactor is registered as a
+// future evaluation item).
 type RedactingWriter struct {
 	W io.Writer
 }

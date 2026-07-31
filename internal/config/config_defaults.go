@@ -36,7 +36,10 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Claude.MaxConcurrent == 0 {
 		cfg.Claude.MaxConcurrent = 4
 	}
-	if cfg.Claude.StreamHistory <= 0 {
+	// StreamHistory: 0 (unset) → default 50; negative → explicit disable so
+	// streamarchive.NewSink's history<=0 disable branch becomes reachable
+	// (matches ListCacheTTL/SettingsCacheTTL's "negative = off" semantics).
+	if cfg.Claude.StreamHistory == 0 {
 		cfg.Claude.StreamHistory = 50
 	}
 	if cfg.Claude.AppendSystemPrompt == "" {
@@ -66,7 +69,8 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Opencode.MaxConcurrent == 0 {
 		cfg.Opencode.MaxConcurrent = 4
 	}
-	if cfg.Opencode.StreamHistory <= 0 {
+	// StreamHistory: see Claude note — negative disables archiving.
+	if cfg.Opencode.StreamHistory == 0 {
 		cfg.Opencode.StreamHistory = 50
 	}
 	if cfg.Opencode.ListCacheTTL == 0 {
@@ -84,7 +88,8 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.OMP.MaxConcurrent == 0 {
 		cfg.OMP.MaxConcurrent = 4
 	}
-	if cfg.OMP.StreamHistory <= 0 {
+	// StreamHistory: see Claude note — negative disables archiving.
+	if cfg.OMP.StreamHistory == 0 {
 		cfg.OMP.StreamHistory = 50
 	}
 	if cfg.OMP.AppendSystemPrompt == "" {
@@ -130,7 +135,8 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.MiniAgent.MaxTokens <= 0 {
 		cfg.MiniAgent.MaxTokens = 4096
 	}
-	if cfg.MiniAgent.StreamHistory <= 0 {
+	// StreamHistory: see Claude note — negative disables archiving.
+	if cfg.MiniAgent.StreamHistory == 0 {
 		cfg.MiniAgent.StreamHistory = 50
 	}
 	if cfg.StateDir == "" {
@@ -139,10 +145,15 @@ func applyDefaults(cfg *Config, cfgPath string) {
 		cfg.StateDir = filepath.Dir(cfgPath)
 	}
 	if cfg.RouterPath == "" {
-		// Backend bindings (sessionID/directory/model/permission/etc.) persist
-		// here; without it router.New runs in-memory and every redeploy resets
-		// all bindings to defaults. Co-located with state_dir so both backends
-		// share the conventional {state_dir}/router.v5.json path.
+		// Backend bindings (sessionID/directory/model/permission/etc.)
+		// persist here; without it router.New runs in-memory and every
+		// redeploy resets all bindings to defaults. This is the LEGACY
+		// shared path — since the per-backend router split (R2) each backend
+		// overrides it with router-<backend>.v5.json under state_dir, and
+		// this value only serves as the backward-compat fallback (and as
+		// the source for one-time legacy migration). Co-located with
+		// state_dir so the conventional {state_dir}/router.v5.json path
+		// holds.
 		cfg.RouterPath = filepath.Join(cfg.StateDir, "router.v5.json")
 	}
 	if cfg.Timeouts.BackendHealth == 0 {

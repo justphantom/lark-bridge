@@ -50,6 +50,7 @@ func buildClaudeRunner() *backendhost.CLIRunner[*claudebridge.Handler] {
 		BackendType:         "claude",
 		UnitName:            "lark-claude-back.service",
 		UsageFile:           "usage-claude.json",
+		RouterFile:          "router-claude.v5.json",
 		ProgramPrefix:       "lark-claude-back",
 		LoggerComponent:     "claude-back",
 		MetricsInterval:     func(cfg *config.Config) time.Duration { return time.Duration(cfg.StatusMonitor.Interval) },

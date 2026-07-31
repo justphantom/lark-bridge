@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/justphantom/lark-bridge/internal/atomicwrite"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -71,6 +72,9 @@ func New(persistPath string, logger *log.Logger) (*Router, error) {
 		logger:      logger,
 	}
 	if persistPath != "" {
+		// D3: drop a crash-remnant tmp before loading so it cannot shadow
+		// the real file in operator debugging or future readers.
+		atomicwrite.RemoveStaleTmp(persistPath)
 		r.saveCh = make(chan struct{}, 1)
 		r.saveStop = make(chan struct{})
 		r.saveDone = make(chan struct{})

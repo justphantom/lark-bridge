@@ -61,3 +61,14 @@ func Write(path string, data []byte, mode os.FileMode) (retErr error) {
 	}
 	return nil
 }
+
+// RemoveStaleTmp best-effort removes path+".tmp" left behind by a crash
+// between create and rename (D3). Write already removes the tmp on error,
+// but a SIGKILL/crash mid-write cannot. Call once at process start, BEFORE
+// loading the target file: the tmp is never valid data (a committed write
+// has already renamed it away), so deleting it is always safe. Errors are
+// ignored by design — a missing tmp is the common case and a removal
+// failure must not block startup.
+func RemoveStaleTmp(path string) {
+	_ = os.Remove(path + ".tmp")
+}

@@ -27,6 +27,7 @@ var allowedControlTypes = map[string]struct{}{
 	TypeNotice:       {},
 	TypeFile:         {},
 	TypeStatusReport: {},
+	TypePong:         {},
 }
 
 // Validate checks Event consistency:
@@ -108,7 +109,12 @@ var (
 	validTodoPriorities   = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
 	validNoticeLevels     = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
 	validGateStates       = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
+	validGateKinds        = map[string]struct{}{"permission": {}, "question": {}}
 	validSubagentStatuses = map[string]struct{}{"running": {}, "completed": {}, "failed": {}}
+	// validTaskTypes covers claude's local_agent/local_bash and the "agent"
+	// kind opencode/omp emit. Empty TaskType is valid (omitempty), so it is
+	// checked as "either empty or in the set".
+	validTaskTypes = map[string]struct{}{"local_agent": {}, "local_bash": {}, "agent": {}}
 )
 
 // validateTodo enumerates each Todo's Status and Priority against the enum
@@ -161,6 +167,11 @@ func validateProgress(c *Control) error {
 	if _, ok := validGateStates[c.Progress.Gate.State]; !ok {
 		return fmt.Errorf("progress.gate.state %q must be one of waiting/answered/denied", c.Progress.Gate.State)
 	}
+	if k := c.Progress.Gate.Kind; k != "" {
+		if _, ok := validGateKinds[k]; !ok {
+			return fmt.Errorf("progress.gate.kind %q must be one of permission/question", k)
+		}
+	}
 	return nil
 }
 
@@ -175,6 +186,11 @@ func validateSubagentStatus(s *SubagentSummary) error {
 	}
 	if _, ok := validSubagentStatuses[s.Status]; !ok {
 		return fmt.Errorf("subagent.status %q must be one of running/completed/failed", s.Status)
+	}
+	if tt := s.TaskType; tt != "" {
+		if _, ok := validTaskTypes[tt]; !ok {
+			return fmt.Errorf("subagent.taskType %q must be one of local_agent/local_bash/agent", tt)
+		}
 	}
 	return nil
 }
@@ -222,6 +238,9 @@ var controlRules = map[string]controlRule{
 	TypeNotice:       {payloadIsNil: func(c *Control) bool { return c.Notice == nil }, payloadName: "notice", needsChatID: true, extraCheck: validateNotice},
 	TypeFile:         {payloadIsNil: func(c *Control) bool { return c.File == nil }, payloadName: "file", needsChatID: true, extraCheck: validateFile},
 	TypeStatusReport: {payloadIsNil: func(c *Control) bool { return c.StatusReport == nil }, payloadName: "statusReport", extraCheck: validateStatusReport},
+	// TypePong: pure liveness reply (C2); no chatID (keyed by the URL-path
+	// BackendID), no semantic fields to check.
+	TypePong: {payloadIsNil: func(c *Control) bool { return c.Pong == nil }, payloadName: "pong"},
 }
 
 // Validate checks Control consistency:

@@ -156,6 +156,12 @@ func (c *Core) buildTerminalControl(ctx context.Context, chatID, backendName str
 			title = "请求超时"
 			msg = backendName + " 响应超时，已终止"
 		}
+		// A backend-initiated abort can carry a specific reason (e.g. omp's
+		// auto-retry limit). Surface it instead of the generic copy. Plain
+		// ctx errors (user abort / prompt timeout) keep the generic copy.
+		if r.Err != nil && !errors.Is(r.Err, context.Canceled) && !errors.Is(r.Err, context.DeadlineExceeded) {
+			msg = r.Err.Error()
+		}
 		return &protocol.Control{
 			Type:   protocol.TypeNotice,
 			ChatID: chatID,

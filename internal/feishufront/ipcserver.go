@@ -145,47 +145,41 @@ func (s *IPCServer) authOK(r *http.Request) bool {
 		return true
 	}
 	ip := clientIPFromRequest(r)
-	if s.isLockedOut(ip) {
-		return false
-	}
 	const prefix = "Bearer "
 	h := r.Header.Get("Authorization")
-	ok := strings.HasPrefix(h, prefix) &&
+	tokenOK := strings.HasPrefix(h, prefix) &&
+		// C9 known limitation: ConstantTimeCompare returns early on unequal
+		// lengths, leaking the secret's length via timing. Accepted: the
+		// default deployment is loopback-only, the secret is a fixed-length
+		// 256-bit token, and knowing its length does not make brute force
+		// any more feasible. HMAC-compare would fix the oracle at the cost
+		// of a keyed hash on every request.
 		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, prefix)), []byte(s.secret)) == 1
-	if ok {
-		s.authFailures.Delete(ip)
-	} else {
-		s.recordAuthFailure(ip)
-	}
-	return ok
+	return s.authGate(ip, tokenOK)
 }
 
-// isLockedOut reports whether ip has exceeded authMaxFailures within the
-// lockout window.
-func (s *IPCServer) isLockedOut(ip string) bool {
-	v, ok := s.authFailures.Load(ip)
-	if !ok {
-		return false
-	}
-	f, ok := v.(*authFailureState)
-	if !ok {
-		return false
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.count >= authMaxFailures && time.Since(f.lastFail) < authLockout
-}
-
-// recordAuthFailure increments ip's failure counter (resetting it if the
-// lockout window has elapsed) and caps the map size.
-func (s *IPCServer) recordAuthFailure(ip string) {
+// authGate performs the lockout check AND the failure accounting in a single
+// critical section (C8: the old isLockedOut/recordAuthFailure pair released
+// the per-IP lock between "check" and "count", letting concurrent bad
+// requests slip past the cap — a classic TOCTOU). Returns whether the
+// request may proceed.
+func (s *IPCServer) authGate(ip string, tokenOK bool) bool {
 	now := time.Now()
 	v, _ := s.authFailures.LoadOrStore(ip, &authFailureState{})
 	f, ok := v.(*authFailureState)
 	if !ok {
-		return
+		return tokenOK
 	}
 	f.mu.Lock()
+	if f.count >= authMaxFailures && now.Sub(f.lastFail) < authLockout {
+		f.mu.Unlock()
+		return false // locked out
+	}
+	if tokenOK {
+		f.mu.Unlock()
+		s.authFailures.Delete(ip)
+		return true
+	}
 	if now.Sub(f.lastFail) > authLockout {
 		f.count = 0 // window elapsed: fresh count
 	}
@@ -209,6 +203,7 @@ func (s *IPCServer) recordAuthFailure(ip string) {
 			return true
 		})
 	}
+	return false
 }
 
 func authFailuresMapSize(m *sync.Map) int {

@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+// ErrReconnectBudgetExhausted is returned by Start when the server-supplied
+// ReconnectCount budget runs out WITHOUT ctx being cancelled — i.e. a real
+// outage the client could not recover from. Returning an explicit error (vs.
+// the pre-fix silent nil) lets a supervisor like systemd Restart=on-failure
+// restart the process so it re-bootstraps from a clean state.
+var ErrReconnectBudgetExhausted = errors.New("ws: reconnect budget exhausted (server-supplied ReconnectCount reached)")
+
 // reconnectSleep blocks for the configured nonce/interval before the next
 // reconnect attempt. Returns false if ctx was cancelled during the wait.
 func (c *Client) reconnectSleep(ctx context.Context) bool {
@@ -70,6 +77,12 @@ func (c *Client) fireError(err error) {
 	lc := c.snapshotLC()
 	if lc.OnError != nil {
 		lc.OnError(err)
+	}
+}
+func (c *Client) fireReconnected() {
+	lc := c.snapshotLC()
+	if lc.OnReconnected != nil {
+		lc.OnReconnected()
 	}
 }
 func (c *Client) fireReconnecting() {

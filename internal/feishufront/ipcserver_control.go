@@ -29,6 +29,15 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing backendID", http.StatusBadRequest)
 		return
 	}
+	// Registration check BEFORE reading the body (C7): the registered state
+	// does not depend on the payload, and rejecting early means an
+	// unregistered/stale backend cannot make us burn bandwidth decoding a
+	// large body we will discard anyway.
+	conn, ok := s.registry.Get(id)
+	if !ok {
+		http.Error(w, "backend not registered", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Cap the body so an oversized POST cannot exhaust memory; Decode will
 	// surface a "http: request body too large" error past the limit.
@@ -42,14 +51,26 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, ok := s.registry.Get(id); !ok {
-		http.Error(w, "backend not registered", http.StatusServiceUnavailable)
+	// TypePong is the C2 app-level heartbeat reply: it answers the health
+	// checker's ping, proving the backend's consumer loop (not just its TCP
+	// stack) is alive. Clear the missed-pong counter and short-circuit —
+	// pong is not a business control and must not enter the dispatcher pump.
+	if ctrl.Type == protocol.TypePong {
+		conn.ResetMissedPongs()
+		conn.Touch()
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	// BackendID is backfilled by the frontend from the URL path; the backend
 	// leaves it empty when sending (see protocol.Control comment).
 	ctrl.BackendID = id
 
+	// C14 accepted tradeoff: while a backend is re-registering (SSE
+	// reconnect window), ReceiveControl can drop a control whose chat route
+	// is briefly absent. This is acceptable because the affected controls
+	// are ephemeral (progress/text deltas); terminal controls retry through
+	// EmitTerminalControl's ACK loop and the backend's C1 reconnect lands a
+	// fresh stream well inside the eviction window.
 	if err := s.registry.ReceiveControl(RoutedControl{BackendID: id, Control: &ctrl}); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return

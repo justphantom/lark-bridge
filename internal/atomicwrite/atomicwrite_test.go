@@ -83,3 +83,24 @@ func TestWriteFailsOnMissingDir(t *testing.T) {
 		t.Errorf("target created despite failure: stat err = %v", err)
 	}
 }
+
+// TestRemoveStaleTmp (D3): a crash-remnant tmp is removed; a missing tmp is
+// a no-op; the REAL file is never touched.
+func TestRemoveStaleTmp(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target+".tmp", []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	RemoveStaleTmp(target)
+	if _, err := os.Stat(target + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("tmp still present: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("real file removed: %v", err)
+	}
+	RemoveStaleTmp(filepath.Join(dir, "nonexistent.json")) // must not panic
+}

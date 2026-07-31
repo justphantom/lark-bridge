@@ -88,8 +88,9 @@ type Claude struct {
 	MaxConcurrent      int    `json:"max_concurrent,omitempty"`       // max parallel CLI invocations (default 4)
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"` // system prompt to append (default: "你的回答应该简洁，通常不超过1000字")
 	// StreamHistory caps how many recent per-run raw stream-json captures
-	// are kept under {state_dir}/streams. <=0/unset → 50. The archive is
-	// best-effort and stores lines verbatim (no redaction); see claudebridge.
+	// are kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
+	// archiving entirely (streamarchive.NewSink history<=0 branch). The archive
+	// is best-effort and stores lines verbatim (no redaction); see claudebridge.
 	StreamHistory int `json:"stream_history,omitempty"`
 
 	// ModelOptions lists the models offered in the interactive /model picker
@@ -136,10 +137,10 @@ type Opencode struct {
 	MaxConcurrent    int    `json:"max_concurrent,omitempty"`    // max parallel CLI invocations (default 4)
 
 	// StreamHistory caps how many recent per-run raw NDJSON captures
-	// are kept under {state_dir}/streams. <=0/unset -> 50. The archive is
-	// best-effort and stores lines verbatim (no redaction); see opencodebridge.
+	// are kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
+	// archiving entirely (streamarchive.NewSink history<=0 branch). The archive
+	// is best-effort and stores lines verbatim (no redaction); see opencodebridge.
 	StreamHistory int `json:"stream_history,omitempty"`
-
 	// ListCacheTTL bounds how long ListModels/ListAgents results stay cached
 	// (seconds). The opencode CLI takes 25-50s to list, so caching makes
 	// repeated /model and /agent pickers instant. <=0/unset -> 3600 (1h).
@@ -161,8 +162,8 @@ type OMP struct {
 	// MaxConcurrent caps parallel omp subprocesses (default 4).
 	MaxConcurrent int `json:"max_concurrent,omitempty"`
 	// StreamHistory caps how many recent per-run raw NDJSON captures are
-	// kept under {state_dir}/streams. <=0/unset -> 50. The archive is
-	// best-effort and stores lines verbatim (no redaction).
+	// kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
+	// archiving entirely. The archive is best-effort, verbatim (no redaction).
 	StreamHistory int `json:"stream_history,omitempty"`
 	// AppendSystemPrompt is passed verbatim as --append-system-prompt.
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
@@ -268,8 +269,8 @@ type MiniAgent struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
-	// StreamHistory caps how many recent per-run raw NDJSON captures
-	// are kept under {stateDir}/streams/miniagent/. <=0/unset → 50.
+	// StreamHistory caps how many recent per-run raw NDJSON captures are kept
+	// under {stateDir}/streams/miniagent/. 0 (unset) → 50; negative → disable.
 	StreamHistory int `json:"stream_history,omitempty"`
 	// WorkspaceRoot bounds read_file to paths under this directory (after
 	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
@@ -538,6 +539,10 @@ func Load(path string) (*Config, error) {
 	// DisallowUnknownFields so a typo'd key (e.g. "max_concurent") is
 	// rejected rather than silently ignored — silent ignore plus
 	// applyDefaults makes operators believe the config took effect.
+	// D5 deployment constraint: this strictness means a config written for
+	// a NEWER binary (with added keys) is rejected by an older one — all
+	// binaries sharing one config file must be deployed at the same version
+	// (the deploy script already ships them together).
 	var cfg Config
 	dec := json.NewDecoder(bytes.NewReader(expanded))
 	dec.DisallowUnknownFields()

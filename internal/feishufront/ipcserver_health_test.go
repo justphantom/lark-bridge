@@ -85,3 +85,102 @@ func TestHealthTick_KeepsFreshBackend(t *testing.T) {
 type evict struct {
 	id, typ string
 }
+
+// TestHealthTick_EvictsDeadlockedBackend (C2): a backend whose SSE pipe stays
+// writable (lastSeen keeps refreshing — simulated by Touch) but whose
+// consumer loop never answers a TypePong is wedged. The old lastSeen-only
+// check could NEVER evict it (its own ping's flush kept lastSeen fresh);
+// the missed-pong counter must evict it after maxMissedPongs pings.
+func TestHealthTick_EvictsDeadlockedBackend(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "")
+
+	dead := reg.Register("dead-1", "omp")
+	// Start stale so the first tick pings it.
+	dead.lastSeen.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	// The SSE pipe stays writable the whole time: the flush handler Touches
+	// lastSeen on every write. Simulate that with a background Toucher —
+	// this is exactly why the lastSeen-only check could never evict a
+	// wedged backend.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				dead.Touch()
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+
+	var (
+		mu  sync.Mutex
+		got []evict
+	)
+	srv.SetOnOffline(func(id, typ string) {
+		mu.Lock()
+		got = append(got, evict{id: id, typ: typ})
+		mu.Unlock()
+	})
+
+	for round := 1; round <= maxMissedPongs; round++ {
+		srv.healthTick(context.Background(), time.Minute)
+		if round < maxMissedPongs {
+			if _, ok := reg.Get("dead-1"); !ok {
+				t.Fatalf("evicted after %d missed pongs, want survival until %d", round, maxMissedPongs)
+			}
+		}
+	}
+	if _, ok := reg.Get("dead-1"); ok {
+		t.Error("deadlocked backend not evicted after maxMissedPongs pings")
+	}
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) >= 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0].id != "dead-1" {
+		t.Errorf("onOffline = %+v, want exactly one [dead-1]", got)
+	}
+}
+
+// TestHealthTick_KeepsAliveRespondingBackend (C2): a backend that answers
+// every ping with a pong (missed-pong counter reset, flush Touch) is never
+// evicted, no matter how many ticks pass.
+func TestHealthTick_KeepsAliveRespondingBackend(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "")
+
+	live := reg.Register("live-1", "omp")
+	live.lastSeen.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				live.Touch()
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+
+	srv.SetOnOffline(func(id, _ string) {
+		t.Errorf("live backend wrongly evicted: %s", id)
+	})
+
+	for range maxMissedPongs + 2 {
+		srv.healthTick(context.Background(), time.Minute)
+		live.ResetMissedPongs() // TypePong came back on the control channel
+	}
+	if _, ok := reg.Get("live-1"); !ok {
+		t.Error("pong-responding backend was evicted")
+	}
+}

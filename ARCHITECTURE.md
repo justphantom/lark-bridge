@@ -525,6 +525,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 - 前端：`curl localhost:6060/v1/events` 应返回 401（鉴权拦截，`deploy/README.md:214`）
 - 后端：启动时 `api.IsReady` fail-fast（如 claude CLI 未安装，`cmd/claude-back/main.go:118`）
 - WS 看门狗：`ShouldExitUnhealthy`（`feishu/bot.go:249`），5 分钟无健康信号 → `os.Exit(1)` 交 systemd 拉起
+- 应用级心跳（C2）：前端 healthTick 向 `lastSeen` 过期或有未应答 ping 的后端发 `TypePing`，后端在**事件派发循环内**回 `TypePong` control（`bridgebase.Core.ReplyPong` / miniagent `HandleEvent`）。前端按 conn 计 `missedPongs`：连续 3 个 ping 无 pong 即判消费循环死锁并驱逐——`lastSeen` 只证明 SSE 管道可写（ping 的 flush 自己就会刷新它），无法发现 handler 卡死。`TypePong` 由 `ipcserver_control.go` 拦截，不进 dispatcher pump。
 
 ---
 

@@ -60,7 +60,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		reqID := requestID
 		msgID := messageID
 		d.interactiveTimers[requestID] = time.AfterFunc(cardkit.InteractiveTimeout, func() {
-			d.expireInteractive(reqID, msgID)
+			goSafe(func() { d.expireInteractive(reqID, msgID) })
 		})
 		d.cardMu.Unlock()
 	}
@@ -100,7 +100,7 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 		if delay <= 0 {
 			delay = cardPatchDelayDefault
 		}
-		go func() {
+		goSafe(func() {
 			time.Sleep(delay)
 			patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 			defer cancel()
@@ -110,7 +110,7 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 						log.FieldMessageID, msgID, log.FieldError, err.Error())
 				}
 			}
-		}()
+		})
 		return msgID, nil
 	}
 	if interactiveTakeOver(ctrl) && ctrl.PromptID != "" {
@@ -343,7 +343,7 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 					fbBytes := sub
 					fbReqID := requestID
 					fbChatID := action.ChatID
-					go func() {
+					goSafe(func() {
 						time.Sleep(fbDelay)
 						if _, ok := d.turns.InteractiveMessageID(fbReqID); !ok {
 							return
@@ -358,7 +358,7 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 									log.FieldError, err.Error())
 							}
 						}
-					}()
+					})
 					// Cache the SUBMITTED bytes (replacing the original) so a
 					// later finalize renders finalized-from-submitted and
 					// preserves the "✓ 已回答" echo (C5) — but ONLY if the

@@ -224,3 +224,16 @@ func headersOrEmpty(h []Header) []Header {
 	}
 	return h
 }
+
+// TestHeadersGetInt_Overflow (W5): a header value past int64 range must
+// yield 0 (Atoi error), not a silently wrapped integer.
+func TestHeadersGetInt_Overflow(t *testing.T) {
+	hs := Headers{{Key: "x", Value: "99999999999999999999999999"}}
+	if got := hs.GetInt("x"); got != 0 {
+		t.Errorf("GetInt overflow = %d, want 0", got)
+	}
+	hs2 := Headers{{Key: "x", Value: "42"}}
+	if got := hs2.GetInt("x"); got != 42 {
+		t.Errorf("GetInt(42) = %d, want 42", got)
+	}
+}

@@ -23,6 +23,7 @@ type Control struct {
 	Notice       *NoticePayload       `json:"notice,omitempty"`
 	File         *FilePayload         `json:"file,omitempty"`
 	StatusReport *StatusReportPayload `json:"statusReport,omitempty"`
+	Pong         *PongPayload         `json:"pong,omitempty"` // app-level heartbeat reply (C2)
 }
 
 // Control type values.
@@ -41,6 +42,7 @@ const (
 	TypeNotice       = "notice"
 	TypeFile         = "file"
 	TypeStatusReport = "status_report"
+	TypePong         = "pong" // app-level heartbeat reply (backend→frontend, C2)
 )
 
 // SessionInitPayload announces the session the backend bound for this prompt.
@@ -414,3 +416,13 @@ type StatusReportPayload struct {
 	Hosts       []HostStats   `json:"hosts,omitempty"`     // per-host load snapshot
 	Services    []ServiceStat `json:"services,omitempty"`  // per-backend process snapshot
 }
+
+// PongPayload is the empty app-level heartbeat reply (C2). A backend that
+// receives a TypePing Event answers with a TypePong Control so the frontend's
+// health check can distinguish a live (pump-healthy) backend from one whose
+// SSE connection is up but whose handler loop is wedged. The payload is empty
+// on purpose: pong is a pure liveness signal, carrying no business data, and
+// an empty struct marshals to "{}" — a hair cheaper to encode/decode and
+// impossible to misinterpret. The frontend does not render TypePong; it just
+// clears the per-backend pendingPong counter.
+type PongPayload struct{}

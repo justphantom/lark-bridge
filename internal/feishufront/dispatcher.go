@@ -293,13 +293,14 @@ func (d *Dispatcher) SetDedupConfig(staleWindow, eventTTL time.Duration, eventMa
 	// dedupSet.Configure handles the locking and field updates so the
 	// dispatcher does not reach into the set's private fields.
 	if eventTTL > 0 || eventMaxEntries > 0 {
+		curTTL, curMax := d.eventIDs.Config()
 		ttl := eventTTL
 		if ttl <= 0 {
-			ttl = d.eventIDs.ttl
+			ttl = curTTL
 		}
 		maxEntries := eventMaxEntries
 		if maxEntries <= 0 {
-			maxEntries = d.eventIDs.maxEntries
+			maxEntries = curMax
 		}
 		d.eventIDs.Configure(ttl, maxEntries)
 	}
@@ -331,7 +332,10 @@ func (d *Dispatcher) InitDebouncer(ctx context.Context, interval time.Duration) 
 // Add no longer scans for expired entries on the hot path (it was O(n) per
 // call); this ticker is what bounds the TTL-only sets (actionIDs/terminals)
 // in the steady state. eventIDs also benefits but already has maxEntries as
-// a backstop. Call once at startup after NewDispatcher; idempotent in effect
+// a backstop. C6 note: configuring maxEntries=0 via SetDedupConfig degrades
+// eventIDs to TTL-only — in that mode StartDedupPrune is the ONLY bound on
+// its growth, so this call becomes load-bearing, not optional.
+// Call once at startup after NewDispatcher; idempotent in effect
 // but a second call would spawn a second ticker per set harmlessly.
 func (d *Dispatcher) StartDedupPrune(ctx context.Context) {
 	d.eventIDs.StartPrune(ctx)

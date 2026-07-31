@@ -527,3 +527,56 @@ func TestMarkOffline_ResetsAtCap(t *testing.T) {
 		t.Error("most recent offline id missing after reset")
 	}
 }
+
+// TestControl_UnregisteredSkipsBodyDecode (C7): an unregistered backend is
+// rejected 503 BEFORE the body is decoded — an invalid/garbage body must
+// still yield 503, not the 400 a decode error would produce.
+func TestControl_UnregisteredSkipsBodyDecode(t *testing.T) {
+	reg := NewBackendRegistry()
+	srv := NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/v1/control/ghost", "application/json",
+		bytes.NewReader([]byte("{not json")))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (registration checked before body decode)", resp.StatusCode)
+	}
+}
+
+// TestControl_PongResetsMissedPongs (C2): a TypePong control resets the
+// conn's missed-pong counter, touches lastSeen, gets a 202, and does NOT
+// enter the dispatcher pump (it is a liveness signal, not a business
+// control).
+func TestControl_PongResetsMissedPongs(t *testing.T) {
+	reg := NewBackendRegistry()
+	conn := reg.Register("b1", "omp")
+	srv := NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	conn.BumpMissedPongs()
+	conn.BumpMissedPongs()
+
+	body, _ := json.Marshal(&protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}})
+	resp, err := http.Post(ts.URL+"/v1/control/b1", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	if got := conn.MissedPongs(); got != 0 {
+		t.Errorf("missedPongs = %d, want 0 after pong", got)
+	}
+	select {
+	case rc := <-reg.Controls():
+		t.Errorf("pong leaked into the dispatcher pump: %v", rc.Control.Type)
+	default:
+	}
+}

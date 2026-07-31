@@ -3,8 +3,8 @@
 // across the per-turn stream archives.
 //
 // One Store per backend process writes its own file (usage-claude.json /
-// usage-opencode.json under state_dir); the two backends share a state_dir
-// but never the same file, mirroring the per-backend router split.
+// usage-opencode.json under state_dir); the backends share a state_dir but
+// never the same file, mirroring the per-backend router split (R2).
 package usage
 
 import (
@@ -117,6 +117,8 @@ func New(path string, logger *log.Logger, ttl time.Duration) (*Store, error) {
 		sessions: make(map[string]*Entry),
 	}
 	if path != "" {
+		// D3: drop a crash-remnant tmp before loading (see router.New).
+		atomicwrite.RemoveStaleTmp(path)
 		s.saveCh = make(chan struct{}, 1)
 		s.saveStop = make(chan struct{})
 		s.saveDone = make(chan struct{})

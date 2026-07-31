@@ -45,7 +45,12 @@ type SingleFlightJobRunner struct {
 	// One of modeGlobal / modePerChat is non-nil. modeGlobal==nil &&
 	// modePerChat==nil means "accept nothing" (a misconfiguration that
 	// surfaces on first Acquire as a panic).
-	globalMu  *sync.Mutex
+	globalMu *sync.Mutex
+	// chatSlots grows by one *sync.Mutex per distinct chatID and is never
+	// pruned (C4, registered tech debt): deleting a slot safely requires
+	// proving no goroutine is between LoadOrStore and Lock, which a
+	// sync.Map cannot express. Growth is bounded by the deployment's chat
+	// count (typically tens), so the leak is ~100 B/chat and static.
 	chatSlots sync.Map // chatID -> *sync.Mutex
 }
 

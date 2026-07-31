@@ -74,7 +74,7 @@ func Run(ctx context.Context, opts ConnectOptions,
 	current.Store(client)
 	stop := make(chan struct{})
 	defer close(stop)
-	go func() {
+	goSafe(nil, "sse-shutdown", func() {
 		select {
 		case <-ctx.Done():
 			if c := current.Load(); c != nil {
@@ -82,7 +82,7 @@ func Run(ctx context.Context, opts ConnectOptions,
 			}
 		case <-stop:
 		}
-	}()
+	})
 	backoff := reconnectBackoff
 	// failures counts consecutive reconnect attempts without a successful
 	// receive in between. It is the gauge for ErrGiveUpReconnect: any

@@ -7,7 +7,7 @@
 //
 // miniagent is stateless (post fe85c16): no sessions, no memory, no
 // per-chat jsonl. The only persistent per-chat state is the router binding
-// (Directory + ModelSpec), stored under {state_dir}/miniagent-router.json.
+// (Directory + ModelSpec), stored under {state_dir}/router-miniagent.v5.json.
 //
 // Configuration is read from -config. The miniagent.api_key field should
 // use ${MINIAGENT_API_KEY} so the key is pulled from the environment, not
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniagent"
@@ -75,14 +76,19 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.Model == "" {
 		return fmt.Errorf("miniagent.model is required (use ${MINIAGENT_DEFAULT_MODEL} in the config)")
 	}
-	// fail-fast: without a router path the binding file is not persisted and
-	// every redeploy silently resets all per-chat model/directory pins.
-	// Parity with claude-back's main.go check.
+	// Per-backend router file (R2): without persistence every redeploy resets
+	// all per-chat model/directory pins, and sharing one file with the other
+	// backends lost-updates it. miniagent now owns
+	// {state_dir}/router-miniagent.v5.json; MigrateLegacyBindings carries an
+	// existing deployment's bindings forward on the first run after the split.
+	// The router_path == "" guard below is a state_dir sanity check
+	// (router_path defaults from state_dir in applyDefaults).
 	if cfg.RouterPath == "" {
 		return fmt.Errorf("router_path is required (set router_path or state_dir in the config)")
 	}
-
-	r, err := router.New(cfg.RouterPath, logger)
+	routerPath := filepath.Join(cfg.StateDir, "router-miniagent.v5.json")
+	router.MigrateLegacyBindings(routerPath, logger)
+	r, err := router.New(routerPath, logger)
 	if err != nil {
 		return fmt.Errorf("router: %w", err)
 	}
@@ -127,12 +133,14 @@ func run(cfgPath string) error {
 	// Host/process metrics push for the status-monitor overview card. The
 	// cgroup row is the parent service's memory; fork-on-prompt children are
 	// not sampled separately (idle → "—" only when the file is unreadable).
-	go backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
-		Interval: time.Duration(cfg.StatusMonitor.Interval),
-		StateDir: cfg.StateDir,
-		UnitName: "lark-miniagent-back.service",
-		Version:  version,
-		Logger:   logger,
+	bridgebase.GoSafe(logger, "metrics-loop", func() {
+		backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
+			Interval: time.Duration(cfg.StatusMonitor.Interval),
+			StateDir: cfg.StateDir,
+			UnitName: "lark-miniagent-back.service",
+			Version:  version,
+			Logger:   logger,
+		})
 	})
 
 	logger.Info("miniagent ready (CLI mode, stateless)",

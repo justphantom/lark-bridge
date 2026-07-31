@@ -277,6 +277,28 @@ func (c *Core) EmitAsync(promptID string, ctrl *protocol.Control) {
 	})
 }
 
+// ReplyPong answers a frontend health ping (protocol.TypePing Event) with a
+// TypePong control — the C2 app-level heartbeat. It MUST be invoked from the
+// backend's synchronous event-dispatch path (HandleEvent), because that is
+// exactly the goroutine whose liveness the frontend is probing: a wedged
+// consumer loop never reaches this call, so no pong is sent and the frontend
+// evicts the backend after maxMissedPongs. Fire-and-forget with its own 5s
+// ctx: pong is disposable and must not stall the dispatch loop on slow IPC.
+// PromptID stays empty (pong is keyed by the URL-path BackendID).
+func (c *Core) ReplyPong() {
+	if c.RPC == nil {
+		return
+	}
+	GoSafe(c.Logger, "pong", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := c.RPC.SendControl(ctx, &protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}})
+		if err != nil {
+			c.Logger.Debug("pong reply failed", log.FieldError, err)
+		}
+	})
+}
+
 // Close releases Core resources. Idempotent: cancels AppCtx (aborting
 // in-flight prompts) and per-chat cancels, waits up to shutdownGrace for
 // runPrompt goroutines so subprocesses are reaped, not orphaned.

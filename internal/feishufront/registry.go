@@ -47,6 +47,14 @@ type BackendConn struct {
 	// POST /v1/metrics. Atomic pointer swap: writers are the metrics HTTP
 	// handlers, readers are /v1/status. nil until the first push.
 	metrics atomic.Pointer[protocol.MetricsReport]
+
+	// missedPongs counts health pings sent without a TypePong reply (C2
+	// app-level heartbeat). lastSeen only proves the SSE pipe is writable —
+	// a backend whose consumer loop is wedged still ACKs TCP writes, so the
+	// health checker needs this app-level signal to evict it. Reset by the
+	// control handler when a TypePong arrives. Lives on the conn (not the
+	// server) so a re-registered backend starts at zero automatically.
+	missedPongs atomic.Int64
 }
 
 func newBackendConn(id, typ string) *BackendConn {
@@ -69,6 +77,15 @@ func (c *BackendConn) Touch() {
 func (c *BackendConn) LastSeen() time.Time {
 	return time.Unix(0, c.lastSeen.Load())
 }
+
+// BumpMissedPongs records one health ping sent without (yet) a pong reply.
+func (c *BackendConn) BumpMissedPongs() { c.missedPongs.Add(1) }
+
+// ResetMissedPongs clears the counter on a TypePong reply.
+func (c *BackendConn) ResetMissedPongs() { c.missedPongs.Store(0) }
+
+// MissedPongs returns the current unanswered-ping count.
+func (c *BackendConn) MissedPongs() int64 { return c.missedPongs.Load() }
 
 // SendEvent pushes ev onto the connection's event channel. Non-blocking: a
 // full channel returns an error so a slow backend cannot stall the caller.
