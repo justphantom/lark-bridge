@@ -70,6 +70,51 @@ type clientConfig struct {
 	PingInterval      time.Duration // between ping frames
 }
 
+// serverClientConfig mirrors the ClientConfig JSON the bootstrap endpoint and
+// pong payloads carry (whole-second ints). Kept separate from clientConfig so
+// "field absent/zero on the wire" stays distinguishable from a real value.
+type serverClientConfig struct {
+	ReconnectCount    int `json:"ReconnectCount"`
+	ReconnectInterval int `json:"ReconnectInterval"`
+	ReconnectNonce    int `json:"ReconnectNonce"`
+	PingInterval      int `json:"PingInterval"`
+}
+
+// minServerInterval is the floor for server-supplied PingInterval /
+// ReconnectInterval. A buggy or hostile config below this would hot-loop
+// pings or reconnects; zero is NOT clamped here but treated as "keep the
+// current value" by merge.
+const minServerInterval = 5 * time.Second
+
+// merge applies sc field-wise onto cfg: a zero wire field keeps the current
+// value, so a partial pong/bootstrap cannot wipe the reconnect budget
+// (ReconnectCount=0 would exhaust it on the next break) or zero the
+// intervals (ReconnectInterval=0 + Nonce=0 would hot-loop). Non-zero
+// intervals are clamped up to minServerInterval. ReconnectCount=-1 (infinite)
+// still overrides, being non-zero.
+func (cfg clientConfig) merge(sc serverClientConfig) clientConfig {
+	clamp := func(seconds int) time.Duration {
+		d := time.Duration(seconds) * time.Second
+		if d < minServerInterval {
+			return minServerInterval
+		}
+		return d
+	}
+	if sc.ReconnectCount != 0 {
+		cfg.ReconnectCount = sc.ReconnectCount
+	}
+	if sc.ReconnectInterval != 0 {
+		cfg.ReconnectInterval = clamp(sc.ReconnectInterval)
+	}
+	if sc.ReconnectNonce != 0 {
+		cfg.ReconnectNonce = time.Duration(sc.ReconnectNonce) * time.Second
+	}
+	if sc.PingInterval != 0 {
+		cfg.PingInterval = clamp(sc.PingInterval)
+	}
+	return cfg
+}
+
 // defaultConfig matches the values observed from the production bootstrap
 // endpoint; used until the first bootstrap response overrides them.
 func defaultConfig() clientConfig {
@@ -197,7 +242,9 @@ func (c *Client) connect(ctx context.Context) (*websocket.Conn, error) {
 	c.mu.Lock()
 	c.serviceID = serviceID
 	if cfg != nil {
-		c.cfg = *cfg
+		// Field-wise merge (NOT wholesale overwrite): a partial bootstrap
+		// config must not zero the fields it omits — see clientConfig.merge.
+		c.cfg = c.cfg.merge(*cfg)
 	}
 	c.mu.Unlock()
 	// Dial closes resp.Body itself (see its doc); capture the response so the
@@ -213,8 +260,8 @@ func (c *Client) connect(ctx context.Context) (*websocket.Conn, error) {
 }
 
 // bootstrap posts AppID/AppSecret to the endpoint and returns the WS URL plus
-// the server's client config.
-func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
+// the server's client config (raw wire form; the caller merges it).
+func (c *Client) bootstrap(ctx context.Context) (string, *serverClientConfig, error) {
 	body, _ := json.Marshal(map[string]string{"AppID": c.appID, "AppSecret": c.appSecret})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+BootstrapEndpoint, bytes.NewReader(body))
@@ -235,13 +282,8 @@ func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
-			URL          string `json:"URL"`
-			ClientConfig *struct {
-				ReconnectCount    int `json:"ReconnectCount"`
-				ReconnectInterval int `json:"ReconnectInterval"`
-				ReconnectNonce    int `json:"ReconnectNonce"`
-				PingInterval      int `json:"PingInterval"`
-			} `json:"ClientConfig"`
+			URL          string              `json:"URL"`
+			ClientConfig *serverClientConfig `json:"ClientConfig"`
 		} `json:"data"`
 	}
 	// Bound the decode: the bootstrap body is a small JSON blob; a hostile
@@ -259,17 +301,7 @@ func (c *Client) bootstrap(ctx context.Context) (string, *clientConfig, error) {
 	if out.Data.URL == "" {
 		return "", nil, errors.New("ws: bootstrap returned empty URL")
 	}
-	var cfg *clientConfig
-	if out.Data.ClientConfig != nil {
-		cc := out.Data.ClientConfig
-		cfg = &clientConfig{
-			ReconnectCount:    cc.ReconnectCount,
-			ReconnectInterval: time.Duration(cc.ReconnectInterval) * time.Second,
-			ReconnectNonce:    time.Duration(cc.ReconnectNonce) * time.Second,
-			PingInterval:      time.Duration(cc.PingInterval) * time.Second,
-		}
-	}
-	return out.Data.URL, cfg, nil
+	return out.Data.URL, out.Data.ClientConfig, nil
 }
 
 // runSession drives the receive and ping loops for one connection. Blocks

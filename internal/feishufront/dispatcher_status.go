@@ -18,7 +18,19 @@ var statusSendSem = make(chan struct{}, 4)
 // O(chats) synchronous Feishu PATCH calls, so running it inline lets one slow
 // API head-of-line block every chat's card updates. Status is periodic,
 // unordered, and safely droppable — ideal for async + bounded concurrency.
+//
+// The semaphore is acquired BEFORE spawning (non-blocking). Acquiring inside
+// the goroutine bounded concurrency but not the queue: a slow Feishu API plus
+// a sustained tick rate would stack queued goroutines (each capturing rc)
+// without bound. Blocking here would re-introduce head-of-line stall on the
+// serial control pump, so on saturation the tick is dropped — status is
+// periodic, so the next tick (or the next status control) recovers coverage.
 func (d *Dispatcher) sendStatusReportAsync(ctx context.Context, rc RoutedControl) {
+	select {
+	case statusSendSem <- struct{}{}:
+	default:
+		return
+	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -29,9 +41,8 @@ func (d *Dispatcher) sendStatusReportAsync(ctx context.Context, rc RoutedControl
 						log.FieldStack, string(debug.Stack()))
 				}
 			}
+			<-statusSendSem
 		}()
-		statusSendSem <- struct{}{}
-		defer func() { <-statusSendSem }()
 		if err := d.sendStatusReport(ctx, rc); err != nil {
 			if l := d.logger.Load(); l != nil {
 				l.Warn("status report send", "backend_id", rc.BackendID, log.FieldError, err)

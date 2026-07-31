@@ -38,6 +38,13 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend not registered", http.StatusServiceUnavailable)
 		return
 	}
+	// Per-backend session binding (M10-2): a peer holding the same shared
+	// secret must not POST as a backendID it did not register. Reject before
+	// decoding the body so a forged POST costs no bandwidth.
+	if !validateBackendToken(conn, r) {
+		http.Error(w, "backend token mismatch", http.StatusForbidden)
+		return
+	}
 
 	// Cap the body so an oversized POST cannot exhaust memory; Decode will
 	// surface a "http: request body too large" error past the limit.

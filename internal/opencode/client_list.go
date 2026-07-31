@@ -50,6 +50,9 @@ func (c *Client) execLines(ctx context.Context, args ...string) ([]string, error
 	// #nosec G204 -- c.cliPath comes from the trusted config file; args are
 	// fixed subcommands ("models" / "agent" "list"), not user input.
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
+	// Sanitised env: strip the bridge's own secrets so a user-run tool inside
+	// the CLI cannot read them (Low#19). The CLI's own *_API_KEY survives.
+	cmd.Env = cmdutil.SanitizeChildEnv()
 	cmdutil.ApplyGroupCancel(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -116,11 +119,12 @@ func parseAgents(lines []string) []string {
 
 // cachedList serves a list query from cache when fresh, otherwise invokes
 // fetch and stores its result. cache is a pointer-to-pointer so the miss path
-// can replace the cache entry in place under listMu. Concurrent misses are
-// NOT deduplicated: two goroutines hitting an expired cache both fork the
-// CLI. The picker path is async and rare, so at most one extra fork is
-// acceptable; dedup would add a singleflight/goroutine-per-key mechanism out
-// of proportion to the benefit.
+// can replace the cache entry in place under listMu. Concurrent cold misses
+// are deduplicated via listInflight: only the leader forks the CLI; waiters
+// block on its channel and then read the freshly-populated cache. This kills
+// the CPU/memory amplification of a /model or /agent flood (刷屏) each spawning
+// its own 25–50s `opencode models` / `agent list` fork. Errors are NOT cached:
+// a waiter whose leader failed becomes the next leader and re-fetches.
 func (c *Client) cachedList(
 	ctx context.Context,
 	cache **listCache,
@@ -129,28 +133,51 @@ func (c *Client) cachedList(
 	if c.listTTL <= 0 {
 		return fetch(ctx)
 	}
-	now := time.Now()
-	c.listMu.Lock()
-	if *cache != nil && now.Sub((*cache).fetchedAt) < c.listTTL {
-		// Return a copy so a caller cannot mutate the cached slice (the
-		// miss path stores a copy too; both paths must hand back an
-		// independent slice for the contract to hold on every call).
-		out := make([]string, len((*cache).values))
-		copy(out, (*cache).values)
+	for {
+		c.listMu.Lock()
+		if c.listInflight == nil {
+			c.listInflight = make(map[**listCache]chan struct{})
+		}
+		now := time.Now()
+		if *cache != nil && now.Sub((*cache).fetchedAt) < c.listTTL {
+			// Return a copy so a caller cannot mutate the cached slice (the
+			// miss path stores a copy too; both paths must hand back an
+			// independent slice for the contract to hold on every call).
+			out := make([]string, len((*cache).values))
+			copy(out, (*cache).values)
+			c.listMu.Unlock()
+			return out, nil
+		}
+		// A fetch already running for this slot? Wait for it, then re-loop
+		// (the leader will have populated the cache on success).
+		if ch, wait := c.listInflight[cache]; wait {
+			c.listMu.Unlock()
+			select {
+			case <-ch:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		// Become the leader: register an inflight channel, release the lock,
+		// and fork. Waiters landing while we hold the lock see the channel.
+		ch := make(chan struct{})
+		c.listInflight[cache] = ch
 		c.listMu.Unlock()
-		return out, nil
-	}
-	c.listMu.Unlock()
 
-	values, err := fetch(ctx)
-	if err != nil {
-		return nil, err
+		values, err := fetch(ctx)
+
+		c.listMu.Lock()
+		if err == nil {
+			snapshot := make([]string, len(values))
+			copy(snapshot, values)
+			*cache = &listCache{values: snapshot, fetchedAt: time.Now()}
+		}
+		delete(c.listInflight, cache)
+		close(ch)
+		c.listMu.Unlock()
+		// Leader returns its own result/error directly (waiters re-read the
+		// cache via the loop, so both paths hand back independent slices).
+		return values, err
 	}
-	// Copy so a caller cannot mutate the cached slice.
-	snapshot := make([]string, len(values))
-	copy(snapshot, values)
-	c.listMu.Lock()
-	*cache = &listCache{values: snapshot, fetchedAt: time.Now()}
-	c.listMu.Unlock()
-	return values, nil
 }

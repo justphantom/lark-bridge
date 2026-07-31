@@ -11,14 +11,23 @@
 package clibase
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
+
+// maxVersionBytes caps how much of a `--version` (or list) stdout we keep. The
+// real output is a single short line, but cmd.Output() would otherwise swallow
+// a pathological CLI's unbounded stdout whole; the tail past the cap is
+// discarded (drained) so the child is never blocked on a full pipe either.
+const maxVersionBytes = 1 << 20 // 1 MiB
 
 // MaxLineLen caps the per-line buffer for the stdout scanner. CLI stream-json
 // / NDJSON lines are usually small but tool_result payloads (file reads,
@@ -63,13 +72,29 @@ func CheckVersion(ctx context.Context, cliPath, backendName string, timeout time
 	defer cancel()
 	// #nosec G204 -- cliPath comes from trusted Options / config, not user input.
 	cmd := exec.CommandContext(ctx, cliPath, "--version")
-	out, err := cmd.Output()
+	// Sanitised env: strip the bridge's own secrets (FEISHU_APP_SECRET,
+	// IPC_SECRET, ENCRYPT_KEY, …) so a user-run tool cannot read them via the
+	// subprocess's environment (Low#19). The CLI's own *_API_KEY survives.
+	cmd.Env = cmdutil.SanitizeChildEnv()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		return fmt.Errorf("%s CLI not ready (%s --version): %w", backendName, cliPath, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s CLI not ready (%s --version): %w", backendName, cliPath, err)
+	}
+	// Bound the captured output (maxVersionBytes) and drain the rest so a
+	// pathological CLI cannot OOM us via unbounded stdout nor block on a full
+	// pipe. Drain happens before Wait per the os/exec StdoutPipe contract.
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, io.LimitReader(stdout, maxVersionBytes))
+	_, _ = io.Copy(io.Discard, stdout)
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("%s CLI not ready (%s --version): %w", backendName, cliPath, err)
 	}
 	fields := []any{"cli_path", cliPath}
 	fields = append(fields, extraFields...)
-	fields = append(fields, "version", strings.TrimSpace(string(out)))
+	fields = append(fields, "version", strings.TrimSpace(buf.String()))
 	logger.Info(backendName+" CLI ready", fields...)
 	return nil
 }

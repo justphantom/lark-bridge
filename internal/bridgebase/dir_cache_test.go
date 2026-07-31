@@ -36,6 +36,34 @@ func TestDirCache_Validate(t *testing.T) {
 	}
 }
 
+// TestDirCache_Validate_SymlinkEscape verifies Validate resolves symlinks: a
+// workspace entry that is a symlink pointing OUTSIDE root must be rejected,
+// even though its textual path is under root (Low#17 — matches /send SafeJoin).
+func TestDirCache_Validate_SymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir() // outside root
+
+	// A symlink under root whose target escapes root.
+	escape := filepath.Join(root, "escape")
+	if err := os.Symlink(external, escape); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// A symlink under root whose target stays inside root.
+	innerTarget := filepath.Join(root, "real")
+	os.MkdirAll(innerTarget, 0o755)
+	okLink := filepath.Join(root, "link")
+	if err := os.Symlink(innerTarget, okLink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := NewDirCache(root).Validate(escape); err == nil {
+		t.Error("Validate accepted a symlink escaping the workspace root")
+	}
+	if err := NewDirCache(root).Validate(okLink); err != nil {
+		t.Errorf("Validate rejected an in-root symlink: %v", err)
+	}
+}
+
 // TestDirCache_List scans immediate subdirectories, sorted, skipping files.
 func TestDirCache_List(t *testing.T) {
 	workspace := t.TempDir()

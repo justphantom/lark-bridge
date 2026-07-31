@@ -64,11 +64,16 @@ type Client struct {
 	sem     chan struct{}
 
 	// listTTL bounds the model/agent list cache. <=0 disables caching (every
-	// call forks the CLI). listMu guards modelsCache/agentsCache.
+	// call forks the CLI). listMu guards modelsCache/agentsCache/listInflight.
 	listTTL     time.Duration
 	listMu      sync.Mutex
 	modelsCache *listCache
 	agentsCache *listCache
+	// listInflight dedups concurrent cold cache misses per slot: keyed by the
+	// address of the cache field (&modelsCache / &agentsCache), the leader's
+	// channel is closed when its fork finishes so waiters re-check the cache
+	// instead of each forking the (25–50s) CLI themselves. Lazily allocated.
+	listInflight map[**listCache]chan struct{}
 }
 
 // New builds a Client from the CLI-mode config. The logger defaults to a
@@ -175,6 +180,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, error) {
 	if c.cliPath == "" {
 		return nil, errors.New("opencode: cli_path is empty")
+	}
+	// Prompt rides as a single argv element (opencode run does not read stdin),
+	// so it is bound by MAX_ARG_STRLEN and exposed via /proc/<pid>/cmdline —
+	// refuse the fork/exec up front with an attributable error instead of the
+	// kernel's opaque "argument list too long".
+	if len(opts.Prompt) > cmdutil.MaxArgPromptBytes {
+		return nil, fmt.Errorf("opencode: prompt too long for argv (%d > %d bytes)", len(opts.Prompt), cmdutil.MaxArgPromptBytes)
 	}
 	args := []string{
 		"run",

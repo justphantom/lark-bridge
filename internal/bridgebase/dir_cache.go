@@ -69,7 +69,10 @@ func (c *DirCache) List() ([]string, error) {
 // Validate checks that dir is an immediate or nested subdirectory of the
 // cache's root, refusing escapes. An empty root refuses everything (the
 // operator has not opted into /cd selection). The check uses filepath.Rel:
-// a result starting with ".." escapes the root.
+// a result starting with ".." escapes the root. A second pass resolves
+// symlinks so a workspace entry that is itself a symlink pointing OUTSIDE root
+// cannot bind the chat to an external dir — matches /send's SafeJoin, which
+// EvalSymlinks on the target.
 func (c *DirCache) Validate(dir string) error {
 	if c.root == "" {
 		return fmt.Errorf("未配置 WORKSPACE_ROOT 环境变量，无法校验目录")
@@ -82,6 +85,17 @@ func (c *DirCache) Validate(dir string) error {
 	}
 	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return fmt.Errorf("目录不在 workspace 范围内（%s 不在 %s 下）：%s", dir, root, dir)
+	}
+	// Symlink containment: resolve both ends (a symlinked root must not
+	// false-positive) and re-check. An actual escape requires the symlink to
+	// EXIST, in which case EvalSymlinks succeeds and withinRoot catches it; a
+	// path that does not resolve (non-existent / broken symlink / root on an
+	// unresolvable FS) cannot yet bind to anything, so the text verdict above
+	// stays the final authority rather than hard-failing a working setup.
+	realDir, derr := filepath.EvalSymlinks(cleaned)
+	realRoot, rerr := filepath.EvalSymlinks(root)
+	if derr == nil && rerr == nil && !withinRoot(realRoot, realDir) {
+		return fmt.Errorf("目录经符号链接解析后不在 workspace 范围内：%s", dir)
 	}
 	return nil
 }

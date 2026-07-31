@@ -27,6 +27,12 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 	sweepTicker := time.NewTicker(chunkTTL)
 	defer sweepTicker.Stop()
 
+	// The dispatch pool decouples event handling from the read loop: a slow
+	// sink (file download + convert) must not head-of-line block frame
+	// processing or delay ACKs. Owned per session so its workers are torn
+	// down with everything else below.
+	pool := newDispatchPool()
+
 	var wg sync.WaitGroup
 	firstExit := make(chan struct{})
 	var once sync.Once
@@ -36,7 +42,7 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 	go func() {
 		defer wg.Done()
 		defer signal()
-		c.receiveLoop(ctx, conn, reassembly)
+		c.receiveLoop(ctx, conn, reassembly, pool)
 	}()
 	go func() {
 		defer wg.Done()
@@ -73,6 +79,11 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 	// surviving loops would outlive runSession as short-lived orphans
 	// piling up per reconnect.
 	<-exitCh
+	// receiveLoop has returned (it is part of wg above), so no submit can
+	// race this close. Draining keeps already-queued events deliverable —
+	// the cancelled ctx makes well-behaved sinks abort promptly — and the
+	// wait guarantees no worker goroutine outlives the session.
+	pool.close()
 }
 
 // receiveLoop reads frames until the conn errors or ctx is done. Each inbound
@@ -87,7 +98,7 @@ func (c *Client) runSession(ctx context.Context, conn *websocket.Conn) {
 // Without this the original SDK's gorilla SetReadDeadline analogue is gone and
 // a silent death would otherwise only surface via the 5-minute frontend
 // watchdog, dropping every event in between.
-func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn, reassembly *reassembler) {
+func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn, reassembly *reassembler, pool *dispatchPool) {
 	rt := &router{sink: c.snapshotSink()}
 	c.refreshReadDeadline(conn)
 	for {
@@ -113,7 +124,7 @@ func (c *Client) receiveLoop(ctx context.Context, conn *websocket.Conn, reassemb
 		case MethodControl:
 			c.handleControl(frame)
 		case MethodData:
-			c.handleData(ctx, frame, reassembly, rt, conn)
+			c.handleData(ctx, frame, reassembly, rt, conn, pool)
 		}
 	}
 }
@@ -144,29 +155,32 @@ func (c *Client) handleControl(frame Frame) {
 	if len(frame.Payload) == 0 {
 		return
 	}
-	var cc struct {
-		ReconnectCount    int `json:"ReconnectCount"`
-		ReconnectInterval int `json:"ReconnectInterval"`
-		ReconnectNonce    int `json:"ReconnectNonce"`
-		PingInterval      int `json:"PingInterval"`
-	}
-	if err := json.Unmarshal(frame.Payload, &cc); err != nil {
+	var sc serverClientConfig
+	if err := json.Unmarshal(frame.Payload, &sc); err != nil {
 		return
 	}
 	c.mu.Lock()
-	c.cfg = clientConfig{
-		ReconnectCount:    cc.ReconnectCount,
-		ReconnectInterval: time.Duration(cc.ReconnectInterval) * time.Second,
-		ReconnectNonce:    time.Duration(cc.ReconnectNonce) * time.Second,
-		PingInterval:      time.Duration(cc.PingInterval) * time.Second,
-	}
+	// Field-wise merge: a pong carrying only some fields must not zero the
+	// rest (ReconnectCount=0 would exhaust the budget; zero intervals would
+	// hot-loop). Intervals are clamped to a floor inside merge.
+	c.cfg = c.cfg.merge(sc)
 	c.mu.Unlock()
 }
 
-// handleData reassembles a data frame, routes it, and writes the ACK. ACKing is
-// mandatory: the lark server treats an unacked delivery as a failure and
-// redelivers, which the upstream dedup then has to suppress.
-func (c *Client) handleData(ctx context.Context, frame Frame, r *reassembler, rt *router, conn frameWriter) {
+// handleData reassembles a data frame, ACKs it, then dispatches it to the
+// session's worker pool. ACKing is mandatory: the lark server treats an
+// unacked delivery as a failure and redelivers, which the upstream dedup
+// then has to suppress.
+//
+// The ACK is sent the instant the full message is reassembled, BEFORE
+// dispatch: with a slow sink (file download + convert, tens of seconds),
+// dispatch-then-ACK would hold this frame's ACK — and under the old
+// serial read loop every other chat's ACK too — for the whole sink
+// latency, inviting redelivery storms whenever the server tightens
+// PingInterval. Dispatch failures no longer map to a 500 ACK; a
+// deterministic dispatch failure would only loop on redelivery, so the
+// error is reported through the job's errf (Lifecycle.OnError) instead.
+func (c *Client) handleData(ctx context.Context, frame Frame, r *reassembler, rt *router, conn frameWriter, pool *dispatchPool) {
 	hs := Headers(frame.Headers)
 	msgID := hs.GetString(HeaderMessageID)
 	sum := hs.GetInt(HeaderSum)
@@ -177,16 +191,30 @@ func (c *Client) handleData(ctx context.Context, frame Frame, r *reassembler, rt
 		// remaining pieces; partial ack would confuse the redelivery state.
 		return
 	}
+	c.writeAck(conn, frame, http.StatusOK)
 	if rt.sink == nil {
-		c.writeAck(conn, frame, http.StatusOK)
 		return
 	}
-	ackCode := http.StatusOK
-	if err := rt.dispatch(ctx, joined); err != nil {
-		c.fireError(fmt.Errorf("ws: dispatch %s: %w", hs.GetString(HeaderType), err))
-		ackCode = http.StatusInternalServerError
+	eventType := hs.GetString(HeaderType)
+	job := dispatchJob{
+		ctx:     ctx,
+		rt:      rt,
+		payload: joined,
+		errf: func(err error) {
+			c.fireError(fmt.Errorf("ws: dispatch %s: %w", eventType, err))
+		},
 	}
-	c.writeAck(conn, frame, ackCode)
+	if !pool.submit(job) {
+		// Queue saturated (4 workers all busy on slow sinks, 64-deep buffer
+		// full): fall back to inline dispatch on the read loop. This
+		// deliberately reintroduces head-of-line blocking under sustained
+		// overload rather than drop the event — backpressure then throttles
+		// the read loop, which is safer than unbounded queue growth or silent
+		// data loss. The ACK has already gone out, so no redelivery pressure
+		// is added; the job's own recover keeps a panicking sink from killing
+		// the read loop.
+		job.run()
+	}
 }
 
 // frameWriter is the write seam of a websocket.Conn so handleData can be

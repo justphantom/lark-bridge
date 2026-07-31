@@ -286,6 +286,17 @@ func (h *Handler) runJob(chatID, promptID, cardMsgID, name string, args []string
 		"cmd", jobLabel(name, args))
 
 	out, err := h.cmd.Run(ctx, h.cfg.ProjectRoot, name, args...)
+
+	// Release the single-flight slot BEFORE the terminal-notice retry loop.
+	// notifyWithRetry polls a frontend that may be mid-redeploy for up to ~3
+	// min (15 × retry budget); holding the slot for that whole window would
+	// reject every /deploy /pull /push in every chat (Low#4). The notice is
+	// idempotent, so a new job starting concurrently is harmless. The deferred
+	// clear above stays as a panic safety net (idempotent on the happy path).
+	h.mu.Lock()
+	h.running = false
+	h.mu.Unlock()
+
 	if err != nil {
 		h.logger.Error("job failed", log.FieldChatID, chatID, "cmd", jobLabel(name, args), log.FieldError, err)
 		h.notifyWithRetry(chatID, promptID, cardMsgID, "error", label+"失败",

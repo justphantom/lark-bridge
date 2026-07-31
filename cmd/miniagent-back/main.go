@@ -110,9 +110,19 @@ func run(cfgPath string) error {
 
 	// CLI subprocess mode: miniagent-back forks miniagent per turn.
 	// The CLI binary (github.com/justphantom/miniagent) lives alongside
-	// this binary in the deploy dir.
-	cliPath := filepath.Join(filepath.Dir(os.Args[0]), "miniagent")
-	if _, err := os.Stat(cliPath); err != nil { //nolint:gosec // G703: cliPath derives from our own argv[0], not user input
+	// this binary in the deploy dir. os.Executable() resolves the real binary
+	// path even when argv[0] has been rewritten by a wrapper/supervisor
+	// (systemd, shell aliases); fall back to argv[0]'s dir only if it fails.
+	exeDir := filepath.Dir(os.Args[0])
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exeDir = filepath.Dir(resolved)
+		} else {
+			exeDir = filepath.Dir(exe)
+		}
+	}
+	cliPath := filepath.Join(exeDir, "miniagent")
+	if _, err := os.Stat(cliPath); err != nil { //nolint:gosec // G703: cliPath derives from our own binary path, not user input
 		// Fallback: check /usr/local/bin (make deploy from miniagent repo).
 		cliPath = "/usr/local/bin/miniagent"
 	}

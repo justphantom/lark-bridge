@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -48,7 +49,10 @@ func (h *Handler) confirmAndDeploy(ctx context.Context, chatID, promptID, cardMs
 		h.answers.Cancel(requestID)
 		return err
 	}
-	go h.awaitDeploy(chatID, promptID, cardMsgID, ch) //nolint:gosec // G118: the wait must outlive the triggering request's ctx
+	// GoSafe so a panic in the wait/answer path cannot crash the backend
+	// process (the job goroutine already uses GoSafe for the same reason).
+	bridgebase.GoSafe(h.logger, "deploy-monitor await: "+chatID,
+		func() { h.awaitDeploy(chatID, promptID, cardMsgID, ch) })
 	return nil
 }
 

@@ -16,9 +16,11 @@ import (
 //
 // The sequence is: open path+".tmp" → write → fsync → rename over
 // path → open parent dir → fsync dir. mode is applied to the temp
-// file (rename preserves the mode of the replaced file when one
-// already exists, which is the desired behaviour for files that were
-// created with a tighter umask).
+// file, and rename(2) then gives path the temp file's inode — so path
+// ends up with exactly `mode`, NOT the mode of any file that happened
+// to exist there before (rename replaces the inode wholesale; it does
+// not merge modes). Callers that rely on a specific mode must pass it
+// every time; a pre-existing file with a tighter mode is overwritten.
 //
 // On any error the temp file is removed (best-effort) so an aborted
 // write does not leave litter next to the target. The directory sync

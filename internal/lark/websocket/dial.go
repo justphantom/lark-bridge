@@ -25,6 +25,13 @@ import (
 	"time"
 )
 
+// handshakeTimeout bounds the upgrade handshake (request write + response
+// read) when the caller's ctx carries no tighter deadline. The TCP dial above
+// has its own 30s timeout, but http.ReadResponse would otherwise block
+// forever against a peer that accepts the connection yet never answers the
+// upgrade — hanging the lark client's Start. A var so tests can shrink it.
+var handshakeTimeout = 30 * time.Second
+
 // Dial opens a WebSocket connection to the given URL. The HTTP Upgrade
 // handshake is performed manually so no third-party HTTP hijack helper is
 // needed; wss:// is transparently wrapped in TLS. header is merged into the
@@ -88,9 +95,14 @@ func Dial(ctx context.Context, rawURL string, header http.Header) (*Conn, *http.
 	if err != nil {
 		return nil, nil, fmt.Errorf("websocket: dial: %w", err)
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		_ = nc.SetDeadline(dl)
+	// Arm the handshake deadline unconditionally: a tighter ctx deadline (if
+	// any) wins, otherwise handshakeTimeout applies. Cleared right after
+	// ReadResponse below so the live conn is not bound to it.
+	deadline := time.Now().Add(handshakeTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
 	}
+	_ = nc.SetDeadline(deadline)
 
 	key, err := makeChallengeKey()
 	if err != nil {

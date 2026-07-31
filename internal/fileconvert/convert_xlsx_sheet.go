@@ -14,6 +14,13 @@ import (
 // N rows so a hostile workbook cannot pin the dispatcher goroutine.
 const xlsxCtxCheckInterval = 64
 
+// xlsxTokenCheckInterval bounds ctx polling INSIDE the XML token loop. The
+// per-row check above fires only at row boundaries, so a single huge row (many
+// cells, still under the padding budget) would run uninterrupted between them;
+// polling every N tokens closes that gap (Low#8). Cheap: one incr + mod + bool
+// per token, with ctx.Err() only every N.
+const xlsxTokenCheckInterval = 4096
+
 // xlsxMaxColumns is the OOXML column ceiling (XFD). colLettersToIdx clamps to
 // it so a hostile cell reference cannot trigger unbounded row padding.
 const xlsxMaxColumns = 16384
@@ -77,6 +84,7 @@ func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtInde
 	}
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	rowCount := 0
+	tokens := 0
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -86,6 +94,14 @@ func parseSheet(ctx context.Context, data []byte, sst []string, fmts *numFmtInde
 			// A malformed worksheet demotes the whole sheet to a 读取失败
 			// placeholder (§4.3); the caller continues with the next sheet.
 			return nil, fmt.Errorf("parse worksheet XML: %w", err)
+		}
+		// Poll ctx every N tokens so a single huge row (many cells between row
+		// boundaries) cannot run uninterrupted (Low#8).
+		tokens++
+		if tokens%xlsxTokenCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:

@@ -12,6 +12,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +26,31 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
+
+// BackendTokenHeader carries the per-backend session token on the SSE
+// handshake and every POST. The frontend records the value at SSE-register
+// time and rejects a POST whose token does not match the conn that registered
+// the backendID — closing the lateral-movement gap where, under the shared
+// bearer secret, any one compromised backend could POST /v1/control/{otherID}
+// and impersonate a peer (M10-2). A header (not a query param) keeps the token
+// out of access logs.
+const BackendTokenHeader = "X-Backend-Token"
+
+// newBackendToken returns a fresh unguessable per-process token. Bound to the
+// Client (regenerated only across process restarts / reconnects that rebuild
+// the Client), so a peer can never learn another peer's token: each backend
+// generates its own locally and only the frontend sees it.
+func newBackendToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing means the host PRNG is broken; the token degrades
+		// to all-zeros (still structurally valid, just no entropy). The frontend
+		// still binds the POST to whatever value SSE registered, so the
+		// consistency check holds even here — only guess-resistance is lost.
+		return hex.EncodeToString(b[:])
+	}
+	return hex.EncodeToString(b[:])
+}
 
 // handshakeTimeout bounds the SSE handshake (dial + response-header wait).
 // Without it a stalled frontend makes Connect block until systemd's
@@ -99,7 +126,12 @@ type Client struct {
 	backendType string
 	frontendURL string
 	secret      string // shared bearer token; sent on SSE and POST
-	httpClient  *http.Client
+	// backendToken is the per-backend session token presented via
+	// BackendTokenHeader so the frontend can bind a POST to the SSE connection
+	// that registered this backendID (M10-2). Empty only in unit-test fakes
+	// that skip the live handshake.
+	backendToken string
+	httpClient   *http.Client
 	// ownsTransport reports whether this Client created httpClient itself
 	// (via newHTTPClient in Connect). Only an owned transport has its idle
 	// pool released on Close: a caller-supplied client (tests, embedders)
@@ -184,6 +216,7 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 		ownsTransport: ownsTransport,
 		eventCh:       make(chan *protocol.Event, sseEventChanBuf),
 		closeCh:       make(chan struct{}),
+		backendToken:  newBackendToken(),
 	}
 	c.logger.Store(log.Nop())
 	u, err := url.Parse(c.frontendURL)
@@ -221,6 +254,7 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	c.setAuth(req)
+	c.setBackendToken(req)
 	resp, err := httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	// Headers arrived (or Do errored): disarm the handshake timer so it can
 	// never cancel the body mid-stream. Stop() before the status check
@@ -320,6 +354,16 @@ func (c *Client) setAuth(req *http.Request) {
 	}
 }
 
+// setBackendToken attaches the per-backend session token so the frontend can
+// verify the POST sender is the connection that registered this backendID
+// (M10-2). No-op for test fakes with no token (frontend treats a conn with no
+// recorded token as a pre-token backend and still accepts it).
+func (c *Client) setBackendToken(req *http.Request) {
+	if c.backendToken != "" {
+		req.Header.Set(BackendTokenHeader, c.backendToken)
+	}
+}
+
 // RecvEvent blocks until the next Event arrives or the client is closed.
 func (c *Client) RecvEvent() (*protocol.Event, error) {
 	select {
@@ -354,6 +398,7 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuth(req)
+	c.setBackendToken(req)
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
 		return err
@@ -393,6 +438,7 @@ func (c *Client) PushMetrics(ctx context.Context, report *protocol.MetricsReport
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuth(req)
+	c.setBackendToken(req)
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
 	if err != nil {
 		return err

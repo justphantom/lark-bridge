@@ -256,6 +256,29 @@ func (s *IPCServer) Routes() http.Handler {
 	return mux
 }
 
+// backendTokenHeader carries the per-backend session token on the SSE
+// handshake and every POST (mirrors backendrpc.BackendTokenHeader). The SSE
+// handler records it on the conn; the control/metrics handlers reject a POST
+// whose token does not match the conn that registered the backendID — without
+// this, under the shared bearer secret any one compromised backend could POST
+// /v1/control/{peerID} and impersonate a peer (M10-2). A conn with an empty
+// recorded token (pre-token / old backend) opts out, so rolling upgrades do
+// not break.
+const backendTokenHeader = "X-Backend-Token"
+
+// validateBackendToken enforces the per-backend session binding for a POST
+// targeting conn. It returns true when the request may proceed: either the
+// conn recorded no token (legacy backend, never opted in) or the request
+// carries the matching token. A non-empty recorded token with a mismatched
+// (or absent) request token is an impersonation attempt → false.
+func validateBackendToken(conn *BackendConn, r *http.Request) bool {
+	want := conn.Token()
+	if want == "" {
+		return true // pre-token backend: rolling-upgrade compatibility
+	}
+	return r.Header.Get(backendTokenHeader) == want
+}
+
 // ipcReadHeaderTimeout bounds request-header read time so a slowloris-style
 // client cannot pin a connection on POST /v1/control or GET /v1/status. SSE is
 // unaffected: its header is read once at connect, then the handler owns the

@@ -125,3 +125,39 @@ func TestLineTruncated(t *testing.T) {
 		t.Errorf("LineTruncated(omp) = %d after ResetAll, want 0", got)
 	}
 }
+
+// TestUnknownStoreOverflow verifies the cardinality cap: once maxUnknownKeys
+// distinct keys are tracked, further unseen keys fold into one shared
+// overflow counter instead of growing the map without bound.
+func TestUnknownStoreOverflow(t *testing.T) {
+	s := newUnknownStore()
+
+	// Fill the store up to the cap; each key gets its own counter.
+	for i := range maxUnknownKeys {
+		c := s.get(string(rune(i)))
+		if c == s.Overflow() {
+			t.Fatalf("key %d below cap folded into overflow", i)
+		}
+	}
+
+	// The next unseen key must fold into the shared overflow counter.
+	c := s.get("past-the-cap")
+	if c != s.Overflow() {
+		t.Fatal("key past cap did not fold into overflow counter")
+	}
+	// ...and so must any further unseen key (same shared counter).
+	if s.get("another") != s.Overflow() {
+		t.Fatal("second key past cap did not fold into overflow counter")
+	}
+
+	// Existing tracked keys still resolve to their own (non-overflow) counter.
+	if s.get(string(rune(0))) == s.Overflow() {
+		t.Fatal("existing tracked key collapsed into overflow")
+	}
+
+	// Overflow counter is counted.
+	s.Overflow().Inc()
+	if v := s.Overflow().Value(); v != 1 {
+		t.Errorf("overflow value = %d, want 1", v)
+	}
+}

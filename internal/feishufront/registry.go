@@ -34,6 +34,13 @@ type BackendConn struct {
 	eventCh chan *protocol.Event
 	mu      sync.Mutex
 	closed  bool
+	// token is the per-backend session token presented at SSE-register time
+	// (see ipcserver). A POST must carry the same token or the frontend
+	// rejects it as an impersonation: under the shared bearer secret any one
+	// backend could otherwise POST /v1/control/{peerID} and act as a peer
+	// (M10-2). Empty for a pre-token (old) backend; the POST handler treats
+	// an empty recorded token as "not opted in" and still accepts.
+	token string
 	// lastSeen is a lock-free scalar (unix-nanos) updated on every successful
 	// SSE flush. Kept atomic so Touch (hot flush path) and LastSeen (health
 	// check) do not contend with mu, which protects only closed + the channel.
@@ -57,15 +64,20 @@ type BackendConn struct {
 	missedPongs atomic.Int64
 }
 
-func newBackendConn(id, typ string) *BackendConn {
+func newBackendConn(id, typ, token string) *BackendConn {
 	c := &BackendConn{
 		id:      id,
 		typ:     typ,
+		token:   token,
 		eventCh: make(chan *protocol.Event, connEventChanBuf),
 	}
 	c.lastSeen.Store(time.Now().UnixNano())
 	return c
 }
+
+// Token returns the per-backend session token recorded at SSE-register time.
+// Empty for a pre-token (old) backend.
+func (c *BackendConn) Token() string { return c.token }
 
 // Touch marks the connection as seen (a successful SSE flush). Read by the
 // health checker to evict silent backends.
@@ -130,15 +142,29 @@ func NewBackendRegistry() *BackendRegistry {
 	}
 }
 
-// Register registers a new backend connection. If backendID already exists,
-// the old connection is closed first and replaced. Returns the new conn.
+// Register registers a new backend connection WITHOUT a session token — the
+// legacy/pre-token shape used by tests and any path that does not need POST
+// impersonation protection. For the live SSE handshake use RegisterWithToken.
+// If backendID already exists, the old connection is closed first and replaced.
+// Returns the new conn.
 func (r *BackendRegistry) Register(id, typ string) *BackendConn {
+	return r.RegisterWithToken(id, typ, "")
+}
+
+// RegisterWithToken registers a new backend connection bound to a per-backend
+// session token. The token binds subsequent POSTs to this connection (M10-2):
+// under the shared bearer secret any one compromised backend could otherwise
+// POST /v1/control/{peerID} and impersonate a peer, so the POST handler
+// rejects a request whose token does not match the conn that registered the
+// backendID. An empty token (Register / pre-token backend) opts out — the POST
+// handler treats an empty recorded token as "legacy" and still accepts.
+func (r *BackendRegistry) RegisterWithToken(id, typ, token string) *BackendConn {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if old, ok := r.conns[id]; ok {
 		old.Close()
 	}
-	conn := newBackendConn(id, typ)
+	conn := newBackendConn(id, typ, token)
 	r.conns[id] = conn
 	return conn
 }

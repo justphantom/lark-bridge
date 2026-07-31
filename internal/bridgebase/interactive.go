@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -41,6 +42,11 @@ const (
 // EmitFunc matches the bridges' Handler.emit signature: promptID scopes the
 // control to an in-flight turn (empty for a standalone picker card).
 type EmitFunc func(ctx context.Context, promptID string, ctrl *protocol.Control) error
+
+// ErrPickerInFlight is returned by Core.AskAndWait when a picker is already
+// open in the same chat. The caller surfaces err.Error() as a notice, so the
+// message is user-facing.
+var ErrPickerInFlight = errors.New("本群已有一个选择进行中，请先完成或等待其失效")
 
 // StaticOptions adapts a fixed option list to AskAndWait's listFn form, for
 // backends whose picker values come from static config rather than a CLI
@@ -296,11 +302,26 @@ func EmitCardUpdate(appCtx context.Context, emit EmitFunc, chatID, updateMessage
 // AskAndWait is the receiver form of the package-level AskAndWait, binding
 // the Core's appCtx, answer broker, and emit. It is the single entry point
 // every bridge's interactive picker uses.
+//
+// It enforces per-chat single-flight: a chat that already has a picker open
+// gets ErrPickerInFlight instead of a second concurrent picker, so a flood of
+// /model (刷屏) cannot stack goroutines (each blocked up to AskWaitTimeout)
+// and duplicate cards. The heavy CLI fork behind the list is already deduped
+// by the backends' cachedList single-flight; this guard bounds the rest.
 func (c *Core) AskAndWait(
 	chatID, replyToID, kind, label string,
 	listFn func(context.Context) ([]string, error),
 	allowCustom bool,
 ) (string, string, error) {
+	slot, _ := c.pickerSlots.LoadOrStore(chatID, &sync.Mutex{})
+	mu, ok := slot.(*sync.Mutex)
+	if !ok {
+		return "", "", fmt.Errorf("picker slot for chat %s has unexpected type %T", chatID, slot)
+	}
+	if !mu.TryLock() {
+		return "", "", ErrPickerInFlight
+	}
+	defer mu.Unlock()
 	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
 }
 

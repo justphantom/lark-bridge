@@ -73,14 +73,22 @@ func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 		return
 	}
 	st.pendingType = backendType
+	// Arm (or re-arm) the debounce timer with a fresh generation token each
+	// time. A previously-fired timer's callback may be in flight, waiting on
+	// flapMu; bumping generation makes it see a stale armedGen and
+	// self-suppress, so only this latest arm's callback can post. Stopping
+	// and recreating (not Reset) is required: Reset reuses the original
+	// callback and its captured armedGen, which would still match
+	// st.generation on the re-fire and post a DUPLICATE offline card plus a
+	// duplicate reclaimStrandedTurns (the original M11 bug).
+	st.generation++
+	armedGen := st.generation
 	if st.timer != nil {
-		st.timer.Reset(d.offlineNoticeDebounce)
-	} else {
-		armedGen := st.generation
-		st.timer = time.AfterFunc(d.offlineNoticeDebounce, func() {
-			goSafe(func() { d.fireOfflineNotice(backendID, armedGen) })
-		})
+		st.timer.Stop()
 	}
+	st.timer = time.AfterFunc(d.offlineNoticeDebounce, func() {
+		goSafe(func() { d.fireOfflineNotice(backendID, armedGen) })
+	})
 	d.flapMu.Unlock()
 }
 

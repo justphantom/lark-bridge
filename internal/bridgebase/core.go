@@ -153,6 +153,16 @@ type Core struct {
 	// reassigning the field (it is exported for that purpose).
 	Git *GitRunner
 
+	// pickerSlots gives each chat at most one in-flight AskAndWait picker. A
+	// flood of /model (刷屏) would otherwise stack goroutines each waiting up
+	// to AskWaitTimeout and emitting its own card; the heavy CLI fork behind
+	// the list is already collapsed by the clients' cachedList single-flight,
+	// but this bounds the goroutine + card pile-up too. One *sync.Mutex per
+	// chat that has ever run a picker, never pruned — same C4 tradeoff as
+	// SingleFlightJobRunner.chatSlots (~tens of bytes/chat, bounded by the
+	// deployment's chat count).
+	pickerSlots sync.Map
+
 	closeOnce sync.Once
 }
 

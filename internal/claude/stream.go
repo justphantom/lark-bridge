@@ -49,6 +49,13 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 	stderrDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, maxStderrBytes))
+		// Keep draining past the cap so the OS stderr pipe never fills and
+		// deadlocks the child: a child blocked on stderr write stops writing
+		// stdout too, which hangs the pump on ReadLine (with prompt_timeout=0
+		// / idle_timeout=0 there is no fallback cancel). The head is already
+		// captured for diagnostics; the tail is discarded. Matches
+		// miniclient/client.go.
+		_, _ = io.Copy(io.Discard, stderr)
 		close(stderrDone)
 	}()
 

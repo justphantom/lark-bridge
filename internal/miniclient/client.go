@@ -215,6 +215,7 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 
 	lr := linereader.New(stdout, maxLineLen)
 	gotTerminal := false
+readLoop:
 	for {
 		line, truncated, err := lr.ReadLine()
 		if errors.Is(err, io.EOF) {
@@ -238,7 +239,15 @@ func (c *Client) pump(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Read
 		if !ok {
 			continue
 		}
-		out <- ev
+		// out is buffered but bounded; a consumer that stops draining without
+		// cancelling ctx would otherwise block this send (and the whole pump
+		// goroutine) forever. Abandon the rest on ctx cancel — the deferred
+		// close(out) and cmd teardown below still run (Low#16).
+		select {
+		case out <- ev:
+		case <-ctx.Done():
+			break readLoop
+		}
 		if ev.IsTerminal {
 			gotTerminal = true
 			break

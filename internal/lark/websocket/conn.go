@@ -42,6 +42,13 @@ const maxControlPayload = 125
 // path (many small continuations). 4 MiB is well above any legit lark payload.
 const maxMessageSize = 4 << 20
 
+// writeTimeout bounds a single frame write on the wire. Without it a peer
+// that stops reading (full TCP window, half-open conn) would block a write
+// until the TCP retransmit timeout (minutes); WriteMessage holds closeMu
+// across the write, so Close — and with it the whole reconnect path — would
+// stall for the same window. A var (not const) so tests can shrink it.
+var writeTimeout = 15 * time.Second
+
 // ErrCloseSent is returned by WriteMessage after a Close frame has been written.
 var ErrCloseSent = errors.New("websocket: close sent")
 
@@ -282,7 +289,17 @@ func (c *Conn) writeControl(opcode int, data []byte) error {
 }
 
 // writeFrameLocked emits one frame. Caller holds writeMu.
+//
+// The write deadline is re-armed before EVERY frame (not cleared after): a
+// deadline left over from an earlier write would otherwise silently expire
+// and fail a later healthy write, and clearing after success would leave the
+// next write unbounded if it is the last one before a partition. Re-arming
+// per write keeps each write independently bounded; SetWriteDeadline takes
+// no locks, so the closeMu→writeMu order is unaffected.
 func (c *Conn) writeFrameLocked(opcode int, data []byte, final, mask bool) error {
+	if err := c.nc.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return err
+	}
 	var hdr [14]byte
 	hdr[0] = byte(opcode & 0x0f)
 	if final {

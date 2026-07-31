@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -131,5 +133,56 @@ func TestCachedList_FetchErrorNotCached(t *testing.T) {
 	}
 	if cache != nil {
 		t.Errorf("failed fetch was cached: %+v", cache)
+	}
+}
+
+// TestCachedList_ConcurrentSingleFlight verifies concurrent cold misses share a
+// single fetch: the leader forks, waiters block on its channel and read the
+// populated cache. Without single-flight a /model flood would each spawn their
+// own ~100-150s `omp models --json` fork.
+func TestCachedList_ConcurrentSingleFlight(t *testing.T) {
+	var calls atomic.Int64
+	// Block the leader inside fetch until released, so all N callers are
+	// guaranteed to land while it is in flight — the exact window single-flight
+	// must collapse to one fork.
+	release := make(chan struct{})
+	fetched := make(chan struct{}, 1)
+	fetch := func(context.Context) ([]string, error) {
+		calls.Add(1)
+		select {
+		case fetched <- struct{}{}:
+		default:
+		}
+		<-release
+		return []string{"a", "b"}, nil
+	}
+	c := &Client{listTTL: 10 * time.Minute}
+	cache := (*listCache)(nil)
+
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([][]string, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], _ = c.cachedList(context.Background(), &cache, fetch)
+		}(i)
+	}
+	close(start)
+	// Wait for the leader to enter fetch, then let it finish.
+	<-fetched
+	close(release)
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("fetch calls = %d, want 1 (single-flight collapsed concurrent misses)", got)
+	}
+	for i := range n {
+		if !reflect.DeepEqual(results[i], []string{"a", "b"}) {
+			t.Errorf("goroutine %d result = %v, want [a b]", i, results[i])
+		}
 	}
 }

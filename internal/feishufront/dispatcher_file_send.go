@@ -21,7 +21,24 @@ var fileSendSem = make(chan struct{}, 4)
 // dispatchFileAsync runs a TypeFile control off the caller's goroutine. The
 // control pump is a single serial goroutine — a synchronous deliverFile would
 // head-of-line block every chat's card updates behind one slow upload.
+//
+// The semaphore is acquired BEFORE spawning (non-blocking). Acquiring inside
+// the goroutine bounded concurrency but not the queue: a buggy/compromised
+// backend POSTing a burst of TypeFile controls would stack N goroutines, each
+// pinning the full ctrl (base64 payload up to ~40 MB, decoded data another
+// copy) — N queued ≈ N×90 MB resident, an OOM path. A blocking acquire here
+// would itself head-of-line stall the serial control pump, so on saturation
+// we fall back to a synchronous busy-notice on the picker card (no spawn →
+// the ctrl is eligible for GC on return, no lingering 40 MB pin) instead of
+// dropping the user-initiated send silently.
 func (d *Dispatcher) dispatchFileAsync(ctx context.Context, ctrl *protocol.Control, backendType string) {
+	select {
+	case fileSendSem <- struct{}{}:
+	default:
+		d.reflectFileOutcome(ctx, ctrl, backendType, "error", "发送失败",
+			"文件发送队列已满（并发上限 4），请稍后重试。")
+		return
+	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -32,9 +49,8 @@ func (d *Dispatcher) dispatchFileAsync(ctx context.Context, ctrl *protocol.Contr
 						log.FieldStack, string(debug.Stack()))
 				}
 			}
+			<-fileSendSem
 		}()
-		fileSendSem <- struct{}{}
-		defer func() { <-fileSendSem }()
 		if err := d.handleFileControl(ctx, ctrl, backendType); err != nil {
 			if l := d.logger.Load(); l != nil {
 				l.Error("file control", log.FieldChatID, ctrl.ChatID, log.FieldError, err)

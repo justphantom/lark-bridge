@@ -21,6 +21,16 @@ import (
 // a goroutine, so without a bound a slow path would leak.
 const Timeout = 15 * time.Second
 
+// MaxArgPromptBytes is the ceiling on a prompt passed to a backend CLI as a
+// positional argv element (opencode/omp; claude reads stdin and is unaffected).
+// Linux bounds a single argv string at MAX_ARG_STRLEN = 128 KiB; beyond that
+// execve fails with E2BIG ("argument list too long"), an opaque error that does
+// not point back to the prompt. 100 KiB stays safely under the kernel hard
+// limit while leaving headroom for the other argv slots. A guard here also
+// caps how much of a pasted prompt is world-readable via /proc/<pid>/cmdline
+// for the subprocess's lifetime.
+const MaxArgPromptBytes = 100 << 10 // 100 KiB
+
 // Result is the body a slash command returns. The dispatcher wraps it in a
 // TypeNotice Control; a non-nil error is converted into an error-level
 // notice instead. Field/Before/After carry a structured setting change: when

@@ -55,7 +55,10 @@ func fetchModels(ctx context.Context, baseURL, apiKey string) ([]string, error) 
 		return nil, fmt.Errorf("miniagent: 请求 /v1/models 失败：%w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	// Bound the response: a hostile or buggy proxy could stream an unbounded
+	// body and OOM us on io.ReadAll. 4 MiB is far above any real /v1/models
+	// catalog; past it we fail rather than swallow the whole body.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, fmt.Errorf("miniagent: 读取 models 响应失败：%w", err)
 	}

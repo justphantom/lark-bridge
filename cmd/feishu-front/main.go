@@ -172,6 +172,12 @@ func run(cfgPath, addr string) error {
 	// message nor switches backend for 14d is treated as abandoned and pruned
 	// (persisted), so long-running deployments do not accumulate dead groups.
 	router.StartPrune(ctx, 14*24*time.Hour)
+	// Periodic inbox sweep: PruneInbox otherwise runs only once at startup, so
+	// a multi-month deployment would accumulate one inbox dir per chatID/msgID.
+	// Immediate-then-daily; only when the file pipeline is wired.
+	if cfg.FileConvert.Enabled {
+		dispatcher.StartInboxPrune(ctx, time.Duration(cfg.FileConvert.Retention))
+	}
 
 	ipc.SetOnOffline(dispatcher.OnBackendOffline)
 	ipc.SetOnOnline(dispatcher.OnBackendOnline)
@@ -384,7 +390,6 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 
 	dispatcher.SetFilePipeline(bot, converter, inbox, cfg.FileConvert.MaxFileSize, tmpl, postTmpl)
 	dispatcher.SetXlsxPromptTemplate(xlsxTmpl)
-	dispatcher.PruneInbox(time.Duration(cfg.FileConvert.Retention))
 	logger.Info("file pipeline enabled",
 		"inbox", inbox,
 		"max_file_size", cfg.FileConvert.MaxFileSize,

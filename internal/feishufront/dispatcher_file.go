@@ -451,3 +451,31 @@ func (d *Dispatcher) PruneInbox(retention time.Duration) {
 		l.Warn("inbox prune walk failed", log.FieldPath, d.inboxDir, log.FieldError, walkErr.Error())
 	}
 }
+
+// inboxPruneInterval is how often StartInboxPrune re-runs PruneInbox. PruneInbox
+// otherwise ran only once at startup, so a deployment up for months between
+// restarts would grow one inbox dir per chatID/msgID without bound.
+const inboxPruneInterval = 24 * time.Hour
+
+// StartInboxPrune sweeps the inbox immediately and then on a daily ticker until
+// ctx is done. Each sweep is best-effort. Mirrors StartDedupPrune and
+// router.StartPrune so the inbox stays bounded across long-running deployments,
+// not only at process start. retention<=0 disables archiving entirely.
+func (d *Dispatcher) StartInboxPrune(ctx context.Context, retention time.Duration) {
+	if retention <= 0 {
+		return
+	}
+	d.PruneInbox(retention)
+	go func() {
+		ticker := time.NewTicker(inboxPruneInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				d.PruneInbox(retention)
+			}
+		}
+	}()
+}

@@ -27,6 +27,15 @@ func (s *IPCServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing backendID", http.StatusBadRequest)
 		return
 	}
+	// Per-backend session binding (M10-2): reject a peer impersonating this
+	// backendID before decoding the body. SetMetrics re-checks registration.
+	if conn, ok := s.registry.Get(id); !ok {
+		http.Error(w, "backend not registered", http.StatusNotFound)
+		return
+	} else if !validateBackendToken(conn, r) {
+		http.Error(w, "backend token mismatch", http.StatusForbidden)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxMetricsBody)
 	// Plain Decode (no DisallowUnknownFields): a newer backend may add fields
 	// before this frontend upgrades; dropping them beats rejecting the push.

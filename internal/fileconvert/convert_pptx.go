@@ -47,6 +47,21 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 		return fmt.Errorf("fileconvert: create pptx dst: %w", err)
 	}
 	bw := &bytes.Buffer{}
+	// finishSlide writes the slide separator and flushes bw to out, bounding
+	// peak memory to one slide's rendered body: a deck with many slides would
+	// otherwise hold the entire rendered Markdown until a single final
+	// WriteTo (M2). The buf's Write never fails; the only error (disk full /
+	// unwritable) is checked once per slide here.
+	finishSlide := func() error {
+		bw.WriteString("---\n\n")
+		if _, err := bw.WriteTo(out); err != nil {
+			_ = out.Close()
+			_ = os.Remove(dstPath)
+			return fmt.Errorf("fileconvert: write pptx dst: %w", err)
+		}
+		bw.Reset()
+		return nil
+	}
 
 	maxSlides := c.pptxMaxSlides
 	for i, sp := range slidePaths {
@@ -65,13 +80,17 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 		zf := parts[sp]
 		if zf == nil {
 			fmt.Fprintf(bw, "<!-- Slide %d: 缺失，未提取 -->\n\n", i+1)
-			bw.WriteString("---\n\n")
+			if err := finishSlide(); err != nil {
+				return err
+			}
 			continue
 		}
 		data, rerr := readZipPart(zf)
 		if rerr != nil {
 			fmt.Fprintf(bw, "<!-- Slide %d: 读取失败，未提取: %s -->\n\n", i+1, sanitizeMetaText(rerr.Error()))
-			bw.WriteString("---\n\n")
+			if err := finishSlide(); err != nil {
+				return err
+			}
 			continue
 		}
 		p := &slideParser{bw: bw}
@@ -90,14 +109,11 @@ func (c *Converter) convertPptx(ctx context.Context, srcPath, dstPath string) er
 		if p.diags > 0 {
 			fmt.Fprintf(bw, "<!-- Slide %d: 含 SmartArt，未提取 -->\n\n", i+1)
 		}
-		bw.WriteString("---\n\n")
+		if err := finishSlide(); err != nil {
+			return err
+		}
 	}
 
-	if _, err := bw.WriteTo(out); err != nil {
-		_ = out.Close()
-		_ = os.Remove(dstPath)
-		return fmt.Errorf("fileconvert: write pptx dst: %w", err)
-	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(dstPath)
 		return fmt.Errorf("fileconvert: close pptx dst: %w", err)

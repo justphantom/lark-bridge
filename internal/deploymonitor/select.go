@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -63,7 +64,8 @@ func (h *Handler) confirmAndDeploySome(ctx context.Context, chatID, promptID, ca
 		h.answers.Cancel(requestID)
 		return err
 	}
-	go h.awaitDeploySome(chatID, promptID, cardMsgID, ch) //nolint:gosec // G118: the wait must outlive the triggering request's ctx
+	bridgebase.GoSafe(h.logger, "deploy-monitor await-some: "+chatID,
+		func() { h.awaitDeploySome(chatID, promptID, cardMsgID, ch) })
 	return nil
 }
 

@@ -19,6 +19,12 @@ import (
 // paragraphs) could still pin the dispatcher goroutine without a budget.
 const docxCtxCheckInterval = 64
 
+// docxTokenCheckInterval bounds ctx polling INSIDE the XML token loop. The
+// per-paragraph check fires only at paragraph boundaries, so a run of nested
+// tables / fields with no <p> close would go uninterrupted between them;
+// polling every N tokens closes that gap (Low#8).
+const docxTokenCheckInterval = 4096
+
 // maxListLevel caps the list indentation level (OOXML allows 0-8); a hostile
 // ilvl attribute cannot become an unbounded strings.Repeat indent.
 const maxListLevel = 8
@@ -97,18 +103,22 @@ func (c *Converter) convertDocx(ctx context.Context, srcPath, dstPath string) er
 	p.emitFootnotes()
 
 	// The missing-numbering-definition aggregate belongs at the document
-	// head (§3.2), so it is prepended after the body is complete.
-	var out bytes.Buffer
-	if p.missingNumPr > 0 {
-		fmt.Fprintf(&out, "<!-- %d 个列表段落缺少编号定义，已降级为无序列表 -->\n\n", p.missingNumPr)
-	}
-	out.Write(bw.Bytes())
-
+	// head (§3.2), so it is prepended. Write it straight to dst and stream bw
+	// after it, rather than copying bw into an intermediate buffer first: a
+	// large document.xml would otherwise hold two full rendered copies (the
+	// bw body plus the out buffer) at once (M2).
 	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("fileconvert: create docx dst: %w", err)
 	}
-	if _, err := out.WriteTo(dst); err != nil {
+	if p.missingNumPr > 0 {
+		if _, err := fmt.Fprintf(dst, "<!-- %d 个列表段落缺少编号定义，已降级为无序列表 -->\n\n", p.missingNumPr); err != nil {
+			_ = dst.Close()
+			_ = os.Remove(dstPath)
+			return fmt.Errorf("fileconvert: write docx dst: %w", err)
+		}
+	}
+	if _, err := bw.WriteTo(dst); err != nil {
 		_ = dst.Close()
 		_ = os.Remove(dstPath)
 		return fmt.Errorf("fileconvert: write docx dst: %w", err)
@@ -229,9 +239,17 @@ func (p *docParser) safeRun(ctx context.Context, data []byte) (err error) {
 
 func (p *docParser) run(ctx context.Context, data []byte) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
+	tokens := 0
 	for {
 		tok, err := dec.Token()
 		if err != nil || p.stop {
+			return
+		}
+		// Poll ctx every N tokens so a stretch with no paragraph boundary
+		// (nested tables / fields) cannot run uninterrupted (Low#8).
+		tokens++
+		if tokens%docxTokenCheckInterval == 0 && ctx.Err() != nil {
+			p.stop = true
 			return
 		}
 		switch t := tok.(type) {

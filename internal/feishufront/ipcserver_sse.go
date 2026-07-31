@@ -24,6 +24,12 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing backendID or backendType", http.StatusBadRequest)
 		return
 	}
+	// Per-backend session token (M10-2): binds subsequent POSTs to this
+	// connection so a peer holding the same shared secret cannot POST as this
+	// backendID. A header (not a query param) keeps it out of access logs;
+	// empty means a pre-token (old) backend, which the POST handler still
+	// accepts for rolling-upgrade compatibility.
+	token := r.Header.Get(backendTokenHeader)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -39,7 +45,7 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// as soon as it reads the response headers, so any caller that immediately
 	// dispatches (e.g. a test, or a backend whose first POST loses the race
 	// with the SSE handler goroutine) must observe the backend as registered.
-	conn := s.registry.Register(id, typ)
+	conn := s.registry.RegisterWithToken(id, typ, token)
 	// Version arrives once in the handshake query (empty for pre-metrics
 	// backends → "unknown" on the card). Old frontends ignore the param.
 	if v := r.URL.Query().Get("version"); v != "" {

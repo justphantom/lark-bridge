@@ -100,11 +100,26 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 	if err != nil {
 		return nil, fmt.Errorf("fileconvert: create xlsx dst: %w", err)
 	}
-	// Accumulate the body in a bytes.Buffer and flush once at the end.
+	// Render each sheet into a reused bytes.Buffer and flush it to out before
+	// the next sheet, rather than accumulating the whole workbook in memory.
 	// bytes.Buffer's Write never fails, so the many Write/String/Byte calls
 	// below stay clean without per-call error checks; the only error that
-	// matters (disk full / unwritable) surfaces on the single buf.WriteTo.
+	// matters (disk full / unwritable) surfaces on each flush. Per-sheet
+	// flushing bounds peak memory to one sheet's rendered body plus its
+	// parsed rows — a workbook with many large sheets would otherwise hold
+	// the entire rendered Markdown (2-3× the source XML) until a single
+	// final WriteTo (M2).
 	buf := &bytes.Buffer{}
+	flush := func() error {
+		if buf.Len() == 0 {
+			return nil
+		}
+		if _, err := buf.WriteTo(out); err != nil {
+			return err
+		}
+		buf.Reset()
+		return nil
+	}
 
 	meta := &XlsxMeta{}
 	if hasPivot {
@@ -143,6 +158,14 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 		res, perr := c.parseSheetByName(ctx, parts, wbRels, sheet, sst, fmts, date1904)
 		writeXlsxSheetBody(buf, name, res, perr, chartCounts[sheet.Name])
 		buf.WriteString("---\n\n")
+		// Flush this sheet's body now so its rendered Markdown (and, once res
+		// is reused next iteration, its parsed rows) can be reclaimed before
+		// the next sheet is parsed.
+		if err := flush(); err != nil {
+			_ = out.Close()
+			_ = os.Remove(dstPath)
+			return nil, fmt.Errorf("fileconvert: write xlsx dst: %w", err)
+		}
 
 		meta.Sheets = append(meta.Sheets, buildSheetMeta(name, res, perr, chartCounts[sheet.Name]))
 
@@ -159,7 +182,7 @@ func (c *Converter) convertXlsx(ctx context.Context, srcPath, dstPath string) (*
 		buf.WriteString("<!-- 工作簿含数据透视表（pivotTable），未提取 -->\n\n")
 	}
 
-	if _, err := buf.WriteTo(out); err != nil {
+	if err := flush(); err != nil {
 		_ = out.Close()
 		_ = os.Remove(dstPath)
 		return nil, fmt.Errorf("fileconvert: write xlsx dst: %w", err)

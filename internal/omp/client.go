@@ -103,11 +103,16 @@ type Client struct {
 	sem                chan struct{}
 
 	// listTimeout bounds the `omp models --json` fork. listTTL bounds its
-	// cache (<=0 disables). listMu guards modelsCache.
+	// cache (<=0 disables). listMu guards modelsCache and listInflight.
 	listTimeout time.Duration
 	listTTL     time.Duration
 	listMu      sync.Mutex
 	modelsCache *listCache
+	// listInflight dedups concurrent cold cache misses per slot: keyed by the
+	// address of the cache field (&modelsCache), the leader's channel is
+	// closed when its fork finishes so waiters re-check the cache instead of
+	// each forking the (minutes-long) CLI themselves. Lazily allocated.
+	listInflight map[**listCache]chan struct{}
 }
 
 // New builds a Client from opts, applying the documented defaults for any
@@ -250,6 +255,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 func (c *Client) buildCommand(ctx context.Context, opts RunOptions) (*exec.Cmd, error) {
 	if c.cliPath == "" {
 		return nil, errors.New("omp: cli_path is empty")
+	}
+	// Prompt rides as a single argv element (omp -p reads it from argv, not
+	// stdin), so it is bound by MAX_ARG_STRLEN and exposed via
+	// /proc/<pid>/cmdline — refuse the fork/exec up front with an attributable
+	// error instead of the kernel's opaque "argument list too long".
+	if len(opts.Prompt) > cmdutil.MaxArgPromptBytes {
+		return nil, fmt.Errorf("omp: prompt too long for argv (%d > %d bytes)", len(opts.Prompt), cmdutil.MaxArgPromptBytes)
 	}
 	// Defensive enum validation: RunOptions is exported, so a caller can bypass
 	// the slash-command / config-validate gates and hand in an illegal value.

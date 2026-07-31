@@ -39,6 +39,14 @@ const topDir = "streams"
 // order — the rotation prune relies on this.
 const fileTimeLayout = "20060102T150405.000000000"
 
+// maxArchiveFileBytes caps a single archive file's size. Prune rotates by file
+// COUNT at run start, not by size, so a runaway model output loop within one
+// session (or a tool dumping a huge file) would otherwise grow a single file
+// without bound until the run ends — multiplied by the independent per-backend
+// dirs. Above the cap the file is sealed with a marker line and further writes
+// are dropped so the run completes without filling the disk.
+const maxArchiveFileBytes = 100 << 20 // 100 MiB
+
 // NewSink opens (creating) the per-run archive file under
 // {stateDir}/streams/{backend}/ and prunes that backend's directory to
 // history-1 files first so the total stays bounded.
@@ -72,9 +80,9 @@ func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, hi
 		return nil, nil
 	}
 	if redact {
-		return NewRedactingWriter(f), f.Close
+		return NewRedactingWriter(newCappedWriter(f, maxArchiveFileBytes)), f.Close
 	}
-	return f, f.Close
+	return newCappedWriter(f, maxArchiveFileBytes), f.Close
 }
 
 // Prune deletes the oldest *.jsonl files in dir until at most keep remain.
@@ -82,6 +90,12 @@ func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, hi
 // FS failure never blocks a run. Filenames sort chronologically because they
 // begin with fileTimeLayout.
 func Prune(logger *log.Logger, dir string, keep int) {
+	if keep < 0 {
+		// A negative keep would make len(names)-keep overshoot the slice and
+		// panic below. The sole caller passes history-1 with history>0, but
+		// clamp at the entry point so a future caller cannot crash the run.
+		keep = 0
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		logger.Warn("stream archive: readdir", log.FieldError, err)
@@ -125,4 +139,45 @@ func SanitizeName(s string) string {
 		return "x"
 	}
 	return b.String()
+}
+
+// cappedWriter passes bytes through to dst until cumulative bytes reach cap;
+// then it writes a single truncation marker line and silently drops the rest.
+// Dropping (not erroring) keeps archiving best-effort: the run is unaffected,
+// only the archive tail is lost. Not safe for concurrent use; each archive
+// sink is single-writer from one pump goroutine. Sits below the redactor (if
+// any) so the cap counts on-disk bytes and redaction still runs on what fits.
+type cappedWriter struct {
+	dst     io.Writer
+	limit   int64
+	written int64
+	sealed  bool
+}
+
+func newCappedWriter(dst io.Writer, limit int64) *cappedWriter {
+	return &cappedWriter{dst: dst, limit: limit}
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	if w.sealed {
+		// Pretend the bytes were accepted so the caller's pump never errors or
+		// retries on a full archive; the run must not be disturbed.
+		return len(p), nil
+	}
+	if w.written+int64(len(p)) > w.limit {
+		allow := w.limit - w.written
+		if allow > 0 {
+			n, err := w.dst.Write(p[:allow])
+			w.written += int64(n)
+			if err != nil {
+				return n, err
+			}
+		}
+		_, _ = fmt.Fprintf(w.dst, "\n[archive truncated: single-file cap %d MiB reached]\n", w.limit>>20)
+		w.sealed = true
+		return len(p), nil
+	}
+	n, err := w.dst.Write(p)
+	w.written += int64(n)
+	return n, err
 }
