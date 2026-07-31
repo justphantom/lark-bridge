@@ -1110,3 +1110,121 @@ func TestOnBackendOffline_NoDuplicateAfterNotified(t *testing.T) {
 		t.Fatalf("duplicate offline suppressed: want 1 card, got %d", got)
 	}
 }
+
+// TestFireOfflineNotice_ReclaimsStrandedTurns is the B3 fix: a backend that
+// stays offline past the debounce window has lost its in-flight goroutines, so
+// its turns can never emit a terminal control. fireOfflineNotice must reclaim
+// them — finishing the turn AND flipping its progress card to a "会话已失效"
+// failure card in place — so /v1/deploy-preflight converges instead of
+// deadlocking and the user sees the prompt died.
+func TestFireOfflineNotice_ReclaimsStrandedTurns(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+	d.offlineNoticeDebounce = 20 * time.Millisecond
+
+	// Two in-flight turns on the dying backend, one on a healthy backend.
+	d.turns.Start("p-A1", "oc_a", "om_A1", "back-1")
+	d.turns.Start("p-A2", "oc_a", "om_A2", "back-1")
+	d.turns.Start("p-B1", "oc_a", "om_B1", "back-2")
+	d.progressMu.Lock()
+	d.progress["p-A1"] = nil
+	d.progress["p-A2"] = nil
+	d.progressMu.Unlock()
+
+	d.OnBackendOffline("back-1", "claude")
+	// Past the debounce window: one offline notice card + two reclaim PATCHes.
+	waitForSends(t, sink, 1, time.Second)
+
+	// Both stranded turns are finished; the healthy backend's turn survives.
+	if _, ok := d.turns.Get("p-A1"); ok {
+		t.Fatal("p-A1 must be reclaimed after back-1 stays offline")
+	}
+	if _, ok := d.turns.Get("p-A2"); ok {
+		t.Fatal("p-A2 must be reclaimed after back-1 stays offline")
+	}
+	if _, ok := d.turns.Get("p-B1"); !ok {
+		t.Fatal("p-B1 (other backend) must survive back-1's reclaim")
+	}
+
+	// Each stranded turn's progress card was PATCHed to a failure notice.
+	sink.mu.Lock()
+	patched := map[string]bool{}
+	for _, u := range sink.updates {
+		if (u.messageID == "om_A1" || u.messageID == "om_A2") && strings.Contains(string(u.card), "会话已失效") {
+			patched[u.messageID] = true
+		}
+	}
+	sink.mu.Unlock()
+	if !patched["om_A1"] || !patched["om_A2"] {
+		t.Fatalf("both progress cards must be PATCHed to 会话已失效, got %v", patched)
+	}
+
+	// Progress state for the reclaimed turns is released (no leak).
+	d.progressMu.Lock()
+	_, leakA1 := d.progress["p-A1"]
+	_, leakA2 := d.progress["p-A2"]
+	d.progressMu.Unlock()
+	if leakA1 || leakA2 {
+		t.Fatalf("progress state must be released for reclaimed turns (leakA1=%v leakA2=%v)", leakA1, leakA2)
+	}
+
+	// InFlight now reflects only the healthy backend's turn.
+	if got := d.turns.InFlight(); got != 1 {
+		t.Fatalf("InFlight after reclaim: want 1, got %d", got)
+	}
+}
+
+// TestFireOfflineNotice_BlipKeepsTurns confirms a brief offline blip (reconnect
+// inside the debounce window) does NOT reclaim turns — the reclaim is gated on
+// the offline persisting for the whole window, so a flapping backend's turns
+// survive to resume once it reconnects.
+func TestFireOfflineNotice_BlipKeepsTurns(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+	d.offlineNoticeDebounce = 20 * time.Millisecond
+
+	d.turns.Start("p-1", "oc_a", "om_1", "back-1")
+	d.OnBackendOffline("back-1", "claude")
+	d.OnBackendOnline("back-1", "claude") // cancelled before the window fires
+
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := d.turns.Get("p-1"); !ok {
+		t.Fatal("turn must survive a brief offline blip (reclaim only after a persistent offline)")
+	}
+	if got := sinkSendCount(sink); got != 0 {
+		t.Fatalf("blap suppressed: want 0 cards, got %d", got)
+	}
+}
+
+// TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend pins the fallback
+// path: when the progress card was withdrawn (UpdateCard errors), the failure
+// notice is delivered as a fresh standalone card in the chat instead of being
+// dropped — the user always learns the prompt died. Turn release itself is
+// ReclaimBackend's job (covered by TestFireOfflineNotice_ReclaimsStrandedTurns);
+// invalidateTurnCard owns only the card + progress-state cleanup.
+func TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend(t *testing.T) {
+	sink := &fakeSink{updateErr: errors.New("card withdrawn")}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+
+	d.turns.Start("p-1", "oc_a", "om_1", "back-1")
+	turn, _ := d.turns.Get("p-1")
+	d.invalidateTurnCard(turn)
+
+	sends, updates := sink.counts()
+	if updates != 1 {
+		t.Fatalf("want 1 attempted UpdateCard, got %d", updates)
+	}
+	if sends != 1 {
+		t.Fatalf("withdrawn progress card must fall back to a fresh SendCard, got %d sends", sends)
+	}
+	if !strings.Contains(string(sink.lastSendCard()), "会话已失效") {
+		t.Fatalf("fallback SendCard must carry 会话已失效, got %q", sink.lastSendCard())
+	}
+	// Progress state for the turn is released (no leak) even on the fallback path.
+	d.progressMu.Lock()
+	_, leak := d.progress["p-1"]
+	d.progressMu.Unlock()
+	if leak {
+		t.Fatal("progress state must be released even when the progress card was withdrawn")
+	}
+}

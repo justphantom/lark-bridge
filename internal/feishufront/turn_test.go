@@ -167,3 +167,44 @@ func TestInteractiveByPromptID(t *testing.T) {
 		t.Fatal("p-c: want 0 cards")
 	}
 }
+
+// ReclaimBackend (called by fireOfflineNotice) finishes every turn owned by one
+// backend and returns them so the dispatcher can flip each progress card to a
+// failure state. Turns on other backends are untouched. This is the only path
+// that releases a turn without a terminal control, so it must be precise.
+func TestReclaimBackend(t *testing.T) {
+	m := NewTurnManager()
+	m.Start("p-A1", "oc_a", "om_A1", "back-A")
+	m.Start("p-A2", "oc_a", "om_A2", "back-A")
+	m.Start("p-B1", "oc_b", "om_B1", "back-B")
+
+	reclaimed := m.ReclaimBackend("back-A")
+	if len(reclaimed) != 2 {
+		t.Fatalf("reclaim back-A: want 2 turns, got %d", len(reclaimed))
+	}
+	ids := map[string]bool{}
+	for _, tr := range reclaimed {
+		ids[tr.PromptID] = true
+	}
+	if !ids["p-A1"] || !ids["p-A2"] {
+		t.Fatalf("reclaim back-A: want {p-A1,p-A2}, got %v", ids)
+	}
+	if _, ok := m.Get("p-A1"); ok {
+		t.Fatal("p-A1 must be finished after reclaim")
+	}
+	if _, ok := m.Get("p-A2"); ok {
+		t.Fatal("p-A2 must be finished after reclaim")
+	}
+	// Other backend's turn is untouched.
+	if _, ok := m.Get("p-B1"); !ok {
+		t.Fatal("p-B1 (other backend) must survive reclaim of back-A")
+	}
+	// Reclaiming a backend with no turns returns nil, not an empty slice edge case.
+	if got := m.ReclaimBackend("back-Z"); len(got) != 0 {
+		t.Fatalf("reclaim unknown backend: want 0, got %d", len(got))
+	}
+	// InFlight count reflects the release (back-B's one turn remains).
+	if m.InFlight() != 1 {
+		t.Fatalf("InFlight after reclaim: want 1, got %d", m.InFlight())
+	}
+}

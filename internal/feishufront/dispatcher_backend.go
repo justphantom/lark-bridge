@@ -51,12 +51,12 @@ type flapState struct {
 
 // OnBackendOffline arms a debounce timer rather than posting immediately: a
 // reconnect within offlineNoticeDebounce cancels it (see OnBackendOnline), so a
-// flapping backend produces no notice. Only when the timer fires does the
-// offline card reach every bound chat.
-//
-// Per project policy a turn ends ONLY when the user sends /session-abort, so
-// turns are NOT released here — stranded turns stay in-flight, visible via GET
-// /v1/status, until the user aborts or the frontend restarts.
+// flapping backend produces no notice. Only when the timer fires
+// (fireOfflineNotice) does the offline card reach every bound chat — and only
+// then are the backend's stranded turns reclaimed: a backend that stays down
+// for the whole window has lost its in-flight goroutines, so its turns can
+// never receive a terminal control and would otherwise wedge
+// /v1/deploy-preflight forever. A brief blip reclaims nothing.
 func (d *Dispatcher) OnBackendOffline(backendID, backendType string) {
 	if d.router == nil {
 		return
@@ -102,6 +102,12 @@ func (d *Dispatcher) fireOfflineNotice(backendID string, armedGen int) {
 	st.timer = nil
 	d.flapMu.Unlock()
 	d.sendOfflineNotices(backendID, typ)
+	// Now that the offline is confirmed persistent, reclaim the backend's
+	// stranded turns: their goroutines died with the backend process, so they
+	// can never emit a terminal control. Flipping each progress card to a
+	// failure state and releasing the turn lets /v1/deploy-preflight converge
+	// instead of deadlocking.
+	d.reclaimStrandedTurns(backendID)
 }
 
 // OnBackendOnline either cancels a pending offline notice (the backend blipped
@@ -147,7 +153,7 @@ func (d *Dispatcher) sendOfflineNotices(backendID, backendType string) {
 	for _, chatID := range chats {
 		footer := cardkit.FooterInfo{BackendID: backendID, BackendType: backendType, Status: "离线", Time: time.Now()}
 		card, err := cardkit.Notice(footer, "warning", "后端离线",
-			"backend "+backendID+" 已断开。该后端的进行中任务不会被自动结束，如需结束请发送 /session-abort；要继续对话请用 /backend 切换到其他在线后端。", "", "", "")
+			"backend "+backendID+" 已断开。该后端的进行中任务已被自动结束（见下方「会话已失效」卡片）；要继续对话请用 /backend 切换到其他在线后端。", "", "", "")
 		if err != nil {
 			continue
 		}
@@ -173,6 +179,68 @@ func (d *Dispatcher) sendOnlineNotices(backendID, backendType string) {
 		}
 		d.notifyBackendChat(chatID, "online", card)
 	}
+}
+
+// reclaimStrandedTurns finishes every in-flight turn owned by backendID and
+// flips each turn's progress card to a "会话已失效" failure card in place. It
+// runs once a backend has been offline for the whole notice-debounce window
+// (fireOfflineNotice): by then the backend process and its in-flight goroutines
+// are gone, so those turns can never receive a terminal control. Releasing them
+// lets /v1/deploy-preflight converge instead of deadlocking every later deploy,
+// and tells the user which prompt died rather than leaving a "处理中" card
+// frozen forever. A turn with no progress card (messageID empty) falls back to
+// a fresh standalone notice in its chat.
+func (d *Dispatcher) reclaimStrandedTurns(backendID string) {
+	reclaimed := d.turns.ReclaimBackend(backendID)
+	for _, turn := range reclaimed {
+		d.invalidateTurnCard(turn)
+	}
+}
+
+// invalidateTurnCard finalises one reclaimed turn: it patches the progress
+// card to a failure notice (so the user sees the prompt ended), drops the
+// progress state + finalized marker, and finalises any linked interactive
+// cards. A withdrawn progress card or an empty messageID falls back to a fresh
+// standalone notice so the failure is never silently dropped.
+func (d *Dispatcher) invalidateTurnCard(turn Turn) {
+	ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
+	defer cancel()
+	backendType := ""
+	if d.registry != nil {
+		backendType = d.registry.BackendType(turn.BackendID)
+	}
+	footer := cardkit.FooterInfo{
+		BackendID: turn.BackendID, BackendType: backendType,
+		Model: turn.Model, SessionID: turn.SessionID,
+		Status: "失效", Elapsed: cardkit.FormatElapsed(time.Since(turn.StartedAt)), Time: time.Now(),
+	}
+	card, err := cardkit.Notice(footer, "error", "会话已失效",
+		"后端已离线，该任务无法继续。请重新发送你的问题，或用 /backend 切换到其他在线后端。", "", "", "")
+	if err != nil {
+		// Rendering failed: still release the progress slot so it does not leak.
+		d.cleanupProgress(turn.PromptID, turn.MessageID)
+		return
+	}
+	delivered := false
+	if turn.MessageID != "" {
+		if uerr := d.bot.UpdateCard(ctx, turn.MessageID, card); uerr == nil {
+			d.markFinalized(turn.MessageID)
+			delivered = true
+		}
+	}
+	if !delivered {
+		// No progress card to patch, or it was withdrawn: send a fresh notice.
+		if _, serr := d.bot.SendCard(ctx, turn.ChatID, card, ""); serr != nil {
+			if l := d.logger.Load(); l != nil {
+				l.Warn("reclaim: failed to deliver stranded-turn notice",
+					log.FieldChatID, turn.ChatID, log.FieldMessageID, turn.MessageID, log.FieldError, serr.Error())
+			}
+		}
+	}
+	// Release progress state + finalized marker, and finalise any interactive
+	// cards the turn owned (so they flip to a finalised form rather than grey).
+	d.cleanupProgress(turn.PromptID, turn.MessageID)
+	d.finalizeLinkedInteractive(ctx, turn.PromptID)
 }
 
 // notifyBackendChat sends a backend online/offline notice to one chat. A

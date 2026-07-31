@@ -108,10 +108,11 @@ func (m *TurnManager) Finish(promptID string) {
 	delete(m.turns, promptID)
 }
 
-// TurnsByBackend returns the promptIDs of in-flight turns owned by backendID.
-// Retained for abort/diagnostic paths that need to target one backend's turns
-// — OnBackendOffline no longer releases them (a turn ends only on
-// /session-abort, not on its backend disconnecting).
+// TurnsByBackend returns the promptIDs of in-flight turns owned by backendID,
+// for abort/diagnostic paths that need to target one backend's turns. A turn
+// ends on a terminal control or when ReclaimBackend reaps it after the backend
+// stays offline past the notice-debounce window; it is NOT released by a brief
+// offline blip (OnBackendOnline cancels the reclaim before it fires).
 func (m *TurnManager) TurnsByBackend(backendID string) []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -122,6 +123,27 @@ func (m *TurnManager) TurnsByBackend(backendID string) []string {
 		}
 	}
 	return ids
+}
+
+// ReclaimBackend finishes every in-flight turn owned by backendID and returns
+// the reclaimed turns. Called once a backend has been confirmed offline for the
+// whole offline-notice debounce window (fireOfflineNotice): a backend that
+// stays down that long has lost any in-flight goroutine, so its turns can never
+// receive a terminal control and would otherwise strand forever, wedging
+// /v1/deploy-preflight. A brief offline blip does NOT reach here — the debounce
+// timer is cancelled by OnBackendOnline, so flapping backends reclaim nothing.
+// Returns value-copies so the caller can render a per-turn failure card.
+func (m *TurnManager) ReclaimBackend(backendID string) []Turn {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var reclaimed []Turn
+	for promptID, t := range m.turns {
+		if t.BackendID == backendID {
+			reclaimed = append(reclaimed, *t)
+			delete(m.turns, promptID)
+		}
+	}
+	return reclaimed
 }
 
 // InFlight returns the number of currently in-flight turns (prompts that have
