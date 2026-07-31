@@ -84,10 +84,13 @@ func (r *GitRunner) AcquireAndRun(chatID, dir string, args []string, label strin
 		notice("warning", label+"进行中", "本群已有一次 "+label+" 操作正在执行，请等待其完成后再试。")
 		return false
 	}
-	go func() {
+	// GoSafe: a panic inside runJob must not crash the backend process.
+	// mu.Unlock is deferred inside fn so the per-chat slot is still released
+	// during the panic unwind before GoSafe's recover catches it.
+	GoSafe(r.logger, "git job: "+label, func() {
 		defer mu.Unlock()
 		r.runJob(chatID, dir, args, label, notice)
-	}()
+	})
 	return true
 }
 

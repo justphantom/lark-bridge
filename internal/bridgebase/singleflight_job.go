@@ -96,10 +96,14 @@ func (r *SingleFlightJobRunner) Acquire(chatID, label string, job Job, okNotice,
 		}
 		return false
 	}
-	go func() {
+	// GoSafe so a panic inside runJob is recovered + logged instead of
+	// crashing the whole backend (and every other in-flight turn with it).
+	// The deferred mu.Unlock still runs during the panic unwind before GoSafe's
+	// recover catches it, so the single-flight slot is released either way.
+	GoSafe(r.logger, "singleflight job: "+label, func() {
 		defer mu.Unlock()
 		r.runJob(chatID, label, job, okNotice)
-	}()
+	})
 	return true
 }
 

@@ -230,10 +230,16 @@ func (h *Handler) acquireAndRun(chatID, promptID, cardMsgID, name string, args [
 	// (runJob builds a context.Background()-rooted timeout) precisely so it
 	// outlives the triggering request — and the process, until Close returns.
 	h.jobWg.Add(1)
-	go func() {
+	// GoSafe so a panic inside runJob (git/docker output parsing, a bad cmd)
+	// is recovered + logged instead of crashing the backend. jobWg.Done is
+	// deferred inside fn so it still runs during the panic unwind (Close does
+	// not hang waiting on a dead job) before GoSafe's recover catches it. The
+	// job still runs on its own context.Background()-rooted timeout inside
+	// runJob so it outlives the triggering request's ctx.
+	bridgebase.GoSafe(h.logger, "deploy-monitor job: "+label, func() {
 		defer h.jobWg.Done()
 		h.runJob(chatID, promptID, cardMsgID, name, args, label)
-	}() //nolint:gosec // G118: job must outlive the triggering request's ctx
+	})
 	return nil
 }
 
