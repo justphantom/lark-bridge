@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -200,14 +201,41 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 		"frontend_url", cfg.FrontendURL)
 
 	eventHandler := r.EventHandlerFactory(h)
+	// ACK resolver: every CLI bridge Handler embeds *bridgebase.Core, which
+	// owns the Acks registry. Type-assert (mirroring SetUsage above) so H
+	// stays unconstrained. nil → the ACK is a no-op (EmitTerminal falls back
+	// to pure-retry-on-send-error, the safe degradation).
+	ackReg := ackRegistryFrom(h)
 	eventErr := func(err error) {
 		base.Logger.Warn("ipc", log.FieldError, err)
 	}
 	return backendrpc.Run(ctx, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
+			// Intercept terminal-delivery ACKs before the bridge sees them:
+			// bridges have no ACK case and would error "unknown event type".
+			// The ACK resolves the EmitTerminal retry wait keyed by PromptID.
+			if ev.Type == protocol.TypeAck && ackReg != nil {
+				ackReg.HandleAck(ev.PromptID)
+				return nil
+			}
 			if err := eventHandler(ctx, ev); err != nil {
 				base.Logger.Error("handle event", log.FieldEventType, ev.Type, log.FieldError, err)
 			}
 			return nil
 		}, eventErr)
+}
+
+// ackRegistryFrom extracts the terminal-delivery ACK registry from a bridge
+// Handler via type assertion. Every CLI bridge Handler embeds *bridgebase.Core,
+// which exposes AckResolver(). Returns nil for a Handler without it (miniagent
+// / future backends), in which case ACKs are silently dropped and the sender
+// falls back to pure-retry-on-send-error — the safe degradation.
+func ackRegistryFrom[H any](h H) *bridgebase.AckRegistry {
+	type ackResolver interface {
+		AckResolver() *bridgebase.AckRegistry
+	}
+	if r, ok := any(h).(ackResolver); ok {
+		return r.AckResolver()
+	}
+	return nil
 }

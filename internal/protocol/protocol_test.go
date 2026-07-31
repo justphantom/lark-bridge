@@ -107,6 +107,9 @@ func TestEventValidate(t *testing.T) {
 		{"answer missing requestID", &Event{Type: TypeAnswer, Answer: &AnswerPayload{ChatID: "c1"}}, true},
 		{"abort missing chatID", &Event{Type: TypeAbort, PromptID: "p", Abort: &AbortPayload{SessionID: "s1"}}, true},
 		{"abort ok", &Event{Type: TypeAbort, PromptID: "p", Abort: &AbortPayload{ChatID: "c1"}}, false},
+		{"ack missing promptID", &Event{Type: TypeAck}, true},
+		{"ack ok (no payload)", &Event{Type: TypeAck, PromptID: "p"}, false},
+		{"ack ok (with payload)", &Event{Type: TypeAck, PromptID: "p", Ack: &AckPayload{ControlType: "result"}}, false},
 		{"unknown type", &Event{Type: "unknown"}, true},
 	}
 	for _, tc := range cases {

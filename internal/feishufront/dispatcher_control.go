@@ -43,12 +43,28 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		// Notice to precede a still-desired Result for the same prompt,
 		// switch the key to PromptID+Type (per-type bucketing).
 		if ctrl.PromptID != "" && !d.terminals.Add(ctrl.PromptID) {
+			// A duplicate terminal for an already-finalised prompt: still ACK it
+			// (the backend is retrying because its first ACK was lost; this
+			// resolves its wait so it stops re-sending) but render nothing.
+			d.ackTerminal(rc.BackendID, ctrl.PromptID, ctrl.Type)
 			return nil
 		}
+		var rerr error
 		if ctrl.Type == protocol.TypeResult {
-			return d.sendResult(ctx, ctrl, backendType)
+			rerr = d.sendResult(ctx, ctrl, backendType)
+		} else {
+			rerr = d.sendNoticeControl(ctx, ctrl, backendType)
 		}
-		return d.sendNoticeControl(ctx, ctrl, backendType)
+		// ACK the backend regardless of render outcome: a render failure on the
+		// frontend side (Feishu API error) is NOT a delivery failure the backend
+		// can fix by retrying — re-sending the same control would hit the same
+		// Feishu error. Acknowledging resolves the backend's wait so it does not
+		// burn its retry budget, and the frontend's own error log is the surface
+		// for the render failure. (If the render truly lost the card, the
+		// backend's fallback notice is still a better UX than an infinite retry
+		// loop against a broken Feishu API.)
+		d.ackTerminal(rc.BackendID, ctrl.PromptID, ctrl.Type)
+		return rerr
 	case protocol.TypeStatusReport:
 		// Periodic broadcast from the status-monitor backend. Deliberately NOT
 		// routed through the terminal dedup set (it is keyed by PromptID and
@@ -220,6 +236,32 @@ func (d *Dispatcher) sendTerminalCard(ctx context.Context, promptID, chatID, mes
 		d.cleanupProgress(promptID, messageID)
 	}
 	return err
+}
+
+// ackTerminal sends the backend a terminal-delivery ACK over the SSE stream
+// (the only frontend→backend channel). The backend's EmitTerminal retry loop
+// arms a one-shot wait keyed by promptID; this ACK resolves it so the backend
+// stops retrying. Best-effort: SendEvent is non-blocking (full channel or a
+// disconnected backend returns an error), and a lost ACK just means the backend
+// retries and hits the terminal dedup above (a harmless re-ACK) — so failure is
+// logged at debug, not surfaced to the user. controlType is echoed for
+// diagnostics (the wait resolves on promptID alone).
+func (d *Dispatcher) ackTerminal(backendID, promptID, controlType string) {
+	if backendID == "" || promptID == "" {
+		return
+	}
+	err := d.registry.SendEvent(backendID, &protocol.Event{
+		Type:     protocol.TypeAck,
+		PromptID: promptID,
+		Ack:      &protocol.AckPayload{ControlType: controlType},
+	})
+	if err != nil {
+		if l := d.logger.Load(); l != nil {
+			l.Debug("ack: send failed (backend will retry)",
+				"backend_id", backendID, log.FieldPromptID, promptID,
+				log.FieldControlType, controlType, log.FieldError, err)
+		}
+	}
 }
 
 func (d *Dispatcher) sendResult(ctx context.Context, ctrl *protocol.Control, backendType string) error {

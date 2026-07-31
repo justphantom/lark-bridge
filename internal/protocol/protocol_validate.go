@@ -8,6 +8,7 @@ var allowedEventTypes = map[string]struct{}{
 	TypeAnswer: {},
 	TypeAbort:  {},
 	TypePing:   {},
+	TypeAck:    {},
 }
 
 // allowedControlTypes is the set of valid Control.Type values.
@@ -44,6 +45,10 @@ func (e *Event) Validate() error {
 	if e.Type == TypePing {
 		return nil
 	}
+	// TypeAck carries no mandatory payload (Ack is diagnostic-only), but it
+	// MUST carry a non-empty PromptID: that is the backend's terminal-wait
+	// key. Letting it fall through to the PromptID-nonempty check below
+	// enforces this without a dedicated branch.
 	// TypeAnswer is keyed by RequestID, so PromptID may be empty.
 	if e.Type != TypeAnswer && e.PromptID == "" {
 		return fmt.Errorf("protocol: %s event requires promptID", e.Type)

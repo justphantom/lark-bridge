@@ -133,6 +133,12 @@ type Core struct {
 	// does not leave a goroutine blocked forever.
 	Answers *AnswerBroker
 
+	// Acks pairs terminal Control emits with the frontend's delivery ACK.
+	// EmitTerminal arms a wait per promptID; a protocol.TypeAck Event from the
+	// frontend resolves it so the retry loop can stop early. Never nil after
+	// NewCore (tests get an empty registry that never resolves → retry loop
+	// behaves as pure-retry, which is the correct fallback).
+	Acks *AckRegistry
 	// emitSem caps concurrent fire-and-forget emit goroutines so an extreme
 	// event burst cannot exhaust goroutines (see EmitAsync). A Core field
 	// (not a package global) so concurrent tests do not share one semaphore.
@@ -170,13 +176,19 @@ func NewCore(r *router.Router, rpc *backendrpc.Client, cfg CoreConfig, logger *l
 		DirCache:            NewDirCache(cfg.WorkspaceRoot),
 		CancelByChat:        make(map[string]*PromptCancel),
 		Answers:             NewAnswerBroker(),
+		Acks:                NewAckRegistry(logger),
 		emitSem:             make(chan struct{}, emitConcurrency),
-		Git:                 NewGitRunner(ExecCommander{}, logger, 0),
 	}
 	c.AppCtx, c.AppCancel = context.WithCancel(context.Background())
 	c.logDebugRedact.Store(cfg.DebugRedact)
 	return c
 }
+
+// AckResolver returns the terminal-delivery ACK registry. Exposed as a method
+// (not just the field) so backendhost's generic runner can type-assert
+// `interface{ AckResolver() *AckRegistry }` against an opaque Handler type H
+// without importing bridgebase's concrete Core layout.
+func (c *Core) AckResolver() *AckRegistry { return c.Acks }
 
 // DebugRedact reports the current debug-redact flag.
 func (c *Core) DebugRedact() bool {
@@ -273,6 +285,9 @@ func (c *Core) Close() {
 		c.AppCancel()
 		c.CancelAll()
 		c.Answers.Drain()
+		if c.Acks != nil {
+			c.Acks.Close()
+		}
 		c.WaitPrompts()
 		if c.Usage != nil {
 			c.Usage.Close()

@@ -68,7 +68,9 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	// counted first. Add is an in-memory map update (the async save is
 	// non-blocking), so this does not delay the terminal emit.
 	h.RecordUsage(chatID, result)
-	h.EmitTerminal(ctx, chatID, replyToID, "opencode", int(h.IdleTimeout.Seconds()), result)
+	if err := h.EmitTerminal(ctx, chatID, replyToID, "opencode", int(h.IdleTimeout.Seconds()), result); err != nil {
+		bridgebase.HandleTerminalEmitError(h.Core, ctx, chatID, replyToID, err)
+	}
 }
 
 // runOpencode starts one opencode subprocess, streams its events into

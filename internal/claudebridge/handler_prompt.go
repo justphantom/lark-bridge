@@ -81,7 +81,9 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	// counted first. Add is an in-memory map update (the async save is
 	// non-blocking), so this does not delay the terminal emit.
 	h.RecordUsage(chatID, result)
-	h.EmitTerminal(ctx, chatID, replyToID, "Claude", 0, result)
+	if err := h.EmitTerminal(ctx, chatID, replyToID, "Claude", 0, result); err != nil {
+		bridgebase.HandleTerminalEmitError(h.Core, ctx, chatID, replyToID, err)
+	}
 }
 
 // runClaude starts one Claude subprocess, streams its events into Controls,

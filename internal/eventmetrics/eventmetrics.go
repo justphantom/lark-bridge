@@ -51,6 +51,19 @@ var OMPTextEndFallback Counter
 // because the auto_retry attempt count exceeded the configured limit.
 var OMPAutoRetryLimit Counter
 
+// TerminalEmitRetries counts extra emit attempts for terminal controls
+// (TypeResult/TypeError/terminal TypeNotice) beyond the first. A non-zero value
+// means the frontend's first accept was not confirmed and the backend retried;
+// sustained growth signals IPC instability (SSE blips, frontend congestion).
+var TerminalEmitRetries Counter
+
+// TerminalEmitLost counts terminal controls whose delivery was never
+// confirmed (all retries exhausted / no ACK within the wait budget). Each
+// increment is a turn whose final reply card the user never saw — the
+// highest-severity observability signal in this package. Backends emit a
+// fallback notice when this fires so the turn is not silently stranded.
+var TerminalEmitLost Counter
+
 // ---- UnknownEvent dimension ----
 
 // unknownStore holds per-(backend,event_type) counters, created lazily.
@@ -82,6 +95,8 @@ func ResetAll() {
 	ClaudeResultParseFail.Reset()
 	OMPTextEndFallback.Reset()
 	OMPAutoRetryLimit.Reset()
+	TerminalEmitRetries.Reset()
+	TerminalEmitLost.Reset()
 	globalUnknownStore.reset()
 	globalTruncatedStore.reset()
 }
