@@ -5,6 +5,104 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-01
+
+v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incomplete、shell 进度摘要）、
+**全量代码审查修复**（2 高危 + 11 中危 + 低危）、**REMEDIATION_PLAN 架构加固**（runSession
+死锁、per-backend router、app heartbeat、IPC TLS/mTLS）、**SSE handshake deadline 重连风暴
+修复**、**idle_timeout 推荐值放宽 600s→1800s**、**systemd restart-burst 单元修正**。新增功能 →
+按 semver 升 minor。无协议层 breaking change；`config.example.json` 的 `idle_timeout` 变更需
+部署侧同步（见 Notes）。**发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
+
+### Added
+
+- **miniagent v1.1.0 finish 透传**（`28f63ad`）。miniclient 解析 result 事件的 `finish`
+  字段并暴露 `FinishStop`/`FinishMaxIterations` 常量；miniagent handler 在 `max_iterations`
+  时设 `ResultPayload.Incomplete` 并为空回复填入提示文案。该字段自协议建立即存在却从未
+  赋值——本版接线。`RenderResult` 对 `Incomplete` 渲染为 orange「未完成」卡，消除撞迭代
+  上限时「空回复绿卡」的静默失败。
+- **miniagent shell 工具计入进度摘要**（`28f63ad`）。`toolCategory` 把 `Shell`（miniagent 的
+  `shell` 经 `normalizeToolName` 大写化）归入 exec 类，进度卡 summary「执行 N」段纳入
+  miniagent；`read`/`write`/`edit` 经 normalize 早被正确分类。
+- **IPC TLS/mTLS**（`0454f27`，M10-1）。新增配置 `ipc_tls_cert_file`/`key_file`/`client_ca_file`
+  （frontend）与 `ipc_tls_ca_file`/`client_cert_file`/`client_key_file`（backend），启动校验
+  配对与文件存在；非 loopback 绑定强制 TLS（双护栏：config 校验 + 运行时拒绝），可选 mTLS
+  （`RequireAndVerifyClientCert`）。README 文档化。
+- **per-backend session token**（`2641838`，M10-2）。POST `/v1/control`|`/v1/metrics` 绑定到
+  注册该 backendID 的 SSE 连接，关闭共享 bearer 下的跨后端冒充。
+- **WS dispatch worker pool**（`2641838`，M4）。完整帧后立即 ACK，dispatch 投递到有界 worker
+  （满则 inline fallback）——慢文件消息不再队头阻塞读循环或推迟 ACK 至服务器重投。
+- **picker per-chat single-flight**（`2641838`，M3）。`ErrPickerInFlight`，`/model` 刷屏不再堆
+  9 分钟 goroutine；omp/opencode 的 `cachedList`（TTL + inflight 单飞）让 list fork 去重。
+- **app-level heartbeat**（`d0bdb17`，C2）。`TypePing`→`TypePong` 在 dispatch loop，
+  `missedPongs≥3` 驱逐——补 `lastSeen` 无法驱逐卡死 consumer 的漏洞（其自身 ping 的 flush
+  会刷新 lastSeen）。
+- **per-backend router 文件**（`d0bdb17`，R2）。claude/opencode/omp/miniagent 各自独立 router
+  文件 + 旧 `router.v5.json` 迁移，结束多后端共写单文件的跨进程 lost-update。
+- **streamarchive 单文件 100 MiB 上限**（`2641838`，M7）超限写截断 marker 行；**行级脱敏**
+  （`0454f27`，低危#25）`RedactingWriter` 按行缓冲，多行/部分写入与数组套数组均覆盖。
+- **eventmetrics UnknownEvent 键上限 256**（`2641838`，M8）超限落入共享 `__overflow__` 计数器。
+- **mid-run notice 走 TypeProgress**（`d0bdb17`，S1）避免与终态去重冲突吞掉最终回复。
+- **status report 异步化**（`d0bdb17`，C3）移出 control pump。
+
+### Changed
+
+- **`idle_timeout` 推荐值 `600s`→`1800s`**（`28f63ad`，`config.example.json`）。opencode / omp
+  的无输出看门狗阈值放宽到 30 分钟，上游 LLM 长卡顿不再 10 分钟被误杀。**部署行为变化**：
+  各环境实际 `config.json` 需手动同步（默认 `0`=禁用不变）。
+
+### Fixed
+
+- **H1 TypeFile 异步投递 OOM**（`2641838`）。`fileSendSem`/`statusSendSem` 前移到 spawn 之前
+  获取（满则丢弃 + busy notice），排队 TypeFile（单条 ~40 MB）不再无界堆积到 OOM。
+  涉及 `internal/feishufront/dispatcher_file_send.go`、`dispatcher_status.go`。
+- **H2 WS 写路径无 deadline**（`2641838`）。`WriteMessage` 加 15s 写 deadline，半开连接不再
+  持 `closeMu` 分钟级阻塞重连。涉及 `internal/lark/websocket/conn.go`。
+- **R1 runSession sweep-goroutine 死锁**（`d0bdb17`）。退出前先 cancel 再等 `exitCh`。
+- **SSE body 被 handshake deadline 提前关闭（重连风暴）**（`86318f7`）。`context.WithTimeout`
+  统管响应 body 整个生命周期，handshake 的 `AfterFunc` 自动触发会把 body 撕裂致重连风暴；
+  改 `WithCancel` + `AfterFunc`（header 到达即 stop），仅 `Close()` 结束流。
+  涉及 `internal/backendrpc/client.go`；`handshakeTimeout` 改 var 以便测试缩小。
+- **M1 stderr 截断后不 drain 双向死锁**（`2641838`）。三桥 + miniclient 在 64 KiB 上限后继续
+  `io.Copy(io.Discard, stderr)`，子进程不再因满管道与父进程双向死锁（默认 prompt_timeout=0、
+  idle_timeout=0 无兜底）。涉及 `claude/stream.go`、`opencode/stream.go`、`omp/stream.go`、
+  `miniclient/client.go`。
+- **M2 文件转换全量内存缓冲**（`2641838`）。docx/xlsx/pptx 按 section/sheet/slide 流式 flush，
+  不再整文档驻留 `bytes.Buffer`。涉及 `internal/fileconvert/`。
+- **M5 WS 升级握手读无 deadline**（`2641838`）。无条件 30s 读 deadline，`Start` 不再永久挂起。
+  涉及 `internal/lark/websocket/dial.go`。
+- **M6 pong 重连参数无下限**（`2641838`）。字段级合并（零值保留旧）+ 5s 下限钳制，部分 pong
+  不再清零重连预算或触发热循环。涉及 `internal/lark/ws/wsclient.go`。
+- **M9 opencode/omp prompt 走 argv**（`2641838`）。>100 KiB 提前报错，避免 `MAX_ARG_STRLEN`
+  硬失败与 `/proc` 明文暴露。涉及 `internal/opencode/client.go`、`internal/omp/client.go`。
+- **M11 离线通知 timer Reset 未 bump generation**（`2641838`）。重武装时 `generation++` +
+  `AfterFunc` 重建，不再重复发「后端离线」卡。涉及 `dispatcher_backend.go`。
+- **C1 readSSE stalled-consumer 超时强制重连**、**C13 bounded SSE handshake ctx（Close 取消）**
+  （`d0bdb17`）。**W1** `ErrReconnectBudgetExhausted` 替代静默 nil + `fireReconnected`（`d0bdb17`）。
+- **S2 auto-retry-limit 单终态文案**、**S3 scaffold 在 EmitTerminal 前 cancel**（`d0bdb17`）。
+- **P2 ApplyGroupCancel ESRCH probe**、**P3 RunGC group-kill**、**P4 StderrPipe 失败关 stdout-pipe（×4 桥）**（`d0bdb17`）。
+- **systemd restart-burst 单元修正**（`446e82f`）。`StartLimitIntervalSec`/`Burst` 移到 `[Unit]`——
+  systemd <230 在 `[Service]` 静默忽略它们，使重启突发限流失效。涉及 `deploy/`。
+- **低危（节选）**（`2641838`/`0454f27`/`d0bdb17`）：inbox 每日清扫 ticker（#1）；flap/statusCards
+  上限与回收（#2）；复用已连 SSE client 消除双重连接 + 修复 batch1 的 stale token 导致 POST
+  被判冒充的回归（#9）；`AckRegistry.Close` 以 `ErrAckRegistryClosed` 唤醒、不再当已送达（#10）；
+  `StartPrompt` 的 `Wg.Add` 与 `Close` 同在 `CancelMu` 下，消除 WaitGroup 误用竞态（#11）；
+  miniagent-back 用 `os.Executable`（#15）；`/cd` 用 `EvalSymlinks` containment（#17）；
+  card-action 日志截断脱敏（#18）；config 文件权限宽于 0600 且含明文密钥时告警（#20）；
+  opencode sessionID 拒前导 dash（#22）；权限/问答卡明示群成员可批准（#23）；atomicwrite 注释
+  修正（#24）；README 补日志轮转 / 环境密钥命名陷阱说明（#7/#21）。#3（debug 日志，部署侧确认）、
+  #12（Close 最多泄漏 1 goroutine）按设计接受。
+
+### Notes
+
+- **上游依赖**：miniagent 二进制建议升级到 `v1.1.0`——`finish` 透传在旧版退化为空值
+  （`Incomplete` 恒 false，不报错但无新效果）。lark-bridge 不打包 miniagent 二进制。
+- **idle_timeout 部署同步**：`config.example.json` 已改 `1800s`，但各环境实际 `config.json`
+  不自动跟随，部署侧重办时需手动同步（opencode / omp 无输出终止阈值由此改变）。
+- **发版顺序**：先 feishu-front 后各 backend；新协议字段 `ResultPayload.Incomplete` 对旧后端
+  向后兼容（未知字段忽略）。
+- 本版完成全量代码审查 P0–P3 修复（2 高危 + 11 中危 + 低危 23/25；余 #3/#12 按设计接受）。
+
 ## [1.8.0] - 2026-07-31
 
 v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/session-use`/`/session-clean`/`/session-list`、
