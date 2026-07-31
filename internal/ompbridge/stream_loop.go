@@ -221,22 +221,22 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 			})
 		case omp.EventThinkingLevelChanged:
 			// The CLI resolved a thinking effort (often configured=auto →
-			// resolved=high). Surface it as an info notice so the card shows
-			// the level the model actually uses, without silently overriding
-			// the user's explicit effort pin.
+			// resolved=high). This event fires VERY early in the OMP stream
+			// (right after the `session` header, before agent_start), so it
+			// reaches the frontend well before the final TypeResult. Emitting
+			// it as a TypeNotice would collide with the frontend's terminal
+			// dedup: TypeNotice shares the per-PromptID `terminals` set with
+			// TypeResult/Error (dispatcher_control.go), so the early notice
+			// finalises the prompt and the real TypeResult is silently dropped
+			// — the user sees only "当前实际使用 thinking level: high" and no
+			// final reply (B2 regression from 6ba58fd). Log at debug only; if
+			// the resolved level ever needs to reach the card it MUST go via a
+			// NON-terminal channel (TypeProgress description or a TypeSessionInit
+			// extension field), never a standalone TypeNotice.
 			if ev.Text != "" {
 				h.Logger.Debug("omp thinking level changed",
 					log.FieldChatID, chatID,
 					"resolved", ev.Text)
-				h.EmitAsync(promptID, &protocol.Control{
-					Type:   protocol.TypeNotice,
-					ChatID: chatID,
-					Notice: &protocol.NoticePayload{
-						Level:   "info",
-						Title:   "Thinking 级别",
-						Message: fmt.Sprintf("当前实际使用 thinking level: %s", ev.Text),
-					},
-				})
 			}
 		case omp.EventToolUpdate:
 			// Intermediate tool output (tool_execution_update). Emitting a

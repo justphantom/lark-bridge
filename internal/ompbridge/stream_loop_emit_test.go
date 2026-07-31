@@ -194,27 +194,29 @@ func TestEmit_NoticeForwardsMessage(t *testing.T) {
 	}
 }
 
-// TestEmit_ThinkingLevelChangedSurfacesResolved verifies a
-// thinking_level_changed event surfaces the resolved level as an info notice so
-// the card shows the effort the model actually uses (configured=auto →
-// resolved=high).
-func TestEmit_ThinkingLevelChangedSurfacesResolved(t *testing.T) {
+// TestEmit_ThinkingLevelChangedDoesNotEmitNotice verifies a
+// thinking_level_changed event does NOT emit a standalone TypeNotice.
+//
+// thinking_level_changed fires at the very start of the OMP stream (right
+// after `session`, before agent_start), so a TypeNotice for it would reach the
+// frontend before the final TypeResult. TypeNotice shares the per-PromptID
+// terminal dedup set with TypeResult in dispatcher_control.go, so the early
+// notice would finalise the prompt and the real TypeResult would be silently
+// dropped — the "no final reply" regression (B2). The resolved level is logged
+// at debug only; the final TypeResult must still be emitted.
+func TestEmit_ThinkingLevelChangedDoesNotEmitNotice(t *testing.T) {
 	controls := runOmpLines(t, ompSessionHdr, ompAgentStart, ompTurnStart,
 		`{"type":"thinking_level_changed","thinkingLevel":"high","configured":"auto","resolved":"high"}`,
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"ok"}}`,
 		ompMsgEnd, ompAgentEnd)
 
-	var saw bool
 	for _, c := range controls {
-		if c.Type == protocol.TypeNotice && c.Notice != nil && strings.Contains(c.Notice.Message, "high") {
-			saw = true
-			if c.Notice.Title != "Thinking 级别" {
-				t.Errorf("Title = %q, want Thinking 级别", c.Notice.Title)
-			}
+		if c.Type == protocol.TypeNotice && c.Notice != nil && strings.Contains(c.Notice.Message, "thinking level") {
+			t.Errorf("thinking_level_changed must not emit a TypeNotice (terminal dedup collision); got %v", ompControlTypes(controls))
 		}
 	}
-	if !saw {
-		t.Fatalf("no thinking-level notice emitted; got %v", ompControlTypes(controls))
+	if findControl(controls, protocol.TypeResult) == nil {
+		t.Fatalf("final TypeResult missing; got %v", ompControlTypes(controls))
 	}
 }
 
