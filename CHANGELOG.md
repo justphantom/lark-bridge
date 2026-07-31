@@ -62,6 +62,10 @@ omp `/session-list`/`/session-use`/`/session-clean`/`/session-gc`）、**部署�
   按 fileCount 汇成 `TypeProgress` 描述（长时 glob/bash 不再静默）。
   - `thinking_level_changed` 仅记 debug 日志，**不**发独立控制——该事件在流开头早于终态
     `TypeResult`，发 `TypeNotice` 会与终态去重冲突并吞掉最终回复（见 Fixed 段 B2）。
+- **miniagent 终态投递重试对齐**（`6369348`）。`bridgebase.EmitTerminalControl` 提为包级函数
+  （基于新 `backendrpc.ControlSender` 接口），让无 `Core` 的后端共享 `c7d67ed` 的终态重试+ACK
+  循环。miniagent 的最终 Result/Error 现走该路径（`nil` acks = 纯发送失败重试，`appCtx` 在
+  `Close` 时取消退避）——丢失的 miniagent 最终回复被重发而非静默吞，与三个 CLI 后端行为对齐。
 
 ### Changed
 
@@ -117,14 +121,24 @@ omp `/session-list`/`/session-use`/`/session-clean`/`/session-gc`）、**部署�
 
 - **主机按 `ReportedAt` 去重 + ws 帧合并 flake**（`3846b89`）。总览卡主机行按上报时间去重；
   修 `wsclient_test` 帧合并导致的偶发 flake。
+- **长时 job goroutine panic 恢复**（`b0e4a8c`）。git / singleflight / deploy job 内的 panic
+  此前会崩溃整个后端进程（连带所有在途 turn）。现经 `bridgebase.GoSafe` 运行：延迟的槽位释放
+  （`mu.Unlock` / `jobWg.Done`）在 `recover` 前的 panic unwind 中仍执行，无槽位泄漏，`Close`
+  不会卡在死 job 上。涉及 `internal/bridgebase/git_runner.go`、`singleflight_job.go`、
+  `internal/deploymonitor/handler.go`。
+- **config.example.json 启动即崩**（`73bf2e8`）。示例配置的 `timeouts.prompt_timeout: "0s"` 在
+  `config.Load` 解析阶段被拒，导致每个 deploy 命令启动即失败。删除该显式字段（由 `applyDefaults`
+  默认值生效）；新增 `TestLoadConfigExample` 钉住「示例配置永远可加载」，防回归。
 
 ### Notes
 
 - `docs/` 目录重新加入 `.gitignore`（设计/评估文档本地化，不入仓）（`5caff43`/`076570d`）。
-  本版新增 `docs/release-readiness-assessment.md`（发版前评估）、`docs/inflight-session-inconsistency.md`
-  （inflight 不一致根因分析）、`docs/backend-alignment-and-hardening.md`（已全部落地，过时）。
 - `golangci-lint run ./...` 恢复 0 issues（修 23 处 v1.7.0 后回归：errorlint×12 改 `errors.Is`、
   goimports×4、nilerr×3 加 nolint 注释、errcheck×2、staticcheck×1、unused×1）。
+- Makefile 新增 `lint` 与 `prerelease` 目标——后者把 `go test ./...` + `golangci-lint run ./...`
+  作为打 tag 前闸门（`1d8f9c9`）。
+- 测试覆盖补充（`c3c63b5`）：health-tick 陈旧后端驱逐、omp stale-session 重试编排、omp
+  idle-vs-cancel 终态分流。
 
 ## [1.7.0] - 2026-07-30
 

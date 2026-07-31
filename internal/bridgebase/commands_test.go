@@ -198,7 +198,7 @@ func TestDispatch_Timeout(t *testing.T) {
 	if n.Level != "warning" || !strings.Contains(n.Message, "超时") {
 		t.Errorf("notice=%+v, want warning mentioning timeout", n)
 	}
-	if elapsed > 20*time.Second {
+	if elapsed > 2*cmdutil.Timeout {
 		t.Errorf("dispatch took %s, should be bounded near cmdutil.Timeout", elapsed)
 	}
 }
