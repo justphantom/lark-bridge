@@ -82,7 +82,6 @@
 
   "timeouts": {
     "backend_health":     "90s",
-    "prompt_timeout":     "0s",
     "idle_timeout":       "600s",
     "usage_session_ttl":  "168h",
     "card_patch_delay":   "5s"

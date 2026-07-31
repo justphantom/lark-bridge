@@ -772,3 +772,33 @@ func TestLoadOMPMaxAutoRetriesOverride(t *testing.T) {
 		t.Errorf("max_auto_retries = %d, want 7", cfg.OMP.MaxAutoRetries)
 	}
 }
+
+// TestLoadConfigExample validates that the repo-root config.example.json is
+// always loadable. It is the source template for deploy.sh / upgrade-monitor.sh
+// / upgrade-status.sh; a broken example (e.g. an explicit "0s" duration that
+// Duration.UnmarshalJSON rejects) causes every deployment command to fail at
+// startup.
+func TestLoadConfigExample(t *testing.T) {
+	stateDir := t.TempDir()
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	t.Setenv("FEISHU_APP_ID", "cli_xxxxxxxxxxxxxxxx")
+	t.Setenv("FEISHU_APP_SECRET", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	t.Setenv("IPC_SECRET", "deadbeef")
+	t.Setenv("IPC_ADDR", "localhost:6060")
+	t.Setenv("FRONTEND_URL", "http://localhost:6060")
+	t.Setenv("STATE_DIR", stateDir)
+	t.Setenv("MINIAGENT_API_KEY", "sk-test")
+	t.Setenv("MINIAGENT_BASE_URL", "http://localhost:8080")
+	t.Setenv("MINIAGENT_DEFAULT_MODEL", "test-model")
+	t.Setenv("WORKSPACE_ROOT", t.TempDir())
+	t.Setenv("PROJECT_ROOT", repoRoot)
+
+	path := filepath.Join(repoRoot, "config.example.json")
+	if _, err := Load(path); err != nil {
+		t.Fatalf("config.example.json failed to load: %v", err)
+	}
+}
