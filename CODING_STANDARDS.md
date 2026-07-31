@@ -16,7 +16,7 @@
 | Lint 工具 | **golangci-lint v2**（`version: "2"`），采用社区 "golden config"（maratori/golangci-lint-config） | `.golangci.yml:1-10` |
 | Formatter | **goimports**（含 `local-prefixes` 分组） | `.golangci.yml:16-24` |
 | 构建工具 | Make（默认目标 `build`），ldflags 注入 git 版本号 | `Makefile` |
-| 部署形态 | 6 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
+| 部署形态 | 7 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
 | 平台约束 | `//go:build linux || darwin`（agent 子进程包） | `internal/claude/*`、`internal/opencode/*` |
 
 设计哲学（从配置文件中明示）：
@@ -60,7 +60,7 @@ golangci-lint run   # 风格检查（手动）
 
 ```
 lark-bridge/
-├── cmd/                         # 6 个二进制入口，每个一个子目录
+├── cmd/                         # 7 个二进制入口，每个一个子目录
 │   ├── feishu-front/            #   main.go (+ main_test.go)
 │   ├── claude-back/
 │   ├── opencode-back/
@@ -527,13 +527,13 @@ func TestControlRoundTrip(t *testing.T) {
 
 | 目标 | 作用 |
 |---|---|
-| `build`（默认） | 编译 6 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
-| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 6 个 cmd） |
+| `build`（默认） | 编译 7 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
+| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 7 个 cmd） |
 | `vet` | `go vet ./...` |
 | `fmt` | `gofmt -s -w .`（simplify） |
 | `test` | `build-check` → `vet` → `go test -race ./...`（CGO 默认开，启用 race） |
 | `clean` | `rm -rf bin/` |
-| `pack` | 交叉编译 6 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
+| `pack` | 交叉编译 7 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
 | `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 4 个业务 systemd 服务 |
 | `upgrade-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
 

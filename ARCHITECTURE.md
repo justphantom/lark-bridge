@@ -31,7 +31,7 @@
 
 ### 1.3 规模
 
-- **350 个 Go 文件，67,164 行**，其中测试 **32,139 行（约 47.9%）**
+- **357 个 Go 文件，69,143 行**，其中测试 **33,239 行（约 48.1%）**
 - `internal/` 下 **29 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
@@ -80,7 +80,7 @@ lark-bridge/
 │   │   ├── websocket/        #   RFC 6455 WS 客户端
 │   │   └── ws/               #   帧编解码 + 重连 + 分片重组
 │   ├── feishu/               # lark.Client 的业务封装层（Bot/IncomingMessage）
-│   ├── feishufront/          # ★ 前端核心（14601 行，最大包）
+│   ├── feishufront/          # ★ 前端核心（15546 行，最大包）
 │   │   ├── cardkit/          #   飞书卡片元素 schema
 │   │   └── renderer/         #   progress/result/interactive 渲染器
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
@@ -152,7 +152,7 @@ lark-bridge/
 
 按规模（行数）降序，共 29 个包。
 
-### 5.1 `feishufront/`（14601 行，52 文件）——前端核心
+### 5.1 `feishufront/`（15546 行，54 文件）——前端核心
 
 前端的所有业务逻辑集中地，是体量最大的包。
 

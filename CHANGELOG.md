@@ -53,6 +53,16 @@ omp `/session-list`/`/session-use`/`/session-clean`/`/session-gc`）、**部署�
 - **status-monitor 主机去重 + NAT 消歧**（`a017fae`）。总览卡主机行按 machine-id 去重，NAT
   环境下显示 IP 消歧。
 
+- **omp 流事件处理补齐**（`6ba58fd`）。omp 桥对 OMP CLI 流的事件映射全面补齐，与
+  claude/opencode 对齐：`notice` / `custom-nudge`（mid-run-todo-nudge）→ `TypeNotice`；
+  `todowrite` 完成事件改写为 `TypeTodo`（todo 区，不再叠加同 call 的 `TypeToolResult`）；
+  `task` 工具按 `subagent_type` 归入子代理专区（`SubagentSummary`）；`turn_end` 携带的完整
+  assistant message 作为兜底回复（流式路径无文本时）；`session` 头的 title/cwd 解析；
+  assistant `message_end` 的错误码以 `[status/id]` 拼入错误文案；`tool_execution_update`
+  按 fileCount 汇成 `TypeProgress` 描述（长时 glob/bash 不再静默）。
+  - `thinking_level_changed` 仅记 debug 日志，**不**发独立控制——该事件在流开头早于终态
+    `TypeResult`，发 `TypeNotice` 会与终态去重冲突并吞掉最终回复（见 Fixed 段 B2）。
+
 ### Changed
 
 - **超长流行截断而非中止 turn**（`aec61ba`，F1）。此前单个超过 `maxLineLen` 的行会以
@@ -85,6 +95,18 @@ omp `/session-list`/`/session-use`/`/session-clean`/`/session-gc`）、**部署�
   - 测试：`TestReclaimBackend`、`TestFireOfflineNotice_ReclaimsStrandedTurns`、
     `TestFireOfflineNotice_BlipKeepsTurns`、`TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend`；
     既有 `TestOnBackendOffline_KeepsInFlightTurn`（短暂离线保留）仍绿。
+
+- **终态控制投递 ACK + 重试，杜绝最终回复静默丢失**（`c7d67ed`）。3 个 CLI 后端
+  （claude/omp/opencode）的终态控制（Result/Error/Notice）此前是"单次即丢"：一次 HTTP POST
+  返回 202 即视为成功，但前端可能在渲染前崩溃/重启，导致最终回复卡永久丢失且无任何告警。现
+  `Core.EmitTerminal` 改为 4 次重试 + ACK 确认（指数退避 1/2/4s）：前端 SSE 在收到终态控制时回
+  一个 `TypeAck` Event（即便渲染失败或命中去重重复也回），后端 `AckRegistry` 据此停止重发；
+  4 次全失败时发兜底 notice 并 bump `TerminalEmitLost` 指标——丢失不再静默。新增 `protocol.TypeAck`
+  事件类型（`allowedEventTypes` + 表驱动校验）与 `bridgebase.AckRegistry`（PromptID 配对的一次性
+  wait）；前端 `dispatcher_control.go` 对每个终态控制回 ACK。
+  - **B2 连带修复**：`thinking_level_changed` 在 `6ba58fd` 中被映射为 `TypeNotice`，因其早于
+    最终 `TypeResult` 到达前端而命中 `terminals` 终态去重，系统性吞掉 OMP 后端（thinking=auto）
+    的最终回复卡；现改为仅 debug 日志，不再发独立终态控制。
 
 - **提交后翻灰 + 延迟兜底 PATCH**（`3846b89`）。问答/权限卡提交后按钮置灰、显示「已提交/✓ …」；
   追加延迟兜底 PATCH 绕过飞书点击处理窗口（~3-5s）的静默回退。`0eebfae` 修复 notice-patch 时
