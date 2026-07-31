@@ -944,6 +944,92 @@ func TestSubmit_DelayedFallbackSkippedAfterFinalize(t *testing.T) {
 	}
 }
 
+// TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate verifies the delayed-PATCH
+// guard also holds when the terminal frame is a TypeNotice patching the card in
+// place (UpdateMessageID) rather than a turn Result — the path /session-clean's
+// EmitCardUpdate takes. Before the fix, sendNoticeControl did not release the
+// interactive binding, so the fallback re-sent the grey submitted bytes and
+// overwrote the green result card, stranding it on "你选择了" forever.
+func TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate(t *testing.T) {
+	const backendID = "omp-notice"
+	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	defer cleanup()
+	go func() { _, _ = client.RecvEvent() }() // drain the forwarded answer
+
+	// The notice patch lands synchronously well before this window elapses.
+	disp.cardPatchDelay = 40 * time.Millisecond
+
+	chatID := "oc_chat_notice"
+	if err := router.Set(chatID, backendID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A /session-clean permission card ships STANDALONE: the slash command
+	// returned Handled before opening a progress turn, so TakeOverProgress
+	// is unset and PromptID is empty. confirm/cancel map to the generic
+	// "确认"/"取消" echo via choiceLabel.
+	permCtrl := &protocol.Control{
+		Type: protocol.TypePermission, ChatID: chatID,
+		Permission: &protocol.PermissionPayload{
+			RequestID: "req-notice",
+			Message:   "即将删除当前目录下 2 个会话（当前绑定的会话已保留）。确认继续？",
+			Options: []protocol.PermissionOption{
+				{Label: "确认删除", Value: "confirm"},
+				{Label: "取消", Value: "cancel"},
+			},
+		},
+	}
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+		t.Fatalf("permission emit: %v", err)
+	}
+	mid, _ := disp.turns.InteractiveMessageID("req-notice")
+	if mid == "" {
+		t.Fatal("interactive card not bound after emit")
+	}
+
+	// User clicks 确认删除 → submitted flip (✓ 你选择了「确认」 + 处理中) AND
+	// arms the delayed fallback PATCH at +40ms.
+	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: chatID, MessageID: mid,
+		Value: map[string]any{"requestID": "req-notice", "kind": "permission", "choice": "confirm"},
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	// Backend resolves the answer, deletes, and patches the SAME card with a
+	// success notice — the /session-clean result path. This must release the
+	// interactive binding so the armed fallback PATCH skips.
+	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
+		Type:   protocol.TypeNotice,
+		ChatID: chatID,
+		Notice: &protocol.NoticePayload{
+			Level:           "success",
+			Title:           "清理完成",
+			Message:         "已删除 2 个会话。",
+			UpdateMessageID: mid,
+		},
+	}}); err != nil {
+		t.Fatalf("notice emit: %v", err)
+	}
+
+	// Wait past the window so the delayed goroutine runs (and must skip).
+	time.Sleep(120 * time.Millisecond)
+
+	sink.mu.Lock()
+	last := lastUpdateFor(sink.updates, mid)
+	sink.mu.Unlock()
+	if last == nil || !strings.Contains(string(last), "清理完成") {
+		t.Errorf("terminal notice must remain; delayed PATCH regressed it: %s", last)
+	}
+	if last != nil && strings.Contains(string(last), "你选择了") {
+		t.Errorf("delayed PATCH overwrote the terminal notice with submitted bytes: %s", last)
+	}
+	// Binding released after the terminal notice patch.
+	if _, ok := disp.turns.InteractiveMessageID("req-notice"); ok {
+		t.Error("binding should be released after the terminal notice patch")
+	}
+}
+
 // TestSendResult_CardRejectedFallsBackToText pins the production fix for the
 // silent "card not sent" bug: when Feishu rejects the result CARD's content
 // (ErrCode 11310 — too many tables, surfaced as feishu.ErrCardContentRejected),

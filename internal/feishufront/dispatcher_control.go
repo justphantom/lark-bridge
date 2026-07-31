@@ -327,10 +327,20 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 			// A direct card patch IS this prompt's terminal frame (the
 			// promptID dedup above already consumed it): release the
 			// turn/progress slots so a live turn — e.g. /pull on
-			// deploy-monitor, where the frontend never restarted — does
-			// not leak into /running.
+			// deploy-monitor, where the frontend never restarted —
+			// does not leak into /running.
 			d.turns.Finish(ctrl.PromptID)
 			d.cleanupProgress(ctrl.PromptID, n.UpdateMessageID)
+			// Release any interactive-card binding (cached bytes + TTL
+			// timer) still pointing at the patched card. A submitted
+			// interactive card arms a delayed fallback PATCH that
+			// re-sends the grey "你选择了" bytes past Feishu's click
+			// window; the fallback's guard skips only once the binding
+			// is gone. Without this release the fallback overwrites the
+			// terminal notice, stranding the card on the submitted
+			// state — the /session-clean symptom. (No-op when the
+			// patched card was never an interactive card.)
+			d.evictInteractiveByMessageID(n.UpdateMessageID, "")
 		}
 		return err
 	}
