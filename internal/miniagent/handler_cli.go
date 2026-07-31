@@ -47,7 +47,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	if err != nil {
 		h.logger.Warn("miniagent start failed",
 			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
-		h.sendCtrl(&protocol.Control{
+		h.sendTerminalCtrl(&protocol.Control{
 			Type:     protocol.TypeError,
 			PromptID: promptID,
 			ChatID:   chatID,
@@ -97,7 +97,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			"input_tokens", ev.InputTokens,
 			"output_tokens", ev.OutputTokens,
 			log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
+		h.sendTerminalCtrl(&protocol.Control{
 			Type:     protocol.TypeResult,
 			PromptID: promptID,
 			ChatID:   chatID,
@@ -116,7 +116,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			log.FieldPromptID, promptID,
 			log.FieldError, errors.New(ev.Message),
 			log.FieldDuration, time.Since(start).Milliseconds())
-		h.sendCtrl(&protocol.Control{
+		h.sendTerminalCtrl(&protocol.Control{
 			Type:     protocol.TypeError,
 			PromptID: promptID,
 			ChatID:   chatID,

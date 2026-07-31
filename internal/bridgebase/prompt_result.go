@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -189,7 +190,19 @@ func (c *Core) buildTerminalControl(ctx context.Context, chatID, backendName str
 	}
 }
 
-// emitTerminalControl sends one terminal Control with a retry+ACK budget.
+// emitTerminalControl sends c's terminal Control through the shared
+// EmitTerminalControl retry+ACK loop. Thin wrapper so Core callers keep their
+// c.emitTerminalControl(...) call site while the loop itself is shared with
+// non-Core backends (miniagent) that have no Core to embed.
+func (c *Core) emitTerminalControl(promptID, chatID string, ctrl *protocol.Control) error {
+	var rpc backendrpc.ControlSender
+	if c.RPC != nil {
+		rpc = c.RPC // deref so a nil *backendrpc.Client stays a nil interface
+	}
+	return EmitTerminalControl(c.Logger, rpc, c.Acks, c.AppCtx, promptID, chatID, ctrl)
+}
+
+// EmitTerminalControl sends one terminal Control with a retry+ACK budget.
 //
 // The terminal control is the single most important message of a turn (the
 // final reply / error / timeout notice). Unlike intermediate controls
@@ -199,60 +212,77 @@ func (c *Core) buildTerminalControl(ctx context.Context, chatID, backendName str
 //
 //  1. Send the control (perAttemptTimeout budget).
 //  2. Wait up to ackWaitBudget for the frontend's ACK (protocol.TypeAck,
-//     carried on the SSE stream). The ACK resolves c.Acks and the loop exits
+//     carried on the SSE stream). The ACK resolves acks and the loop exits
 //     early — success.
 //  3. On timeout/no-ACK, retry (up to maxTerminalAttempts) with backoff.
 //  4. If all attempts go unconfirmed, return the last error (or a synthetic
 //     "no ACK" error); the caller emits a fallback notice and bumps
 //     TerminalEmitLost.
 //
-// A nil Acks registry (defensive; tests that do not wire the SSE ingress)
-// behaves as pure-retry-on-send-error: a successful 202 with no ACK wait still
-// succeeds on the first attempt, because a confirmation that can never arrive
-// must not regress the happy path.
-func (c *Core) emitTerminalControl(promptID, chatID string, ctrl *protocol.Control) error {
+// Extracted to a package-level helper (from Core.emitTerminalControl) so
+// non-Core backends (miniagent) share the same retry reliability without
+// embedding a Core:
+//   - rpc performs the actual POST; nil → no-op success on attempt 1 (a
+//     hand-built test Core with no IPC client wired, where nothing will ever
+//     ACK either).
+//   - acks pairs the emit with the frontend's delivery ACK; nil skips the ACK
+//     wait (pure retry-on-send-error) — used by miniagent, which has no
+//     AckRegistry. A successful POST is "delivered" on the first attempt
+//     because a confirmation that can never arrive must not regress the happy
+//     path.
+//   - appCtx cancels the between-attempt backoff sleep on shutdown.
+//
+// ctrl.PromptID is back-filled from promptID when unset. Idempotent on the
+// frontend (terminal dedup keys on PromptID), so a retry is a harmless no-op
+// there if the first attempt did land.
+func EmitTerminalControl(logger *log.Logger, rpc backendrpc.ControlSender, acks *AckRegistry, appCtx context.Context, promptID, chatID string, ctrl *protocol.Control) error {
 	if ctrl.PromptID == "" {
 		ctrl.PromptID = promptID
+	}
+	// No IPC client wired (hand-built test Core): nothing to send and nothing
+	// to ever ACK, so a single no-op success is the correct "delivered" signal.
+	if rpc == nil {
+		return nil
 	}
 	var lastErr error
 	for attempt := 1; attempt <= maxTerminalAttempts; attempt++ {
 		if attempt > 1 {
 			eventmetrics.TerminalEmitRetries.Inc()
-			c.Logger.Warn("terminal control unconfirmed, retrying",
-				log.FieldChatID, chatID, log.FieldPromptID, promptID,
-				log.FieldControlType, ctrl.Type, "attempt", attempt)
+			if logger != nil {
+				logger.Warn("terminal control unconfirmed, retrying",
+					log.FieldChatID, chatID, log.FieldPromptID, promptID,
+					log.FieldControlType, ctrl.Type, "attempt", attempt)
+			}
 			select {
 			case <-time.After(terminalRetryBackoff(attempt)):
-			case <-c.AppCtx.Done():
-				return c.ctxOrLast(c.AppCtx.Err(), lastErr)
+			case <-appCtx.Done():
+				return ctxOrLast(appCtx.Err(), lastErr)
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perAttemptTimeout)
-		sendErr := c.Emit(ctx, promptID, ctrl)
+		sendErr := rpc.SendControl(ctx, ctrl)
 		cancel()
 		if sendErr != nil {
 			lastErr = sendErr
-			c.Logger.Warn("terminal control send failed",
-				log.FieldChatID, chatID, log.FieldPromptID, promptID,
-				log.FieldControlType, ctrl.Type, log.FieldError, sendErr, "attempt", attempt)
+			if logger != nil {
+				logger.Warn("terminal control send failed",
+					log.FieldChatID, chatID, log.FieldPromptID, promptID,
+					log.FieldControlType, ctrl.Type, log.FieldError, sendErr, "attempt", attempt)
+			}
 			continue
 		}
-		// Send accepted (202). Skip the ACK wait when no IPC client is wired
-		// (unit tests, or a backend with no frontend reachable): there is no
-		// SSE ingress to ever deliver an ACK, so waiting would always time out
-		// and needlessly retry. A nil RPC → Emit is a no-op success, which is
-		// the correct "delivered" signal for that degenerate case. This MUST
-		// also cover the c.Acks==nil defensive case (never true after NewCore,
-		// but kept for hand-built Cores in tests).
-		if c.RPC == nil || c.Acks == nil {
+		// Send accepted (202). No ACKer → pure-retry-on-send-error: a
+		// successful POST with no ACK ingress is "delivered" (miniagent has no
+		// AckRegistry; a nil rpc was handled above).
+		if acks == nil {
 			return nil
 		}
 		// Wait for the frontend's ACK. Resolve = success; timeout = retry.
-		if err := c.Acks.WaitFor(promptID, ackWaitBudget); err == nil {
-			c.Acks.Forget(promptID)
+		if err := acks.WaitFor(promptID, ackWaitBudget); err == nil {
+			acks.Forget(promptID)
 			return nil
 		}
-		c.Acks.Forget(promptID)
+		acks.Forget(promptID)
 		lastErr = fmt.Errorf("terminal control %s: no ACK within %s", ctrl.Type, ackWaitBudget)
 	}
 	return lastErr
@@ -260,7 +290,7 @@ func (c *Core) emitTerminalControl(promptID, chatID string, ctrl *protocol.Contr
 
 // ctxOrLast returns ctxErr when non-nil (the shutdown cause), else lastErr so
 // the caller sees the actionable send/ACK failure rather than a bare context.
-func (c *Core) ctxOrLast(ctxErr, lastErr error) error {
+func ctxOrLast(ctxErr, lastErr error) error {
 	if ctxErr != nil {
 		return ctxErr
 	}

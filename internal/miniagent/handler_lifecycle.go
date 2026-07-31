@@ -73,6 +73,7 @@ func (h *Handler) endTurn(chatID string, mine *bridgebase.PromptCancel) {
 // wind down so the process does not exit mid-emit / mid-Append. Idempotent.
 func (h *Handler) Close() {
 	h.closeOnce.Do(func() {
+		h.appCancel()
 		h.cancelMu.Lock()
 		h.closed = true
 		for _, pc := range h.cancelBy {

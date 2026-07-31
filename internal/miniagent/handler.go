@@ -52,6 +52,13 @@ type Handler struct {
 	closed    bool                                // set under cancelMu by Close; rejects new startTurn
 	wg        sync.WaitGroup                      // tracks runTurn goroutines
 	closeOnce sync.Once
+
+	// appCtx is the process-lifetime context for sendTerminalCtrl's retry
+	// backoff: Close cancels it so an in-flight EmitTerminalControl does not
+	// keep sleeping through a shutdown. Has no part in per-turn cancellation
+	// (turns use their own turnCtx from startTurn).
+	appCtx    context.Context
+	appCancel context.CancelFunc
 }
 
 // New builds a Handler. rpc emits Controls to the frontend; router holds
@@ -64,7 +71,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 	if logger == nil {
 		logger = log.Nop()
 	}
-	return &Handler{
+	h := &Handler{
 		rpc:           rpc,
 		logger:        logger,
 		router:        r,
@@ -78,6 +85,8 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		git:           bridgebase.NewGitRunner(bridgebase.ExecCommander{}, logger, 0),
 		cancelBy:      make(map[string]*bridgebase.PromptCancel),
 	}
+	h.appCtx, h.appCancel = context.WithCancel(context.Background())
+	return h
 }
 
 // SetPromptIDForPickers stores the promptID for a chat so async picker
@@ -195,10 +204,13 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 			"上一条消息还在处理，请等它结束后再发。")
 		return nil
 	}
-	go func() {
+	// GoSafe so a panic inside runTurn is recovered + logged instead of
+	// crashing the backend. endTurn is deferred inside fn so the per-chat turn
+	// slot is still released during the panic unwind before GoSafe's recover.
+	bridgebase.GoSafe(h.logger, "miniagent turn: "+chatID, func() {
 		defer h.endTurn(chatID, mine)
 		h.runTurn(turnCtx, promptID, chatID, prompt)
-	}()
+	})
 	return nil
 }
 
@@ -224,6 +236,22 @@ func (h *Handler) sendCtrl(ctrl *protocol.Control) {
 	defer cancel()
 	if err := h.rpc.SendControl(ctx, ctrl); err != nil {
 		h.logger.Warn("miniagent emit failed",
+			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
+			log.FieldControlType, ctrl.Type, log.FieldError, err)
+	}
+}
+
+// sendTerminalCtrl emits a TERMINAL control (TypeResult / TypeError) through
+// bridgebase.EmitTerminalControl's retry path so a lost final reply is re-sent
+// instead of dropped on a single failed POST — parity with the 3 CLI bridges'
+// Core.EmitTerminal. miniagent has no AckRegistry, so the ACK wait is skipped
+// (pure retry-on-send-error: a successful POST is "delivered"); h.appCtx
+// cancels the backoff on Close. Non-terminal controls (notice / progress /
+// tool signals) stay on the single-shot sendCtrl — only the final reply and
+// error warrant the retry budget.
+func (h *Handler) sendTerminalCtrl(ctrl *protocol.Control) {
+	if err := bridgebase.EmitTerminalControl(h.logger, h.rpc, nil, h.appCtx, ctrl.PromptID, ctrl.ChatID, ctrl); err != nil {
+		h.logger.Warn("miniagent terminal emit failed",
 			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
 			log.FieldControlType, ctrl.Type, log.FieldError, err)
 	}
