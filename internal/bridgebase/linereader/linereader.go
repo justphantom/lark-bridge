@@ -8,6 +8,7 @@ package linereader
 
 import (
 	"bufio"
+	"errors"
 	"io"
 
 	"github.com/justphantom/lark-bridge/internal/strutil"
@@ -51,7 +52,7 @@ func (l *LineReader) ReadLine() (line string, truncated bool, err error) {
 	for {
 		chunk, readErr := l.r.ReadSlice('\n')
 
-		complete := readErr == nil || readErr == io.EOF
+		complete := readErr == nil || errors.Is(readErr, io.EOF)
 		if complete {
 			content := chunk
 			if readErr == nil && len(content) > 0 && content[len(content)-1] == '\n' {
@@ -66,13 +67,13 @@ func (l *LineReader) ReadLine() (line string, truncated bool, err error) {
 				return strutil.Truncate(string(buf), l.max), true, nil
 			}
 			buf = append(buf, content...)
-			if len(buf) == 0 && readErr == io.EOF {
+			if len(buf) == 0 && errors.Is(readErr, io.EOF) {
 				return "", false, io.EOF
 			}
 			return string(buf), false, nil
 		}
 
-		if readErr == bufio.ErrBufferFull {
+		if errors.Is(readErr, bufio.ErrBufferFull) {
 			// Line continues past this chunk (no '\n' within one buffer).
 			if len(buf)+len(chunk) > l.max {
 				// Cap reached mid-line: keep the first max bytes, drop the
@@ -118,7 +119,7 @@ func stripNewline(s string) string {
 func (l *LineReader) discardLine() {
 	for {
 		_, err := l.r.ReadSlice('\n')
-		if err != bufio.ErrBufferFull {
+		if !errors.Is(err, bufio.ErrBufferFull) {
 			return
 		}
 	}

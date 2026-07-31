@@ -7,10 +7,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 )
 
 // TestEmitTerminal_SurfacesScanError locks in that a stdout read failure

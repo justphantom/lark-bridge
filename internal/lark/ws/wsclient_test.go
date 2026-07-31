@@ -74,14 +74,6 @@ func newFakeServer(t *testing.T) *fakeServer {
 
 func (f *fakeServer) URL() string { return "ws://" + f.ln.Addr().String() + "/" }
 
-// connCount returns the number of accepted conns (mutex-guarded for race-safe
-// test reads).
-func (f *fakeServer) connCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.conns)
-}
-
 func (f *fakeServer) accept() {
 	for {
 		c, err := f.ln.Accept()

@@ -40,10 +40,10 @@ func writeSessionJSONL(t *testing.T, root, dir, id, content string) {
 
 func TestEncodeProjectDir(t *testing.T) {
 	cases := map[string]string{
-		"/home/user/lark-bridge":       "-home-user-lark-bridge",
-		"/tmp/lb-session-test-VK1C":    "-tmp-lb-session-test-VK1C",
-		"/":                            "-",
-		"/a":                           "-a",
+		"/home/user/lark-bridge":    "-home-user-lark-bridge",
+		"/tmp/lb-session-test-VK1C": "-tmp-lb-session-test-VK1C",
+		"/":                         "-",
+		"/a":                        "-a",
 	}
 	for in, want := range cases {
 		if got := encodeProjectDir(in); got != want {

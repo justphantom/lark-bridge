@@ -25,7 +25,7 @@ func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) 
 	}
 	sessions, err := h.agent.ListSessions(h.AppCtx, b.Directory)
 	if err != nil {
-		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil
+		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil //nolint:nilerr // 用户输入错误以提示文案返回；非内部错误，不上报 error 级别
 	}
 	return commandResult{Body: formatSessionList(sessions, b.SessionID)}, nil
 }

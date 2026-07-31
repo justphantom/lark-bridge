@@ -123,7 +123,7 @@ func readSessionHeader(path string) (Session, bool, error) {
 	if err != nil {
 		return Session{}, false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1<<20)
@@ -329,10 +329,7 @@ func (c *Client) RunGC(ctx context.Context, opts GCOptions) (GCResult, error) {
 		return GCResult{}, fmt.Errorf("omp gc: parse output: %w", err)
 	}
 
-	var errs []string
-	for _, e := range raw.Archive.Errors {
-		errs = append(errs, e)
-	}
+	errs := append([]string(nil), raw.Archive.Errors...)
 
 	return GCResult{
 		AgentDir:           raw.AgentDir,

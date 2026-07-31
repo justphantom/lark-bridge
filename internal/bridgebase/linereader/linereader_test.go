@@ -1,6 +1,7 @@
 package linereader
 
 import (
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestReadLine_NormalLines(t *testing.T) {
 		t.Fatalf("second line: %q truncated=%v err=%v", line, truncated, err)
 	}
 	line, truncated, err = r.ReadLine()
-	if line != "" || truncated || err != io.EOF {
+	if line != "" || truncated || !errors.Is(err, io.EOF) {
 		t.Fatalf("EOF: %q truncated=%v err=%v", line, truncated, err)
 	}
 }
@@ -61,7 +62,7 @@ func TestReadLine_NoTrailingNewline(t *testing.T) {
 		t.Fatalf("second (no newline): %q err=%v", line, err)
 	}
 	line, _, err = r.ReadLine()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF, got %q err=%v", line, err)
 	}
 }
@@ -105,7 +106,7 @@ func TestReadLine_TruncatedNoTrailingNewline(t *testing.T) {
 	}
 	// Should be EOF
 	_, _, err = r.ReadLine()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF after truncated last line, got %v", err)
 	}
 }
@@ -138,7 +139,7 @@ func TestReadLine_MultipleTruncatedLines(t *testing.T) {
 	truncs := make([]bool, 0, 5)
 	for {
 		line, truncated, err := r.ReadLine()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -188,7 +189,7 @@ func TestReadLine_UTF8Boundary(t *testing.T) {
 func TestReadLine_EOFOnEmpty(t *testing.T) {
 	r := New(strings.NewReader(""), 1024)
 	_, _, err := r.ReadLine()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF on empty reader, got %v", err)
 	}
 }
@@ -196,7 +197,7 @@ func TestReadLine_EOFOnEmpty(t *testing.T) {
 func TestReadLine_MaxBytesZero(t *testing.T) {
 	r := New(strings.NewReader("hello\n"), 0)
 	_, _, err := r.ReadLine()
-	if err != io.ErrUnexpectedEOF {
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("expected ErrUnexpectedEOF for max=0, got %v", err)
 	}
 }

@@ -57,7 +57,7 @@ func (h *Handler) cmdSessionClean(ctx context.Context, chatID string, args []str
 	// before entering the blocking confirmation goroutine.
 	sessions, err := h.agent.ListSessions(h.AppCtx, dir)
 	if err != nil {
-		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil
+		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil //nolint:nilerr // 用户输入错误以提示文案返回；非内部错误，不上报 error 级别
 	}
 	targets := make([]string, 0, len(sessions))
 	for _, s := range sessions {
@@ -155,7 +155,7 @@ func (h *Handler) cmdSessionUse(ctx context.Context, chatID string, args []strin
 	curSession := b.SessionID
 	sessions, err := h.agent.ListSessions(h.AppCtx, dir)
 	if err != nil {
-		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil
+		return commandResult{Body: "获取会话列表失败：" + err.Error()}, nil //nolint:nilerr // 用户输入错误以提示文案返回；非内部错误，不上报 error 级别
 	}
 	if len(sessions) == 0 {
 		return commandResult{Body: "当前目录下没有任何会话。"}, nil
