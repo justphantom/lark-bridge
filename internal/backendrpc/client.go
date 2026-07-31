@@ -25,9 +25,11 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// handshakeTimeout bounds the SSE GET + POST dial/header wait. Without it a
-// stalled frontend makes Connect or SendControl block indefinitely.
-const handshakeTimeout = 10 * time.Second
+// handshakeTimeout bounds the SSE handshake (dial + response-header wait).
+// Without it a stalled frontend makes Connect block until systemd's
+// TimeoutStartSec. A var (not const) so tests can shrink it, mirroring
+// sseSendTimeout.
+var handshakeTimeout = 10 * time.Second
 
 // sendControlTimeout is the fallback deadline SendControl applies when the
 // caller's ctx has none, so a wedged frontend cannot pin the emit goroutine.
@@ -196,23 +198,36 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 		q.Set("version", opts.Version)
 	}
 	u.RawQuery = q.Encode()
-	// C13: bound the handshake with a timeout context instead of
-	// context.Background — a frontend that accepts TCP but never answers
-	// would otherwise hang Connect (and backend startup) until systemd's
-	// TimeoutStartSec. The cancel is retained on the Client (see sseCancel):
-	// it must NOT fire on success, because this context also governs the
-	// response body — cancelling it after Connect returns would close the
-	// SSE stream.
-	handshakeCtx, handshakeCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	// C13 (revised): bound the handshake (dial + response-header wait) with a
+	// timer that cancels the context if headers don't arrive within
+	// handshakeTimeout — a frontend that accepts TCP but never answers would
+	// otherwise hang Connect until systemd's TimeoutStartSec.
+	//
+	// CRITICAL: the request context also governs the response body's whole
+	// lifetime in net/http, so it MUST NOT carry an auto-firing deadline. A
+	// context.WithTimeout here would cancel itself at handshakeTimeout and
+	// tear down the SSE body every 10s, surfacing as an endless
+	// "sse recv: client closed" → reconnect storm. Use a plain WithCancel and
+	// STOP the timer the moment headers arrive; the context then lives until
+	// Close() calls handshakeCancel.
+	handshakeCtx, handshakeCancel := context.WithCancel(context.Background())
 	c.sseCancel = handshakeCancel
+	handshakeTimer := time.AfterFunc(handshakeTimeout, handshakeCancel)
 	req, err := http.NewRequestWithContext(handshakeCtx, http.MethodGet, u.String(), nil)
 	if err != nil {
+		handshakeTimer.Stop()
 		handshakeCancel()
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	c.setAuth(req)
 	resp, err := httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
+	// Headers arrived (or Do errored): disarm the handshake timer so it can
+	// never cancel the body mid-stream. Stop() before the status check
+	// minimises the window in which the timer could fire between Do returning
+	// and Stop() being called; even if it already fired, the request context
+	// is only cancelled by Close() on a live stream.
+	handshakeTimer.Stop()
 	if err != nil {
 		handshakeCancel()
 		return nil, err

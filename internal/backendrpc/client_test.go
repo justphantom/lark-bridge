@@ -367,3 +367,64 @@ func TestReadSSE_InvalidEventDropped(t *testing.T) {
 		t.Fatalf("expected the valid ping after the dropped invalid event, got %+v", got)
 	}
 }
+
+// TestConnect_SSEBodyOutlivesHandshakeTimeout pins the regression behind the
+// 2026-07-31 SSE reconnect storm: the request context governs the response
+// body's whole lifetime, so it MUST NOT carry an auto-firing deadline.
+// connect() previously used context.WithTimeout(handshakeTimeout) on the SSE
+// GET; net/http cancelled the body at handshakeTimeout (10s in prod) every
+// cycle, surfacing as an endless "sse recv: client closed" → reconnect loop
+// across every backend. The handshake timer is now disarmed on header
+// arrival, so only Close() ends the body — proven by a frame delivered well
+// past handshakeTimeout.
+func TestConnect_SSEBodyOutlivesHandshakeTimeout(t *testing.T) {
+	prev := handshakeTimeout
+	handshakeTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { handshakeTimeout = prev })
+	// writeCh signals the SSE handler to emit one ping frame AFTER the test
+	// sleeps past handshakeTimeout, proving the body is still alive.
+	writeCh := make(chan struct{}, 1) // buffered: a send must not block if the handler already exited (regression case)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush() // push response headers so the client's Do() returns at once
+		}
+		// Hold the stream open; emit a frame only when signalled.
+		select {
+		case <-writeCh:
+			fmt.Fprintf(w, "data: {\"type\":\"ping\",\"ping\":{}}\n\n")
+			if fl != nil {
+				fl.Flush()
+			}
+		case <-r.Context().Done():
+			return
+		}
+		<-r.Context().Done() // keep the conn alive until the client closes
+	}))
+	defer srv.Close()
+	defer close(writeCh)
+
+	client, err := Connect(ConnectOptions{BackendID: "b1", BackendType: "probe", FrontendURL: srv.URL})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+
+	// Sleep past the OLD killing deadline. Pre-fix this cancelled the body
+	// (context.WithTimeout auto-fired) → readSSE ended → Close() → the
+	// RecvEvent below would return "client closed".
+	time.Sleep(handshakeTimeout + 100*time.Millisecond)
+
+	// A frame written now must still arrive: the body outlives handshakeTimeout.
+	writeCh <- struct{}{}
+
+	got, err := client.RecvEvent()
+	if err != nil {
+		t.Fatalf("RecvEvent after handshakeTimeout: %v — body torn down by an auto-firing deadline (regression)", err)
+	}
+	if got.Type != protocol.TypePing {
+		t.Fatalf("expected ping after handshakeTimeout, got %+v", got)
+	}
+}
