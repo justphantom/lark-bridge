@@ -5,7 +5,9 @@
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
+#   lint        golangci-lint run ./... (the 0-issues quality gate)
 #   test        build-check + vet + deploy-smoke + go test -race ./...
+#   prerelease  test + lint — the pre-tag gate, run before `git tag v1.x.0`
 #   deploy-smoke bash helper unit tests (deploy/tests/smoke.sh)
 #   deploy      build, then install as systemd services via deploy/deploy.sh
 #   pack        build all seven binaries and bundle into a distributable tarball
@@ -21,7 +23,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-check test vet fmt clean deploy upgrade-monitor upgrade-status pack
+.PHONY: build build-check test vet fmt lint prerelease clean deploy upgrade-monitor upgrade-status pack
 
 # Default to `build` so a bare `make` produces the seven binaries.
 .DEFAULT_GOAL := build
@@ -76,10 +78,21 @@ vet:
 fmt:
 	gofmt -s -w .
 
+# lint runs golangci-lint over the whole module. The repo's quality baseline is
+# 0 issues; this target makes it enforceable from one command and is the gate
+# prerelease runs before tagging. Requires golangci-lint on PATH.
+lint:
+	golangci-lint run ./...
+
 # test runs build-check + vet as gates, then the full suite under the race
 # detector. -race needs CGO_ENABLED=1, which is the default on Linux.
 test: build-check vet deploy-smoke
 	go test -race ./...
+
+# prerelease is the pre-tag gate: the full test suite (build-check + vet +
+# deploy-smoke + go test -race) AND a clean golangci-lint pass. Run this before
+# `git tag v1.x.0` so a tag never cuts a build with lint issues or a failing test.
+prerelease: test lint
 
 # deploy-smoke unit-tests the bash deploy helpers (lib-common.sh + deploy.sh's
 # source guard) without systemd/sudo; catches mapping-table and escaping
