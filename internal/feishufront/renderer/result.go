@@ -57,6 +57,16 @@ func RenderResult(ctrl *protocol.Control, header cardkit.HeaderInfo, footer card
 	if header.Title == "" {
 		header.Title = "已完成"
 	}
+	// Incomplete: the turn hit the backend's iteration cap without a final
+	// answer (miniagent max_iterations). Render as a warning so a truncated
+	// turn is distinguishable from a normal completion; the reason text is
+	// already in Result.Text (filled by the miniagent handler).
+	if ctrl.Result.Incomplete {
+		header.Template = "orange"
+		if header.Title == "已完成" {
+			header.Title = "未完成"
+		}
+	}
 	body := truncateRunes(ctrl.Result.Text, maxResultRunes)
 	// Sections below the body are joined with markdown thematic breaks so each
 	// reads as its own line; collect them in order then append to the body.

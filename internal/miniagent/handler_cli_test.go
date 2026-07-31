@@ -53,9 +53,10 @@ func TestEmitCLIEvent_NormalResult(t *testing.T) {
 	}
 }
 
-// TestEmitCLIEvent_EmptyResultText verifies an empty-text result still
-// emits a Result control (no placeholder fill after the Incomplete field
-// was removed in the stateless migration).
+// TestEmitCLIEvent_EmptyResultText verifies a result with empty text AND empty
+// finish stays empty: only finish=max_iterations fills a placeholder (see
+// TestEmitCLIEvent_MaxIterations). A pre-v1.1.0 CLI (no finish field) hitting
+// an empty reply still surfaces an empty card.
 func TestEmitCLIEvent_EmptyResultText(t *testing.T) {
 	h, sender := newCLIHandler(t)
 	ev := miniclient.Event{
@@ -72,6 +73,53 @@ func TestEmitCLIEvent_EmptyResultText(t *testing.T) {
 	}
 	if got[0].Result.Text != "" {
 		t.Errorf("Text = %q, want empty passed through", got[0].Result.Text)
+	}
+}
+
+// TestEmitCLIEvent_MaxIterations verifies a result with finish=max_iterations
+// flips Incomplete and fills the empty Text with a reason — so the user sees a
+// "未完成" (orange) card, not a blank green "已完成" one.
+func TestEmitCLIEvent_MaxIterations(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:       miniclient.KindResult,
+		Text:       "",
+		Model:      "kimi",
+		Finish:     miniclient.FinishMaxIterations,
+		IsTerminal: true,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now())
+	got := sender.Controls()
+	if len(got) != 1 || got[0].Result == nil {
+		t.Fatalf("want one Result, got %+v", got)
+	}
+	r := got[0].Result
+	if !r.Incomplete {
+		t.Error("Incomplete = false, want true for max_iterations")
+	}
+	if r.Text == "" {
+		t.Error("Text empty: max_iterations should fill a reason placeholder")
+	}
+}
+
+// TestEmitCLIEvent_NormalFinish verifies a stop finish keeps Incomplete false
+// and the reply text propagated unchanged.
+func TestEmitCLIEvent_NormalFinish(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:       miniclient.KindResult,
+		Text:       "done",
+		Model:      "kimi",
+		Finish:     miniclient.FinishStop,
+		IsTerminal: true,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now())
+	r := sender.Controls()[0].Result
+	if r.Incomplete {
+		t.Error("Incomplete = true, want false for stop")
+	}
+	if r.Text != "done" {
+		t.Errorf("Text = %q, want \"done\" unchanged", r.Text)
 	}
 }
 

@@ -12,6 +12,13 @@ const (
 	KindError   = "error"
 )
 
+// Finish reason constants reported on result events (miniagent v1.1.0+). Empty
+// on older versions that predate the field.
+const (
+	FinishStop          = "stop"
+	FinishMaxIterations = "max_iterations"
+)
+
 // Event is one parsed stream-json line from miniagent's stdout. A
 // terminal event (KindResult or KindError) is always emitted last; the
 // pump goroutine closes the channel after it.
@@ -26,6 +33,11 @@ type Event struct {
 	InputTokens  int
 	OutputTokens int
 	Steps        int
+	// Finish is the termination reason miniagent v1.1.0+ reports on the result
+	// event: "stop" (normal) or "max_iterations" (hit the loop cap, Text empty).
+	// Empty when the upstream CLI predates the field. Consumed by the miniagent
+	// handler to set ResultPayload.Incomplete.
+	Finish string
 
 	// error event fields.
 	Message string
@@ -45,7 +57,10 @@ type rawEvent struct {
 	InputTokens  int    `json:"input_tokens,omitempty"`
 	OutputTokens int    `json:"output_tokens,omitempty"`
 	Steps        int    `json:"steps,omitempty"`
-	Message      string `json:"message,omitempty"`
+	// finish is miniagent v1.1.0+'s termination reason (stop / max_iterations),
+	// absent on older versions and on non-result events.
+	Finish  string `json:"finish,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // parseEvent decodes one NDJSON line into an Event. Returns ok=false on
@@ -64,6 +79,7 @@ func parseEvent(line []byte) (Event, bool) {
 		InputTokens:  raw.InputTokens,
 		OutputTokens: raw.OutputTokens,
 		Steps:        raw.Steps,
+		Finish:       raw.Finish,
 		Message:      raw.Message,
 	}
 	switch raw.Type {

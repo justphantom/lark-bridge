@@ -90,10 +90,21 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: ev.Input},
 		})
 	case miniclient.KindResult:
+		incomplete := ev.Finish == miniclient.FinishMaxIterations
+		text := ev.Text
+		// max_iterations leaves Text empty; without a hint the user sees a blank
+		// green "已完成" card and cannot tell a truncated turn from a real empty
+		// reply. Surface a reason and flip Incomplete so the card renders as
+		// "未完成" (orange) via RenderResult.
+		if incomplete && text == "" {
+			text = "已达到最大推理步数，未产出最终回答。可尝试拆分任务或细化问题后重试。"
+		}
 		h.logger.Info("miniagent turn done",
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
 			"steps", ev.Steps,
+			"finish", ev.Finish,
+			"incomplete", incomplete,
 			"input_tokens", ev.InputTokens,
 			"output_tokens", ev.OutputTokens,
 			log.FieldDuration, time.Since(start).Milliseconds())
@@ -102,12 +113,13 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			PromptID: promptID,
 			ChatID:   chatID,
 			Result: &protocol.ResultPayload{
-				Text:        ev.Text,
+				Text:        text,
 				Model:       ev.Model,
 				Tokens:      ev.InputTokens + ev.OutputTokens,
 				Duration:    time.Since(start),
 				Steps:       ev.Steps,
 				TotalTokens: ev.InputTokens + ev.OutputTokens,
+				Incomplete:  incomplete,
 			},
 		})
 	case miniclient.KindError:

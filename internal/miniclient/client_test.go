@@ -30,6 +30,24 @@ func TestParseEvent_Result(t *testing.T) {
 	}
 }
 
+func TestParseEvent_ResultFinish(t *testing.T) {
+	// miniagent v1.1.0+ reports a finish reason on the result event; older
+	// versions omit the field entirely (Finish stays empty).
+	ev, _ := parseEvent([]byte(`{"type":"result","text":"","model":"kimi","finish":"max_iterations"}`))
+	if ev.Finish != FinishMaxIterations {
+		t.Errorf("Finish = %q, want %q", ev.Finish, FinishMaxIterations)
+	}
+	ev2, _ := parseEvent([]byte(`{"type":"result","text":"ok","finish":"stop"}`))
+	if ev2.Finish != FinishStop {
+		t.Errorf("Finish = %q, want %q", ev2.Finish, FinishStop)
+	}
+	// Absent finish (pre-v1.1.0 / non-result) parses without error.
+	ev3, _ := parseEvent([]byte(`{"type":"result","text":"ok"}`))
+	if ev3.Finish != "" {
+		t.Errorf("Finish = %q, want empty when field absent", ev3.Finish)
+	}
+}
+
 func TestParseEvent_Error(t *testing.T) {
 	ev, _ := parseEvent([]byte(`{"type":"error","message":"boom"}`))
 	if ev.Kind != KindError || ev.Message != "boom" {

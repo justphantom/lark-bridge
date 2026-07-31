@@ -18,7 +18,10 @@ func toolCategory(t toolRow) string {
 	switch {
 	case isReadTool(t.name):
 		return "read"
-	case t.name == "Bash":
+	// Bash is claude/opencode/omp's shell tool; Shell (normalised from
+	// miniagent's lowercase "shell") is the same category. A subagent named
+	// "Shell" never reaches here — isSubagent is checked above.
+	case t.name == "Bash" || t.name == "Shell":
 		return "exec"
 	case t.name == "Edit":
 		return "edit"
