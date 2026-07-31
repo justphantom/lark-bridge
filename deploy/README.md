@@ -189,6 +189,10 @@ set -a; source .env; set +a
 | `omp.thinking_level` | `auto` |
 | `omp.model_list_timeout` | `300s` |
 | `omp.list_cache_ttl` | `3600` |
+| `omp.agent_dir` | `""`（空=用 omp 默认 `~/.local/share/omp`） |
+| `omp.gc_cold_archive_after_days` | `30` |
+| `omp.gc_retain_newest_per_cwd` | `5` |
+| `omp.gc_timeout` | `300s` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}`（当前仅 opencode-back 生效） |

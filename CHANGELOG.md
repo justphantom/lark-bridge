@@ -5,6 +5,105 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-31
+
+v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/session-use`/`/session-clean`/`/session-list`、
+omp `/session-list`/`/session-use`/`/session-clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
+`LARK_RUN_MODE` 双模式）、**事件流健壮性**（超长行截断、未知事件计数、流归档字段脱敏），以及修复
+**inflight 会话状态不一致导致的部署死锁**。无协议层 breaking change，新增功能 → 按 semver 升 minor。
+**发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
+
+### Added
+
+- **claude 会话管理命令对齐 omp/opencode**（`6a15532`）。此前 claude 的 `/session-list` 只读
+  本地 chat→session 绑定表（注释自承 "The Claude backend has no central session registry"），
+  且缺 `/session-use`/`/session-clean`。现按 claude 的 `~/.claude/projects/<编码cwd>/` 落盘布局
+  实现文件系统会话驱动，三命令全部对齐：
+  - 新增 `internal/claude/sessions.go`：`encodeProjectDir`（cwd 绝对路径每个 `/`→`-`，含前导）、
+    `ListSessions`（枚举目录下 `*.jsonl`，按 mtime 倒序）、`DeleteSession`（删 `.jsonl` + 同名
+    子目录，保留项目级共享 `memory/`）。编码规则、resume 的 cwd-bound 语义、删除等同 `--resume`
+    失效（命中 `IsStaleSession`）均经实测确认。
+  - `/session-list` 改枚举当前绑定目录下真实会话，当前绑定会话标 `★`（不再读 `router.AllBindings()`）。
+  - `/session-use` 新增：同目录会话切换，无参弹选择卡、带参支持序号/id；切到当前会话 no-op。
+  - `/session-clean` 新增：无参删当前目录除当前会话外的全部，带参仅删指定 id；走 `AskPermission`
+    确认卡 + 原地 PATCH 刷新；保护当前绑定会话不可删。
+  - `claudeAPI` 接口 +2 方法（`ListSessions`/`DeleteSession`），所有 fake 补实现；表驱动测试
+    覆盖无绑定/无目录/保护当前会话/确认删除/取消五条路径。
+
+- **omp 会话管理命令补齐**（`49c3d5b`）。omp 的 session store 是 cwd-bound 且慢，此前仅部分
+  命令可达。现 `/session-list`/`/session-use`/`/session-clean`/`/session-gc` 全部走磁盘 session
+  store；新增配置 `omp.agent_dir`、`omp.gc_cold_archive_after_days`/`gc_retain_newest_per_cwd`/
+  `gc_timeout`；terminal-event 检测加固。
+
+- **deploy-monitor `/deploy` 确认门 + `/deploy-some` 增强**（`f98ad73`）。`/deploy` 现弹出二次
+  确认卡，主确认按钮；`/deploy-some` 多选纳入 omp 服务，进度卡 takeover（`TakeOverProgress`）。
+
+- **`LARK_RUN_MODE` 双模式门**（`316f6be` + `d8a586d`）。`LARK_RUN_MODE=pro` 时 deploy 流程跳过
+  deploy-monitor（pro 环境不部署部署触发器），并在 dev→pro 切换时禁用遗留的 deploy-monitor
+  systemd 单元；CLI 健康探测改为按可执行位判定（去掉 `--version`，适配不实现该 flag 的 CLI），
+  过滤后无存活服务时 fail-fast。
+
+- **streamarchive 字段级脱敏 + miniagent 流归档**（`662e7d2`，F7/F9）。stream 归档新增 opt-in
+  字段级 redaction；miniagent 对话输出持久化到 `{state_dir}/streams/miniagent/`（与
+  claude/opencode/omp 字节级同构）。
+
+- **eventmetrics 进程内事件流计数器**（`6bb4cd9`）。为事件流可观测性新增 in-process counters
+  （lenient-parse 命中、未知事件类型、超长行截断等），供排障。
+
+- **status-monitor 主机去重 + NAT 消歧**（`a017fae`）。总览卡主机行按 machine-id 去重，NAT
+  环境下显示 IP 消歧。
+
+### Changed
+
+- **超长流行截断而非中止 turn**（`aec61ba`，F1）。此前单个超过 `maxLineLen` 的行会以
+  `bufio.ErrTooLong` 终止整轮 turn；现改为截断该行（保留前缀 + `...`）并继续，配合计数器可观测。
+
+- **claude lenient-parse 命中与未知事件计数**（`b10f830`，F2/F8）。lenient 解析路径与未知事件
+  类型现经 eventmetrics 计数，不再静默。
+
+- **omp `text_end` 兜底 + `auto_retry` turn 限制**（`56fe984`，F3/F4）。无 delta 的轮次用
+  `text_end` 兜底；`auto_retry` 加 turn 上限防无限重试。
+
+- **strutil 统一 stringify 跨后端**（`3f3a468`，F5/F6）。`stringifyContent`/`stringifyJSON`
+  收敛到 `internal/strutil`，opencode failure-signal 识别随之定型。
+
+### Fixed
+
+- **inflight 会话状态不一致导致部署死锁（P0）**。前端 `TurnManager`（乐观事件簿记）与后端
+  `CancelByChat`（goroutine 存活）无同步机制：后端被 `SIGKILL`/OOM/重启时，正在跑的 turn 连同
+  终态事件一起消失，前端那条 turn 永不 `Finish`，`/v1/deploy-preflight` 永久返回 409，
+  `deploy.sh` 永久拒绝部署——运维死锁，此前只能手动重启 feishu-front 或 `--force` 绕过。
+  现状：`fireOfflineNotice`（后端离线超过 `offlineNoticeDebounce` 窗口，已排除短暂抖动）触发
+  `reclaimStrandedTurns`——`TurnManager.ReclaimBackend` 释放该后端的全部 stranded turn，并把
+  每张进度卡原地 PATCH 为「会话已失效」错误卡（进度卡被撤回时回退独立 notice），同步释放
+  progress 状态与关联的交互卡绑定。`/v1/deploy-preflight` 在 TTL 内自动收敛恢复 200。
+  - `internal/feishufront/turn.go`：`ReclaimBackend(backendID) []Turn`；`TURNSBYBACKEND` 注释刷新。
+  - `internal/feishufront/dispatcher_backend.go`：`fireOfflineNotice` 接 `reclaimStrandedTurns`；
+    新增 `reclaimStrandedTurns`/`invalidateTurnCard`；离线卡文案改为「进行中任务已被自动结束」。
+  - 既有「turn 只在 `/session-abort` 结束」政策保留于 `OnBackendOffline` 的 arm 阶段（短暂抖动
+    不回收），仅当离线持续过 debounce 窗口才回收——无在线判定，无误杀长 LLM turn 风险。
+  - 测试：`TestReclaimBackend`、`TestFireOfflineNotice_ReclaimsStrandedTurns`、
+    `TestFireOfflineNotice_BlipKeepsTurns`、`TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend`；
+    既有 `TestOnBackendOffline_KeepsInFlightTurn`（短暂离线保留）仍绿。
+
+- **提交后翻灰 + 延迟兜底 PATCH**（`3846b89`）。问答/权限卡提交后按钮置灰、显示「已提交/✓ …」；
+  追加延迟兜底 PATCH 绕过飞书点击处理窗口（~3-5s）的静默回退。`0eebfae` 修复 notice-patch 时
+  未释放 interactive binding 致延迟兜底 PATCH 误命中的连带 bug（`/session-clean` 悬卡）。
+
+- **status-monitor `/status` 按需刷新**（`3846b89`）。`buildStatusReport` 抽取共用，`/status`/
+  `/refresh` 立即推一张总览卡（不等 `interval`）；`/running`/`/help` 分派对齐 deploy-monitor。
+
+- **主机按 `ReportedAt` 去重 + ws 帧合并 flake**（`3846b89`）。总览卡主机行按上报时间去重；
+  修 `wsclient_test` 帧合并导致的偶发 flake。
+
+### Notes
+
+- `docs/` 目录重新加入 `.gitignore`（设计/评估文档本地化，不入仓）（`5caff43`/`076570d`）。
+  本版新增 `docs/release-readiness-assessment.md`（发版前评估）、`docs/inflight-session-inconsistency.md`
+  （inflight 不一致根因分析）、`docs/backend-alignment-and-hardening.md`（已全部落地，过时）。
+- `golangci-lint run ./...` 恢复 0 issues（修 23 处 v1.7.0 后回归：errorlint×12 改 `errors.Is`、
+  goimports×4、nilerr×3 加 nolint 注释、errcheck×2、staticcheck×1、unused×1）。
+
 ## [1.7.0] - 2026-07-30
 
 v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后端**——一个新的

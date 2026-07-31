@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 调查日期：2026-07-28 | 当前版本：v1.5.0
+> 调查日期：2026-07-31 | 当前版本：v1.8.0
 
 ---
 
@@ -12,7 +12,7 @@
 **lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code / opencode / miniagent 等 CLI agent 完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
 
 - 仓库：`github.com/justphantom/lark-bridge`
-- 当前版本：**v1.5.0**（git tag）
+- 当前版本：**v1.8.0**（git tag）
 - 核心问题：飞书开放平台 ↔ 本地 CLI agent 之间没有原生通道；直接把 agent 暴露给飞书缺少鉴权、并发、流式渲染、会话路由等能力
 - 解决思路：采用 **1 前端 + N 后端** 的拆分架构（`README.md:3`、`CHANGELOG.md:131`）
 
@@ -31,8 +31,8 @@
 
 ### 1.3 规模
 
-- **334 个 Go 文件，61,994 行**，其中测试 **29,301 行（约 47.3%）**
-- `internal/` 下 **28 个子包**
+- **350 个 Go 文件，67,164 行**，其中测试 **32,139 行（约 47.9%）**
+- `internal/` 下 **29 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
 ---
@@ -71,7 +71,7 @@ lark-bridge/
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
 │   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
 │   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
-├── internal/                 # 28 个内部包（详见第 5 节）
+├── internal/                 # 29 个内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
 │   ├── router/               # chatID ↔ 后端绑定持久化
 │   ├── config/               # JSON 配置加载/默认值/校验
@@ -121,7 +121,7 @@ lark-bridge/
 | 目录 | 职责 | 备注 |
 |---|---|---|
 | `cmd/` | 7 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
-| `internal/` | 全部业务代码，28 个包 | 不对外暴露 |
+| `internal/` | 全部业务代码，29 个包 | 不对外暴露 |
 | `deploy/` | `deploy.sh`（业务 5 服务：feishu/claude/opencode/omp/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
 | `bin/` | `make build` 产物（7 个二进制） | gitignore |
@@ -150,7 +150,7 @@ lark-bridge/
 
 ## 5. `internal/` 模块职责详述
 
-按规模（行数）降序，共 28 个包。
+按规模（行数）降序，共 29 个包。
 
 ### 5.1 `feishufront/`（14601 行，52 文件）——前端核心
 
