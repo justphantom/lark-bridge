@@ -173,6 +173,37 @@ func TestDeleteSession_SubprocessFailureIncludesOutput(t *testing.T) {
 	}
 }
 
+// TestDeleteSession_InvalidSessionIDRejected verifies ids outside the
+// flag-safe whitelist are refused before forking the CLI: a leading '-' would
+// otherwise be parsed as a CLI flag, and shell-meaningful characters argue a
+// caller bug. The fake binary fails the test if it runs at all.
+func TestDeleteSession_InvalidSessionIDRejected(t *testing.T) {
+	bin, work := fakeOpencodeInDir(t, `echo "should not be called" >&2; exit 1`)
+	c := New(Config{CLIPath: bin}, log.Nop())
+	for _, id := range []string{"-rf", "--force", "id with space", "id;rm", "id$(x)", "id`x`", "a/b", `id"x`} {
+		err := c.DeleteSession(context.Background(), work, id)
+		if err == nil {
+			t.Errorf("expected error for session id %q", id)
+			continue
+		}
+		if !strings.Contains(err.Error(), "invalid session id") {
+			t.Errorf("id %q: error should name the validation step, got: %v", id, err)
+		}
+	}
+}
+
+// TestDeleteSession_ValidSessionIDCharset pins the whitelist's accepted
+// shapes: opencode's "ses_<alnum>" style plus underscore/dash interior.
+func TestDeleteSession_ValidSessionIDCharset(t *testing.T) {
+	bin, work := fakeOpencodeInDir(t, `printf '%s\n' "$3" > argv_marker`)
+	c := New(Config{CLIPath: bin}, log.Nop())
+	for _, id := range []string{"ses_abc123", "ABC_def-09", "_leading_underscore"} {
+		if err := c.DeleteSession(context.Background(), work, id); err != nil {
+			t.Errorf("id %q should be accepted: %v", id, err)
+		}
+	}
+}
+
 // TestDeleteSession_EmptyCLIPathErrors verifies the guard matches other
 // methods.
 func TestDeleteSession_EmptyCLIPathErrors(t *testing.T) {

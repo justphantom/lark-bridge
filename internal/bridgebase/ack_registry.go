@@ -2,6 +2,7 @@ package bridgebase
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -25,12 +26,26 @@ import (
 //     Wait never blocks past that — if no ACK arrives, the retry loop's own
 //     deadline fires and the wait is reaped by the loop calling Forget.
 //   - Close drains all pending waits so a Core shutdown does not leave the
-//     EmitTerminal goroutines blocked forever.
+//     EmitTerminal goroutines blocked forever. Waiters woken by Close get
+//     ErrAckRegistryClosed — NOT a success — so a terminal control in flight
+//     during shutdown is never misread as delivered (which would skip the
+//     retry accounting and inflate the ACK-confirmed metric).
 type AckRegistry struct {
 	mu      sync.Mutex
 	waiters map[string]chan struct{}
-	logger  *log.Logger
+	// done is closed by Close; waiters select on it alongside their per-wait
+	// channel so Close can wake them with a distinct error instead of
+	// closing their channel (which WaitFor cannot tell apart from Resolve).
+	done   chan struct{}
+	closed bool
+	logger *log.Logger
 }
+
+// ErrAckRegistryClosed is returned by WaitFor when Close drains the registry
+// while a wait is pending: the ACK can never arrive because the Core is
+// shutting down. It is deliberately NOT nil and NOT context.DeadlineExceeded,
+// so callers can distinguish "shutdown" from both "delivered" and "timed out".
+var ErrAckRegistryClosed = errors.New("bridgebase: ack registry closed")
 
 // NewAckRegistry builds an empty registry. logger is used for debug traces of
 // late/duplicate ACKs; nil → no-op.
@@ -40,6 +55,7 @@ func NewAckRegistry(logger *log.Logger) *AckRegistry {
 	}
 	return &AckRegistry{
 		waiters: make(map[string]chan struct{}),
+		done:    make(chan struct{}),
 		logger:  logger,
 	}
 }
@@ -94,29 +110,36 @@ func (r *AckRegistry) HandleAck(promptID string) {
 	r.Resolve(promptID)
 }
 
-// WaitFor blocks until either the ACK for promptID arrives (Resolve closes the
-// channel) or the timeout elapses. Returns nil on ACK, context.DeadlineExceeded
-// on timeout. The caller is responsible for Forget-ing the entry after this
-// returns (whether ACK or timeout) so a straggler ACK does not leak.
+// WaitFor blocks until the ACK for promptID arrives (Resolve closes the
+// channel), the timeout elapses, or the registry is Closed. Returns nil on
+// ACK, context.DeadlineExceeded on timeout, ErrAckRegistryClosed on shutdown.
+// The caller is responsible for Forget-ing the entry after this returns
+// (whether ACK or timeout) so a straggler ACK does not leak.
 func (r *AckRegistry) WaitFor(promptID string, timeout time.Duration) error {
 	ch := r.Arm(promptID)
 	select {
 	case <-ch:
 		return nil
+	case <-r.done:
+		return ErrAckRegistryClosed
 	case <-time.After(timeout):
 		return context.DeadlineExceeded
 	}
 }
 
 // Close drains every pending wait so EmitTerminal callers blocked in WaitFor
-// unblock on shutdown. Each gets a timeout result (no ACK will ever arrive).
+// unblock on shutdown. Each gets ErrAckRegistryClosed (no ACK will ever
+// arrive) — distinct from a delivered ACK so shutdown is never misreported
+// as confirmed delivery. Idempotent.
 func (r *AckRegistry) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for promptID, ch := range r.waiters {
-		close(ch)
-		delete(r.waiters, promptID)
+	if r.closed {
+		return
 	}
+	r.closed = true
+	close(r.done)
+	clear(r.waiters)
 }
 
 // IsAckEvent reports whether ev is a terminal-delivery ACK the registry owns.

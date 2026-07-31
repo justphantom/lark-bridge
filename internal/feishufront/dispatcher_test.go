@@ -1228,3 +1228,29 @@ func TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend(t *testing.T) {
 		t.Fatal("progress state must be released even when the progress card was withdrawn")
 	}
 }
+
+// TestOnBackendOnline_CleansFlapEntry locks in low-2: once a backend's flap
+// state resolves (blip recovered before the debounce fired, or recovery card
+// sent), its entry is deleted so flap holds only LIVE debounce state instead
+// of accumulating one entry per backend ever seen.
+func TestOnBackendOnline_CleansFlapEntry(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
+
+	// Arm a pending offline notice, then recover before it fires.
+	d.OnBackendOffline("back-flap", "claude")
+	d.flapMu.Lock()
+	if _, ok := d.flap["back-flap"]; !ok {
+		d.flapMu.Unlock()
+		t.Fatal("offline should have created a flap entry")
+	}
+	d.flapMu.Unlock()
+
+	d.OnBackendOnline("back-flap", "claude")
+	d.flapMu.Lock()
+	_, ok := d.flap["back-flap"]
+	d.flapMu.Unlock()
+	if ok {
+		t.Fatal("flap entry should be deleted once the blip recovered")
+	}
+}

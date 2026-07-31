@@ -3,9 +3,12 @@ package feishufront
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +27,13 @@ type IPCServer struct {
 	// goroutine), so it is stored atomically to avoid a data race.
 	server atomic.Pointer[http.Server]
 	secret string // shared bearer token; empty disables auth (loopback-only)
+
+	// IPC TLS (M10-1): set via SetTLS. tlsCertFile/tlsKeyFile enable HTTPS;
+	// tlsClientCAFile upgrades to mTLS (RequireAndVerifyClientCert). Empty
+	// tlsCertFile means plaintext — legal only on loopback (enforced by Listen).
+	tlsCertFile     string
+	tlsKeyFile      string
+	tlsClientCAFile string
 
 	// onOffline, when set, is invoked when the health checker evicts a
 	// backend (id, typ). Used by the Dispatcher to post offline notices.
@@ -105,6 +115,18 @@ func NewIPCServer(registry *BackendRegistry, secret string) *IPCServer {
 	s := &IPCServer{registry: registry, secret: secret}
 	s.logger.Store(log.Nop())
 	return s
+}
+
+// SetTLS wires the IPC TLS configuration (M10-1). certFile/keyFile enable
+// HTTPS on the listener; clientCAFile additionally requires and verifies
+// backend client certificates (mTLS). Called by main.go after NewIPCServer;
+// all-empty is a no-op (loopback plaintext stays legal). Config validation
+// already enforces pairing and non-loopback ⇒ TLS; Listen re-checks the
+// non-loopback rule so a hand-wired server cannot bypass it.
+func (s *IPCServer) SetTLS(certFile, keyFile, clientCAFile string) {
+	s.tlsCertFile = certFile
+	s.tlsKeyFile = keyFile
+	s.tlsClientCAFile = clientCAFile
 }
 
 // SetLogger wires the component logger. Called by main.go after NewIPCServer;
@@ -310,6 +332,12 @@ func (s *IPCServer) Listen(addr string) error {
 	if s.secret == "" && !isLoopbackAddr(addr) {
 		return fmt.Errorf("feishufront: ipc_secret is required when IPC binds non-loopback %q (bearer would be cleartext and the endpoint unauthenticated)", addr)
 	}
+	// M10-1: bearer over plaintext HTTP on a routable address can be sniffed
+	// on-path and then grants full impersonation (POST controls, forge
+	// terminal cards, send files to any chat). TLS is mandatory off-loopback.
+	if s.tlsCertFile == "" && !isLoopbackAddr(addr) {
+		return fmt.Errorf("feishufront: ipc_tls_cert_file/ipc_tls_key_file are required when IPC binds non-loopback %q (bearer would cross the network in cleartext)", addr)
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Routes(),
@@ -318,6 +346,23 @@ func (s *IPCServer) Listen(addr string) error {
 		IdleTimeout:       ipcIdleTimeout,
 	}
 	s.server.Store(srv)
+	if s.tlsCertFile != "" {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if s.tlsClientCAFile != "" {
+			caPEM, err := os.ReadFile(s.tlsClientCAFile)
+			if err != nil {
+				return fmt.Errorf("feishufront: read ipc_tls_client_ca_file: %w", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caPEM) {
+				return fmt.Errorf("feishufront: ipc_tls_client_ca_file %q contains no PEM certificates", s.tlsClientCAFile)
+			}
+			tlsCfg.ClientCAs = pool
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+		srv.TLSConfig = tlsCfg
+		return srv.ListenAndServeTLS(s.tlsCertFile, s.tlsKeyFile)
+	}
 	return srv.ListenAndServe()
 }
 

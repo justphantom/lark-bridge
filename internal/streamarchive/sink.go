@@ -80,7 +80,20 @@ func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, hi
 		return nil, nil
 	}
 	if redact {
-		return NewRedactingWriter(newCappedWriter(f, maxArchiveFileBytes)), f.Close
+		// Redactor outside, cappedWriter inside: the cap counts on-disk
+		// (post-redaction) bytes and the truncation marker is written
+		// straight to the file, bypassing the redactor's line buffer.
+		rw := NewRedactingWriter(newCappedWriter(f, maxArchiveFileBytes))
+		return rw, func() error {
+			// Flush the redactor's buffered partial line before closing the
+			// file, or a final non-newline-terminated record would be lost.
+			flushErr := rw.Close()
+			closeErr := f.Close()
+			if flushErr != nil {
+				return flushErr
+			}
+			return closeErr
+		}
 	}
 	return newCappedWriter(f, maxArchiveFileBytes), f.Close
 }

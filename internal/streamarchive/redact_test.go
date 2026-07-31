@@ -7,15 +7,26 @@ import (
 	"testing"
 )
 
+// writeAndClose drives the full Write→Close cycle most tests want: a single
+// record without trailing newline, flushed by Close. Returns total consumed.
+func writeAndClose(t *testing.T, rw *RedactingWriter, input string) int {
+	t.Helper()
+	n, err := rw.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	return n
+}
+
 func TestRedactingWriter_SensitiveFieldRedacted(t *testing.T) {
 	var buf bytes.Buffer
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"prompt":"my secret prompt","text":"some text","content":"sensitive content"}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "my secret prompt") {
@@ -37,10 +48,7 @@ func TestRedactingWriter_NonSensitiveFieldPreserved(t *testing.T) {
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"model":"claude-3-opus-20240229","role":"assistant","stop_reason":"end_turn"}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if !strings.Contains(out, "claude-3-opus-20240229") {
@@ -60,10 +68,7 @@ func TestRedactingWriter_NestedObjectRedaction(t *testing.T) {
 
 	// input is a sensitive field, so the entire nested object is redacted.
 	input := `{"type":"tool_use","name":"Read","input":{"file_path":"/etc/passwd","text":"root:x:0:0:root:/root:/bin/bash"}}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "root:x:0:0") {
@@ -87,10 +92,7 @@ func TestRedactingWriter_RecursiveNestedObjectRedaction(t *testing.T) {
 	// A non-sensitive field contains a nested object with sensitive keys,
 	// testing redactMap's recursion into nested objects.
 	input := `{"type":"tool_result","metadata":{"prompt":"secret query","other":"keep this"}}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "secret query") {
@@ -112,10 +114,7 @@ func TestRedactingWriter_ArrayElementRedaction(t *testing.T) {
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"content":[{"type":"text","text":"secret reply"},{"type":"text","text":"another secret"}]}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "secret reply") {
@@ -126,15 +125,33 @@ func TestRedactingWriter_ArrayElementRedaction(t *testing.T) {
 	}
 }
 
+// TestRedactingWriter_NestedArrayRedaction covers objects hidden inside
+// arrays nested within arrays ([]-of-[]), which must be redacted at any
+// depth, not just one array level down.
+func TestRedactingWriter_NestedArrayRedaction(t *testing.T) {
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf)
+
+	input := `{"events":[[{"type":"text","text":"deep secret"}],[[{"prompt":"deeper secret"}]]],"meta":{"batch":[[{"content":"nested batch secret"}]]}}`
+	writeAndClose(t, rw, input)
+
+	out := buf.String()
+	for _, secret := range []string{"deep secret", "deeper secret", "nested batch secret"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("expected %q to be redacted, got: %s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "events") || !strings.Contains(out, "batch") {
+		t.Errorf("expected structural keys preserved, got: %s", out)
+	}
+}
+
 func TestRedactingWriter_UnparseableLinePassesVerbatim(t *testing.T) {
 	var buf bytes.Buffer
 	rw := NewRedactingWriter(&buf)
 
 	input := `this is not json at all`
-	n, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	n := writeAndClose(t, rw, input)
 	if n != len(input) {
 		t.Fatalf("Write returned %d, want %d", n, len(input))
 	}
@@ -157,6 +174,9 @@ func TestRedactingWriter_EmptyLinePassesThrough(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("Write returned %d, want 0", n)
 	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
 
 	out := buf.String()
 	if out != "" {
@@ -169,10 +189,7 @@ func TestRedactingWriter_InputOutputRedacted(t *testing.T) {
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"type":"tool_result","tool_use_id":"tu_01","content":"Here is the file content","input":"some sensitive input"}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "Here is the file content") {
@@ -191,10 +208,7 @@ func TestRedactingWriter_ThinkingRedacted(t *testing.T) {
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"type":"thinking","thinking":"The model's internal reasoning","text":"visible text"}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "The model's internal reasoning") {
@@ -213,10 +227,7 @@ func TestRedactingWriter_FileTextRedacted(t *testing.T) {
 	rw := NewRedactingWriter(&buf)
 
 	input := `{"type":"tool_result","name":"Read","file_text":"SSH private key content"}`
-	_, err := rw.Write([]byte(input))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	writeAndClose(t, rw, input)
 
 	out := buf.String()
 	if strings.Contains(out, "SSH private key content") {
@@ -276,5 +287,93 @@ func TestRedactingWriter_MultiLineFraming(t *testing.T) {
 		if err := json.Unmarshal([]byte(l), &m); err != nil {
 			t.Errorf("line not valid JSON: %q: %v", l, err)
 		}
+	}
+}
+
+// TestRedactingWriter_MultiRecordSingleWrite covers a Write carrying several
+// complete NDJSON lines at once: each must be redacted and framed
+// individually rather than failing JSON parse and landing verbatim.
+func TestRedactingWriter_MultiRecordSingleWrite(t *testing.T) {
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf)
+
+	input := `{"prompt":"first secret"}` + "\n" + `{"text":"second secret"}` + "\n"
+	n, err := rw.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "first secret") || strings.Contains(out, "second secret") {
+		t.Errorf("expected both records redacted, got: %s", out)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 NDJSON lines, got %d: %q", len(lines), out)
+	}
+	for _, l := range lines {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Errorf("line not valid JSON: %q: %v", l, err)
+		}
+	}
+}
+
+// TestRedactingWriter_PartialLineAcrossWrites splits one NDJSON record over
+// two Writes: nothing may be forwarded (or leaked verbatim) until the line is
+// complete, then the reassembled line is redacted as usual.
+func TestRedactingWriter_PartialLineAcrossWrites(t *testing.T) {
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf)
+
+	if _, err := rw.Write([]byte(`{"prompt":"split sec`)); err != nil {
+		t.Fatalf("first Write failed: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("partial line must be buffered, got early output: %q", buf.String())
+	}
+	if _, err := rw.Write([]byte(`ret","type":"user"}` + "\n")); err != nil {
+		t.Fatalf("second Write failed: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "split secret") {
+		t.Errorf("expected reassembled line redacted, got: %s", out)
+	}
+	if !strings.HasSuffix(out, "\n") || strings.Count(out, "\n") != 1 {
+		t.Errorf("expected exactly one newline-terminated line, got: %q", out)
+	}
+}
+
+// TestRedactingWriter_CloseFlushesResidual covers a final record without
+// trailing newline: it stays buffered through Write and is flushed —
+// best-effort redacted, without an invented newline — by Close.
+func TestRedactingWriter_CloseFlushesResidual(t *testing.T) {
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf)
+
+	if _, err := rw.Write([]byte(`{"prompt":"tail secret"}` + "\n" + `{"text":"residual secret"}`)); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if strings.Contains(buf.String(), "residual") {
+		t.Fatalf("residual partial line must wait for Close, got: %q", buf.String())
+	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "tail secret") || strings.Contains(out, "residual secret") {
+		t.Errorf("expected both lines redacted, got: %s", out)
+	}
+	if strings.Count(out, "\n") != 1 {
+		t.Errorf("residual flush must not append a newline the source never had, got: %q", out)
+	}
+	// Close with an empty buffer is a no-op (idempotent close path).
+	if err := rw.Close(); err != nil {
+		t.Fatalf("second Close failed: %v", err)
 	}
 }

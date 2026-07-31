@@ -109,7 +109,7 @@ type CLIRunner[H any] struct {
 // Returns the error that terminated the run (typically ctx.Err() on
 // SIGTERM).
 func (r *CLIRunner[H]) Run(cfgPath, version string) error {
-	cfg, err := config.Load(cfgPath)
+	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -117,6 +117,9 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 	base, err := log.NewBaseLogger(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, r.LoggerComponent)
 	if err != nil {
 		return err
+	}
+	for _, w := range cfgWarns {
+		base.Logger.Warn("config warning", "warning", w)
 	}
 
 	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
@@ -167,6 +170,15 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 		FrontendURL: cfg.FrontendURL,
 		Secret:      cfg.IPCSecret,
 		Version:     version,
+		// One session token per process, pinned so reconnects re-register
+		// with the SAME token the Handler's ControlSender and the metrics
+		// loop POST with (M10-2); see ConnectOptions.BackendToken.
+		BackendToken: backendrpc.NewBackendToken(),
+		// M10-1: TLS client config for https frontend_url (CA pinning +
+		// optional mTLS client certificate).
+		TLSCAFile:         cfg.IPCTLSCAFile,
+		TLSClientCertFile: cfg.IPCTLSClientCertFile,
+		TLSClientKeyFile:  cfg.IPCTLSClientKeyFile,
 	}
 	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {
@@ -227,7 +239,7 @@ func (r *CLIRunner[H]) Run(cfgPath, version string) error {
 	eventErr := func(err error) {
 		base.Logger.Warn("ipc", log.FieldError, err)
 	}
-	return backendrpc.Run(ctx, connOpts,
+	return backendrpc.RunWithClient(ctx, rpc, connOpts,
 		func(ctx context.Context, ev *protocol.Event) error {
 			// Intercept terminal-delivery ACKs before the bridge sees them:
 			// bridges have no ACK case and would error "unknown event type".

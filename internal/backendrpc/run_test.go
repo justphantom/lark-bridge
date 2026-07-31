@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -475,5 +476,139 @@ func TestRun_RecvSuccessResetsFailures(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// TestConnect_PinnedBackendToken verifies ConnectOptions.BackendToken is
+// presented verbatim on the SSE handshake (M10-2 stability: the process pins
+// one token so reconnects re-register with the same identity the POST paths
+// use).
+func TestConnect_PinnedBackendToken(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	c, err := Connect(ConnectOptions{
+		BackendID: "back-tok", BackendType: "claude", FrontendURL: ts.URL,
+		BackendToken: "pinned-token-123",
+	})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		conn, ok := reg.Get("back-tok")
+		if ok {
+			if got := conn.Token(); got != "pinned-token-123" {
+				t.Fatalf("registered token = %q, want pinned-token-123", got)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("backend never registered")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// TestRunWithClient_ReusesInitialConnection verifies low-9: RunWithClient
+// consumes the caller's already-connected client as its first stream instead
+// of dialing a second connection (which the frontend would replace-kick and,
+// worse, whose token mismatch would get every POST rejected as impersonation).
+func TestRunWithClient_ReusesInitialConnection(t *testing.T) {
+	reg := feishufront.NewBackendRegistry()
+	srv := feishufront.NewIPCServer(reg, "")
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	opts := ConnectOptions{
+		BackendID: "back-rwc", BackendType: "claude", FrontendURL: ts.URL,
+		BackendToken: NewBackendToken(),
+	}
+	client, err := Connect(opts)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	var got atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithClient(ctx, client, opts,
+			func(_ context.Context, ev *protocol.Event) error {
+				if ev.Type == protocol.TypePing {
+					got.Add(1)
+				}
+				return nil
+			},
+			func(error) {})
+	}()
+
+	// The pre-connected client must already be registered — no second
+	// handshake needed before events flow.
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := reg.Get("back-rwc"); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("backend never registered")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if err := reg.SendEvent("back-rwc", &protocol.Event{Type: protocol.TypePing, Ping: &protocol.PingPayload{}}); err != nil {
+		t.Fatalf("SendEvent: %v", err)
+	}
+	for got.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for event delivery")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("RunWithClient returned %v, want nil on cancel", err)
+	}
+}
+
+// TestRunWithClient_NilClientRejected covers the guard clause.
+func TestRunWithClient_NilClientRejected(t *testing.T) {
+	err := RunWithClient(context.Background(), nil, ConnectOptions{},
+		func(context.Context, *protocol.Event) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected error for nil client")
+	}
+}
+
+// TestConnect_TLSClientConfig covers the M10-1 backend-side TLS client:
+// garbage CA / cert paths fail at Connect time (not mid-handshake).
+func TestConnect_TLSClientConfig(t *testing.T) {
+	dir := t.TempDir()
+	bad := dir + "/bad.pem"
+	if err := os.WriteFile(bad, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Connect(ConnectOptions{
+		BackendID: "b", BackendType: "claude", FrontendURL: "https://127.0.0.1:0",
+		TLSCAFile: bad,
+	}); err == nil {
+		t.Fatal("expected error for garbage CA file")
+	}
+	if _, err := Connect(ConnectOptions{
+		BackendID: "b", BackendType: "claude", FrontendURL: "https://127.0.0.1:0",
+		TLSClientCertFile: bad, TLSClientKeyFile: bad,
+	}); err == nil {
+		t.Fatal("expected error for garbage client cert/key")
 	}
 }

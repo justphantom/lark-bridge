@@ -2,6 +2,7 @@ package feishufront
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/feishufront/renderer"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // sendInteractive renders a permission-request or question card and ships it
@@ -276,13 +278,14 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		"operator_openid", action.UserOpenID,
 		"request_id", requestIDFromValue(action.Value))
 	// kind=="" 意味着 button value 没回传（schema 2.0 下顶层 value 字段
-	// 已是 historical attribute）。Warn 整个 value，便于区分「空 map」
-	// 与「回了部分字段但缺 kind」两种失效形态。
+	// 已是 historical attribute）。Warn 截断后的 value（可能含表单 PII，
+	// low-18），足以区分「空 map」与「回了部分字段但缺 kind」两种失效形态。
 	if kind == "" {
+		valueJSON, _ := json.Marshal(action.Value)
 		d.logger.Load().Warn("card action: empty kind in value",
 			log.FieldChatID, action.ChatID,
 			log.FieldMessageID, action.MessageID,
-			"value", action.Value)
+			"value", strutil.Truncate(string(valueJSON), 300))
 	}
 	// Frontend-owned card (the /backend picker): consume the click directly —
 	// no requestID, no answer forwarding to a backend.

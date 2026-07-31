@@ -66,6 +66,37 @@ func Run(ctx context.Context, opts ConnectOptions,
 	if err != nil {
 		return err
 	}
+	return run(ctx, client, opts, handle, eventErr)
+}
+
+// RunWithClient is Run with the initial connection already established: the
+// caller's client becomes the loop's first stream instead of Run dialing a
+// second one. backendhost uses this so the SAME *Client serves both the SSE
+// receive loop and the ControlSender/metrics POST paths — two connections
+// would register under one backendID (the frontend kicks the first) and,
+// worse, the kicked first connection's session token would no longer match
+// the registered one, so every control/metrics POST would be rejected as an
+// impersonation attempt (M10-2). Reconnects after the first stream behave
+// exactly like Run.
+//
+// Ownership: the loop closes client on shutdown/reconnect like any client it
+// dialed itself; the caller must not use it after RunWithClient returns.
+func RunWithClient(ctx context.Context, client *Client, opts ConnectOptions,
+	handle func(context.Context, *protocol.Event) error,
+	eventErr func(err error)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if client == nil {
+		return fmt.Errorf("backendrpc: RunWithClient requires a non-nil client")
+	}
+	return run(ctx, client, opts, handle, eventErr)
+}
+
+// run is the shared receive/reconnect loop of Run and RunWithClient.
+func run(ctx context.Context, client *Client, opts ConnectOptions,
+	handle func(context.Context, *protocol.Event) error,
+	eventErr func(err error)) error {
 	// current holds the live client behind an atomic so the shutdown goroutine
 	// can Close it (to unblock RecvEvent) without racing the reconnect loop's
 	// reassignment. RecvEvent does not observe ctx, so a ctx cancel can only
@@ -101,6 +132,7 @@ func Run(ctx context.Context, opts ConnectOptions,
 				eventErr(fmt.Errorf("sse recv: %w", rerr))
 			}
 			// Reconnect with backoff, interruptible by ctx.
+			var err error
 			client, err = reconnect(ctx, opts, &backoff, &failures, eventErr)
 			if err != nil {
 				if ctx.Err() != nil {

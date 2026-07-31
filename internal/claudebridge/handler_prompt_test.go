@@ -95,6 +95,7 @@ func TestStartPromptBusy(t *testing.T) {
 	if !ok {
 		t.Fatal("first startPrompt returned ok=false")
 	}
+	defer h.Wg.Done() // pairs StartPrompt's Add (no runPrompt in this test)
 	defer mine1.Cancel()
 
 	if _, _, ok2 := h.StartPrompt(context.Background(), "chat-busy"); ok2 {

@@ -163,6 +163,10 @@ type Core struct {
 	// deployment's chat count).
 	pickerSlots sync.Map
 
+	// closing is set by Close (under CancelMu) before any cancellation runs;
+	// StartPrompt checks it under the same mutex and refuses new prompts, so
+	// its Wg.Add can never race WaitPrompts' zero-counter Wait.
+	closing   bool
 	closeOnce sync.Once
 }
 
@@ -314,6 +318,11 @@ func (c *Core) ReplyPong() {
 // runPrompt goroutines so subprocesses are reaped, not orphaned.
 func (c *Core) Close() {
 	c.closeOnce.Do(func() {
+		// Reject new prompts first (under CancelMu, paired with StartPrompt's
+		// check) so no Wg.Add can land once WaitPrompts starts waiting.
+		c.CancelMu.Lock()
+		c.closing = true
+		c.CancelMu.Unlock()
 		c.AppCancel()
 		c.CancelAll()
 		c.Answers.Drain()

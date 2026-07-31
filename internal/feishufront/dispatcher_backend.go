@@ -132,22 +132,26 @@ func (d *Dispatcher) OnBackendOnline(backendID, backendType string) {
 		return // never went offline-presented; nothing to recover
 	}
 	// A pending offline notice means the backend blipped and came back: cancel
-	// it silently — no offline card, no recovery card. Bump generation so a
-	// timer callback that already fired (Stop returned false) and is waiting
-	// on flapMu sees its armedGen is stale and does not post the offline card.
+	// it silently — no offline card, no recovery card. Deleting the entry (not
+	// just bumping the generation) makes a timer callback that already fired
+	// (Stop returned false) and is waiting on flapMu see st==nil and suppress
+	// the notice — and it keeps flap bounded to backends with LIVE flap state
+	// instead of accumulating one entry per backend ever seen (low-2).
 	if st.timer != nil {
 		st.timer.Stop()
-		st.timer = nil
-		st.generation++
+		delete(d.flap, backendID)
 		d.flapMu.Unlock()
 		return
 	}
 	// Only send a recovery if we previously showed an offline card.
 	if !st.notifiedOffline {
+		delete(d.flap, backendID) // clean state: nothing pending, nothing shown
 		d.flapMu.Unlock()
 		return
 	}
-	st.notifiedOffline = false
+	// Recovery path: clear the state under the lock (so a concurrent offline
+	// re-arms a fresh entry) before posting the recovery card.
+	delete(d.flap, backendID)
 	d.flapMu.Unlock()
 	d.sendOnlineNotices(backendID, backendType)
 }

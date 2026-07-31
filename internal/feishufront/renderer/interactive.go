@@ -71,6 +71,9 @@ func RenderQuestion(ctrl *protocol.Control, header cardkit.HeaderInfo, footer ca
 		formElems = append(formElems, cardkit.MarkdownElement(fmt.Sprintf("…共 %d 个问题，已省略 %d 项", len(q.Questions), len(q.Questions)-maxQuestions)))
 	}
 	formElems = append(formElems, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
+	// low-23: card clicks are not authenticated against the original requester
+	// (any group member can answer); say so on the card itself.
+	formElems = append(formElems, cardkit.MarkdownElement("🔓 群内任何成员均可提交此卡片"))
 	submit := cardkit.SubmitButtonAction("提交",
 		map[string]any{"requestID": q.RequestID, "kind": "question"}, true)
 	formElems = append(formElems, cardkit.Element(submit))
@@ -101,6 +104,9 @@ func RenderPermission(ctrl *protocol.Control, header cardkit.HeaderInfo, footer 
 		elements = append(elements, cardkit.MarkdownElement(msg))
 	}
 	elements = append(elements, cardkit.MarkdownElement(fmt.Sprintf("⏳ 等待你的确认（%d 分钟后自动失效）", int(cardkit.InteractiveTimeout.Minutes()))))
+	// low-23: permission approvals are not authenticated against the original
+	// requester (any group member can click allow); surface that on the card.
+	elements = append(elements, cardkit.MarkdownElement("🔓 群内任何成员均可点击批准，请谨慎操作"))
 	opts := p.Options
 	if len(opts) > maxPermissionOptions {
 		opts = opts[:maxPermissionOptions]

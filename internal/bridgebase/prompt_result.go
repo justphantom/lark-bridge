@@ -284,11 +284,18 @@ func EmitTerminalControl(logger *log.Logger, rpc backendrpc.ControlSender, acks 
 			return nil
 		}
 		// Wait for the frontend's ACK. Resolve = success; timeout = retry.
-		if err := acks.WaitFor(promptID, ackWaitBudget); err == nil {
-			acks.Forget(promptID)
+		// ErrAckRegistryClosed = shutdown: stop retrying immediately — the
+		// control was NOT confirmed delivered, so report it as undelivered
+		// (pre-Close-drain this path returned success and inflated the ACK
+		// metric while skipping the remaining attempts).
+		err := acks.WaitFor(promptID, ackWaitBudget)
+		acks.Forget(promptID)
+		if err == nil {
 			return nil
 		}
-		acks.Forget(promptID)
+		if errors.Is(err, ErrAckRegistryClosed) {
+			return err
+		}
 		lastErr = fmt.Errorf("terminal control %s: no ACK within %s", ctrl.Type, ackWaitBudget)
 	}
 	return lastErr

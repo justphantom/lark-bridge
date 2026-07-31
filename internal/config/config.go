@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/strutil"
@@ -39,7 +41,20 @@ type Config struct {
 	FrontendURL string `json:"frontend_url,omitempty"` // 前端 IPC server 地址
 	IPCAddr     string `json:"ipc_addr,omitempty"`     // 前端 IPC 监听地址（仅 feishu-front 用）
 	IPCSecret   string `json:"ipc_secret,omitempty"`   // 前端与后端共享密钥，校验 SSE/POST 的 Authorization: Bearer
-	RouterPath  string `json:"router_path,omitempty"`  // router 持久化文件路径（前后端共用）
+	// IPC TLS（仅 feishu-front 用）：ipc_addr 绑定非 loopback 地址时必须配置
+	// cert/key，否则明文 HTTP 上的 bearer 可被同网段嗅探冒用（M10-1）。启用后
+	// 后端的 frontend_url 需使用 https:// scheme。ClientCAFile 可选：配置后
+	// 要求并校验后端客户端证书（mTLS）。
+	IPCTLSCertFile     string `json:"ipc_tls_cert_file,omitempty"`
+	IPCTLSKeyFile      string `json:"ipc_tls_key_file,omitempty"`
+	IPCTLSClientCAFile string `json:"ipc_tls_client_ca_file,omitempty"`
+	// 后端侧 TLS 客户端配置（各 back / monitor 用，frontend_url 为 https:// 时）：
+	// IPCTLSCAFile 信任前端（可能自签）证书的 CA；IPCTLSClientCertFile/KeyFile
+	// 在前端启用 mTLS（ipc_tls_client_ca_file）时提供客户端证书。
+	IPCTLSCAFile         string `json:"ipc_tls_ca_file,omitempty"`
+	IPCTLSClientCertFile string `json:"ipc_tls_client_cert_file,omitempty"`
+	IPCTLSClientKeyFile  string `json:"ipc_tls_client_key_file,omitempty"`
+	RouterPath           string `json:"router_path,omitempty"` // router 持久化文件路径（前后端共用）
 
 	// —— 后端运行时：各后端按需 ——
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
@@ -527,13 +542,23 @@ func expandEnvVars(data []byte) ([]byte, error) {
 
 // Load reads the config file at path and returns a validated *Config.
 func Load(path string) (*Config, error) {
+	cfg, _, err := LoadWithWarnings(path)
+	return cfg, err
+}
+
+// LoadWithWarnings is Load plus non-fatal operator warnings (low-20): today
+// the only one is "config file is group/other-readable AND carries plaintext
+// secrets" — deploy.sh chmods 600, but a hand-placed file gets a loud warn
+// instead of silent exposure. Callers should log each warning at startup.
+func LoadWithWarnings(path string) (*Config, []string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
+	warnings := secretPermWarnings(path, raw)
 	expanded, err := expandEnvVars(raw)
 	if err != nil {
-		return nil, fmt.Errorf("expand env: %w", err)
+		return nil, nil, fmt.Errorf("expand env: %w", err)
 	}
 
 	// DisallowUnknownFields so a typo'd key (e.g. "max_concurent") is
@@ -547,12 +572,39 @@ func Load(path string) (*Config, error) {
 	dec := json.NewDecoder(bytes.NewReader(expanded))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse json: %w", err)
+		return nil, nil, fmt.Errorf("parse json: %w", err)
 	}
 
 	applyDefaults(&cfg, path)
 	if err := validate(&cfg); err != nil {
-		return nil, fmt.Errorf("validate: %w", err)
+		return nil, nil, fmt.Errorf("validate: %w", err)
 	}
-	return &cfg, nil
+	return &cfg, warnings, nil
+}
+
+// plaintextSecretRe matches a secret-bearing JSON key whose VALUE is a
+// literal (not a "${VAR}" reference): feishu_app_secret / ipc_secret /
+// miniagent api_key written in cleartext.
+var plaintextSecretRe = regexp.MustCompile(`"(?:feishu_app_secret|ipc_secret|api_key)"\s*:\s*"((?:[^"$]|\$[^{])[a-zA-Z0-9_-]*)"`)
+
+// secretPermWarnings returns a warning when the config file is
+// group/other-readable AND embeds at least one plaintext secret (low-20).
+// Permission alone is not warned on (the file may hold only ${VAR}
+// references); plaintext alone is fine when the file is 0600. Skipped on
+// non-Unix platforms where Perm bits are not meaningful.
+func secretPermWarnings(path string, raw []byte) []string {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil // the read already succeeded; a stat race is not warn-worthy
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	if !plaintextSecretRe.Match(raw) {
+		return nil
+	}
+	return []string{fmt.Sprintf("config file %s is readable by group/other (mode %04o) and contains plaintext secrets; chmod 600 or switch to ${VAR} references", path, info.Mode().Perm())}
 }

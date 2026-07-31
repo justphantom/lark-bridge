@@ -118,7 +118,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 			Notice: &protocol.NoticePayload{Level: "warning", Title: "请稍后", Message: "正在处理上一个请求"},
 		})
 	}
-	h.Wg.Add(1)
+	// Wg.Add already happened inside StartPrompt (under CancelMu); runPrompt defers the matching Done.
 	go h.runPrompt(promptCtx, chatID, binding, p.Text, replyToID, mine)
 	return nil
 }

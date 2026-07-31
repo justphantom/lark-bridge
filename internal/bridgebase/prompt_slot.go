@@ -12,13 +12,24 @@ import (
 
 // StartPrompt reserves the per-chat prompt slot derived from AppCtx. Returns
 // (ctx, mine, ok=false) when the chat already has an in-flight prompt
-// (busy-then-drop). On success the caller owns the slot until EndPrompt.
+// (busy-then-drop) or the Core is closing (Close set the closing flag, so a
+// prompt racing shutdown is rejected instead of started on a cancelled ctx).
+// On success the caller owns the slot until EndPrompt, and the Core's Wg has
+// ALREADY been Add(1)'d under CancelMu — the caller MUST pair it with exactly
+// one Wg.Done (runPrompt's defer). Doing the Add here, atomically with the
+// slot registration and under the same mutex Close's flag check uses, closes
+// the shutdown race where an Add landed between CancelAll and WaitPrompts
+// (sync.WaitGroup forbids Add concurrent with a zero-counter Wait).
 func (c *Core) StartPrompt(_ context.Context, chatID string) (ctx context.Context, mine *PromptCancel, ok bool) {
 	c.CancelMu.Lock()
 	defer c.CancelMu.Unlock()
+	if c.closing {
+		return nil, nil, false
+	}
 	if _, busy := c.CancelByChat[chatID]; busy {
 		return nil, nil, false
 	}
+	c.Wg.Add(1)
 	ctx, cancel := context.WithCancel(c.AppCtx)
 	mine = &PromptCancel{
 		Cancel:    cancel,

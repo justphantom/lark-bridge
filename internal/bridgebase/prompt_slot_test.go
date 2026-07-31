@@ -21,6 +21,7 @@ func TestStartPrompt_BusyThenDrop(t *testing.T) {
 	if !ok {
 		t.Fatal("first StartPrompt should succeed")
 	}
+	defer c.Wg.Done() // pairs StartPrompt's Add (no runPrompt in this test)
 	defer c.EndPrompt("chat-A", mine)
 
 	if _, _, ok2 := c.StartPrompt(context.Background(), "chat-A"); ok2 {
@@ -37,11 +38,13 @@ func TestStartPrompt_IndependentChats(t *testing.T) {
 	if !okA {
 		t.Fatal("StartPrompt A failed")
 	}
+	defer c.Wg.Done()
 	defer c.EndPrompt("A", a)
 	_, b, okB := c.StartPrompt(context.Background(), "B")
 	if !okB {
 		t.Fatal("StartPrompt B should succeed independently of A")
 	}
+	defer c.Wg.Done()
 	defer c.EndPrompt("B", b)
 }
 
@@ -55,7 +58,9 @@ func TestEndPrompt_OnlyMine(t *testing.T) {
 	_, first, _ := c.StartPrompt(context.Background(), "C")
 	// Simulate the slot being replaced: force-clear and re-acquire.
 	c.EndPrompt("C", first)
+	c.Wg.Done() // first's turn fully unwound; pair its StartPrompt Add
 	_, second, _ := c.StartPrompt(context.Background(), "C")
+	defer c.Wg.Done()
 
 	// A late EndPrompt from the unwound first turn must not touch second.
 	c.EndPrompt("C", first)
@@ -74,6 +79,7 @@ func TestEndPrompt_NilMineNoOp(t *testing.T) {
 	c := newTestCore(t)
 	defer c.Close()
 	_, mine, _ := c.StartPrompt(context.Background(), "D")
+	defer c.Wg.Done()
 	defer c.EndPrompt("D", mine)
 	defer func() {
 		if r := recover(); r != nil {
@@ -93,6 +99,7 @@ func TestAbortChat_CancelsCtx(t *testing.T) {
 	c := newTestCore(t)
 	defer c.Close()
 	ctx, mine, _ := c.StartPrompt(context.Background(), "E")
+	defer c.Wg.Done()
 	defer c.EndPrompt("E", mine)
 	if err := ctx.Err(); err != nil {
 		t.Fatalf("fresh ctx already cancelled: %v", err)
@@ -142,6 +149,7 @@ func TestStartPrompt_ConcurrentSerialization(t *testing.T) {
 			if ok {
 				atomic.AddInt64(&winners, 1)
 				c.EndPrompt("race", mine)
+				c.Wg.Done()
 			}
 		}()
 	}
@@ -156,5 +164,19 @@ func TestStartPrompt_ConcurrentSerialization(t *testing.T) {
 	// Slot must be free after everyone released.
 	if _, _, ok := c.StartPrompt(context.Background(), "race"); !ok {
 		t.Error("slot should be free after all holders released")
+	} else {
+		c.Wg.Done()
+	}
+}
+
+// TestStartPrompt_RejectedAfterClose locks in the low-11 shutdown race fix:
+// once Close has run, StartPrompt must refuse (its Wg.Add can never race
+// WaitPrompts' zero-counter Wait, and no prompt starts on a cancelled ctx).
+func TestStartPrompt_RejectedAfterClose(t *testing.T) {
+	c := newTestCore(t)
+	c.Close()
+	if _, _, ok := c.StartPrompt(context.Background(), "chat-late"); ok {
+		t.Fatal("StartPrompt after Close should be rejected")
+		c.Wg.Done()
 	}
 }

@@ -9,10 +9,19 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 )
+
+// sessionIDRe constrains session ids to a flag-safe character set before the
+// id lands in argv. exec argv is not shell-parsed, but an id starting with
+// '-' would be consumed by the CLI as a flag, and anything outside
+// [A-Za-z0-9_-] argues a caller bug upstream (opencode ids look like
+// "ses_<alnum>"). Mirrors claude's uuidRe guard (claude/sessions.go) with a
+// looser whitelist since the opencode id format is not a UUID.
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
 
 // sessionTimeout bounds `opencode session list` / `opencode session delete`.
 // The CLI forks the same heavy provider/config load as `models`/`agent list`
@@ -80,11 +89,15 @@ func (c *Client) DeleteSession(ctx context.Context, dir, sessionID string) error
 	if sessionID == "" {
 		return errors.New("opencode: session id is empty")
 	}
+	if !sessionIDRe.MatchString(sessionID) {
+		return fmt.Errorf("opencode: invalid session id %q", sessionID)
+	}
 	ctx, cancel := context.WithTimeout(ctx, sessionTimeout)
 	defer cancel()
 	// #nosec G204 -- c.cliPath comes from the trusted config file; sessionID
-	// is constrained to an ID returned by ListSessions (the slash command
-	// validates it against the listing before reaching here).
+	// is whitelisted against sessionIDRe above (no flag-shaped or
+	// shell-meaningful characters) and cross-checked against ListSessions
+	// output by the slash command before reaching here.
 	cmd := exec.CommandContext(ctx, c.cliPath, "session", "delete", sessionID)
 	cmdutil.ApplyGroupCancel(cmd)
 	if dir != "" {

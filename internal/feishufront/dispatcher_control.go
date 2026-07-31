@@ -500,6 +500,12 @@ func (d *Dispatcher) sendStatusReport(ctx context.Context, rc RoutedControl) err
 	return nil
 }
 
+// maxStatusCards bounds the standing status-card cache (chatID+reportKey →
+// messageID). Steady state is one entry per bound chat; the cap only guards a
+// dynamic-chat deployment. On overflow patchOrCreateStatusCard resets the map
+// wholesale (cards get re-sent once) rather than leaking forever.
+const maxStatusCards = 256
+
 // patchOrCreateStatusCard PATCHes the cached card for (chatID, key), or
 // SendCards a new one when none is cached or the prior one was withdrawn. A
 // transient (non-gone) PATCH error leaves the cached messageID in place so the
@@ -534,6 +540,13 @@ func (d *Dispatcher) patchOrCreateStatusCard(ctx context.Context, chatID, key st
 		return
 	}
 	d.statusMu.Lock()
+	// Bound the cache (low-2): one entry per (chat, reportKey) ever seen
+	// otherwise accumulates for the process lifetime. Hitting the cap resets
+	// wholesale — the cosmetic cost is each standing card being re-SENT once
+	// (instead of PATCHed) on the next tick, mirroring maxWasOffline.
+	if len(d.statusCards) >= maxStatusCards {
+		clear(d.statusCards)
+	}
 	d.statusCards[mapKey] = newID
 	d.statusMu.Unlock()
 }

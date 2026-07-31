@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,9 @@ func validate(cfg *Config) error {
 	case "debug", "info", "warn", "error", "":
 	default:
 		return fmt.Errorf("feishu_log_level must be one of debug/info/warn/error, got %q", cfg.FeishuLogLevel)
+	}
+	if err := validateIPCTLS(cfg); err != nil {
+		return err
 	}
 	// Validate component log levels.
 	for comp, level := range map[string]string{
@@ -251,6 +255,59 @@ func ensureDir(label, abs string, create bool) error {
 		return fmt.Errorf("%s: path is not a directory: %s", label, abs)
 	}
 	return nil
+}
+
+// validateIPCTLS checks the IPC TLS triple (M10-1): cert/key must be paired,
+// a client CA requires the pair, every named file must exist, and a
+// non-loopback ipc_addr without TLS is rejected outright — plaintext HTTP on
+// a routable address exposes the shared bearer to sniffing and full
+// impersonation. ipc_addr is only consumed by feishu-front, so the loopback
+// rule keys off it being set.
+func validateIPCTLS(cfg *Config) error {
+	cert, key, ca := cfg.IPCTLSCertFile, cfg.IPCTLSKeyFile, cfg.IPCTLSClientCAFile
+	if (cert == "") != (key == "") {
+		return fmt.Errorf("ipc_tls_cert_file and ipc_tls_key_file must be set together (cert=%q key=%q)", cert, key)
+	}
+	if ca != "" && cert == "" {
+		return fmt.Errorf("ipc_tls_client_ca_file requires ipc_tls_cert_file/ipc_tls_key_file")
+	}
+	for name, path := range map[string]string{
+		"ipc_tls_cert_file":        cert,
+		"ipc_tls_key_file":         key,
+		"ipc_tls_client_ca_file":   ca,
+		"ipc_tls_ca_file":          cfg.IPCTLSCAFile,
+		"ipc_tls_client_cert_file": cfg.IPCTLSClientCertFile,
+		"ipc_tls_client_key_file":  cfg.IPCTLSClientKeyFile,
+	} {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	if (cfg.IPCTLSClientCertFile == "") != (cfg.IPCTLSClientKeyFile == "") {
+		return fmt.Errorf("ipc_tls_client_cert_file and ipc_tls_client_key_file must be set together")
+	}
+	if cfg.IPCAddr != "" && !isLoopbackIPCAddr(cfg.IPCAddr) && cert == "" {
+		return fmt.Errorf("ipc_addr %q is non-loopback: ipc_tls_cert_file/ipc_tls_key_file are required (bearer would cross the network in cleartext)", cfg.IPCAddr)
+	}
+	return nil
+}
+
+// isLoopbackIPCAddr mirrors feishufront.isLoopbackAddr (config cannot import
+// the frontend package): empty host (":6060") binds ALL interfaces and is
+// therefore NOT loopback.
+func isLoopbackIPCAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	return false
 }
 
 // validatePromptTemplate parses t with the same FuncMap the runtime renderer

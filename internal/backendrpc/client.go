@@ -13,12 +13,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -51,6 +54,12 @@ func newBackendToken() string {
 	}
 	return hex.EncodeToString(b[:])
 }
+
+// NewBackendToken exposes newBackendToken for the process entry point, which
+// generates ONE token at startup and pins it into ConnectOptions.BackendToken
+// so every (re)connect of this process presents the same session token (see
+// ConnectOptions.BackendToken for why stability matters).
+func NewBackendToken() string { return newBackendToken() }
 
 // handshakeTimeout bounds the SSE handshake (dial + response-header wait).
 // Without it a stalled frontend makes Connect block until systemd's
@@ -120,6 +129,44 @@ func newHTTPClient() *http.Client {
 	return &http.Client{Transport: clone}
 }
 
+// newTLSHTTPClient is newHTTPClient plus the IPC TLS client config (M10-1):
+// caFile pins the root CA that signed the frontend's certificate (required
+// for self-signed deployments; empty → system roots), and certFile/keyFile
+// present a client certificate when the frontend runs mTLS
+// (ipc_tls_client_ca_file). Any load failure is fatal at Connect time, not
+// mid-handshake.
+func newTLSHTTPClient(caFile, certFile, keyFile string) (*http.Client, error) {
+	c := newHTTPClient()
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		return c, nil // exotic fallback transport: leave TLS to net/http defaults
+	}
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caFile != "" {
+		caPEM, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("backendrpc: read ipc_tls_ca_file: %w", err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("backendrpc: ipc_tls_ca_file %q contains no PEM certificates", caFile)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	if certFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("backendrpc: load ipc_tls_client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	tr.TLSClientConfig = tlsCfg
+	return c, nil
+}
+
 // Client is one backend's connection to the frontend.
 type Client struct {
 	backendID   string
@@ -180,6 +227,21 @@ type ConnectOptions struct {
 	FrontendURL string
 	Secret      string
 	Version     string
+	// BackendToken pins the per-backend session token (M10-2) instead of
+	// generating a fresh one per Connect. The backend process generates it
+	// once at startup and reuses it across reconnects, so POSTs from the
+	// long-lived ControlSender/metrics client keep matching the token the
+	// frontend recorded for the CURRENT SSE registration — a reconnect that
+	// minted a new token would strand every POST path on the old one.
+	// Empty → Connect generates a fresh token (tests, one-shot clients).
+	BackendToken string
+	// IPC TLS client config (M10-1), used only when FrontendURL is https://.
+	// TLSCAFile pins the root CA for the frontend's (possibly self-signed)
+	// certificate; TLSClientCertFile/TLSClientKeyFile present a client
+	// certificate when the frontend enforces mTLS (ipc_tls_client_ca_file).
+	TLSCAFile         string
+	TLSClientCertFile string
+	TLSClientKeyFile  string
 }
 
 // Connect opens an SSE connection to the frontend. opts.Secret is the shared
@@ -187,7 +249,19 @@ type ConnectOptions struct {
 // frontend with no auth configured. The Client owns the HTTP transport it
 // creates and releases its idle pool on Close.
 func Connect(opts ConnectOptions) (*Client, error) {
-	return connect(opts, newHTTPClient(), true)
+	var (
+		hc  *http.Client
+		err error
+	)
+	if opts.TLSCAFile != "" || opts.TLSClientCertFile != "" {
+		hc, err = newTLSHTTPClient(opts.TLSCAFile, opts.TLSClientCertFile, opts.TLSClientKeyFile)
+	} else {
+		hc = newHTTPClient()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return connect(opts, hc, true)
 }
 
 // ConnectWithHTTPClient opens an SSE connection using the given HTTP client
@@ -207,6 +281,10 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 	if opts.BackendID == "" || opts.BackendType == "" || opts.FrontendURL == "" {
 		return nil, fmt.Errorf("backendID/backendType/frontendURL required")
 	}
+	token := opts.BackendToken
+	if token == "" {
+		token = newBackendToken()
+	}
 	c := &Client{
 		backendID:     opts.BackendID,
 		backendType:   opts.BackendType,
@@ -216,7 +294,7 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 		ownsTransport: ownsTransport,
 		eventCh:       make(chan *protocol.Event, sseEventChanBuf),
 		closeCh:       make(chan struct{}),
-		backendToken:  newBackendToken(),
+		backendToken:  token,
 	}
 	c.logger.Store(log.Nop())
 	u, err := url.Parse(c.frontendURL)

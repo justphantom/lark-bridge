@@ -55,13 +55,16 @@ func main() {
 }
 
 func run(cfgPath string) error {
-	cfg, err := config.Load(cfgPath)
+	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}
 	logger, err := buildLogger(cfg)
 	if err != nil {
 		return err
+	}
+	for _, w := range cfgWarns {
+		logger.Warn("config warning", "warning", w)
 	}
 
 	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
@@ -100,6 +103,11 @@ func run(cfgPath string) error {
 		FrontendURL: cfg.FrontendURL,
 		Secret:      cfg.IPCSecret,
 		Version:     version,
+		// M10-1: TLS client config for https frontend_url (CA pinning +
+		// optional mTLS client certificate).
+		TLSCAFile:         cfg.IPCTLSCAFile,
+		TLSClientCertFile: cfg.IPCTLSClientCertFile,
+		TLSClientKeyFile:  cfg.IPCTLSClientKeyFile,
 	}
 	rpc, err := backendrpc.Connect(connOpts)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/lark"
 	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/strutil"
 )
 
 // handleMessageReceive is the lark.Handler entry point for inbound messages.
@@ -94,13 +95,16 @@ func (b *Bot) handleCardAction(ctx context.Context, ev *lark.CardActionEvent) er
 	}
 	b.markHealthy() // any inbound event proves the WS is alive
 	// 入口 Info：诊断 ws→lark 链路是否把 card 事件投递到 Bot。
-	// value 整条记录，便于发现飞书 schema 2.0 下 button 回调 value 字段缺失。
+	// value 可能携带表单输入（PII），落日志前截断并在 log_debug_redact 下
+	// 整体脱敏（low-18）；键结构仍可见，足以发现 schema 2.0 下 button 回调
+	// value 字段缺失这类问题。
+	valueJSON, _ := json.Marshal(ev.Action.Value)
 	b.logger.Info("card action received",
 		"event_id", ev.EventID,
 		log.FieldChatID, ev.ChatID,
 		log.FieldMessageID, ev.MessageID,
 		"operator_openid", ev.Operator.OpenID,
-		"value", ev.Action.Value)
+		"value", strutil.DebugRedact(strutil.Truncate(string(valueJSON), 300), b.logDebugRedact.Load()))
 	h := b.onCardAction.Load()
 	if h == nil {
 		b.logger.Warn("card action: no handler registered",

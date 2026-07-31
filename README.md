@@ -74,6 +74,12 @@ make upgrade-status ARGS=--init
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 
+### 运维注意事项
+
+- **日志轮转**：`internal/log` 只输出到 stdout/stderr，**无内建轮转**。生产部署必须依赖 journald 或容器运行时做日志轮转；切勿把 stdout 用 shell 重定向到文件长期运行——磁盘增长无任何保护。
+- **环境密钥命名**：传给 CLI 子进程的环境采用 **deny-list 清洗**（变量名含 `SECRET`/`TOKEN`/`ENCRYPT`/`PASS`/`PRIVATE_KEY`/`CREDENTIAL` 片段会被剥离）。请勿用不含这些片段的名字存放敏感环境变量——如 `LARK_VERIFICATION_KEY`、`APP_KEY` 这类命名会**原样**传给 CLI 子进程及其 spawn 的工具孙子进程。`MINIAGENT_API_KEY` 按设计放行，会被 CLI 及其工具继承。
+- **IPC 非 loopback 必须 TLS**：`ipc_addr` 绑定非 loopback 地址时，必须配置 `ipc_tls_cert_file`/`ipc_tls_key_file`（否则 feishu-front 拒绝启动——明文 HTTP 上的 bearer 可被同网段嗅探冒用）；可选 `ipc_tls_client_ca_file` 启用 mTLS（要求并校验后端客户端证书）。启用 TLS 后，各后端的 `frontend_url` 需使用 `https://`；mTLS 时后端还需配置客户端证书。
+
 ## 目录约定
 
 - `cmd/`：7 个二进制的入口（feishu-front、claude-back、opencode-back、omp-back、miniagent-back、deploy-monitor、status-monitor）。

@@ -79,7 +79,7 @@ func main() {
 }
 
 func run(cfgPath, addr string) error {
-	cfg, err := config.Load(cfgPath)
+	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -93,6 +93,9 @@ func run(cfgPath, addr string) error {
 	logger, err := buildLogger(cfg)
 	if err != nil {
 		return err
+	}
+	for _, w := range cfgWarns {
+		logger.Warn("config warning", "warning", w)
 	}
 
 	// The IPC server is reachable by backends over HTTP; require a shared
@@ -125,6 +128,9 @@ func run(cfgPath, addr string) error {
 	registry := feishufront.NewBackendRegistry()
 	ipc := feishufront.NewIPCServer(registry, cfg.IPCSecret)
 	ipc.SetLogger(logger)
+	// M10-1: TLS (or mTLS) for the IPC listener; mandatory when ipc_addr is
+	// non-loopback (config validate + Listen both enforce).
+	ipc.SetTLS(cfg.IPCTLSCertFile, cfg.IPCTLSKeyFile, cfg.IPCTLSClientCAFile)
 
 	// Dispatcher wires the bot, registry, turn manager and router.
 	turns := feishufront.NewTurnManager()
