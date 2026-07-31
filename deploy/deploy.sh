@@ -723,17 +723,18 @@ CapabilityBoundingSet='
 [Unit]
 Description=lark-bridge $unit
 $deps
+# Bounded restart burst so a misconfig that bypasses the readiness probe does
+# not bounce the unit every 5s forever (systemd gives up + stays down for an
+# interval, then the operator fixes config and clears manually). These belong
+# in [Unit]: systemd <230 ignores them in [Service] ("Unknown key ... ignoring").
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 EnvironmentFile=$CONFIG_DIR/.env
 ${env_block}ExecStart=$DEPLOY_DIR/$unit -config $CONFIG_DIR/$config
 Restart=on-failure
 RestartSec=5
-# Bounded restart burst so a misconfig that bypasses the readiness probe does
-# not bounce the unit every 5s forever (systemd gives up + stays down for an
-# interval, then the operator fixes config and clears manually).
-StartLimitIntervalSec=60
-StartLimitBurst=5
 # Graceful shutdown: feishu-front needs up to ~10s (bot+ipc) to drain; give
 # systemd headroom past that so it does not SIGKILL mid-drain.
 TimeoutStopSec=20
