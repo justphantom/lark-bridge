@@ -194,11 +194,14 @@ func TestParseEvent_MessageEndStopReasonError(t *testing.T) {
 	}
 }
 
-// TestParseEvent_TurnIgnored verifies turn_end is ignored (turn_start is NOT —
-// see TestParseEvent_TurnStartBoundary).
-func TestParseEvent_TurnIgnored(t *testing.T) {
-	if _, ok, err := parseEvent(`{"type":"turn_end","toolResults":[]}`); err != nil || ok {
-		t.Errorf("turn_end → ok=%v err=%v, want ok=false err=nil", ok, err)
+// TestParseEvent_TurnEndForwarded verifies turn_end is now forwarded as
+// EventTurnEnd (it carries the round's assistant message, used by the bridge
+// as a fallback reply source) rather than ignored. turn_start still yields
+// EventTurnStart — see TestParseEvent_TurnStartBoundary.
+func TestParseEvent_TurnEndForwarded(t *testing.T) {
+	ev := parseOne(t, `{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`)
+	if ev.Type != EventTurnEnd {
+		t.Errorf("Type = %q, want %q", ev.Type, EventTurnEnd)
 	}
 }
 
@@ -279,11 +282,32 @@ func TestParseEvent_AutoRetry(t *testing.T) {
 	}
 }
 
-// TestParseEvent_Notice verifies the notice event maps through.
+// TestParseEvent_Notice verifies the notice event forwards its level +
+// human-readable message body (the body shares the "message" JSON key with
+// the assistant-message envelope but is a bare string for notices).
 func TestParseEvent_Notice(t *testing.T) {
-	ev := parseOne(t, `{"type":"notice","level":"info","message":"hello"}`)
+	ev := parseOne(t, `{"type":"notice","level":"info","message":"xd://: mounted mcp__codegraph_explore","source":"xdev"}`)
 	if ev.Type != EventNotice {
 		t.Errorf("Type = %q, want %q", ev.Type, EventNotice)
+	}
+	if ev.NoticeLevel != "info" {
+		t.Errorf("NoticeLevel = %q, want info", ev.NoticeLevel)
+	}
+	if ev.NoticeMessage != "xd://: mounted mcp__codegraph_explore" {
+		t.Errorf("NoticeMessage = %q", ev.NoticeMessage)
+	}
+}
+
+// TestParseEvent_NoticeLevelDefaultsInfo verifies a notice without an explicit
+// level still defaults to "info" (never empty) so the renderer always has a
+// valid level to style against.
+func TestParseEvent_NoticeLevelDefaultsInfo(t *testing.T) {
+	ev := parseOne(t, `{"type":"notice","message":"bare notice"}`)
+	if ev.NoticeLevel != "info" {
+		t.Errorf("NoticeLevel = %q, want info (default)", ev.NoticeLevel)
+	}
+	if ev.NoticeMessage != "bare notice" {
+		t.Errorf("NoticeMessage = %q, want bare notice", ev.NoticeMessage)
 	}
 }
 
@@ -355,5 +379,130 @@ func TestParseEvent_FullSuccessFlow(t *testing.T) {
 	}
 	if !gotTerminal {
 		t.Error("did not capture terminal agent_end")
+	}
+}
+
+// TestParseEvent_SessionTitleCwd verifies the session header forwards title +
+// cwd alongside the id (previously only the id was consumed).
+func TestParseEvent_SessionTitleCwd(t *testing.T) {
+	ev := parseOne(t, `{"type":"session","id":"s1","title":"统计代码行数","cwd":"/home/user/ZCodeProject/lark-bridge"}`)
+	if ev.Type != EventSession {
+		t.Fatalf("Type = %q, want %q", ev.Type, EventSession)
+	}
+	if ev.SessionID != "s1" {
+		t.Errorf("SessionID = %q, want s1", ev.SessionID)
+	}
+	if ev.SessionTitle != "统计代码行数" {
+		t.Errorf("SessionTitle = %q", ev.SessionTitle)
+	}
+	if ev.SessionCwd != "/home/user/ZCodeProject/lark-bridge" {
+		t.Errorf("SessionCwd = %q", ev.SessionCwd)
+	}
+}
+
+// TestParseEvent_ThinkingLevelChanged verifies the resolved thinking level is
+// forwarded (via Text) so the bridge can surface the level the model actually
+// uses, distinct from the configured/auto value.
+func TestParseEvent_ThinkingLevelChanged(t *testing.T) {
+	ev := parseOne(t, `{"type":"thinking_level_changed","thinkingLevel":"high","configured":"auto","resolved":"high"}`)
+	if ev.Type != EventThinkingLevelChanged {
+		t.Fatalf("Type = %q, want %q", ev.Type, EventThinkingLevelChanged)
+	}
+	if ev.Text != "high" {
+		t.Errorf("Text (resolved) = %q, want high", ev.Text)
+	}
+}
+
+// TestParseEvent_TodoReminderAndTTSR verify the in-run reminder events are
+// forwarded as named types (not "unknown") so the unknown-event metric stops
+// ticking on them, while the bridge still treats them as no-op diagnostics.
+func TestParseEvent_TodoReminderAndTTSR(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{"todo_reminder", `{"type":"todo_reminder","todos":[],"attempt":1}`, EventTodoReminder},
+		{"ttsr_triggered", `{"type":"ttsr_triggered"}`, EventTTSRTriggered},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := parseOne(t, tc.line)
+			if ev.Type != tc.want {
+				t.Errorf("Type = %q, want %q", ev.Type, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseEvent_MessageEndErrorCodes verifies errorStatus/errorId are captured
+// on a stopReason=error message_end so the bridge can append the code (e.g.
+// [429/135168]) to the surfaced error text.
+func TestParseEvent_MessageEndErrorCodes(t *testing.T) {
+	ev, ok, err := parseEvent(`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorStatus":429,"errorId":135168,"errorMessage":"429 限流","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}}}}`)
+	if err != nil || !ok {
+		t.Fatalf("parseEvent: ok=%v err=%v", ok, err)
+	}
+	if ev.Type != EventError {
+		t.Errorf("Type = %q, want %q", ev.Type, EventError)
+	}
+	if ev.ErrorStatus != 429 {
+		t.Errorf("ErrorStatus = %d, want 429", ev.ErrorStatus)
+	}
+	if ev.ErrorID != 135168 {
+		t.Errorf("ErrorID = %d, want 135168", ev.ErrorID)
+	}
+	if ev.Text != "429 限流" {
+		t.Errorf("Text = %q, want 429 限流", ev.Text)
+	}
+}
+
+// TestParseEvent_MessageEndCustomRole verifies a role=custom system nudge
+// (e.g. mid-run-todo-nudge) surfaces as EventMessageEnd with Role=custom and
+// the customType in Text, never routed to the error path even if it carried an
+// incidental stopReason.
+func TestParseEvent_MessageEndCustomRole(t *testing.T) {
+	ev, ok, err := parseEvent(`{"type":"message_end","message":{"role":"custom","customType":"mid-run-todo-nudge","content":"<system-reminder>10 todos open</system-reminder>","stopReason":"stop"}}`)
+	if err != nil || !ok {
+		t.Fatalf("parseEvent: ok=%v err=%v", ok, err)
+	}
+	if ev.Type != EventMessageEnd {
+		t.Errorf("Type = %q, want %q (not EventError)", ev.Type, EventMessageEnd)
+	}
+	if ev.Role != "custom" {
+		t.Errorf("Role = %q, want custom", ev.Role)
+	}
+	if ev.Text != "mid-run-todo-nudge" {
+		t.Errorf("Text = %q, want mid-run-todo-nudge", ev.Text)
+	}
+}
+
+// TestParseEvent_ToolExecutionStartCarriesArgs verifies the raw args JSON is
+// stashed on the start event (the end event carries no args), keyed by
+// toolCallId, so the bridge can drive todowrite/task special handling at end.
+func TestParseEvent_ToolExecutionStartCarriesArgs(t *testing.T) {
+	ev := parseOne(t, `{"type":"tool_execution_start","toolCallId":"call_1","toolName":"task","args":{"agent":"scout","task":"探索","i":"explore"},"intent":"Explore repo"}`)
+	if ev.ToolCallID != "call_1" {
+		t.Errorf("ToolCallID = %q, want call_1", ev.ToolCallID)
+	}
+	if ev.ToolInput != "Explore repo" {
+		t.Errorf("ToolInput = %q, want intent Explore repo", ev.ToolInput)
+	}
+	if ev.ToolArgs != `{"agent":"scout","task":"探索","i":"explore"}` {
+		t.Errorf("ToolArgs = %q", ev.ToolArgs)
+	}
+}
+
+// TestParseEvent_ToolExecutionEndCarriesCallID verifies the end event carries
+// the toolCallId (for bridge start→end joining) even though it has no args.
+func TestParseEvent_ToolExecutionEndCarriesCallID(t *testing.T) {
+	ev := parseOne(t, `{"type":"tool_execution_end","toolCallId":"call_1","toolName":"read","result":{"content":[{"type":"text","text":"# title"}]},"isError":false}`)
+	if ev.ToolCallID != "call_1" {
+		t.Errorf("ToolCallID = %q, want call_1", ev.ToolCallID)
+	}
+	if ev.ToolArgs != "" {
+		t.Errorf("ToolArgs = %q, want empty (end carries no args)", ev.ToolArgs)
+	}
+	if ev.ToolOutput != "# title" {
+		t.Errorf("ToolOutput = %q, want # title", ev.ToolOutput)
 	}
 }

@@ -32,6 +32,16 @@ type ndjsonLine struct {
 	Intent     string          `json:"intent"`
 	Result     json.RawMessage `json:"result"`
 	IsError    bool            `json:"isError"`
+	// notice event fields. Level/Source decode directly; the message body shares
+	// the "message" JSON key with the message_* envelope above (Message), so it
+	// is read from that RawMessage in the notice case (a notice's message is a
+	// bare JSON string, not the assistant-message object).
+	Level  string `json:"level"`
+	Source string `json:"source"`
+	// thinking_level_changed fields.
+	ThinkingLevel string `json:"thinkingLevel"`
+	Configured    string `json:"configured"`
+	Resolved      string `json:"resolved"`
 	// auto_retry_start.
 	Attempt int `json:"attempt"`
 }
@@ -39,8 +49,11 @@ type ndjsonLine struct {
 // messageShape is the subset of message_end.message the parser reads.
 type messageShape struct {
 	Role         string     `json:"role"`
+	CustomType   string     `json:"customType"` // role=custom system nudge (e.g. mid-run-todo-nudge)
 	StopReason   string     `json:"stopReason"`
 	ErrorMessage string     `json:"errorMessage"`
+	ErrorStatus  int        `json:"errorStatus"` // HTTP-style status (e.g. 429)
+	ErrorID      int        `json:"errorId"`     // provider error id (e.g. 135168)
 	Usage        usageShape `json:"usage"`
 }
 
@@ -104,6 +117,8 @@ func parseEvent(line string) (Event, bool, error) {
 	case "session":
 		base.Type = EventSession
 		base.SessionID = head.ID
+		base.SessionTitle = head.Title
+		base.SessionCwd = head.Cwd
 		return base, true, nil
 
 	// Agent round begins. The bridge bumps stepCount + resets text.
@@ -136,7 +151,12 @@ func parseEvent(line string) (Event, bool, error) {
 	case "tool_execution_start":
 		base.Type = EventToolStart
 		base.ToolName = head.ToolName
+		base.ToolCallID = head.ToolCallID
 		base.ToolInput = summariseToolInput(head.Intent, head.Args)
+		// Stash the raw args: the end event carries only result+isError, so the
+		// bridge joins start→end by ToolCallID and reads args at end to drive
+		// todowrite (full todos) and task (subagent_type) special handling.
+		base.ToolArgs = strutil.StringifyJSON(head.Args)
 		return base, true, nil
 	case "tool_execution_update":
 		base.Type = EventToolUpdate
@@ -145,17 +165,40 @@ func parseEvent(line string) (Event, bool, error) {
 	case "tool_execution_end":
 		base.Type = EventToolEnd
 		base.ToolName = head.ToolName
-		// Pass the same intent/args-derived summary so the result row's
-		// "Input" column matches the start row (the end event carries only
-		// result + isError, not args/intent). When absent, the bridge's
-		// SummarizeToolInput still produces a readable row from ToolName.
+		base.ToolCallID = head.ToolCallID
+		// The end event carries no args/intent (only result + isError). The
+		// bridge joins the matching start by ToolCallID for the Input column
+		// and the todowrite/task special paths.
 		base.ToolOutput = strutil.StringifyContentEnvelope(head.Result)
 		base.IsToolError = head.IsError
 		return base, true, nil
 
-	// Runtime notice.
+	// Runtime notice. Forward the message + level (defaulting to "info") so the
+	// bridge can emit a TypeNotice instead of dropping it into unknown.
 	case "notice":
 		base.Type = EventNotice
+		base.NoticeLevel = head.Level
+		base.NoticeMessage = noticeMessage(head.Message)
+		if base.NoticeLevel == "" {
+			base.NoticeLevel = "info"
+		}
+		return base, true, nil
+
+	// thinking_level_changed: the CLI resolved a thinking effort. Forward the
+	// resolved value via Text so the bridge can surface an info notice showing
+	// the level the model actually uses (not the configured/auto value).
+	case "thinking_level_changed":
+		base.Type = EventThinkingLevelChanged
+		base.Text = head.Resolved
+		return base, true, nil
+
+	// In-run reminders. Forwarded for debug visibility only — the bridge logs
+	// them and does NOT emit a control: the todowrite tool remains the
+	// authoritative todo-list source rendered via TypeTodo, and ttsr is purely
+	// diagnostic. Keeping them as named types (not "unknown") stops the
+	// unknown-event metric from ticking on every occurrence.
+	case "todo_reminder", "ttsr_triggered":
+		base.Type = head.Type
 		return base, true, nil
 
 	// Auto-retry: surface as a progress banner so the card is not silent.
@@ -169,13 +212,15 @@ func parseEvent(line string) (Event, bool, error) {
 	// here so the previous round's inline-thinking preamble does not leak
 	// into the reply (verified empirically against agnes-2.0-flash).
 	//
-	// turn_end carries nothing actionable (no usage, no terminal signal), so
-	// it stays ignored.
+	// turn_end carries the round's complete assistant message (message.content);
+	// forwarded so the bridge can extract its text as a fallback reply when the
+	// streaming path produced none (it carries no usage and no terminal signal).
 	case "turn_start":
 		base.Type = EventTurnStart
 		return base, true, nil
 	case "turn_end":
-		return Event{}, false, nil
+		base.Type = EventTurnEnd
+		return base, true, nil
 
 	default:
 		// Forward-compat: surface unrecognised line types for debugging.
@@ -206,11 +251,28 @@ func parseMessageEnd(base Event, raw json.RawMessage) (Event, bool, error) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return Event{}, false, fmt.Errorf("parse message: %w", err)
 	}
+	base.Role = msg.Role
+	base.ErrorStatus = msg.ErrorStatus
+	base.ErrorID = msg.ErrorID
+
+	// role=custom carries a system-injected nudge (e.g. customType
+	// "mid-run-todo-nudge"). It has no usage and is never a model error, so
+	// surface it as EventMessageEnd with Role=custom + the customType in Text;
+	// the bridge emits an info notice and skips usage accumulation. This is
+	// checked before the stopReason switch so a custom nudge carrying an
+	// incidental stopReason is never misrouted to the error path.
+	if msg.Role == "custom" {
+		base.Type = EventMessageEnd
+		base.Text = msg.CustomType
+		return base, true, nil
+	}
+
 	// §10.10: a model error surfaces as assistant message with
 	// stopReason="error" + errorMessage; there is no standalone error event.
 	// Also treat other terminal stopReasons as errors so the bridge's terminal
 	// path fires instead of falling through to the generic "no terminal event"
-	// message.
+	// message. ErrorStatus/ErrorID (e.g. HTTP 429 / provider error id) are
+	// already on base so the bridge can append them to the error text.
 	switch msg.StopReason {
 	case "error", "aborted", "stopped", "cancelled":
 		m := msg.ErrorMessage
@@ -304,4 +366,22 @@ func summariseToolInput(intent string, args json.RawMessage) string {
 		return intent
 	}
 	return strutil.StringifyJSON(args)
+}
+
+// noticeMessage extracts the human-readable message body from a notice
+// event's "message" JSON value. The same JSON key is shared with the
+// message_start/message_end assistant-message envelope (decoded into
+// ndjsonLine.Message as a RawMessage), but for a notice the value is a bare
+// JSON string (e.g. "xd://: mounted mcp__codegraph_explore"). This unwraps it;
+// any non-string payload (absent, object, malformed) yields "" so the bridge
+// still emits a notice with an empty body rather than panicking.
+func noticeMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }

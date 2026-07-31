@@ -80,6 +80,21 @@ const (
 	// error/cancellation, OR mapped from an assistant message_end whose
 	// stopReason is "error" (§10.10). Terminal like EventAgentEnd.
 	EventError = "error"
+	// EventThinkingLevelChanged: the CLI's resolved thinking effort
+	// changed (thinking_level_changed). Bridge surfaces the resolved level
+	// as an info notice so the card reflects what the model actually uses.
+	EventThinkingLevelChanged = "thinking_level_changed"
+	// EventTodoReminder: an in-run todo reminder (todo_reminder). Currently
+	// forwarded for debug visibility only; the bridge logs it and does not
+	// emit a control (the todowrite tool remains the authoritative list
+	// source rendered via TypeTodo).
+	EventTodoReminder = "todo_reminder"
+	// EventTTSRTriggered: a ttsr_triggered event. Forwarded for debug only.
+	EventTTSRTriggered = "ttsr_triggered"
+	// EventTurnEnd: a turn boundary (turn_end). Carries the round's complete
+	// assistant message in message.content; the bridge extracts its text as a
+	// fallback reply source when the streaming path produced no text.
+	EventTurnEnd = "turn_end"
 )
 
 // Event is a parsed omp NDJSON event, flattened for easy consumption.
@@ -128,6 +143,31 @@ type Event struct {
 	// IsError flags an EventError (terminal).
 	IsError      bool
 	ErrorMessage string
+
+	// —— Tool correlation (tool_execution_* only) ——
+	// ToolCallID is the toolCallId shared by a tool's start/update/end events,
+	// letting the bridge join them (OMP splits a call across start+end, unlike
+	// opencode's single completed event). Empty for non-tool events.
+	ToolCallID string
+	// ToolArgs is the raw args JSON of a tool_execution_start (only). The end
+	// event carries no args, so the bridge stashes this at start keyed by
+	// ToolCallID and reads it at end to drive todowrite (full todos list) and
+	// task (subagent_type) special handling. Empty at end / for non-tool events.
+	ToolArgs string
+
+	// —— notice / session / error enrichment (json:"-" — sourced at parse) ——
+	// NoticeMessage / NoticeLevel come from a notice event's message/level
+	// (level defaults to "info" when the CLI omits it).
+	NoticeMessage string `json:"-"`
+	NoticeLevel   string `json:"-"`
+	// SessionTitle / SessionCwd come from the session header (title / cwd).
+	SessionTitle string `json:"-"`
+	SessionCwd   string `json:"-"`
+	// ErrorStatus / ErrorID come from a message_end whose stopReason indicates
+	// failure (e.g. HTTP 429 / provider error id). Zero when absent; the bridge
+	// appends them to the error text when non-zero.
+	ErrorStatus int `json:"-"`
+	ErrorID     int `json:"-"`
 
 	// Raw is retained for debug logging and forward-compat parsing.
 	Raw string
