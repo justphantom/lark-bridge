@@ -5,59 +5,49 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-02
+
 miniagent **v2.0.0** 全量接入。主线：吸收上游 v2.0.0 的外部契约破坏（`shell` 退出码语义）+
 新事件（`tool_result` / 流式 `text_delta`·`reasoning_delta`）+ 新 CLI flags + 新工具分类；协议层零
 改动（`TypeToolResult`/`TypeThinking`/`TypeText` 早被三桥使用，miniagent 仅转发）。详见
 `docs/MINIAGENT_V2_INTEGRATION_PLAN.md`。新增功能 → 按 semver 升 minor。
 
+miniagent **v3.0.0** 全面落地（破坏性迁移）。主线：吸收上游 v3.0.0 的外部契约破坏
+（`-base-url`/`-confine` 删除 → 完整 URL + `-mode`）、新增代码开发能力（`-mode default` 护栏）、
+每 chat 自动会话记忆（`-session`）、可选多 provider 配置（`-config`）。详见
+`docs/MINIAGENT_V3_MIGRATION.md`。破坏性配置变更 → 按当前 1.x 惯例仍升 minor（CHANGELOG 显式标注）。
+
 ### Added
 
-- **miniclient 解析 v2.0.0 事件**。`event.go` 扩 `Event`/`rawEvent` 容纳 `tool_result`（`output`/
+- **miniclient 解析 v2.0.0 事件**（`4635804`）。`event.go` 扩 `Event`/`rawEvent` 容纳 `tool_result`（`output`/
   `truncated`/`is_error`/`exit_code`）、流式 `text_delta`/`reasoning_delta`（`step`/`text`）；新增
   `KindToolResult`/`KindTextDelta`/`KindReasoningDelta` 常量。未知 type 仍 `ok=true` 非终态（前向兼容，
   未来事件不破泵）。旧版 v1.1.0 二进制不产出这些事件，零影响。
-- **`tool_result` 透传**（D2）。`miniagent.emitCLIEvent` 增 `KindToolResult`→`TypeToolResult`。v2.0.0 破坏性
+- **`tool_result` 透传**（`4635804`）。`miniagent.emitCLIEvent` 增 `KindToolResult`→`TypeToolResult`。v2.0.0 破坏性
   变更的唯一落地处：`shell` 非 0 退出 `is_error` 由 true 改 false，改由 `exit_code` 表达——handler 据此
   把 `[exit N]` 拼进 `Output` 首行（不改协议），`IsError` 仅在 `exit_code<0`（超时/启动失败）或非 shell
   工具的 `is_error=true` 时置位。
-- **流式输出**（D1）。`config.MiniAgent.Stream`（默认关）→ `miniclient` 传 `-stream`；`emitCLIEvent` 增
+- **流式输出**（`4635804`）。`config.MiniAgent.Stream`（默认关）→ `miniclient` 传 `-stream`；`emitCLIEvent` 增
   `KindTextDelta`→`TypeText`、`KindReasoningDelta`→`TypeThinking`（append 模式，渲染层「思考中」区已截尾）。
   与 claude/opencode 流式体验对齐。
-- **可选 CLI flags**（D3：推荐四项）。`config.MiniAgent` 增 `max_iterations`/`shell_timeout`/`confine`/
+- **可选 CLI flags**（`4635804`）。`config.MiniAgent` 增 `max_iterations`/`shell_timeout`/`confine`/
   `key_file`；`miniclient.buildArgs` 据此拼 `-max-iterations`/`-shell-timeout`/`-confine workdir`/`-key-file`。
   `key_file` 非空时改由文件注入 key 且不再经 `$MINIAGENT_API_KEY` env 注入（规避 `/proc/$PPID/environ`
   泄漏）。`max_iterations` 与既有 `Incomplete`（撞迭代上限）联动，让上限可配而非撞硬编码 20。
-- **`-list-models` 委托 CLI**（D4）。`miniclient` 增 `ListModels(ctx)` fork `miniagent -list-models` 读
+- **`-list-models` 委托 CLI**（`4635804`）。`miniclient` 增 `ListModels(ctx)` fork `miniagent -list-models` 读
   stdout；`miniagent/models.go` 删除自带 `GET /v1/models` 的 HTTP/解析/4 MiB 限流代码，改委托 CLI
   （v2.0.0 重新暴露 `-list-models`，回归 v1.1.0 前 behavior）。
-- **`multi_edit` 工具分类**。`renderer.toolCategory` 把 `multi_edit`（→`Multi_edit`）归入 edit 类，进度卡
+- **`multi_edit` 工具分类**（`4635804`）。`renderer.toolCategory` 把 `multi_edit`（→`Multi_edit`）归入 edit 类，进度卡
   summary「编辑 N」段纳入；`grep`/`glob` 经 `isReadTool` 早被归入 read。
-
-### Notes
-
-- **上游依赖**：miniagent 二进制建议升级到 **v2.0.0**——`tool_result`/流式/`exit_code`/新 flags 在旧版
-  退化为「事件不出现 / flag 被拒」。lark-bridge 不打包 miniagent 二进制。`-approve` 必须保持默认 `all`
-  （bridge 每 prompt fork 一次、stdin 写完即 EOF，`dangerous`/`always` 会在 EOF 后拒绝危险工具）。
-
----
-
-miniagent **v3.0.0** 全面落地（破坏性迁移）。主线：吸收上游 v3.0.0 的外部契约破坏
-（`-base-url`/`-confine` 删除 → 完整 URL + `-mode`）、新增代码开发能力（`-mode default` 护栏）、
-每 chat 自动会话记忆（`-session`）、可选多 provider 配置（`-config`）。这是 **operator 必须同步配置**
-的发版（见 Changed/Removed/Notes）。详见 `docs/MINIAGENT_V3_IMPLEMENTATION.md`。破坏性配置变更 →
-semver 倾向 major bump（版本号策略待确认，见末尾 open question）。
-
-### Added
-
-- **`/mode`、`/thinking`、`/clear` 命令**（D2/D3/R2）。每 chat 钉住 `-mode`/`-thinking`（覆盖全局默认，
+- **`/mode`、`/thinking`、`/clear` 命令**（`a3cdfef`）。每 chat 钉住 `-mode`/`-thinking`（覆盖全局默认，
   经 `router.SetMode`/`SetThinking` 持久化）；`/clear` 删除本 chat 的会话 jsonl，下次提问开新对话。`/help`
   与 `/current` 同步纳入新命令。`-mode default`（新默认）：写工具限 workdir + shell 拒 11 类提权器
   （sudo/doas/su/…）；`-mode auto`：放开。
-- **每 chat 自动会话记忆**（D4/R2/R4）。`miniagent.Handler` 在 `{state_dir}/miniagent-sessions/<sha256(chatID)>.jsonl`
+- **每 chat 自动会话记忆**（`a3cdfef`）。`miniagent.Handler` 在 `{state_dir}/miniagent-sessions/<sha256(chatID)>.jsonl`
   落 v3 `-session`，第二轮记得第一轮内容；`/clear` 清空。同 chat 串行由既有 `startTurn` busy-then-drop
   保证（busy 时第二个 prompt 直接被「处理中」拒），单进程下不依赖 v3 跨进程 `flock`。chatID 经 sha256 hex
   防路径穿越/碰撞。
-- **可选 `config_path` 多 provider 模式**（D5/R3）。`miniagent.config_path` 指向 `miniagent.json` 时进入
+- **可选 `config_path` 多 provider 模式**（`a3cdfef`）。`miniagent.config_path` 指向 `miniagent.json` 时进入
   config 模式：bridge 透传 `-config <abspath>`，**不传** `-chat-url`/`-models-url`；`/model provider/id`
   切换 provider。`miniagent.json` **部署期生成**（operator 按 `.env` 产出，bridge 不维护、不生成——R3）。
   示例骨架（`/etc/miniagent/miniagent.json`）：
@@ -69,44 +59,59 @@ semver 倾向 major bump（版本号策略待确认，见末尾 open question）
     "defaults": {"model": "main/model-a", "mode": "default", "thinking": "off"}
   }
   ```
-- **`miniclient.DefaultMode`/`DefaultThinking` 访问器**。给 `miniagent.Handler` 读 client 默认值用
+- **`miniclient.DefaultMode`/`DefaultThinking` 访问器**（`a3cdfef`）。给 `miniagent.Handler` 读 client 默认值用
   （`activeMode`/`activeThinking` 的 fallback），避免改 `New(handler)` 签名。nil 安全（测试）。
-- **启动期校验测试 + config 模式分支测试**（Phase 4）。`cmd/miniagent-back/main_test.go` 钉死
+- **启动期校验测试 + config 模式分支测试**（`a3cdfef`）。`cmd/miniagent-back/main_test.go` 钉死
   `workspace_root` 必配、bare 模式 `chat_url`/`config_path` 二选一、`config_path` 非空时放行 chat_url 缺位；
   `miniclient` 钉死 config 模式下 `-config`/`-mode`/`-thinking`/`-session` 共存（只换端点源，不瘦身每轮形状）。
 
 ### Changed
 
-- **`base_url` → `chat_url` + `models_url`（破坏性）**。v3 删 `-base-url`，bridge 拆成两个完整 URL：
+- **`base_url` → `chat_url` + `models_url`（破坏性）**（`a3cdfef`）。v3 删 `-base-url`，bridge 拆成两个完整 URL：
   `chat_url`（chat completions 全 URL，bare 模式必填）+ `models_url`（models 全 URL，`/models` 用）。
   旧 `miniagent.base_url` 字段经 `DisallowUnknownFields` 启动期明确拒绝。
-- **`confine` 移除 → `mode`（破坏性）**。v2 `confine`（workdir 沙箱）合并进 v3 `-mode`：新默认 `default`
+- **`confine` 移除 → `mode`（破坏性）**（`a3cdfef`）。v2 `confine`（workdir 沙箱）合并进 v3 `-mode`：新默认 `default`
   = 写工具限 workdir + shell 拒提权器；`auto` = 不限。`miniagent.mode` 经 `applyDefaults` 默认 `default`、
   经 `validate` 限 `default`/`auto`。`/mode` 每 chat 覆盖。
-- **`workspace_root` 改为必填**。v3 `-mode default` 需要 workdir；不配启动期 fatal（`/cd` picker 也依赖它）。
+- **`workspace_root` 改为必填**（`a3cdfef`）。v3 `-mode default` 需要 workdir；不配启动期 fatal（`/cd` picker 也依赖它）。
   `cmd/miniagent-back/main.go` 强校验。
-- **`-thinking` 升为一等字段**。`miniagent.thinking`（off|minimal|low|medium|high|xhigh|max）经 `applyDefaults`
+- **`-thinking` 升为一等字段**（`a3cdfef`）。`miniagent.thinking`（off|minimal|low|medium|high|xhigh|max）经 `applyDefaults`
   默认 `off`、经 `validate` 限七值；`/thinking` 每 chat 覆盖。
-- **`-list-models` 适配 v3**。bare 模式传 `-chat-url`+`-models-url`；config 模式只传 `-config`。
+- **`-list-models` 适配 v3**（`a3cdfef`）。bare 模式传 `-chat-url`+`-models-url`；config 模式只传 `-config`。
+- **`env.example` 字段同步**（`f649c37`）。`MINIAGENT_BASE_URL` 废弃（保留仅兼容旧文档）；新增
+  `MINIAGENT_CHAT_URL`、`MINIAGENT_MODELS_URL`；`MINIAGENT_DEFAULT_MODEL` 保留。
+- **`upgrade-monitor.sh` wait_active**（`f649c37`）。用 `wait_active` 轮询取代固定 `sleep 1` + 单次
+  `is-active`，覆盖冷启动窗口，避免误判失败。
+
+### Fixed
+
+- **`backendrpc` SSE + POST 复用同一 token**（`935f8b0`）。修复每次 POST 重新创建 `BackendToken` 导致
+  SSE 连接被抢占的问题；改为进程内单例 `BackendToken` 复用。
 
 ### Removed
 
-- **`miniagent.base_url`**（→ `chat_url`+`models_url`）。旧配置启动期拒绝，operator 必须迁移。
-- **`miniagent.confine`**（→ `mode`）。旧配置启动期拒绝；既有的 `confine: true` 等价于新默认 `mode: default`，
+- **`miniagent.base_url`**（`a3cdfef`）。旧配置启动期拒绝，operator 必须迁移到 `chat_url`+`models_url`。
+- **`miniagent.confine`**（`a3cdfef`）。旧配置启动期拒绝；既有的 `confine: true` 等价于新默认 `mode: default`，
   `confine: false` 等价于 `mode: auto`。
 
 ### Notes
 
-- **operator 迁移清单**（发布重点）：
-  1. 升级 miniagent 二进制到 **v3.0.0**（旧二进制不认 `-chat-url`/`-mode`/`-thinking`/`-session`/`-config`，
-     exit 2）。
+- **上游依赖**：miniagent 二进制建议升级到 **v3.0.0**（旧二进制不认 `-chat-url`/`-mode`/`-thinking`/
+  `-session`/`-config`，exit 2）。详见 `docs/MINIAGENT_V3_MIGRATION.md`。lark-bridge 不打包 miniagent 二进制。
+- **`-approve all` 必须保持默认**（`4635804`）：**bridge 每 prompt fork 一次、stdin 写完即 EOF，
+  `dangerous`/`always` 会在 EOF 后拒绝危险工具**。严禁改为此值。
+- **operator 迁移清单**（v3.0.0，见 `docs/MINIAGENT_V3_MIGRATION.md`）：
+  1. 升级 miniagent 二进制到 **v3.0.0**。
   2. 配置文件 `miniagent.base_url` → `chat_url`+`models_url`（完整 URL）；删 `confine`，按需配 `mode`
      （默认 `default` 等价旧 `confine: true`）。
   3. 配 `miniagent.workspace_root`（v3 必填）。
   4. （可选）多 provider：配 `miniagent.config_path` 指向部署期生成的 `miniagent.json`。
 - **行为变化警告**：operator 的 shell 工具若依赖 sudo/doas/su 等提权器，新默认 `-mode default` 下会被拒，
-  需 `/mode auto`（每 chat）或全局配 `miniagent.mode: auto` 放开。这是有意的护栏（D2）。
+  需 `/mode auto`（每 chat）或全局配 `miniagent.mode: auto` 放开。这是有意的护栏。
 - **`miniagent.json` 部署期生成**：bridge 不生成、不维护该文件（R3）。operator 用 `.env` 模板产出后填 `config_path`。
+- **发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）；miniagent 二进制独立安装。
+
+---
 
 ## [1.9.0] - 2026-08-01
 
