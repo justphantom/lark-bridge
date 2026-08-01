@@ -73,9 +73,9 @@ init_status() {
     write_status_unit
     sudo systemctl daemon-reload
     sudo systemctl enable "$UNIT_NAME"
-    sudo systemctl start "$UNIT_NAME"
-    sleep 1
-    if systemctl is-active --quiet "$UNIT_NAME"; then
+    # wait_active 轮询 ~15s（lib-common），覆盖冷启动窗口；取代固定 sleep 1 +
+    # 单次 is-active——后者在冷启动窗口内必误判失败。
+    if wait_active "$UNIT_NAME"; then
         info "✓ $UNIT_NAME 已安装并运行"
     else
         fail "$UNIT_NAME 启动失败，检查 journalctl -u $UNIT_NAME"
@@ -122,8 +122,7 @@ upgrade_status() {
 
     info "重启 $UNIT_NAME（短暂离线 ~2s）..."
     sudo systemctl restart "$UNIT_NAME"
-    sleep 1
-    if systemctl is-active --quiet "$UNIT_NAME"; then
+    if wait_active "$UNIT_NAME"; then
         info "✓ $UNIT_NAME 已升级并运行"
     else
         fail "$UNIT_NAME 重启失败，检查 journalctl -u $UNIT_NAME"
@@ -132,7 +131,10 @@ upgrade_status() {
 
 # ── main ──────────────────────────────────────────────
 case "${1:-}" in
+    --help|-h)
+        awk 'NR==1{next} /^#!/{next} /^[^#]/{exit} {sub(/^#[[:space:]]?/,""); print}' "$0"
+        exit 0 ;;
     --init) init_status ;;
     "")     upgrade_status ;;
-    *)      fail "未知参数：$1。用法：$0 [--init]" ;;
+    *)      fail "未知参数：$1。用法：$0 [--init | --help]" ;;
 esac
