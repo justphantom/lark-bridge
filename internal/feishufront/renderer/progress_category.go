@@ -23,7 +23,7 @@ func toolCategory(t toolRow) string {
 	// "Shell" never reaches here — isSubagent is checked above.
 	case t.name == "Bash" || t.name == "Shell":
 		return "exec"
-	case t.name == "Edit":
+	case t.name == "Edit" || t.name == "Multi_edit":
 		return "edit"
 	case t.name == "Write":
 		return "write"

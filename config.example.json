@@ -59,7 +59,12 @@
     "system_prompt":   "你是一个简洁的工程助手，回答通常不超过 500 字。重点先行；不确定先查别猜；副作用操作前说明；遇错说原因和修复，别盲目重试。",
     "max_tokens":      4096,
     "stream_history":  50,
-    "workspace_root":  "${WORKSPACE_ROOT}"
+    "workspace_root":  "${WORKSPACE_ROOT}",
+    "stream":          false,
+    "max_iterations":  0,
+    "shell_timeout":   "60s",
+    "confine":         "",
+    "key_file":        ""
   },
 
   "deploy_monitor": {

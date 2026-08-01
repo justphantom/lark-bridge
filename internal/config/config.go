@@ -292,6 +292,35 @@ type MiniAgent struct {
 	// call it) and the /cd picker is disabled. Recommended: ${WORKSPACE_ROOT}
 	// so it shares the same env var as claude-back / opencode-back.
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	// Stream enables miniagent's -stream mode (v2.0.0, SSE): the CLI emits
+	// incremental reasoning_delta events, which the bridge forwards to the
+	// progress card's live "思考中" zone (the terminal result still carries
+	// the full reply). Default false — non-streaming POST, matching the CLI
+	// default; turning it on only changes how the LLM is called + adds live
+	// reasoning, not the final output.
+	Stream bool `json:"stream,omitempty"`
+	// MaxIterations caps one turn's LLM-call count (miniagent -max-iterations,
+	// v2.0.0). <=0/unset → CLI default (20). Wiring it here lets the bridge
+	// tune the same cap that the existing Incomplete / finish=max_iterations
+	// path reacts to, instead of relying on the hardcoded 20.
+	MaxIterations int `json:"max_iterations,omitempty"`
+	// ShellTimeout caps one shell-tool command (miniagent -shell-timeout,
+	// v2.0.0). Go duration string ("60s", "120s"). <=0/unset → CLI default
+	// (60s); still bounded overall by idle_timeout. Raise it for long commands
+	// like `go test` / `npm install` on large repos.
+	ShellTimeout Duration `json:"shell_timeout,omitempty"`
+	// Confine enables miniagent's write-tool path sandbox (v2.0.0). The only
+	// meaningful value is "workdir" (confine write/edit/multi_edit to the
+	// workdir subtree, EvalSymlinks-guarded); empty/absent = free (default).
+	// Defense-in-depth alongside the bridge's own /cd symlink containment —
+	// the CLI rejects an escaping write before it hits the filesystem.
+	Confine string `json:"confine,omitempty"`
+	// KeyFile reads the API key from a file (miniagent -key-file, v2.0.0)
+	// instead of $MINIAGENT_API_KEY, avoiding key exposure via
+	// /proc/$PPID/environ to a shell grandchild. When set, the bridge passes
+	// -key-file and does NOT inject the key into the subprocess env. Empty →
+	// the legacy env-injection path (api_key) is used.
+	KeyFile string `json:"key_file,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

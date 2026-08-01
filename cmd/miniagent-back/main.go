@@ -70,8 +70,12 @@ func run(cfgPath string) error {
 	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
 		return err
 	}
-	if cfg.MiniAgent.APIKey == "" {
-		return fmt.Errorf("miniagent.api_key is required (use ${MINIAGENT_API_KEY} in the config)")
+	// The API key is required, supplied one of two ways (mutually exclusive in
+	// effect): inline via api_key (→ $MINIAGENT_API_KEY env on the subprocess)
+	// or via key_file (→ -key-file; the key then stays out of the subprocess
+	// env). miniclient.New takes both; only one needs to be set.
+	if cfg.MiniAgent.APIKey == "" && cfg.MiniAgent.KeyFile == "" {
+		return fmt.Errorf("miniagent.api_key is required (use ${MINIAGENT_API_KEY}, or set key_file to load it from a file)")
 	}
 	// fail-fast: an empty model makes the miniagent CLI refuse to start
 	// (its main.go requires -model non-empty) and exit code 1 surfaces as
@@ -139,11 +143,16 @@ func run(cfgPath string) error {
 		cliPath = "/usr/local/bin/miniagent"
 	}
 	client := miniclient.New(miniclient.Config{
-		CLIPath:      cliPath,
-		APIKey:       cfg.MiniAgent.APIKey,
-		BaseURL:      cfg.MiniAgent.BaseURL,
-		SystemPrompt: cfg.MiniAgent.SystemPrompt,
-		MaxTokens:    cfg.MiniAgent.MaxTokens,
+		CLIPath:       cliPath,
+		APIKey:        cfg.MiniAgent.APIKey,
+		BaseURL:       cfg.MiniAgent.BaseURL,
+		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
+		MaxTokens:     cfg.MiniAgent.MaxTokens,
+		Stream:        cfg.MiniAgent.Stream,
+		MaxIterations: cfg.MiniAgent.MaxIterations,
+		ShellTimeout:  time.Duration(cfg.MiniAgent.ShellTimeout),
+		Confine:       cfg.MiniAgent.Confine,
+		KeyFile:       cfg.MiniAgent.KeyFile,
 	}, logger)
 
 	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.StreamArchiveRedact)

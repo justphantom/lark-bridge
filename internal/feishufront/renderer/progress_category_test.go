@@ -17,6 +17,7 @@ func TestToolCategory_NormalisedNames(t *testing.T) {
 		{"read", "read"},
 		{"write", "write"},
 		{"edit", "edit"},
+		{"multi_edit", "edit"}, // v2.0.0 tool; normalises to Multi_edit → edit
 		{"shell", "exec"},
 		// claude/opencode/omp (already PascalCase).
 		{"Read", "read"},

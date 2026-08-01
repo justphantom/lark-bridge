@@ -5,6 +5,40 @@
 
 ## [Unreleased]
 
+miniagent **v2.0.0** 全量接入。主线：吸收上游 v2.0.0 的外部契约破坏（`shell` 退出码语义）+
+新事件（`tool_result` / 流式 `text_delta`·`reasoning_delta`）+ 新 CLI flags + 新工具分类；协议层零
+改动（`TypeToolResult`/`TypeThinking`/`TypeText` 早被三桥使用，miniagent 仅转发）。详见
+`docs/MINIAGENT_V2_INTEGRATION_PLAN.md`。新增功能 → 按 semver 升 minor。
+
+### Added
+
+- **miniclient 解析 v2.0.0 事件**。`event.go` 扩 `Event`/`rawEvent` 容纳 `tool_result`（`output`/
+  `truncated`/`is_error`/`exit_code`）、流式 `text_delta`/`reasoning_delta`（`step`/`text`）；新增
+  `KindToolResult`/`KindTextDelta`/`KindReasoningDelta` 常量。未知 type 仍 `ok=true` 非终态（前向兼容，
+  未来事件不破泵）。旧版 v1.1.0 二进制不产出这些事件，零影响。
+- **`tool_result` 透传**（D2）。`miniagent.emitCLIEvent` 增 `KindToolResult`→`TypeToolResult`。v2.0.0 破坏性
+  变更的唯一落地处：`shell` 非 0 退出 `is_error` 由 true 改 false，改由 `exit_code` 表达——handler 据此
+  把 `[exit N]` 拼进 `Output` 首行（不改协议），`IsError` 仅在 `exit_code<0`（超时/启动失败）或非 shell
+  工具的 `is_error=true` 时置位。
+- **流式输出**（D1）。`config.MiniAgent.Stream`（默认关）→ `miniclient` 传 `-stream`；`emitCLIEvent` 增
+  `KindTextDelta`→`TypeText`、`KindReasoningDelta`→`TypeThinking`（append 模式，渲染层「思考中」区已截尾）。
+  与 claude/opencode 流式体验对齐。
+- **可选 CLI flags**（D3：推荐四项）。`config.MiniAgent` 增 `max_iterations`/`shell_timeout`/`confine`/
+  `key_file`；`miniclient.buildArgs` 据此拼 `-max-iterations`/`-shell-timeout`/`-confine workdir`/`-key-file`。
+  `key_file` 非空时改由文件注入 key 且不再经 `$MINIAGENT_API_KEY` env 注入（规避 `/proc/$PPID/environ`
+  泄漏）。`max_iterations` 与既有 `Incomplete`（撞迭代上限）联动，让上限可配而非撞硬编码 20。
+- **`-list-models` 委托 CLI**（D4）。`miniclient` 增 `ListModels(ctx)` fork `miniagent -list-models` 读
+  stdout；`miniagent/models.go` 删除自带 `GET /v1/models` 的 HTTP/解析/4 MiB 限流代码，改委托 CLI
+  （v2.0.0 重新暴露 `-list-models`，回归 v1.1.0 前 behavior）。
+- **`multi_edit` 工具分类**。`renderer.toolCategory` 把 `multi_edit`（→`Multi_edit`）归入 edit 类，进度卡
+  summary「编辑 N」段纳入；`grep`/`glob` 经 `isReadTool` 早被归入 read。
+
+### Notes
+
+- **上游依赖**：miniagent 二进制建议升级到 **v2.0.0**——`tool_result`/流式/`exit_code`/新 flags 在旧版
+  退化为「事件不出现 / flag 被拒」。lark-bridge 不打包 miniagent 二进制。`-approve` 必须保持默认 `all`
+  （bridge 每 prompt fork 一次、stdin 写完即 EOF，`dangerous`/`always` 会在 EOF 后拒绝危险工具）。
+
 ## [1.9.0] - 2026-08-01
 
 v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incomplete、shell 进度摘要）、

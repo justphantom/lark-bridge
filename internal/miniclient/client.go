@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
@@ -40,18 +41,31 @@ type Config struct {
 	SystemPrompt  string
 	MaxTokens     int
 	MaxConcurrent int
+	// Stream enables miniagent's -stream mode (v2.0.0): SSE LLM calls emit
+	// reasoning_delta events so the bridge can show a live "思考中" zone.
+	Stream bool
+	// Optional v2.0.0 run flags. Zero values → omitted (CLI defaults apply).
+	MaxIterations int
+	ShellTimeout  time.Duration
+	Confine       string // "" or "workdir"
+	KeyFile       string // when set, key comes from file, not env
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
 // Run spawns one subprocess, and a semaphore caps parallelism.
 type Client struct {
-	cliPath   string
-	apiKey    string
-	baseURL   string
-	system    string
-	maxTokens int
-	logger    *log.Logger
-	sem       chan struct{}
+	cliPath       string
+	apiKey        string
+	baseURL       string
+	system        string
+	maxTokens     int
+	stream        bool
+	maxIterations int
+	shellTimeout  time.Duration
+	confine       string
+	keyFile       string
+	logger        *log.Logger
+	sem           chan struct{}
 }
 
 // New builds a Client. logger may be nil (→ nop).
@@ -64,13 +78,18 @@ func New(cfg Config, logger *log.Logger) *Client {
 		n = defaultMaxConcurrent
 	}
 	return &Client{
-		cliPath:   cfg.CLIPath,
-		apiKey:    cfg.APIKey,
-		baseURL:   cfg.BaseURL,
-		system:    cfg.SystemPrompt,
-		maxTokens: cfg.MaxTokens,
-		logger:    logger,
-		sem:       make(chan struct{}, n),
+		cliPath:       cfg.CLIPath,
+		apiKey:        cfg.APIKey,
+		baseURL:       cfg.BaseURL,
+		system:        cfg.SystemPrompt,
+		maxTokens:     cfg.MaxTokens,
+		stream:        cfg.Stream,
+		maxIterations: cfg.MaxIterations,
+		shellTimeout:  cfg.ShellTimeout,
+		confine:       cfg.Confine,
+		keyFile:       cfg.KeyFile,
+		logger:        logger,
+		sem:           make(chan struct{}, n),
 	}
 }
 
@@ -81,15 +100,6 @@ type RunOptions struct {
 	Workdir string
 	Sink    io.Writer // optional: tee raw NDJSON lines here
 }
-
-// BaseURL returns the configured OpenAI-compatible root. Exposed so the
-// miniagent handler can issue its own GET /v1/models (the CLI no longer
-// has -list-models after the stateless refactor) using the same endpoint
-// the subprocess uses for /v1/chat/completions.
-func (c *Client) BaseURL() string { return c.baseURL }
-
-// APIKey returns the configured Bearer key. See BaseURL for the rationale.
-func (c *Client) APIKey() string { return c.apiKey }
 
 // Run starts one miniagent subprocess for opts and returns the event
 // stream. The caller MUST drain the channel until close. A terminal Event
@@ -109,12 +119,19 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	// #nosec G204 -- c.cliPath comes from trusted config; args are built internally.
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
 	cmd.Stdin = strings.NewReader(opts.Prompt)
-	// Pass the API key via env, not a flag: miniagent's CLI has no -api-key
-	// (passing one fails startup with "flag provided but not defined"). Inherit
-	// a SANITISED parent env (bridge's own secrets — FEISHU_APP_SECRET / IPC_
-	// SECRET / ENCRYPT_KEY … — are stripped so a user-run Bash tool inside
-	// miniagent cannot read them), then set/override the API key.
-	cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+c.apiKey)
+	// API key injection. Inherit a SANITISED parent env (bridge's own secrets
+	// — FEISHU_APP_SECRET / IPC_SECRET / ENCRYPT_KEY … — are stripped so a
+	// user-run shell tool inside miniagent cannot read them). The key itself
+	// is passed via $MINIAGENT_API_KEY (the CLI has no -api-key flag) UNLESS
+	// KeyFile is set: then buildArgs already added -key-file (a path, not the
+	// key), and the key must NOT also enter the env — that would defeat the
+	// file-based path's whole purpose (keeping the key out of the process env
+	// so /proc/$PPID/environ can't leak it to a shell grandchild).
+	if c.keyFile == "" {
+		cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+c.apiKey)
+	} else {
+		cmd.Env = cmdutil.SanitizeChildEnv()
+	}
 	// Tree-wide SIGKILL on ctx cancel: the CLI spawns tool subprocesses
 	// (bash, git …) that inherit the stdout pipe write end. Without a
 	// process group + WaitDelay, those grandchildren keep the scanner
@@ -150,11 +167,11 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 }
 
 // buildArgs assembles the CLI flags from Client-level config (system prompt,
-// max-tokens) + per-turn options (model, workdir). The API key is
-// intentionally NOT passed as a flag: miniagent's CLI has no -api-key
-// (unknown flags fail startup), it reads $MINIAGENT_API_KEY. Run sets that
-// env var explicitly on the subprocess so a backend running without the
-// env in its own environment still works.
+// max-tokens, optional v2.0.0 run flags) + per-turn options (model, workdir).
+// The API key itself is NOT passed as a flag: miniagent's CLI has no -api-key
+// (unknown flags fail startup). The default key path is $MINIAGENT_API_KEY,
+// set explicitly on the subprocess env in Run; the v2.0.0 alternative is
+// -key-file (a PATH, not the key), added here when KeyFile is configured.
 //
 // Flag form is single-dash to match the miniagent README (Go's flag package
 // accepts both -x and --x).
@@ -171,6 +188,23 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	}
 	if opts.Workdir != "" {
 		a = append(a, "-workdir", opts.Workdir)
+	}
+	if c.stream {
+		// -stream was removed in miniagent fe85c16 and re-added in v2.0.0;
+		// requires a v2.0.0+ binary (older binaries exit(2) on the unknown flag).
+		a = append(a, "-stream")
+	}
+	if c.maxIterations > 0 {
+		a = append(a, "-max-iterations", strconv.Itoa(c.maxIterations))
+	}
+	if c.shellTimeout > 0 {
+		a = append(a, "-shell-timeout", c.shellTimeout.String())
+	}
+	if c.confine != "" {
+		a = append(a, "-confine", c.confine)
+	}
+	if c.keyFile != "" {
+		a = append(a, "-key-file", c.keyFile)
 	}
 	return a
 }

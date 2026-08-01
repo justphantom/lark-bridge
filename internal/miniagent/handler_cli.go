@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -89,6 +90,21 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			ChatID:   chatID,
 			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: ev.Input},
 		})
+	case miniclient.KindToolResult:
+		h.emitToolResult(chatID, promptID, ev)
+	case miniclient.KindReasoningDelta:
+		// Streaming reasoning increment → live "思考中" zone. Append mode
+		// (Replace=false): each delta is a chunk, the renderer caps the
+		// trailing runes shown. text_delta is intentionally NOT forwarded:
+		// the frontend dispatcher drops TypeText (live text preview was
+		// removed; the full reply arrives in the terminal result event), so
+		// emitting it would be a dead signal.
+		h.sendCtrl(&protocol.Control{
+			Type:     protocol.TypeThinking,
+			PromptID: promptID,
+			ChatID:   chatID,
+			Thinking: &protocol.ThinkingPayload{Delta: ev.Text},
+		})
 	case miniclient.KindResult:
 		incomplete := ev.Finish == miniclient.FinishMaxIterations
 		text := ev.Text
@@ -135,6 +151,48 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			Error:    &protocol.ErrorPayload{Message: ev.Message, Recoverable: true},
 		})
 	}
+}
+
+// emitToolResult translates a v2.0.0 tool_result event into a TypeToolResult
+// control. The miniagent CLI truncates the full result to a 2000-char excerpt
+// for the event (the complete output stays in its history for LLM re-feed);
+// Truncated is surfaced as a suffix so the user knows there was more.
+//
+// The v2.0.0 breaking change lands here: the shell tool reports a non-zero
+// exit as exit_code with is_error=false (a legitimate command result, not an
+// execution failure). To preserve "did the command fail?" without a protocol
+// change (decision D2), the exit code is prepended to Output ([exit N]) and
+// IsError is set only for exit_code<0 (the CLI's timeout/startup-failure
+// sentinel). Non-shell tools keep the CLI's is_error verbatim.
+func (h *Handler) emitToolResult(chatID, promptID string, ev miniclient.Event) {
+	output := ev.Output
+	isErr := ev.IsError
+	if ev.Name == "shell" && ev.ExitCode != nil {
+		code := *ev.ExitCode
+		if code != 0 {
+			prefix := "[exit " + strconv.Itoa(code) + "]"
+			if output == "" {
+				output = prefix
+			} else {
+				output = prefix + " " + output
+			}
+		}
+		isErr = code < 0
+	}
+	if ev.Truncated {
+		const tag = "…（输出已截断）"
+		if output == "" {
+			output = tag
+		} else {
+			output += "\n" + tag
+		}
+	}
+	h.sendCtrl(&protocol.Control{
+		Type:       protocol.TypeToolResult,
+		PromptID:   promptID,
+		ChatID:     chatID,
+		ToolResult: &protocol.ToolResultPayload{Name: ev.Name, Output: output, IsError: isErr},
+	})
 }
 
 // activeTurnConfig returns the (model, workdir) the CLI subprocess should be

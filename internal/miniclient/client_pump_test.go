@@ -243,6 +243,54 @@ func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
 	}
 }
 
+// TestRun_KeyFileOmitsEnvKey verifies the v2.0.0 -key-file path's security
+// property: when KeyFile is set, neither the configured APIKey value NOR the
+// key file's contents enter the subprocess env (so /proc/$PPID/environ cannot
+// leak them to a shell grandchild), and the -key-file flag is passed so the CLI
+// knows where to read. The probe script dumps its own env + args to a marker.
+func TestRun_KeyFileOmitsEnvKey(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "probe.sh")
+	marker := filepath.Join(dir, "env.txt")
+	keyFile := filepath.Join(dir, "key")
+	if err := os.WriteFile(keyFile, []byte("sk-from-file"), 0o600); err != nil {
+		t.Fatalf("write keyfile: %v", err)
+	}
+	script := "#!/bin/bash\n" +
+		"{ printf 'KEY=[%s]\\n' \"$MINIAGENT_API_KEY\"; printf 'ARGS=%s\\n' \"$*\"; } > " + marker + "\n" +
+		`printf '{"type":"result","text":"ok","model":"m","steps":1}\n'` + "\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	c := New(Config{CLIPath: scriptPath, APIKey: "sk-should-not-leak", KeyFile: keyFile}, nil)
+	ch, err := c.Run(context.Background(), RunOptions{Model: "m"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for range ch {
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	s := string(got)
+	// The configured APIKey value must NOT reach the subprocess env.
+	if strings.Contains(s, "sk-should-not-leak") {
+		t.Errorf("APIKey value leaked into env despite KeyFile:\n%s", s)
+	}
+	// The key file's contents must NOT reach the env either.
+	if strings.Contains(s, "sk-from-file") {
+		t.Errorf("key file contents leaked into env:\n%s", s)
+	}
+	// The -key-file flag must be passed so the CLI reads the key from the file.
+	if !strings.Contains(s, "-key-file "+keyFile) {
+		t.Errorf("-key-file flag missing from args:\n%s", s)
+	}
+}
+
 // TestRun_SinkTeesRawLines verifies the F9 archive tee: every raw stdout
 // line reaches the sink verbatim (one per line, in order) before parsing.
 func TestRun_SinkTeesRawLines(t *testing.T) {

@@ -27,16 +27,16 @@ import (
 // place via notifyWithPromptID; a post-answer failure patches the picker card.
 func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title, body string) {
 	if arg == "" {
-		// Interactive picker: fetchModels may take seconds and askAndWait
+		// Interactive picker: ListModels may take seconds and askAndWait
 		// blocks for a human click; both must run off the SSE event loop.
-		// Launch a goroutine that fetches models via HTTP, emits a picker
-		// Question morphing the progress card, waits for the click, and
-		// patches that same card with the result.
+		// Launch a goroutine that forks `miniagent -list-models`, emits a
+		// picker Question morphing the progress card, waits for the click,
+		// and patches that same card with the result.
 		promptID := h.PromptIDForPickers(chatID)
 		go func() { //nolint:gosec // G118: picker outlives the request ctx — the user's click may come minutes later
 			pickCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			models, err := fetchModels(pickCtx, h.client.BaseURL(), h.client.APIKey())
+			models, err := h.client.ListModels(pickCtx)
 			if err != nil {
 				h.notifyWithPromptID(chatID, promptID, "error", "选择失败", err.Error())
 				return
@@ -68,7 +68,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 
 // cmdModels lists available models from the OpenAI-compatible endpoint.
 func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title, body string) {
-	models, err := fetchModels(ctx, h.client.BaseURL(), h.client.APIKey())
+	models, err := h.client.ListModels(ctx)
 	if err != nil {
 		return "error", "模型列表", "获取失败：" + err.Error()
 	}

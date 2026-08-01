@@ -2,6 +2,7 @@ package miniclient
 
 import (
 	"testing"
+	"time"
 )
 
 func TestParseEvent_ToolUse(t *testing.T) {
@@ -75,6 +76,84 @@ func TestParseEvent_EmptyType(t *testing.T) {
 	}
 }
 
+// TestParseEvent_ToolResult covers the v2.0.0 tool_result event. A non-shell
+// tool carries no exit_code (pointer stays nil); is_error propagates as-is.
+// It is a non-terminal mid-stream event.
+func TestParseEvent_ToolResult(t *testing.T) {
+	ev, ok := parseEvent([]byte(`{"type":"tool_result","name":"read","call_id":"c1","output":"hi","truncated":false,"is_error":false}`))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if ev.Kind != KindToolResult {
+		t.Errorf("Kind = %q, want tool_result", ev.Kind)
+	}
+	if ev.IsTerminal {
+		t.Error("tool_result must not be terminal")
+	}
+	if ev.Name != "read" || ev.Output != "hi" {
+		t.Errorf("got name=%q output=%q", ev.Name, ev.Output)
+	}
+	if ev.ExitCode != nil {
+		t.Errorf("ExitCode = %v, want nil for non-shell tool", *ev.ExitCode)
+	}
+}
+
+// TestParseEvent_ToolResult_ShellExitCode covers the v2.0.0 breaking change:
+// shell non-zero exit reports exit_code and is_error=false (a legitimate
+// command result, not an execution failure). The pointer distinguishes
+// "absent" from a real code 0.
+func TestParseEvent_ToolResult_ShellExitCode(t *testing.T) {
+	ev, ok := parseEvent([]byte(`{"type":"tool_result","name":"shell","call_id":"c1","output":"err","is_error":false,"exit_code":1}`))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if ev.IsError {
+		t.Error("IsError = true, want false (v2: non-zero exit is not is_error)")
+	}
+	if ev.ExitCode == nil || *ev.ExitCode != 1 {
+		t.Errorf("ExitCode = %v, want 1", ev.ExitCode)
+	}
+}
+
+// TestParseEvent_Deltas covers the v2.0.0 streaming increments (text_delta /
+// reasoning_delta), emitted only under -stream. Both reuse the text JSON key
+// for the chunk and add a step index; neither is terminal.
+func TestParseEvent_Deltas(t *testing.T) {
+	td, ok := parseEvent([]byte(`{"type":"text_delta","step":2,"text":"foo"}`))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if td.Kind != KindTextDelta || td.Step != 2 || td.Text != "foo" {
+		t.Errorf("text_delta got %+v", td)
+	}
+	if td.IsTerminal {
+		t.Error("text_delta must not be terminal")
+	}
+	rd, ok := parseEvent([]byte(`{"type":"reasoning_delta","step":1,"text":"think"}`))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if rd.Kind != KindReasoningDelta || rd.Text != "think" {
+		t.Errorf("reasoning_delta got %+v", rd)
+	}
+}
+
+// TestParseEvent_UnknownType confirms a forward-compat guarantee: a type the
+// bridge does not yet know still parses (ok=true), is non-terminal, and
+// carries the raw type in Kind so the handler switch can ignore it.
+func TestParseEvent_UnknownType(t *testing.T) {
+	ev, ok := parseEvent([]byte(`{"type":"some_future_event","x":1}`))
+	if !ok {
+		t.Fatal("expected ok for unknown type (forward compat)")
+	}
+	if ev.IsTerminal {
+		t.Error("unknown type must not be terminal")
+	}
+	if ev.Kind != "some_future_event" {
+		t.Errorf("Kind = %q, want raw type passthrough", ev.Kind)
+	}
+}
+
 func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/miniagent",
@@ -133,10 +212,11 @@ func TestBuildArgs_Minimal(t *testing.T) {
 }
 
 // TestBuildArgs_NoRemovedFlags is a regression guard for the stateless
-// migration: the 6 flags miniagent fe85c16 deleted (-verbose / -stream /
-// -permission / -blocked-patterns / -chat-id / -state-dir) MUST NOT appear
-// in buildArgs output. Any of them would make Go's flag package os.Exit(2)
-// at startup.
+// migration: 5 of the 6 flags miniagent fe85c16 deleted (-verbose /
+// -permission / -blocked-patterns / -chat-id / -state-dir) MUST NOT appear in
+// buildArgs output — any would make Go's flag package os.Exit(2) at startup.
+// (-stream was also deleted in fe85c16 but RE-ADDED in v2.0.0, so it is no
+// longer banned; see TestBuildArgs_Stream.)
 func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/ma",
@@ -146,11 +226,24 @@ func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 		MaxTokens:    100,
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
-	banned := []string{"-verbose", "-stream", "-permission", "-blocked-patterns", "-chat-id", "-state-dir"}
+	banned := []string{"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir"}
 	for _, b := range banned {
 		if contains(args, b) {
 			t.Errorf("removed flag %q present in args: %v", b, args)
 		}
+	}
+}
+
+// TestBuildArgs_Stream verifies -stream is emitted only when configured (v2.0.0
+// re-added the flag; it requires a v2.0.0+ binary, hence the opt-in).
+func TestBuildArgs_Stream(t *testing.T) {
+	off := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
+	if contains(off.buildArgs(RunOptions{Model: "m"}), "-stream") {
+		t.Error("-stream present when Stream=false")
+	}
+	on := New(Config{CLIPath: "/bin/ma", APIKey: "k", Stream: true}, nil)
+	if !contains(on.buildArgs(RunOptions{Model: "m"}), "-stream") {
+		t.Error("-stream absent when Stream=true")
 	}
 }
 
@@ -161,4 +254,55 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// argValue returns the value immediately following flag in args, or "" if the
+// flag is absent or has no value (e.g. a bare bool flag at the tail).
+func argValue(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// TestBuildArgs_V2OptionalFlags verifies the v2.0.0 optional run flags are
+// emitted with their values when configured. Zero/empty omission is covered by
+// TestBuildArgs_Minimal's shape (these fields are absent from that Config).
+func TestBuildArgs_V2OptionalFlags(t *testing.T) {
+	c := New(Config{
+		CLIPath:       "/bin/ma",
+		APIKey:        "k",
+		MaxIterations: 30,
+		ShellTimeout:  90 * time.Second,
+		Confine:       "workdir",
+		KeyFile:       "/etc/miniagent/key",
+	}, nil)
+	args := c.buildArgs(RunOptions{Model: "m"})
+	if v := argValue(args, "-max-iterations"); v != "30" {
+		t.Errorf("-max-iterations = %q, want 30", v)
+	}
+	if v := argValue(args, "-shell-timeout"); v != "1m30s" {
+		t.Errorf("-shell-timeout = %q, want 1m30s", v)
+	}
+	if v := argValue(args, "-confine"); v != "workdir" {
+		t.Errorf("-confine = %q, want workdir", v)
+	}
+	if v := argValue(args, "-key-file"); v != "/etc/miniagent/key" {
+		t.Errorf("-key-file = %q, want /etc/miniagent/key", v)
+	}
+}
+
+// TestBuildArgs_V2OptionalFlags_Omitted confirms the v2.0.0 flags stay absent
+// at zero values so a default config does not pass them (the CLI would still
+// accept them, but the bridge should not invent settings the user did not set).
+func TestBuildArgs_V2OptionalFlags_Omitted(t *testing.T) {
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
+	args := c.buildArgs(RunOptions{Model: "m"})
+	for _, f := range []string{"-max-iterations", "-shell-timeout", "-confine", "-key-file"} {
+		if contains(args, f) {
+			t.Errorf("zero-value flag %s should be omitted: %v", f, args)
+		}
+	}
 }

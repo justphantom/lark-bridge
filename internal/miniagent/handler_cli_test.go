@@ -2,6 +2,7 @@ package miniagent
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,129 @@ func TestEmitCLIEvent_Error(t *testing.T) {
 	}
 	if got[0].Error.Message != "boom" {
 		t.Errorf("Message = %q, want boom", got[0].Error.Message)
+	}
+}
+
+// TestEmitCLIEvent_ToolResult_NonShell verifies a v2.0.0 tool_result event for
+// a non-shell tool maps to a TypeToolResult with output propagated and is_error
+// taken verbatim (no exit_code on non-shell tools).
+func TestEmitCLIEvent_ToolResult_NonShell(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:    miniclient.KindToolResult,
+		Name:    "read",
+		Output:  "file contents",
+		IsError: false,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now())
+	got := sender.Controls()
+	if len(got) != 1 || got[0].ToolResult == nil {
+		t.Fatalf("want one ToolResult, got %+v", got)
+	}
+	tr := got[0].ToolResult
+	if tr.Name != "read" || tr.Output != "file contents" {
+		t.Errorf("got name=%q output=%q", tr.Name, tr.Output)
+	}
+	if tr.IsError {
+		t.Error("IsError = true, want false")
+	}
+}
+
+// TestEmitCLIEvent_ToolResult_ShellExitCode covers the v2.0.0 breaking change
+// (decision D2): shell non-zero exit reports exit_code with is_error=false. The
+// handler prepends [exit N] to the output and keeps IsError false for >0;
+// exit_code 0 adds no prefix; exit_code<0 (CLI timeout/startup sentinel) is the
+// one case that stays IsError=true.
+func TestEmitCLIEvent_ToolResult_ShellExitCode(t *testing.T) {
+	cases := []struct {
+		name       string
+		code       int
+		input      string
+		wantOutput string
+		wantErr    bool
+	}{
+		{"nonzero", 1, "fail msg", "[exit 1] fail msg", false},
+		{"zero", 0, "ok", "ok", false},
+		{"timeout", -1, "", "[exit -1]", true},
+		{"nonzero-empty-output", 2, "", "[exit 2]", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, sender := newCLIHandler(t)
+			code := c.code
+			ev := miniclient.Event{
+				Kind:     miniclient.KindToolResult,
+				Name:     "shell",
+				Output:   c.input,
+				ExitCode: &code,
+			}
+			h.emitCLIEvent("c", "p", ev, time.Now())
+			got := sender.Controls()
+			if len(got) != 1 || got[0].ToolResult == nil {
+				t.Fatalf("want one ToolResult, got %+v", got)
+			}
+			tr := got[0].ToolResult
+			if tr.Output != c.wantOutput {
+				t.Errorf("Output = %q, want %q", tr.Output, c.wantOutput)
+			}
+			if tr.IsError != c.wantErr {
+				t.Errorf("IsError = %v, want %v", tr.IsError, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestEmitCLIEvent_ToolResult_Truncated verifies the truncated suffix is added
+// so the user knows the CLI's 2000-char event excerpt elided more.
+func TestEmitCLIEvent_ToolResult_Truncated(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:      miniclient.KindToolResult,
+		Name:      "grep",
+		Output:    "match line",
+		Truncated: true,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now())
+	tr := sender.Controls()[0].ToolResult
+	if !strings.Contains(tr.Output, "match line") || !strings.Contains(tr.Output, "已截断") {
+		t.Errorf("Output = %q, want body + truncated suffix", tr.Output)
+	}
+}
+
+// TestEmitCLIEvent_ReasoningDelta verifies a streaming reasoning_delta (v2.0.0,
+// -stream only) maps to a TypeThinking control in APPEND mode (Replace=false),
+// feeding the live "思考中" zone chunk by chunk.
+func TestEmitCLIEvent_ReasoningDelta(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	h.emitCLIEvent("c", "p", miniclient.Event{
+		Kind: miniclient.KindReasoningDelta,
+		Step: 1,
+		Text: "thinking chunk",
+	}, time.Now())
+	got := sender.Controls()
+	if len(got) != 1 || got[0].Thinking == nil {
+		t.Fatalf("want one Thinking, got %+v", got)
+	}
+	if got[0].Thinking.Delta != "thinking chunk" {
+		t.Errorf("Delta = %q, want thinking chunk", got[0].Thinking.Delta)
+	}
+	if got[0].Thinking.Replace {
+		t.Error("Replace = true, want false (append for streaming deltas)")
+	}
+}
+
+// TestEmitCLIEvent_TextDelta_Dropped verifies text_delta is intentionally NOT
+// forwarded: the frontend dispatcher drops TypeText (live text preview was
+// removed), and the full reply arrives in the terminal result event. The
+// handler emits nothing for it.
+func TestEmitCLIEvent_TextDelta_Dropped(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	h.emitCLIEvent("c", "p", miniclient.Event{
+		Kind: miniclient.KindTextDelta,
+		Text: "chunk",
+	}, time.Now())
+	if len(sender.Controls()) != 0 {
+		t.Errorf("text_delta should emit no control, got %+v", sender.Controls())
 	}
 }
 
