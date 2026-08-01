@@ -2,8 +2,11 @@ package miniagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -18,7 +21,7 @@ import (
 // owns IPC + per-chat binding (Directory/ModelSpec) + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	model, workdir := h.activeTurnConfig(chatID)
+	model, workdir, mode, thinking := h.activeTurnConfig(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
@@ -40,10 +43,13 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	}
 
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
-		Prompt:  prompt,
-		Model:   model,
-		Workdir: workdir,
-		Sink:    sink,
+		Prompt:   prompt,
+		Model:    model,
+		Workdir:  workdir,
+		Mode:     mode,
+		Thinking: thinking,
+		Session:  h.sessionPath(chatID),
+		Sink:     sink,
 	})
 	if err != nil {
 		h.logger.Warn("miniagent start failed",
@@ -195,22 +201,44 @@ func (h *Handler) emitToolResult(chatID, promptID string, ev miniclient.Event) {
 	})
 }
 
-// activeTurnConfig returns the (model, workdir) the CLI subprocess should be
-// invoked with for this chat. Per-chat binding fields (router.Lookup) win;
-// empty fields fall back to the bridge's global defaults from config.
+// clientDefaultMode is the global -mode fallback (config.MiniAgent.Mode via
+// miniclient), used when a chat has no per-chat Mode pin. "default" when the
+// client is nil (tests).
+func (h *Handler) clientDefaultMode() string {
+	if h.client != nil {
+		return h.client.DefaultMode()
+	}
+	return "default"
+}
+
+// clientDefaultThinking is the global -thinking fallback. "off" when the
+// client is nil (tests).
+func (h *Handler) clientDefaultThinking() string {
+	if h.client != nil {
+		return h.client.DefaultThinking()
+	}
+	return "off"
+}
+
+// activeTurnConfig returns the (model, workdir, mode, thinking) the CLI
+// subprocess should be invoked with for this chat. Per-chat binding fields
+// (router.Lookup) win; empty fields fall back to the bridge's global defaults
+// from config.
 //
 // When no binding exists the globals are returned directly — the binding is
-// created lazily by /model or /cd, not by the first prompt (miniagent has no
-// session to seed).
-func (h *Handler) activeTurnConfig(chatID string) (model, workdir string) {
+// created lazily by /model, /cd, /mode or /thinking, not by the first prompt
+// (miniagent has no session to seed).
+func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinking string) {
 	model = h.cfgModel
 	workdir = h.workspaceRoot
+	mode = h.clientDefaultMode()
+	thinking = h.clientDefaultThinking()
 	if h.router == nil {
-		return model, workdir
+		return model, workdir, mode, thinking
 	}
 	b, ok := h.router.Lookup(chatID)
 	if !ok {
-		return model, workdir
+		return model, workdir, mode, thinking
 	}
 	if b.ModelSpec != "" {
 		model = b.ModelSpec
@@ -218,7 +246,13 @@ func (h *Handler) activeTurnConfig(chatID string) (model, workdir string) {
 	if b.Directory != "" {
 		workdir = b.Directory
 	}
-	return model, workdir
+	if b.Mode != "" {
+		mode = b.Mode
+	}
+	if b.Thinking != "" {
+		thinking = b.Thinking
+	}
+	return model, workdir, mode, thinking
 }
 
 // activeModel returns the model the CLI would be invoked with for this chat
@@ -243,6 +277,29 @@ func (h *Handler) activeDir(chatID string) string {
 	return h.workspaceRoot
 }
 
+// activeMode returns the -mode the CLI would be invoked with for this chat
+// (used by /current and /mode display). Same precedence as activeTurnConfig.
+func (h *Handler) activeMode(chatID string) string {
+	if h.router != nil {
+		if b, ok := h.router.Lookup(chatID); ok && b.Mode != "" {
+			return b.Mode
+		}
+	}
+	return h.clientDefaultMode()
+}
+
+// activeThinking returns the -thinking the CLI would be invoked with for this
+// chat (used by /current and /thinking display). Same precedence as
+// activeTurnConfig.
+func (h *Handler) activeThinking(chatID string) string {
+	if h.router != nil {
+		if b, ok := h.router.Lookup(chatID); ok && b.Thinking != "" {
+			return b.Thinking
+		}
+	}
+	return h.clientDefaultThinking()
+}
+
 // ensureBinding returns the binding for chatID, creating one on first use.
 // Required because Router.SetModelSpec/SetDirectory are no-ops on missing
 // bindings; /model and /cd must create the binding before mutating it.
@@ -254,4 +311,20 @@ func (h *Handler) ensureBinding(chatID string) {
 		return
 	}
 	h.router.Bind(chatID, "", "", "", "", "")
+}
+
+// sessionPath returns the absolute jsonl path for chatID's per-chat session,
+// or "" when no session root is configured (stateDir unset, e.g. some tests)
+// → runViaCLI passes "" → buildArgs omits -session → miniagent runs stateless.
+// v3 -session treats a value containing / or . as a literal path, so an
+// absolute path bypasses session.dir id resolution. chatID is external input
+// (Feishu chat id), so it is hashed (sha256 hex) — never concatenated raw —
+// to prevent path traversal/collision under sessionRoot. Same-chat write
+// serialisation is guaranteed by startTurn busy-then-drop (R4), not here.
+func (h *Handler) sessionPath(chatID string) string {
+	if h.sessionRoot == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(chatID))
+	return filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".jsonl")
 }

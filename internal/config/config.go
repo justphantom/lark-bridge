@@ -257,70 +257,58 @@ type StatusMonitor struct {
 	Interval Duration `json:"interval,omitempty"`
 }
 
-// MiniAgent holds settings for the miniagent backend. Each turn forks the
-// miniagent CLI binary (github.com/justphantom/miniagent): the CLI owns the
-// ReAct loop, tools, and the LLM call; the bridge does IPC + slash-command
-// dispatch + per-chat Directory/ModelSpec binding via the router. This
-// mirrors how the claude/opencode backends shell out to their own CLIs —
-// the bridge carries no LLM code of its own beyond GET /v1/models for the
-// /model picker.
+// MiniAgent configures the miniagent backend (cmd/miniagent-back). The bridge
+// forks the miniagent CLI per turn; these fields map to CLI flags. v3.0.0
+// replaced -base-url/-confine with full URLs + -mode (see buildArgs).
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
-	// pull from the environment (config.Load expands it); writing the key
-	// literally in the config file is discouraged.
+	// pull from the environment. Bare-mode fallback: $MINIAGENT_API_KEY.
 	APIKey string `json:"api_key,omitempty"`
-	// BaseURL is the OpenAI-compatible root (no /v1/... suffix), e.g.
-	// "https://api.openai.com" or a compatible provider's root like
-	// "https://api.deepseek.com". Required: use ${MINIAGENT_BASE_URL} in
-	// the config (config.Load rejects an unset/empty ${VAR}).
-	BaseURL string `json:"base_url,omitempty"`
-	// Model is the model id passed as the -model flag (e.g.
-	// "gpt-4o", "deepseek-chat"). Required: use ${MINIAGENT_DEFAULT_MODEL}
-	// in the config (config.Load rejects an unset/empty ${VAR}); an empty
-	// value makes the miniagent CLI refuse to start.
+	// ChatURL is the FULL chat completions URL (e.g. ".../v1/chat/completions"),
+	// required in bare mode (config_path empty). v3 removed -base-url. [P1]
+	ChatURL string `json:"chat_url,omitempty"`
+	// ModelsURL is the FULL models URL (e.g. ".../v1/models"), optional in bare
+	// mode but effectively required for /models (ListAvailableModels errors when
+	// both ModelsURL and static models are empty). [P1]
+	ModelsURL string `json:"models_url,omitempty"`
+	// Model is the model id passed as -model. Bare mode = bare id; config mode
+	// = "provider/id". Required: ${MINIAGENT_DEFAULT_MODEL}.
 	Model string `json:"model,omitempty"`
-	// SystemPrompt is prepended to every turn as the system message. Empty
-	// → a concise default assistant persona in config_defaults.
+	// SystemPrompt is prepended to every turn. Empty → default persona.
 	SystemPrompt string `json:"system_prompt,omitempty"`
-	// MaxTokens caps one completion's output tokens. <=0/unset → 4096.
+	// MaxTokens caps one completion's output tokens. <=0 → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
-	// StreamHistory caps how many recent per-run raw NDJSON captures are kept
-	// under {stateDir}/streams/miniagent/. 0 (unset) → 50; negative → disable.
+	// StreamHistory caps per-run raw NDJSON captures under
+	// {stateDir}/streams/miniagent/. 0 → 50; negative → disable.
 	StreamHistory int `json:"stream_history,omitempty"`
-	// WorkspaceRoot bounds read_file to paths under this directory (after
-	// filepath.Clean). Empty → read_file is not registered (the LLM cannot
-	// call it) and the /cd picker is disabled. Recommended: ${WORKSPACE_ROOT}
-	// so it shares the same env var as claude-back / opencode-back.
+	// WorkspaceRoot is the REQUIRED global workdir. Bounds the /cd picker and
+	// is the default -workdir. Required since v3 -mode default needs a workdir.
+	// [P1: required, enforced in cmd/miniagent-back/main.go]
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
-	// Stream enables miniagent's -stream mode (v2.0.0, SSE): the CLI emits
-	// incremental reasoning_delta events, which the bridge forwards to the
-	// progress card's live "思考中" zone (the terminal result still carries
-	// the full reply). Default false — non-streaming POST, matching the CLI
-	// default; turning it on only changes how the LLM is called + adds live
-	// reasoning, not the final output.
+	// Stream enables -stream (SSE reasoning_delta → live 思考区). Default false.
 	Stream bool `json:"stream,omitempty"`
-	// MaxIterations caps one turn's LLM-call count (miniagent -max-iterations,
-	// v2.0.0). <=0/unset → CLI default (20). Wiring it here lets the bridge
-	// tune the same cap that the existing Incomplete / finish=max_iterations
-	// path reacts to, instead of relying on the hardcoded 20.
+	// MaxIterations caps one turn's LLM-call count (-max-iterations). <=0 → 20.
 	MaxIterations int `json:"max_iterations,omitempty"`
-	// ShellTimeout caps one shell-tool command (miniagent -shell-timeout,
-	// v2.0.0). Go duration string ("60s", "120s"). <=0/unset → CLI default
-	// (60s); still bounded overall by idle_timeout. Raise it for long commands
-	// like `go test` / `npm install` on large repos.
+	// ShellTimeout caps one shell-tool command. Duration string. <=0 → 60s.
 	ShellTimeout Duration `json:"shell_timeout,omitempty"`
-	// Confine enables miniagent's write-tool path sandbox (v2.0.0). The only
-	// meaningful value is "workdir" (confine write/edit/multi_edit to the
-	// workdir subtree, EvalSymlinks-guarded); empty/absent = free (default).
-	// Defense-in-depth alongside the bridge's own /cd symlink containment —
-	// the CLI rejects an escaping write before it hits the filesystem.
-	Confine string `json:"confine,omitempty"`
-	// KeyFile reads the API key from a file (miniagent -key-file, v2.0.0)
-	// instead of $MINIAGENT_API_KEY, avoiding key exposure via
-	// /proc/$PPID/environ to a shell grandchild. When set, the bridge passes
-	// -key-file and does NOT inject the key into the subprocess env. Empty →
-	// the legacy env-injection path (api_key) is used.
+	// Mode is the permission mode (-mode): "default" (write confined to workdir
+	// + shell rejects 11 privilege escalators) or "auto" (unrestricted). Default
+	// "default" (applyDefaults). v3 replaced -confine. [P2]
+	Mode string `json:"mode,omitempty"`
+	// Thinking is the reasoning effort (-thinking): off|minimal|low|medium|high|
+	// xhigh|max. Default "off" (applyDefaults). [P2]
+	Thinking string `json:"thinking,omitempty"`
+	// ContextWindow caps model context (tokens); >0 enables summary compaction
+	// of the session jsonl mid-section. Pairs with per-chat sessions (P3). [P2]
+	ContextWindow int `json:"context_window,omitempty"`
+	// KeyFile reads the API key from a file (-key-file) instead of
+	// $MINIAGENT_API_KEY (avoids /proc/$PPID/environ leak to shell grandchildren).
 	KeyFile string `json:"key_file,omitempty"`
+	// ConfigPath, when non-empty, switches to miniagent v3 config mode: the
+	// bridge passes -config <abspath> and does NOT pass chat/models-url. The
+	// miniagent.json is generated at deploy time from .env (NOT by bridge code,
+	// R3). [P4]
+	ConfigPath string `json:"config_path,omitempty"`
 }
 
 // ComponentLogLevel configures per-component log level overrides.

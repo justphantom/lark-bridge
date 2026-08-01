@@ -37,18 +37,19 @@ const defaultMaxConcurrent = 4
 type Config struct {
 	CLIPath       string
 	APIKey        string
-	BaseURL       string
+	ChatURL       string // [P1] full chat completions URL (bare mode required)
+	ModelsURL     string // [P1] full models URL (bare mode, /models)
 	SystemPrompt  string
 	MaxTokens     int
 	MaxConcurrent int
-	// Stream enables miniagent's -stream mode (v2.0.0): SSE LLM calls emit
-	// reasoning_delta events so the bridge can show a live "思考中" zone.
-	Stream bool
-	// Optional v2.0.0 run flags. Zero values → omitted (CLI defaults apply).
+	Stream        bool
 	MaxIterations int
 	ShellTimeout  time.Duration
-	Confine       string // "" or "workdir"
-	KeyFile       string // when set, key comes from file, not env
+	Mode          string // [P2] "default"|"auto"
+	Thinking      string // [P2] off|minimal|low|medium|high|xhigh|max
+	ContextWindow int    // [P2] >0 enables compaction
+	KeyFile       string
+	ConfigPath    string // [P4] non-empty → config mode (no chat/models-url)
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
@@ -56,14 +57,18 @@ type Config struct {
 type Client struct {
 	cliPath       string
 	apiKey        string
-	baseURL       string
+	chatURL       string
+	modelsURL     string
 	system        string
 	maxTokens     int
 	stream        bool
 	maxIterations int
 	shellTimeout  time.Duration
-	confine       string
+	mode          string
+	thinking      string
+	contextWindow int
 	keyFile       string
+	configPath    string
 	logger        *log.Logger
 	sem           chan struct{}
 }
@@ -80,25 +85,48 @@ func New(cfg Config, logger *log.Logger) *Client {
 	return &Client{
 		cliPath:       cfg.CLIPath,
 		apiKey:        cfg.APIKey,
-		baseURL:       cfg.BaseURL,
+		chatURL:       cfg.ChatURL,
+		modelsURL:     cfg.ModelsURL,
 		system:        cfg.SystemPrompt,
 		maxTokens:     cfg.MaxTokens,
 		stream:        cfg.Stream,
 		maxIterations: cfg.MaxIterations,
 		shellTimeout:  cfg.ShellTimeout,
-		confine:       cfg.Confine,
+		mode:          cfg.Mode,
+		thinking:      cfg.Thinking,
+		contextWindow: cfg.ContextWindow,
 		keyFile:       cfg.KeyFile,
+		configPath:    cfg.ConfigPath,
 		logger:        logger,
 		sem:           make(chan struct{}, n),
 	}
 }
 
+// DefaultMode returns the configured -mode default ("default" when unset).
+func (c *Client) DefaultMode() string {
+	if c.mode == "" {
+		return "default"
+	}
+	return c.mode
+}
+
+// DefaultThinking returns the configured -thinking default ("off" when unset).
+func (c *Client) DefaultThinking() string {
+	if c.thinking == "" {
+		return "off"
+	}
+	return c.thinking
+}
+
 // RunOptions describes one miniagent turn.
 type RunOptions struct {
-	Prompt  string
-	Model   string
-	Workdir string
-	Sink    io.Writer // optional: tee raw NDJSON lines here
+	Prompt   string
+	Model    string
+	Workdir  string
+	Mode     string // [P2] per-chat override; "" → client default
+	Thinking string // [P2] per-chat override; "" → client default
+	Session  string // [P3] absolute jsonl path; "" → stateless turn
+	Sink     io.Writer
 }
 
 // Run starts one miniagent subprocess for opts and returns the event
@@ -166,19 +194,18 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	return out, nil
 }
 
-// buildArgs assembles the CLI flags from Client-level config (system prompt,
-// max-tokens, optional v2.0.0 run flags) + per-turn options (model, workdir).
-// The API key itself is NOT passed as a flag: miniagent's CLI has no -api-key
-// (unknown flags fail startup). The default key path is $MINIAGENT_API_KEY,
-// set explicitly on the subprocess env in Run; the v2.0.0 alternative is
-// -key-file (a PATH, not the key), added here when KeyFile is configured.
-//
-// Flag form is single-dash to match the miniagent README (Go's flag package
-// accepts both -x and --x).
+// buildArgs assembles miniagent CLI flags. The API key is NOT a flag: it rides
+// $MINIAGENT_API_KEY on the subprocess env (set in Run) unless KeyFile is set
+// (then -key-file points at a path). v3.0.0 removed -base-url/-confine: bare
+// mode uses -chat-url (and -models-url for listing); config mode uses -config.
+// Flag form is single-dash to match the miniagent README.
 func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{"-model", opts.Model}
-	if c.baseURL != "" {
-		a = append(a, "-base-url", c.baseURL)
+	if c.configPath != "" {
+		// config 模式：端点/key 由 miniagent.json 解析，不传 chat/models-url。
+		a = append(a, "-config", c.configPath)
+	} else if c.chatURL != "" {
+		a = append(a, "-chat-url", c.chatURL)
 	}
 	if c.system != "" {
 		a = append(a, "-system", c.system)
@@ -188,6 +215,26 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	}
 	if opts.Workdir != "" {
 		a = append(a, "-workdir", opts.Workdir)
+	}
+	// -mode（替代 v2 -confine）：每轮覆盖 > client 默认。default 模式需 workdir，
+	// 由 main.go 强校验 WorkspaceRoot + /cd 仅设非空保证。
+	mode := opts.Mode
+	if mode == "" {
+		mode = c.mode
+	}
+	if mode != "" {
+		a = append(a, "-mode", mode)
+	}
+	// -thinking：每轮覆盖 > client 默认。
+	thinking := opts.Thinking
+	if thinking == "" {
+		thinking = c.thinking
+	}
+	if thinking != "" {
+		a = append(a, "-thinking", thinking)
+	}
+	if c.contextWindow > 0 {
+		a = append(a, "-context-window", strconv.Itoa(c.contextWindow))
 	}
 	if c.stream {
 		// -stream was removed in miniagent fe85c16 and re-added in v2.0.0;
@@ -200,8 +247,10 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if c.shellTimeout > 0 {
 		a = append(a, "-shell-timeout", c.shellTimeout.String())
 	}
-	if c.confine != "" {
-		a = append(a, "-confine", c.confine)
+	if opts.Session != "" {
+		// 会话 jsonl 绝对路径（v3 -session，含 / 或 . 视为路径）。同一 chat 由
+		// handler 的 startTurn busy-then-drop 串行，无并发写竞争（R4）。
+		a = append(a, "-session", opts.Session)
 	}
 	if c.keyFile != "" {
 		a = append(a, "-key-file", c.keyFile)

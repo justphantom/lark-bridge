@@ -32,6 +32,8 @@ type Binding struct {
 	PermissionMode string `json:"permissionMode,omitempty"` // claude
 	EffortLevel    string `json:"effortLevel,omitempty"`    // claude
 	SettingsFile   string `json:"settingsFile,omitempty"`   // claude
+	Mode           string `json:"mode,omitempty"`           // miniagent
+	Thinking       string `json:"thinking,omitempty"`       // miniagent
 }
 
 // Router is safe for concurrent use.

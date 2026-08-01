@@ -54,7 +54,8 @@
 
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",
-    "base_url":        "${MINIAGENT_BASE_URL}",
+    "chat_url":        "${MINIAGENT_CHAT_URL}",
+    "models_url":      "${MINIAGENT_MODELS_URL}",
     "model":           "${MINIAGENT_DEFAULT_MODEL}",
     "system_prompt":   "你是一个简洁的工程助手，回答通常不超过 500 字。重点先行；不确定先查别猜；副作用操作前说明；遇错说原因和修复，别盲目重试。",
     "max_tokens":      4096,
@@ -63,8 +64,11 @@
     "stream":          false,
     "max_iterations":  0,
     "shell_timeout":   "60s",
-    "confine":         "",
-    "key_file":        ""
+    "mode":            "default",
+    "thinking":        "off",
+    "context_window":  0,
+    "key_file":        "",
+    "config_path":     ""
   },
 
   "deploy_monitor": {

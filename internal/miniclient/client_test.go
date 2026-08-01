@@ -158,7 +158,7 @@ func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/miniagent",
 		APIKey:       "sk-test",
-		BaseURL:      "http://localhost:8080",
+		ChatURL:      "https://ex.com/v1/chat/completions",
 		SystemPrompt: "be brief",
 		MaxTokens:    2048,
 	}, nil)
@@ -170,7 +170,7 @@ func TestBuildArgs_Full(t *testing.T) {
 	// Check the 5 surviving flags are present. -api-key is intentionally
 	// absent: the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
 	want := map[string]bool{
-		"-model": false, "-base-url": false,
+		"-model": false, "-chat-url": false,
 		"-system": false, "-max-tokens": false, "-workdir": false,
 	}
 	for _, a := range args {
@@ -182,6 +182,10 @@ func TestBuildArgs_Full(t *testing.T) {
 		if !found {
 			t.Errorf("missing flag %s in buildArgs output: %v", flag, args)
 		}
+	}
+	// v3 removed -base-url/-confine: assert they stay out (regression guard).
+	if contains(args, "-base-url") || contains(args, "-confine") {
+		t.Errorf("v3-removed flag present in args: %v", args)
 	}
 }
 
@@ -215,18 +219,20 @@ func TestBuildArgs_Minimal(t *testing.T) {
 // migration: 5 of the 6 flags miniagent fe85c16 deleted (-verbose /
 // -permission / -blocked-patterns / -chat-id / -state-dir) MUST NOT appear in
 // buildArgs output — any would make Go's flag package os.Exit(2) at startup.
+// v3.0.0 additionally removed -base-url/-confine (replaced by -chat-url + -mode),
+// so those are banned too.
 // (-stream was also deleted in fe85c16 but RE-ADDED in v2.0.0, so it is no
 // longer banned; see TestBuildArgs_Stream.)
 func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/ma",
 		APIKey:       "k",
-		BaseURL:      "http://x",
+		ChatURL:      "https://ex.com/v1/chat/completions",
 		SystemPrompt: "s",
 		MaxTokens:    100,
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
-	banned := []string{"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir"}
+	banned := []string{"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir", "-base-url", "-confine"}
 	for _, b := range banned {
 		if contains(args, b) {
 			t.Errorf("removed flag %q present in args: %v", b, args)
@@ -276,7 +282,6 @@ func TestBuildArgs_V2OptionalFlags(t *testing.T) {
 		APIKey:        "k",
 		MaxIterations: 30,
 		ShellTimeout:  90 * time.Second,
-		Confine:       "workdir",
 		KeyFile:       "/etc/miniagent/key",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
@@ -286,23 +291,122 @@ func TestBuildArgs_V2OptionalFlags(t *testing.T) {
 	if v := argValue(args, "-shell-timeout"); v != "1m30s" {
 		t.Errorf("-shell-timeout = %q, want 1m30s", v)
 	}
-	if v := argValue(args, "-confine"); v != "workdir" {
-		t.Errorf("-confine = %q, want workdir", v)
-	}
 	if v := argValue(args, "-key-file"); v != "/etc/miniagent/key" {
 		t.Errorf("-key-file = %q, want /etc/miniagent/key", v)
 	}
 }
 
-// TestBuildArgs_V2OptionalFlags_Omitted confirms the v2.0.0 flags stay absent
-// at zero values so a default config does not pass them (the CLI would still
-// accept them, but the bridge should not invent settings the user did not set).
+// TestBuildArgs_V2OptionalFlags_Omitted confirms the v2.0.0/v3.0.0 flags stay
+// absent at zero values so a default config does not pass them (the CLI would
+// still accept them, but the bridge should not invent settings the user did
+// not set).
 func TestBuildArgs_V2OptionalFlags_Omitted(t *testing.T) {
 	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
-	for _, f := range []string{"-max-iterations", "-shell-timeout", "-confine", "-key-file"} {
+	for _, f := range []string{
+		"-max-iterations", "-shell-timeout", "-key-file",
+		"-mode", "-thinking", "-context-window",
+		"-chat-url", "-config", "-session",
+	} {
 		if contains(args, f) {
 			t.Errorf("zero-value flag %s should be omitted: %v", f, args)
 		}
+	}
+}
+
+// TestBuildArgs_ConfigPath verifies v3 config mode: when ConfigPath is
+// non-empty, -config <abspath> is emitted and -chat-url/-models-url are NOT
+// (endpoints come from miniagent.json). -model and other flags still appear.
+//
+// This also pins the Phase 4 contract: config mode is NOT a "minimal args"
+// mode — it only swaps the endpoint source. The per-turn -mode/-thinking and
+// the per-chat -session MUST still appear alongside -config so that /mode,
+// /thinking, and per-chat memory keep working under multi-provider deployments.
+func TestBuildArgs_ConfigPath(t *testing.T) {
+	c := New(Config{
+		CLIPath:    "/bin/ma",
+		APIKey:     "k",
+		ChatURL:    "https://ex.com/v1/chat/completions", // must be IGNORED in config mode
+		ConfigPath: "/etc/miniagent/miniagent.json",
+		Mode:       "default", // client default still emits -mode in config mode
+		Thinking:   "off",     // client default still emits -thinking in config mode
+	}, nil)
+	args := c.buildArgs(RunOptions{
+		Model:   "main/gpt-4o",
+		Workdir: "/w",
+		Session: "/var/lib/lark-bridge/miniagent-sessions/abc.jsonl",
+	})
+	if v := argValue(args, "-config"); v != "/etc/miniagent/miniagent.json" {
+		t.Errorf("-config = %q, want miniagent.json path", v)
+	}
+	if contains(args, "-chat-url") {
+		t.Errorf("-chat-url must NOT appear in config mode: %v", args)
+	}
+	if contains(args, "-models-url") {
+		t.Errorf("-models-url must NOT appear in config mode: %v", args)
+	}
+	if v := argValue(args, "-model"); v != "main/gpt-4o" {
+		t.Errorf("-model = %q, want main/gpt-4o", v)
+	}
+	if v := argValue(args, "-workdir"); v != "/w" {
+		t.Errorf("-workdir = %q, want /w", v)
+	}
+	// Phase 4: -mode/-thinking/-session co-exist with -config (config mode only
+	// re-routes endpoints, not the per-chat turn shape).
+	if v := argValue(args, "-mode"); v != "default" {
+		t.Errorf("-mode = %q, want default (config mode keeps per-turn mode)", v)
+	}
+	if v := argValue(args, "-thinking"); v != "off" {
+		t.Errorf("-thinking = %q, want off (config mode keeps per-turn thinking)", v)
+	}
+	if v := argValue(args, "-session"); v != "/var/lib/lark-bridge/miniagent-sessions/abc.jsonl" {
+		t.Errorf("-session = %q, want the per-chat jsonl path", v)
+	}
+}
+
+// TestBuildArgs_V3ModeThinkingContextWindow verifies the v3 -mode/-thinking/
+// -context-window flags appear with their configured values when set on the
+// client (the per-chat "" path: RunOptions.Mode/Thinking empty → client default).
+func TestBuildArgs_V3ModeThinkingContextWindow(t *testing.T) {
+	c := New(Config{
+		CLIPath:       "/bin/ma",
+		APIKey:        "k",
+		Mode:          "auto",
+		Thinking:      "high",
+		ContextWindow: 128000,
+	}, nil)
+	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
+	if v := argValue(args, "-mode"); v != "auto" {
+		t.Errorf("-mode = %q, want auto", v)
+	}
+	if v := argValue(args, "-thinking"); v != "high" {
+		t.Errorf("-thinking = %q, want high", v)
+	}
+	if v := argValue(args, "-context-window"); v != "128000" {
+		t.Errorf("-context-window = %q, want 128000", v)
+	}
+}
+
+// TestBuildArgs_PerTurnModeThinkingOverride verifies a non-empty
+// RunOptions.Mode/Thinking overrides the client's configured default — this is
+// the per-chat pin path (handler.activeTurnConfig → binding.Mode/Thinking).
+func TestBuildArgs_PerTurnModeThinkingOverride(t *testing.T) {
+	c := New(Config{
+		CLIPath:  "/bin/ma",
+		APIKey:   "k",
+		Mode:     "default", // global default
+		Thinking: "off",     // global default
+	}, nil)
+	args := c.buildArgs(RunOptions{
+		Model:    "m",
+		Workdir:  "/w",
+		Mode:     "auto", // per-chat pin wins
+		Thinking: "max",  // per-chat pin wins
+	})
+	if v := argValue(args, "-mode"); v != "auto" {
+		t.Errorf("-mode = %q, want per-turn override auto", v)
+	}
+	if v := argValue(args, "-thinking"); v != "max" {
+		t.Errorf("-thinking = %q, want per-turn override max", v)
 	}
 }

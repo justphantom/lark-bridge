@@ -8,13 +8,13 @@ import (
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
 
-// cmdHelp lists the surviving commands after the stateless migration.
-// Sessions / memory / perm / old -chat-id-style /cd are gone; the only
-// persistent per-chat state is model + directory.
+// cmdHelp lists the available commands. The persistent per-chat state is the
+// router binding (model + directory + mode + thinking) plus the per-chat
+// session jsonl (/clear deletes it so the next prompt starts fresh).
 func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, body string) {
 	var sb strings.Builder
 	sb.WriteString("可用命令：\n\n")
-	sb.WriteString("/current        显示当前模型/工作目录\n")
+	sb.WriteString("/current        显示当前模型/工作目录/权限/思考\n")
 	sb.WriteString("/model          切换模型（弹出选择卡）\n")
 	sb.WriteString("/model <id>     直接指定模型\n")
 	sb.WriteString("/model clear    恢复默认模型\n")
@@ -22,6 +22,13 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/cd             切换工作目录（弹出选择卡）\n")
 	sb.WriteString("/cd <path>     直接指定目录\n")
 	sb.WriteString("/cd clear       恢复默认目录\n")
+	sb.WriteString("/mode           显示当前权限模式\n")
+	sb.WriteString("/mode <m>       设置权限模式（default | auto）\n")
+	sb.WriteString("/mode clear     恢复默认权限模式\n")
+	sb.WriteString("/thinking       显示当前思考级别\n")
+	sb.WriteString("/thinking <l>   设置思考级别（off|minimal|low|medium|high|xhigh|max）\n")
+	sb.WriteString("/thinking clear 恢复默认思考级别\n")
+	sb.WriteString("/clear          清空当前会话历史（下次提问开始新会话）\n")
 	sb.WriteString("/pull           在当前工作目录执行 git pull --ff-only\n")
 	sb.WriteString("/push           在当前工作目录执行 git push\n")
 	sb.WriteString("/session-abort  中止当前任务\n")

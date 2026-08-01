@@ -83,6 +83,14 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.Model == "" {
 		return fmt.Errorf("miniagent.model is required (use ${MINIAGENT_DEFAULT_MODEL} in the config)")
 	}
+	// Binary-specific required fields (validate() only checks cross-binary enums;
+	// per its header comment, one-binary requireds live here).
+	if cfg.MiniAgent.WorkspaceRoot == "" {
+		return fmt.Errorf("miniagent.workspace_root is required (v3 -mode default needs a workdir; /cd picker disabled without it)")
+	}
+	if cfg.MiniAgent.ConfigPath == "" && cfg.MiniAgent.ChatURL == "" {
+		return fmt.Errorf("miniagent: bare mode requires chat_url (or set config_path for v3 config mode)")
+	}
 	// Per-backend router file (R2): without persistence every redeploy resets
 	// all per-chat model/directory pins, and sharing one file with the other
 	// backends lost-updates it. miniagent now owns
@@ -145,14 +153,18 @@ func run(cfgPath string) error {
 	client := miniclient.New(miniclient.Config{
 		CLIPath:       cliPath,
 		APIKey:        cfg.MiniAgent.APIKey,
-		BaseURL:       cfg.MiniAgent.BaseURL,
+		ChatURL:       cfg.MiniAgent.ChatURL,
+		ModelsURL:     cfg.MiniAgent.ModelsURL,
 		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
 		MaxTokens:     cfg.MiniAgent.MaxTokens,
 		Stream:        cfg.MiniAgent.Stream,
 		MaxIterations: cfg.MiniAgent.MaxIterations,
 		ShellTimeout:  time.Duration(cfg.MiniAgent.ShellTimeout),
-		Confine:       cfg.MiniAgent.Confine,
+		Mode:          cfg.MiniAgent.Mode,
+		Thinking:      cfg.MiniAgent.Thinking,
+		ContextWindow: cfg.MiniAgent.ContextWindow,
 		KeyFile:       cfg.MiniAgent.KeyFile,
+		ConfigPath:    cfg.MiniAgent.ConfigPath,
 	}, logger)
 
 	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.StreamArchiveRedact)

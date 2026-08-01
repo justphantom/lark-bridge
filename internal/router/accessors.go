@@ -107,3 +107,16 @@ func (r *Router) SetEffortLevel(chatID, effortLevel string) {
 func (r *Router) SetSettingsFile(chatID, settingsFile string) {
 	r.mutate(chatID, func(b *Binding) { b.SettingsFile = settingsFile })
 }
+
+// SetMode replaces the pinned miniagent -mode on the binding for chatID and
+// persists the change. No-op when the binding does not exist. Pass "" to clear.
+func (r *Router) SetMode(chatID, mode string) {
+	r.mutate(chatID, func(b *Binding) { b.Mode = mode })
+}
+
+// SetThinking replaces the pinned miniagent -thinking on the binding for chatID
+// and persists the change. No-op when the binding does not exist. Pass "" to
+// clear.
+func (r *Router) SetThinking(chatID, thinking string) {
+	r.mutate(chatID, func(b *Binding) { b.Thinking = thinking })
+}

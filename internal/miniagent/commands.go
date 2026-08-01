@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// Session management commands. After the stateless migration the only
-// persistent per-chat state is the router binding (Directory + ModelSpec);
-// every command below reads/writes it via h.Router. There is no session,
-// memory, or permission concept anymore.
+// Session management commands. The persistent per-chat state is the router
+// binding (Directory + ModelSpec + Mode + Thinking) plus the per-chat session
+// jsonl under sessionRoot (P3, /clear deletes it). Every command below
+// reads/writes the binding via h.Router.
 //
 // Each command returns the Notice level/title/body the dispatcher emits.
 // "async" as level is a sentinel meaning the command has already emitted its
@@ -23,14 +23,17 @@ import (
 // earlier in HandleEvent (before startTurn) because they must not occupy
 // the per-chat turn slot.
 var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg string) (level, title, body string){
-	"/current": (*Handler).cmdCurrent,
-	"/model":   (*Handler).cmdModel,
-	"/models":  (*Handler).cmdModels,
-	"/cd":      (*Handler).cmdDirectory,
-	"/send":    (*Handler).cmdSend,
-	"/pull":    (*Handler).cmdPull,
-	"/push":    (*Handler).cmdPush,
-	"/help":    (*Handler).cmdHelp,
+	"/current":  (*Handler).cmdCurrent,
+	"/model":    (*Handler).cmdModel,
+	"/models":   (*Handler).cmdModels,
+	"/cd":       (*Handler).cmdDirectory,
+	"/mode":     (*Handler).cmdMode,
+	"/thinking": (*Handler).cmdThinking,
+	"/clear":    (*Handler).cmdClear,
+	"/send":     (*Handler).cmdSend,
+	"/pull":     (*Handler).cmdPull,
+	"/push":     (*Handler).cmdPush,
+	"/help":     (*Handler).cmdHelp,
 }
 
 // isSessionCommand reports whether prompt is one this handler owns. It never
@@ -81,10 +84,9 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 	return nil
 }
 
-// cmdCurrent reports the per-chat model + directory the next fork will use.
-// Falls back to the global defaults when the chat has no pin.
+// cmdCurrent reports the per-chat model + directory + mode + thinking the next
+// fork will use. Falls back to the global defaults when the chat has no pin.
 func (h *Handler) cmdCurrent(_ context.Context, chatID, _ string) (level, title, body string) {
-	cur := h.activeModel(chatID)
-	dir := h.activeDir(chatID)
-	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s", cur, dir)
+	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n权限模式：%s\n思考级别：%s",
+		h.activeModel(chatID), h.activeDir(chatID), h.activeMode(chatID), h.activeThinking(chatID))
 }

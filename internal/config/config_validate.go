@@ -131,6 +131,21 @@ func validate(cfg *Config) error {
 	// GCTimeout is a Duration: UnmarshalJSON already rejects non-positive
 	// explicit values; applyDefaults fills zero to 300s, so no extra check.
 
+	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
+	// reaching validate with "" means an explicit clear; the default values
+	// themselves are valid. (WorkspaceRoot/ChatURL requireds are binary-specific
+	// → enforced in cmd/miniagent-back/main.go, per this func's header comment.)
+	switch cfg.MiniAgent.Mode {
+	case "default", "auto", "":
+	default:
+		return fmt.Errorf("miniagent.mode must be one of default/auto, got %q", cfg.MiniAgent.Mode)
+	}
+	switch cfg.MiniAgent.Thinking {
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max", "":
+	default:
+		return fmt.Errorf("miniagent.thinking must be one of off/minimal/low/medium/high/xhigh/max, got %q", cfg.MiniAgent.Thinking)
+	}
+
 	// StateDir writability.
 	if cfg.StateDir != "" {
 		stateDirAbs, err := filepath.Abs(cfg.StateDir)

@@ -1,13 +1,19 @@
 package miniagent
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
@@ -285,15 +291,23 @@ func TestEmitCLIEvent_TextDelta_Dropped(t *testing.T) {
 }
 
 // TestActiveTurnConfig_DefaultsNoBinding verifies that without a router the
-// global defaults (cfgModel, workspaceRoot) are returned.
+// global defaults (cfgModel, workspaceRoot) are returned. Mode/Thinking fall
+// back to the client-default sentinels ("default"/"off") since no client is
+// wired in newCLIHandler.
 func TestActiveTurnConfig_DefaultsNoBinding(t *testing.T) {
 	h, _ := newCLIHandler(t)
-	model, dir := h.activeTurnConfig("c1")
+	model, dir, mode, thinking := h.activeTurnConfig("c1")
 	if model != "test-model" {
 		t.Errorf("model = %q, want test-model", model)
 	}
 	if dir != "" {
 		t.Errorf("dir = %q, want empty (no workspaceRoot configured)", dir)
+	}
+	if mode != "default" {
+		t.Errorf("mode = %q, want default (client nil)", mode)
+	}
+	if thinking != "off" {
+		t.Errorf("thinking = %q, want off (client nil)", thinking)
 	}
 }
 
@@ -318,16 +332,304 @@ func TestActiveTurnConfig_BoundOverridesDefault(t *testing.T) {
 
 	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", nil, 0, "", false)
 
-	if model, _ := h.activeTurnConfig("c1"); model != "kimi" {
+	if model, _, _, _ := h.activeTurnConfig("c1"); model != "kimi" {
 		t.Errorf("bound model = %q, want kimi", model)
 	}
-	if _, dir := h.activeTurnConfig("c1"); dir != "/proj" {
+	if _, dir, _, _ := h.activeTurnConfig("c1"); dir != "/proj" {
 		t.Errorf("bound dir = %q, want /proj", dir)
 	}
 
 	// A chat without a binding still gets the global defaults — proves the
 	// override is per-chat, not process-wide.
-	if model, dir := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
+	if model, dir, _, _ := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
 		t.Errorf("unbound = (%q, %q), want (test-model, /global-root)", model, dir)
 	}
+}
+
+// TestActiveTurnConfig_PerChatModeThinkingOverride verifies per-chat Mode and
+// Thinking pins (set by /mode and /thinking via SetMode/SetThinking) override
+// the client defaults returned by activeTurnConfig. With no client wired the
+// defaults are "default"/"off"; pinning "auto"/"high" must surface through the
+// 4-value return so runViaCLI's RunOptions carries the per-chat value.
+func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
+	r, err := router.New(filepath.Join(t.TempDir(), "r.json"), log.Nop())
+	if err != nil {
+		t.Fatalf("router.New: %v", err)
+	}
+	defer r.Close()
+	r.Bind("c1", "", "", "", "", "")
+
+	h := New(&captureSender{}, log.Nop(), r, "/root", "m", nil, 0, "", false)
+
+	// Default effective values without any pin.
+	if _, _, mode, thinking := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
+		t.Errorf("defaults = (%q, %q), want (default, off)", mode, thinking)
+	}
+
+	r.SetMode("c1", "auto")
+	r.SetThinking("c1", "high")
+	if _, _, mode, thinking := h.activeTurnConfig("c1"); mode != "auto" || thinking != "high" {
+		t.Errorf("pinned = (%q, %q), want (auto, high)", mode, thinking)
+	}
+
+	// Clearing the pin returns the global default (no per-chat value).
+	r.SetMode("c1", "")
+	r.SetThinking("c1", "")
+	if _, _, mode, thinking := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
+		t.Errorf("after clear = (%q, %q), want (default, off)", mode, thinking)
+	}
+}
+
+// --- Phase 3: per-chat session (sessionPath / -session wiring / R4) ---
+
+// newSessionHandler builds a Handler whose stateDir (and thus sessionRoot) is a
+// real temp dir, so sessionPath returns non-empty absolute paths. client is nil
+// by default; tests that need the CLI fork path wire a stub via setStubClient.
+func newSessionHandler(t *testing.T) (*Handler, string) {
+	t.Helper()
+	stateDir := t.TempDir()
+	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, 0, stateDir, false)
+	return h, stateDir
+}
+
+// TestSessionPath_Deterministic verifies the same chatID resolves to the same
+// jsonl path (so miniagent re-feeds the same conversation across turns), and
+// distinct chatIDs resolve to distinct paths (no cross-chat collision).
+func TestSessionPath_Deterministic(t *testing.T) {
+	h, _ := newSessionHandler(t)
+	p1 := h.sessionPath("oc_chat_a")
+	p2 := h.sessionPath("oc_chat_a")
+	p3 := h.sessionPath("oc_chat_b")
+	if p1 != p2 {
+		t.Errorf("same chatID must be stable: %q vs %q", p1, p2)
+	}
+	if p1 == p3 {
+		t.Errorf("distinct chatIDs must differ: both %q", p1)
+	}
+	// Path must equal sha256(chatID).jsonl under sessionRoot — the documented
+	// contract, so an operator can map a chatID to its file by hand if needed.
+	sum := sha256.Sum256([]byte("oc_chat_a"))
+	want := filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".jsonl")
+	if p1 != want {
+		t.Errorf("path = %q, want %q", p1, want)
+	}
+}
+
+// TestSessionPath_PathSafety verifies a malicious chatID cannot escape
+// sessionRoot: chatIDs containing "..", "/", drive letters, or NUL must all
+// hash to a flat filename under sessionRoot. This is the R4/path-traversal
+// guard called out in §3.2 and §6 of the implementation manual.
+func TestSessionPath_PathSafety(t *testing.T) {
+	h, _ := newSessionHandler(t)
+	for _, bad := range []string{
+		"../../../etc/passwd", "..", "/", "a/b/../../../c",
+		"\x00", "C:\\windows\\system32", "....//....//etc",
+	} {
+		p := h.sessionPath(bad)
+		if p == "" {
+			t.Errorf("chatID=%q: path empty for non-empty sessionRoot", bad)
+		}
+		if !strings.HasPrefix(p, h.sessionRoot+string(filepath.Separator)) {
+			t.Errorf("chatID=%q escaped sessionRoot: %q (root=%q)", bad, p, h.sessionRoot)
+		}
+		// The base name must be exactly 64 hex chars + ".jsonl" — no chatID
+		// bytes leaked into the path.
+		base := filepath.Base(p)
+		wantSuffix := ".jsonl"
+		if !strings.HasSuffix(base, wantSuffix) {
+			t.Errorf("chatID=%q: base %q must end with %q", bad, base, wantSuffix)
+		}
+		hexPart := strings.TrimSuffix(base, wantSuffix)
+		if len(hexPart) != 64 {
+			t.Errorf("chatID=%q: hex part len=%d, want 64 (sha256)", bad, len(hexPart))
+		}
+	}
+}
+
+// TestSessionPath_EmptyRootStateless verifies that when stateDir is unset (some
+// tests, or a misconfigured deploy) sessionPath returns "" → runViaCLI passes
+// "" → buildArgs omits -session → miniagent runs a stateless turn. This is the
+// graceful-degrade path.
+func TestSessionPath_EmptyRootStateless(t *testing.T) {
+	h := New(&captureSender{}, log.Nop(), nil, "", "m", nil, 0, "", false)
+	if got := h.sessionPath("any-chat"); got != "" {
+		t.Errorf("empty sessionRoot: sessionPath = %q, want empty", got)
+	}
+}
+
+// TestRunViaCLI_PassesSessionArg verifies runViaCLI wires
+// h.sessionPath(chatID) into RunOptions.Session by driving a real
+// miniclient.Client whose cliPath is a stub shell script. The script captures
+// its argv to a file and emits one valid result event so runViaCLI completes
+// cleanly. We then assert the captured argv contains "-session <expected path>".
+//
+// This is the strongest feasible coverage without refactoring Handler.client
+// (a concrete *miniclient.Client) to an interface, which §3 does not list.
+func TestRunViaCLI_PassesSessionArg(t *testing.T) {
+	stateDir := t.TempDir()
+	captureFile := filepath.Join(stateDir, "argv")
+	// Stub binary: write "$@" to captureFile, then emit one terminal result
+	// event on stdout so the miniclient pump sees IsTerminal and closes.
+	stub := filepath.Join(stateDir, "stub.sh")
+	script := "#!/bin/sh\n" +
+		`printf '%s\n' "$@" > ` + captureFile + "\n" +
+		`printf '{"type":"result","text":"ok","model":"stub","steps":1}\n'` + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+
+	client := miniclient.New(miniclient.Config{CLIPath: stub, APIKey: "k"}, log.Nop())
+	sender := &captureSender{}
+	h := New(sender, log.Nop(), nil, "", "test-model", client, 0, stateDir, false)
+	defer h.Close()
+
+	wantPath := h.sessionPath("oc_chat_1")
+	if wantPath == "" {
+		t.Fatal("precondition: sessionPath must be non-empty with stateDir set")
+	}
+
+	h.runViaCLI(context.Background(), "p1", "oc_chat_1", "hello")
+
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture: %v (did the stub run?)", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// Find "-session" and assert the following arg is the expected abspath.
+	for i, ln := range lines {
+		if ln == "-session" && i+1 < len(lines) {
+			if lines[i+1] != wantPath {
+				t.Errorf("-session arg = %q, want %q", lines[i+1], wantPath)
+			}
+			// Confirm a Result control landed — proves runViaCLI drained the
+			// event stream to completion.
+			if !harnessHasResult(sender) {
+				t.Error("expected one TypeResult control after runViaCLI")
+			}
+			return
+		}
+	}
+	t.Errorf("-session flag missing from captured argv: %v", lines)
+}
+
+// harnessHasResult reports whether sender captured a TypeResult control.
+func harnessHasResult(sender *captureSender) bool {
+	for _, c := range sender.Controls() {
+		if c.Type == protocol.TypeResult {
+			return true
+		}
+	}
+	return false
+}
+
+// TestR4_SecondPromptWhileBusyIsDropped is the R4 regression test (§3.4). R4
+// (same-chat jsonl writes serialised) is satisfied by startTurn's busy-then-drop:
+// a chat with an in-flight turn rejects a new prompt with a "处理中" notice and
+// does NOT fork a second miniagent process. We occupy the slot with startTurn,
+// fire a second prompt via HandleEvent, and assert (a) a warning notice with the
+// "处理中" body and (b) no terminal result from a second turn. The slot is
+// released cleanly at the end.
+func TestR4_SecondPromptWhileBusyIsDropped(t *testing.T) {
+	h, sender := newTestHandler()
+	defer h.Close()
+
+	// Occupy chat "c"'s turn slot — simulates an in-flight runTurn whose
+	// miniagent subprocess is still writing its session jsonl.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	turnCtx, mine, ok := h.startTurn(ctx, "c")
+	if !ok {
+		t.Fatal("precondition: first startTurn must win the slot")
+	}
+	_ = turnCtx
+	defer h.endTurn("c", mine)
+
+	// Fire a second prompt for the SAME chat. HandleEvent must reject it
+	// (busy-then-drop), not start a second concurrent fork.
+	ev := &protocol.Event{
+		Type:     protocol.TypePrompt,
+		PromptID: "p2",
+		Prompt:   &protocol.PromptPayload{ChatID: "c", Text: "second"},
+	}
+	if err := h.HandleEvent(context.Background(), ev); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+
+	got := sender.Controls()
+	if len(got) != 1 {
+		t.Fatalf("emits = %d, want exactly 1 (the busy notice, no second turn)", len(got))
+	}
+	c := got[0]
+	if c.Type != protocol.TypeNotice {
+		t.Errorf("control type = %v, want Notice", c.Type)
+	}
+	if c.Notice == nil {
+		t.Fatal("Notice payload nil")
+	}
+	if c.Notice.Level != "warning" {
+		t.Errorf("notice level = %q, want warning", c.Notice.Level)
+	}
+	// The busy title is "处理中"; the body says "还在处理…". Assert on the
+	// title (the canonical busy marker); also accept "处理" in the body as a
+	// fallback so a future wording tweak does not break the regression guard.
+	if !strings.Contains(c.Notice.Title, "处理中") && !strings.Contains(c.Notice.Message, "处理") {
+		t.Errorf("notice title=%q body=%q, want 处理中 in title or 处理 in body", c.Notice.Title, c.Notice.Message)
+	}
+	// The second prompt's promptID must be on the notice so the frontend can
+	// resolve its placeholder card.
+	if c.PromptID != "p2" {
+		t.Errorf("notice PromptID = %q, want p2", c.PromptID)
+	}
+	// Sanity: still only one turn registered (the one we hold).
+	if n := len(h.cancelBy); n != 1 {
+		t.Errorf("cancelBy size = %d, want 1 (second prompt must not register a turn)", n)
+	}
+}
+
+// TestR4_ConcurrentSecondPromptIsDropped is the goroutine-racing variant: hold
+// the slot from one goroutine while another fires HandleEvent, and assert no
+// second turn is ever registered. Guards against a regression that re-opens
+// the slot mid-turn under load.
+func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
+	h, sender := newTestHandler()
+	defer h.Close()
+
+	turnCtx, mine, ok := h.startTurn(context.Background(), "c")
+	if !ok {
+		t.Fatal("precondition: startTurn must win")
+	}
+	_ = turnCtx
+
+	var wg sync.WaitGroup
+	const N = 8
+	wg.Add(N)
+	for i := range N {
+		go func(i int) {
+			defer wg.Done()
+			ev := &protocol.Event{
+				Type:     protocol.TypePrompt,
+				PromptID: "p",
+				Prompt:   &protocol.PromptPayload{ChatID: "c", Text: "concurrent"},
+			}
+			_ = h.HandleEvent(context.Background(), ev)
+			_ = i
+		}(i)
+	}
+	wg.Wait()
+
+	// Every one of the N prompts must have been dropped as busy (warning
+	// notices), and the cancelBy map must still hold exactly our one turn.
+	notices := sender.Controls()
+	if len(notices) != N {
+		t.Errorf("emits = %d, want %d busy notices", len(notices), N)
+	}
+	for _, c := range notices {
+		if c.Type != protocol.TypeNotice || c.Notice == nil || c.Notice.Level != "warning" {
+			t.Errorf("want warning notice, got %+v", c)
+		}
+	}
+	if n := len(h.cancelBy); n != 1 {
+		t.Errorf("cancelBy size = %d after concurrent prompts, want 1", n)
+	}
+	h.endTurn("c", mine)
 }

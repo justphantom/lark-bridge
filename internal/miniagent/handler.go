@@ -3,6 +3,8 @@ package miniagent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,9 +27,13 @@ type controlSender = backendrpc.ControlSender
 // the picker/answer-broker machinery. One Handler per process; each turn
 // runs on its own goroutine.
 //
-// miniagent is stateless: no sessions, no memory, no per-chat jsonl. The
-// only persistent per-chat state is the router binding (Directory +
-// ModelSpec); both are spliced into the miniagent CLI flags at fork time.
+// Per-chat memory lives in a jsonl under sessionRoot (one per chat, keyed by
+// sha256(chatID)); the path is passed as -session so miniagent re-feeds prior
+// turns. Same-chat writes are serialised by startTurn's busy-then-drop (R4),
+// not by a per-chat lock. The only other persistent per-chat state is the
+// router binding (Directory + ModelSpec + Mode + Thinking); all are spliced
+// into the miniagent CLI flags at fork time. /clear deletes the jsonl so the
+// next prompt starts a fresh conversation.
 //
 // cancelBy enforces busy-then-drop per chat: a chat with an in-flight turn
 // rejects new prompts with a Notice instead of starting a second concurrent
@@ -44,6 +50,7 @@ type Handler struct {
 	streamHistory   int                // per-chat archive cap (0 = no archive)
 	archiveRedact   bool               // redact sensitive fields in stream archives
 	stateDir        string             // streams root dir
+	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat jsonl
 	git             *bridgebase.GitRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
@@ -84,6 +91,16 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		stateDir:      stateDir,
 		git:           bridgebase.NewGitRunner(bridgebase.ExecCommander{}, logger, 0),
 		cancelBy:      make(map[string]*bridgebase.PromptCancel),
+	}
+	// [P3] sessionRoot holds per-chat jsonl. Only set when stateDir is non-empty:
+	// filepath.Join("", "miniagent-sessions") would yield a relative path, which
+	// we must NOT use as a session dir (turns must stay stateless when stateDir
+	// is unset, e.g. some tests or a misconfigured deploy).
+	if stateDir != "" {
+		h.sessionRoot = filepath.Join(stateDir, "miniagent-sessions")
+		if err := os.MkdirAll(h.sessionRoot, 0o700); err != nil {
+			logger.Warn("miniagent: create session dir failed (turns will fail until fixed)", log.FieldPath, h.sessionRoot, log.FieldError, err)
+		}
 	}
 	h.appCtx, h.appCancel = context.WithCancel(context.Background())
 	return h

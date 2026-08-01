@@ -1,6 +1,7 @@
 package router
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -96,6 +97,57 @@ func TestSetSettingsFile(t *testing.T) {
 	}
 }
 
+// TestSetMode verifies the miniagent -mode field round-trips.
+func TestSetMode(t *testing.T) {
+	r := newTestRouter(t, "c1")
+	r.SetMode("c1", "auto")
+	b, _ := r.Lookup("c1")
+	if b.Mode != "auto" {
+		t.Errorf("Mode = %q, want auto", b.Mode)
+	}
+}
+
+// TestSetThinking verifies the miniagent -thinking field round-trips.
+func TestSetThinking(t *testing.T) {
+	r := newTestRouter(t, "c1")
+	r.SetThinking("c1", "high")
+	b, _ := r.Lookup("c1")
+	if b.Thinking != "high" {
+		t.Errorf("Thinking = %q, want high", b.Thinking)
+	}
+}
+
+// TestSetMode_PersistsAcrossReload verifies SetMode writes through to disk:
+// after Close, a fresh Router loading the same persistPath must surface the
+// pinned mode. Guards the saveAsync coalescer end-to-end for the new field.
+func TestSetMode_PersistsAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "r.json")
+	r1, err := New(path, log.Nop())
+	if err != nil {
+		t.Fatalf("router new: %v", err)
+	}
+	r1.Bind("c1", "", "", "", "", "")
+	r1.SetMode("c1", "auto")
+	r1.SetThinking("c1", "max")
+	r1.Close()
+
+	r2, err := New(path, log.Nop())
+	if err != nil {
+		t.Fatalf("router reload: %v", err)
+	}
+	defer r2.Close()
+	b, ok := r2.Lookup("c1")
+	if !ok {
+		t.Fatal("binding missing after reload")
+	}
+	if b.Mode != "auto" {
+		t.Errorf("Mode after reload = %q, want auto", b.Mode)
+	}
+	if b.Thinking != "max" {
+		t.Errorf("Thinking after reload = %q, want max", b.Thinking)
+	}
+}
+
 // TestSetMethods_LeaveOtherFieldsUntouched verifies each Set* mutates only its
 // own field — a regression here would silently corrupt the binding.
 func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
@@ -108,6 +160,8 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	r.SetPermissionMode("c1", "plan")
 	r.SetEffortLevel("c1", "max")
 	r.SetSettingsFile("c1", "/k.json")
+	r.SetMode("c1", "auto")
+	r.SetThinking("c1", "high")
 
 	// Now change only ModelSpec; everything else must stay.
 	r.SetModelSpec("c1", "opus")
@@ -116,7 +170,8 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 		t.Errorf("ModelSpec = %q, want opus", b.ModelSpec)
 	}
 	if b.Agent != "build" || b.SessionID != "sess-1" || b.Directory != "/work" ||
-		b.PermissionMode != "plan" || b.EffortLevel != "max" || b.SettingsFile != "/k.json" {
+		b.PermissionMode != "plan" || b.EffortLevel != "max" || b.SettingsFile != "/k.json" ||
+		b.Mode != "auto" || b.Thinking != "high" {
 		t.Errorf("SetModelSpec corrupted other fields: %+v", b)
 	}
 }
@@ -136,6 +191,8 @@ func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
 	r.SetPermissionMode("ghost", "x")
 	r.SetEffortLevel("ghost", "x")
 	r.SetSettingsFile("ghost", "x")
+	r.SetMode("ghost", "x")
+	r.SetThinking("ghost", "x")
 	if _, ok := r.Lookup("ghost"); ok {
 		t.Fatal("Set* on missing binding must not create one")
 	}

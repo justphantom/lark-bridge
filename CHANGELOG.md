@@ -39,6 +39,75 @@ miniagent **v2.0.0** 全量接入。主线：吸收上游 v2.0.0 的外部契约
   退化为「事件不出现 / flag 被拒」。lark-bridge 不打包 miniagent 二进制。`-approve` 必须保持默认 `all`
   （bridge 每 prompt fork 一次、stdin 写完即 EOF，`dangerous`/`always` 会在 EOF 后拒绝危险工具）。
 
+---
+
+miniagent **v3.0.0** 全面落地（破坏性迁移）。主线：吸收上游 v3.0.0 的外部契约破坏
+（`-base-url`/`-confine` 删除 → 完整 URL + `-mode`）、新增代码开发能力（`-mode default` 护栏）、
+每 chat 自动会话记忆（`-session`）、可选多 provider 配置（`-config`）。这是 **operator 必须同步配置**
+的发版（见 Changed/Removed/Notes）。详见 `docs/MINIAGENT_V3_IMPLEMENTATION.md`。破坏性配置变更 →
+semver 倾向 major bump（版本号策略待确认，见末尾 open question）。
+
+### Added
+
+- **`/mode`、`/thinking`、`/clear` 命令**（D2/D3/R2）。每 chat 钉住 `-mode`/`-thinking`（覆盖全局默认，
+  经 `router.SetMode`/`SetThinking` 持久化）；`/clear` 删除本 chat 的会话 jsonl，下次提问开新对话。`/help`
+  与 `/current` 同步纳入新命令。`-mode default`（新默认）：写工具限 workdir + shell 拒 11 类提权器
+  （sudo/doas/su/…）；`-mode auto`：放开。
+- **每 chat 自动会话记忆**（D4/R2/R4）。`miniagent.Handler` 在 `{state_dir}/miniagent-sessions/<sha256(chatID)>.jsonl`
+  落 v3 `-session`，第二轮记得第一轮内容；`/clear` 清空。同 chat 串行由既有 `startTurn` busy-then-drop
+  保证（busy 时第二个 prompt 直接被「处理中」拒），单进程下不依赖 v3 跨进程 `flock`。chatID 经 sha256 hex
+  防路径穿越/碰撞。
+- **可选 `config_path` 多 provider 模式**（D5/R3）。`miniagent.config_path` 指向 `miniagent.json` 时进入
+  config 模式：bridge 透传 `-config <abspath>`，**不传** `-chat-url`/`-models-url`；`/model provider/id`
+  切换 provider。`miniagent.json` **部署期生成**（operator 按 `.env` 产出，bridge 不维护、不生成——R3）。
+  示例骨架（`/etc/miniagent/miniagent.json`）：
+  ```json
+  {
+    "providers": [
+      {"name": "main", "chat_url": "${MINIAGENT_CHAT_URL}", "models_url": "${MINIAGENT_MODELS_URL}", "key": "${MINIAGENT_API_KEY}", "models": ["model-a", "model-b"]}
+    ],
+    "defaults": {"model": "main/model-a", "mode": "default", "thinking": "off"}
+  }
+  ```
+- **`miniclient.DefaultMode`/`DefaultThinking` 访问器**。给 `miniagent.Handler` 读 client 默认值用
+  （`activeMode`/`activeThinking` 的 fallback），避免改 `New(handler)` 签名。nil 安全（测试）。
+- **启动期校验测试 + config 模式分支测试**（Phase 4）。`cmd/miniagent-back/main_test.go` 钉死
+  `workspace_root` 必配、bare 模式 `chat_url`/`config_path` 二选一、`config_path` 非空时放行 chat_url 缺位；
+  `miniclient` 钉死 config 模式下 `-config`/`-mode`/`-thinking`/`-session` 共存（只换端点源，不瘦身每轮形状）。
+
+### Changed
+
+- **`base_url` → `chat_url` + `models_url`（破坏性）**。v3 删 `-base-url`，bridge 拆成两个完整 URL：
+  `chat_url`（chat completions 全 URL，bare 模式必填）+ `models_url`（models 全 URL，`/models` 用）。
+  旧 `miniagent.base_url` 字段经 `DisallowUnknownFields` 启动期明确拒绝。
+- **`confine` 移除 → `mode`（破坏性）**。v2 `confine`（workdir 沙箱）合并进 v3 `-mode`：新默认 `default`
+  = 写工具限 workdir + shell 拒提权器；`auto` = 不限。`miniagent.mode` 经 `applyDefaults` 默认 `default`、
+  经 `validate` 限 `default`/`auto`。`/mode` 每 chat 覆盖。
+- **`workspace_root` 改为必填**。v3 `-mode default` 需要 workdir；不配启动期 fatal（`/cd` picker 也依赖它）。
+  `cmd/miniagent-back/main.go` 强校验。
+- **`-thinking` 升为一等字段**。`miniagent.thinking`（off|minimal|low|medium|high|xhigh|max）经 `applyDefaults`
+  默认 `off`、经 `validate` 限七值；`/thinking` 每 chat 覆盖。
+- **`-list-models` 适配 v3**。bare 模式传 `-chat-url`+`-models-url`；config 模式只传 `-config`。
+
+### Removed
+
+- **`miniagent.base_url`**（→ `chat_url`+`models_url`）。旧配置启动期拒绝，operator 必须迁移。
+- **`miniagent.confine`**（→ `mode`）。旧配置启动期拒绝；既有的 `confine: true` 等价于新默认 `mode: default`，
+  `confine: false` 等价于 `mode: auto`。
+
+### Notes
+
+- **operator 迁移清单**（发布重点）：
+  1. 升级 miniagent 二进制到 **v3.0.0**（旧二进制不认 `-chat-url`/`-mode`/`-thinking`/`-session`/`-config`，
+     exit 2）。
+  2. 配置文件 `miniagent.base_url` → `chat_url`+`models_url`（完整 URL）；删 `confine`，按需配 `mode`
+     （默认 `default` 等价旧 `confine: true`）。
+  3. 配 `miniagent.workspace_root`（v3 必填）。
+  4. （可选）多 provider：配 `miniagent.config_path` 指向部署期生成的 `miniagent.json`。
+- **行为变化警告**：operator 的 shell 工具若依赖 sudo/doas/su 等提权器，新默认 `-mode default` 下会被拒，
+  需 `/mode auto`（每 chat）或全局配 `miniagent.mode: auto` 放开。这是有意的护栏（D2）。
+- **`miniagent.json` 部署期生成**：bridge 不生成、不维护该文件（R3）。operator 用 `.env` 模板产出后填 `config_path`。
+
 ## [1.9.0] - 2026-08-01
 
 v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incomplete、shell 进度摘要）、

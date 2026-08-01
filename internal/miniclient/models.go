@@ -27,6 +27,11 @@ const listModelsMaxBytes = 4 << 20
 // CLI owns the endpoint, auth, and retry once more — the bridge no longer
 // carries its own LLM HTTP code.
 //
+// v3 changed the endpoint flags: bare mode requires -chat-url (full chat
+// completions URL) and uses -models-url (full models URL) for the listing;
+// config mode (-config <abspath>) reads endpoints from miniagent.json and
+// must NOT pass -chat-url/-models-url.
+//
 // The API key follows the same routing as Run: $MINIAGENT_API_KEY env by
 // default, or -key-file (a path, not the key) when KeyFile is configured — in
 // which case the key is kept out of the subprocess env.
@@ -35,8 +40,18 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("miniclient: cli_path is empty")
 	}
 	args := []string{"-list-models"}
-	if c.baseURL != "" {
-		args = append(args, "-base-url", c.baseURL)
+	if c.configPath != "" {
+		// config 模式：-list-models 经 miniagent.json 解析 provider（须 defaults.model
+		// 或单一 provider，否则 CLI 报错）。
+		args = append(args, "-config", c.configPath)
+	} else {
+		// 裸模式：-chat-url 必需；-models-url 空则 ListAvailableModels 报错（/model <id> 仍可用）。
+		if c.chatURL != "" {
+			args = append(args, "-chat-url", c.chatURL)
+		}
+		if c.modelsURL != "" {
+			args = append(args, "-models-url", c.modelsURL)
+		}
 	}
 	if c.keyFile != "" {
 		args = append(args, "-key-file", c.keyFile)
