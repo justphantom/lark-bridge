@@ -489,6 +489,20 @@ stage_configs() {
     cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
+    # miniagent CLI 自己的配置（v3.1+ config-only 模式所必需）：端点 + 已删 flag
+    # 对应的 run 参数（shell_timeout 等）从这里来，不再走 CLI flag。${MINIAGENT_*}
+    # 占位符由 miniagent 加载时用子进程 env 展开（不在 deploy 期 envsubst，与
+    # config.example.json 的 ${VAR} 同一思路，改 .env 即生效）。quoted heredoc
+    # （'EOF'）阻止 bash 展开 ${...}。config_path 在 config.example.json 里已是
+    # 字面量 /etc/lark-bridge/miniagent-cli.json，无需 sed 注入。
+    cat > "$STAGE/miniagent-cli.json" <<'EOF'
+{
+  "providers": [{"name": "default", "chat_url": "${MINIAGENT_CHAT_URL}", "models_url": "${MINIAGENT_MODELS_URL}"}],
+  "defaults": {"model": "${MINIAGENT_DEFAULT_MODEL}"},
+  "run": {"shell_timeout": "60s"}
+}
+EOF
+
     # feishu-front: derived from claude-config (same base). Note: every backend
     # shares internal/config.Config struct + DisallowUnknownFields, so "extra
     # fields are inert" is NOT true -- the struct must recognise every key in the
@@ -620,6 +634,11 @@ install_files() {
     for s in "${SELECTED[@]}"; do
         sudo cp "$STAGE/$(svc_config "$s")" "$CONFIG_DIR/"
     done
+    # miniagent-cli.json 是 miniagent-config.json 的附属文件（v3.1+ config-only
+    # 模式所必需），不在 svc_config 映射里；miniagent 在 SELECTED 时单独拷贝。
+    if [[ " ${SELECTED[*]} " == *" miniagent "* ]]; then
+        sudo cp "$STAGE/miniagent-cli.json" "$CONFIG_DIR/"
+    fi
     sudo chmod 600 "$CONFIG_DIR"/*.json
 
     sync_env

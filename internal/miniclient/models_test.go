@@ -38,7 +38,7 @@ func TestListModels_OK(t *testing.T) {
 	}
 	p := writeModelsScript(t, t.TempDir(), "ok.sh",
 		[]string{"gpt-4o", "gpt-4o-mini", "", "  deepseek-chat  "}, "", 0)
-	c := New(Config{CLIPath: p, APIKey: "k", ChatURL: "https://ex.com/v1/chat/completions"}, nil)
+	c := New(Config{CLIPath: p, APIKey: "k", ConfigPath: "/etc/miniagent/miniagent.json"}, nil)
 	got, err := c.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
@@ -93,8 +93,8 @@ func TestListModels_NonZeroExit(t *testing.T) {
 }
 
 // writeArgsEchoScript writes a bash mock that echoes its own argv (one per line)
-// on stdout then exits 0. Used to verify ListModels builds the expected -chat-url
-// / -models-url / -config flags without the real miniagent binary.
+// on stdout then exits 0. Used to verify ListModels builds the expected -config
+// flag without the real miniagent binary.
 func writeArgsEchoScript(t *testing.T, dir, name string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -105,36 +105,8 @@ func writeArgsEchoScript(t *testing.T, dir, name string) string {
 	return p
 }
 
-// TestListModels_BareModeArgs verifies v3 bare mode: ListModels passes
-// -chat-url + -models-url (full URLs) and does NOT pass the v2 -base-url.
-func TestListModels_BareModeArgs(t *testing.T) {
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash not available")
-	}
-	p := writeArgsEchoScript(t, t.TempDir(), "echo.sh")
-	c := New(Config{
-		CLIPath:   p,
-		APIKey:    "k",
-		ChatURL:   "https://ex.com/v1/chat/completions",
-		ModelsURL: "https://ex.com/v1/models",
-	}, nil)
-	got, err := c.ListModels(context.Background())
-	if err != nil {
-		t.Fatalf("ListModels: %v", err)
-	}
-	joined := strings.Join(got, " ")
-	for _, want := range []string{"-chat-url", "https://ex.com/v1/chat/completions", "-models-url", "https://ex.com/v1/models"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("bare mode args missing %q; got %v", want, got)
-		}
-	}
-	if strings.Contains(joined, "-base-url") {
-		t.Errorf("v3 removed -base-url but it appears in args: %v", got)
-	}
-}
-
-// TestListModels_ConfigModeArgs verifies v3 config mode: ListModels passes
-// -config <abspath> and does NOT pass -chat-url / -models-url.
+// TestListModels_ConfigModeArgs verifies v3.1+ config-only mode: ListModels
+// passes -config <abspath> and does NOT pass the removed -chat-url / -models-url.
 func TestListModels_ConfigModeArgs(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
@@ -143,8 +115,6 @@ func TestListModels_ConfigModeArgs(t *testing.T) {
 	c := New(Config{
 		CLIPath:    p,
 		APIKey:     "k",
-		ChatURL:    "https://ex.com/v1/chat/completions", // must be IGNORED in config mode
-		ModelsURL:  "https://ex.com/v1/models",           // likewise
 		ConfigPath: "/etc/miniagent/miniagent.json",
 	}, nil)
 	got, err := c.ListModels(context.Background())
@@ -156,9 +126,9 @@ func TestListModels_ConfigModeArgs(t *testing.T) {
 		t.Errorf("config mode args missing -config <path>; got %v", got)
 	}
 	if strings.Contains(joined, "-chat-url") {
-		t.Errorf("-chat-url must NOT appear in config mode: %v", got)
+		t.Errorf("-chat-url must NOT appear (removed in v3.1): %v", got)
 	}
 	if strings.Contains(joined, "-models-url") {
-		t.Errorf("-models-url must NOT appear in config mode: %v", got)
+		t.Errorf("-models-url must NOT appear (removed in v3.1): %v", got)
 	}
 }

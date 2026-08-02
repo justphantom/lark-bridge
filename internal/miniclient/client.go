@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
@@ -34,22 +33,22 @@ const maxStderrBytes = 64 << 10
 const defaultMaxConcurrent = 4
 
 // Config carries the scalar settings the Client reads from config.MiniAgent.
+// miniagent v3.1+ is config-only: endpoints + removed run settings
+// (shell-timeout/context-window) live in the miniagent.json at ConfigPath, not
+// here. ChatURL/ModelsURL/ShellTimeout/ContextWindow were deleted along with
+// their CLI flags.
 type Config struct {
 	CLIPath       string
 	APIKey        string
-	ChatURL       string // [P1] full chat completions URL (bare mode required)
-	ModelsURL     string // [P1] full models URL (bare mode, /models)
 	SystemPrompt  string
 	MaxTokens     int
 	MaxConcurrent int
 	Stream        bool
 	MaxIterations int
-	ShellTimeout  time.Duration
 	Mode          string // [P2] "default"|"auto"
 	Thinking      string // [P2] off|minimal|low|medium|high|xhigh|max
-	ContextWindow int    // [P2] >0 enables compaction
 	KeyFile       string
-	ConfigPath    string // [P4] non-empty → config mode (no chat/models-url)
+	ConfigPath    string // [P4] required → -config <abspath> (config-only mode)
 }
 
 // Client wraps the miniagent binary. Safe for concurrent use: each
@@ -57,16 +56,12 @@ type Config struct {
 type Client struct {
 	cliPath       string
 	apiKey        string
-	chatURL       string
-	modelsURL     string
 	system        string
 	maxTokens     int
 	stream        bool
 	maxIterations int
-	shellTimeout  time.Duration
 	mode          string
 	thinking      string
-	contextWindow int
 	keyFile       string
 	configPath    string
 	logger        *log.Logger
@@ -85,16 +80,12 @@ func New(cfg Config, logger *log.Logger) *Client {
 	return &Client{
 		cliPath:       cfg.CLIPath,
 		apiKey:        cfg.APIKey,
-		chatURL:       cfg.ChatURL,
-		modelsURL:     cfg.ModelsURL,
 		system:        cfg.SystemPrompt,
 		maxTokens:     cfg.MaxTokens,
 		stream:        cfg.Stream,
 		maxIterations: cfg.MaxIterations,
-		shellTimeout:  cfg.ShellTimeout,
 		mode:          cfg.Mode,
 		thinking:      cfg.Thinking,
-		contextWindow: cfg.ContextWindow,
 		keyFile:       cfg.KeyFile,
 		configPath:    cfg.ConfigPath,
 		logger:        logger,
@@ -206,17 +197,16 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 
 // buildArgs assembles miniagent CLI flags. The API key is NOT a flag: it rides
 // $MINIAGENT_API_KEY on the subprocess env (set in Run) unless KeyFile is set
-// (then -key-file points at a path). v3.0.0 removed -base-url/-confine: bare
-// mode uses -chat-url (and -models-url for listing); config mode uses -config.
-// Flag form is single-dash to match the miniagent README.
+// (then -key-file points at a path). miniagent v3.1+ is config-only: endpoints
+// + the removed run settings (shell-timeout/context-window) come from the
+// miniagent.json at -config, so buildArgs never passes -chat-url/-models-url/
+// -context-window/-shell-timeout. Flag form is single-dash to match the
+// miniagent README.
 func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{"-model", opts.Model}
-	if c.configPath != "" {
-		// config 模式：端点/key 由 miniagent.json 解析，不传 chat/models-url。
-		a = append(a, "-config", c.configPath)
-	} else if c.chatURL != "" {
-		a = append(a, "-chat-url", c.chatURL)
-	}
+	// config-only：端点/key/run 参数由 miniagent.json 解析。configPath 由 main.go
+	// 强校验非空，这里直接追加。
+	a = append(a, "-config", c.configPath)
 	if c.system != "" {
 		a = append(a, "-system", c.system)
 	}
@@ -243,9 +233,6 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if thinking != "" {
 		a = append(a, "-thinking", thinking)
 	}
-	if c.contextWindow > 0 {
-		a = append(a, "-context-window", strconv.Itoa(c.contextWindow))
-	}
 	if c.stream {
 		// -stream was removed in miniagent fe85c16 and re-added in v2.0.0;
 		// requires a v2.0.0+ binary (older binaries exit(2) on the unknown flag).
@@ -258,9 +245,6 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	}
 	if maxIter > 0 {
 		a = append(a, "-max-iterations", strconv.Itoa(maxIter))
-	}
-	if c.shellTimeout > 0 {
-		a = append(a, "-shell-timeout", c.shellTimeout.String())
 	}
 	if opts.Session != "" {
 		// 会话 jsonl 绝对路径（v3 -session，含 / 或 . 视为路径）。同一 chat 由

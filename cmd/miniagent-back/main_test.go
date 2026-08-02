@@ -20,7 +20,7 @@ func TestRun_BadConfigReturnsError(t *testing.T) {
 
 // writeMiniAgentConfig writes a JSON config that loads cleanly and clears the
 // cross-binary validators + the APIKey/Model requireds in run(), so the
-// WorkspaceRoot / ChatURL-ConfigPath gates are the FIRST ones reachable. The
+// WorkspaceRoot / ConfigPath gates are the FIRST ones reachable. The
 // caller passes the miniagent fields it wants to test (the helper fills the
 // rest with valid values). state_dir points at a pre-created temp dir so the
 // validate() writability check passes; returns the config path.
@@ -50,12 +50,11 @@ func writeMiniAgentConfig(t *testing.T, miniagentJSON string) string {
 // -mode default requires a workdir (it bounds the write tools + /cd picker);
 // letting it through would surface as an opaque exit-1 on the first prompt.
 func TestRun_WorkspaceRootRequired(t *testing.T) {
-	// workspace_root omitted (empty). api_key/model/chat_url set so the gates
-	// BEFORE workspace_root pass; workspace_root is the first one to fire.
+	// workspace_root omitted (empty). api_key/model set so the gates BEFORE
+	// workspace_root pass; workspace_root is the first one to fire.
 	p := writeMiniAgentConfig(t, `{
 		"api_key":   "sk-test",
-		"model":     "kimi",
-		"chat_url":  "https://ex.test/v1/chat/completions"
+		"model":     "kimi"
 	}`)
 	err := run(p)
 	if err == nil {
@@ -66,11 +65,12 @@ func TestRun_WorkspaceRootRequired(t *testing.T) {
 	}
 }
 
-// TestRun_BareModeRequiresChatURL pins the v3 Phase 1/4 gate: in bare mode
-// (config_path empty) chat_url is required. v3 removed -base-url, so the
-// endpoint must come from chat_url (or from config_path → miniagent.json).
-func TestRun_BareModeRequiresChatURL(t *testing.T) {
-	// api_key/model/workspace_root set; chat_url AND config_path both empty.
+// TestRun_ConfigPathRequired pins the v3.1+ config-only gate: an empty
+// miniagent.config_path makes run() fail fast. v3.1 removed bare CLI mode
+// (-chat-url/-models-url), so the endpoint must come from config_path →
+// miniagent.json.
+func TestRun_ConfigPathRequired(t *testing.T) {
+	// api_key/model/workspace_root set; config_path empty.
 	p := writeMiniAgentConfig(t, `{
 		"api_key":        "sk-test",
 		"model":          "kimi",
@@ -78,19 +78,22 @@ func TestRun_BareModeRequiresChatURL(t *testing.T) {
 	}`)
 	err := run(p)
 	if err == nil {
-		t.Fatal("run with empty chat_url AND config_path should return an error")
+		t.Fatal("run with empty config_path should return an error")
 	}
-	if !strings.Contains(err.Error(), "chat_url") || !strings.Contains(err.Error(), "bare mode") {
-		t.Errorf("err = %q, want it to mention bare mode / chat_url", err.Error())
+	if !strings.Contains(err.Error(), "config_path") {
+		t.Errorf("err = %q, want it to mention config_path", err.Error())
+	}
+	if strings.Contains(err.Error(), "bare mode") || strings.Contains(err.Error(), "chat_url") {
+		t.Errorf("err = %q must not reference removed bare-mode/chat_url", err.Error())
 	}
 }
 
-// TestRun_ConfigPathSatisfiesBareGate pins the v3 Phase 4 path: a non-empty
-// config_path satisfies the startup gate even when chat_url is empty. run()
-// proceeds past the gate (it will still fail later — no real frontend, no
-// miniagent binary — but the FAILURE MUST NOT be the bare-mode gate). This is
-// the negative-space assertion for TestRun_BareModeRequiresChatURL.
-func TestRun_ConfigPathSatisfiesBareGate(t *testing.T) {
+// TestRun_ConfigPathSatisfiesGate pins the v3.1+ config-only path: a non-empty
+// config_path satisfies the startup gate. run() proceeds past the gate (it
+// will still fail later — no real frontend, no miniagent binary — but the
+// FAILURE MUST NOT be the config_path-required gate). This is the
+// negative-space assertion for TestRun_ConfigPathRequired.
+func TestRun_ConfigPathSatisfiesGate(t *testing.T) {
 	p := writeMiniAgentConfig(t, `{
 		"api_key":        "sk-test",
 		"model":          "main/kimi",
@@ -101,7 +104,7 @@ func TestRun_ConfigPathSatisfiesBareGate(t *testing.T) {
 	if err == nil {
 		t.Fatal("run should still return an error (no real frontend / binary)")
 	}
-	if strings.Contains(err.Error(), "bare mode") || strings.Contains(err.Error(), "chat_url") {
-		t.Errorf("config_path set must satisfy the bare-mode gate; err = %q", err.Error())
+	if strings.Contains(err.Error(), "config_path is required") {
+		t.Errorf("config_path set must satisfy the gate; err = %q", err.Error())
 	}
 }

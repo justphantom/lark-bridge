@@ -2,7 +2,6 @@ package miniclient
 
 import (
 	"testing"
-	"time"
 )
 
 func TestParseEvent_ToolUse(t *testing.T) {
@@ -158,19 +157,20 @@ func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/miniagent",
 		APIKey:       "sk-test",
-		ChatURL:      "https://ex.com/v1/chat/completions",
 		SystemPrompt: "be brief",
 		MaxTokens:    2048,
+		ConfigPath:   "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Prompt:  "hi",
 		Model:   "kimi",
 		Workdir: "/proj",
 	})
-	// Check the 5 surviving flags are present. -api-key is intentionally
-	// absent: the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
+	// Check the surviving flags are present. -api-key is intentionally absent:
+	// the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
+	// -config is always emitted (v3.1+ config-only mode).
 	want := map[string]bool{
-		"-model": false, "-chat-url": false,
+		"-model": false, "-config": false,
 		"-system": false, "-max-tokens": false, "-workdir": false,
 	}
 	for _, a := range args {
@@ -183,9 +183,12 @@ func TestBuildArgs_Full(t *testing.T) {
 			t.Errorf("missing flag %s in buildArgs output: %v", flag, args)
 		}
 	}
-	// v3 removed -base-url/-confine: assert they stay out (regression guard).
-	if contains(args, "-base-url") || contains(args, "-confine") {
-		t.Errorf("v3-removed flag present in args: %v", args)
+	// v3 removed -base-url/-confine; v3.1 removed -chat-url/-models-url/
+	// -context-window/-shell-timeout: assert they stay out (regression guard).
+	for _, b := range []string{"-base-url", "-confine", "-chat-url", "-models-url", "-context-window", "-shell-timeout"} {
+		if contains(args, b) {
+			t.Errorf("removed flag present in args: %v", args)
+		}
 	}
 }
 
@@ -219,20 +222,24 @@ func TestBuildArgs_Minimal(t *testing.T) {
 // migration: 5 of the 6 flags miniagent fe85c16 deleted (-verbose /
 // -permission / -blocked-patterns / -chat-id / -state-dir) MUST NOT appear in
 // buildArgs output — any would make Go's flag package os.Exit(2) at startup.
-// v3.0.0 additionally removed -base-url/-confine (replaced by -chat-url + -mode),
-// so those are banned too.
+// v3.0.0 additionally removed -base-url/-confine; v3.1 removed -chat-url/
+// -models-url/-context-window/-shell-timeout (config-only mode), so all are banned.
 // (-stream was also deleted in fe85c16 but RE-ADDED in v2.0.0, so it is no
 // longer banned; see TestBuildArgs_Stream.)
 func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:      "/bin/ma",
 		APIKey:       "k",
-		ChatURL:      "https://ex.com/v1/chat/completions",
 		SystemPrompt: "s",
 		MaxTokens:    100,
+		ConfigPath:   "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
-	banned := []string{"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir", "-base-url", "-confine"}
+	banned := []string{
+		"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir",
+		"-base-url", "-confine",
+		"-chat-url", "-models-url", "-context-window", "-shell-timeout",
+	}
 	for _, b := range banned {
 		if contains(args, b) {
 			t.Errorf("removed flag %q present in args: %v", b, args)
@@ -273,40 +280,39 @@ func argValue(args []string, flag string) string {
 	return ""
 }
 
-// TestBuildArgs_V2OptionalFlags verifies the v2.0.0 optional run flags are
-// emitted with their values when configured. Zero/empty omission is covered by
-// TestBuildArgs_Minimal's shape (these fields are absent from that Config).
+// TestBuildArgs_V2OptionalFlags verifies the optional run flags still exposed
+// as CLI flags are emitted with their values when configured. Zero/empty
+// omission is covered by TestBuildArgs_Minimal's shape (these fields are
+// absent from that Config). (-shell-timeout moved to miniagent.json in v3.1.)
 func TestBuildArgs_V2OptionalFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:       "/bin/ma",
 		APIKey:        "k",
 		MaxIterations: 30,
-		ShellTimeout:  90 * time.Second,
 		KeyFile:       "/etc/miniagent/key",
+		ConfigPath:    "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
 	if v := argValue(args, "-max-iterations"); v != "30" {
 		t.Errorf("-max-iterations = %q, want 30", v)
-	}
-	if v := argValue(args, "-shell-timeout"); v != "1m30s" {
-		t.Errorf("-shell-timeout = %q, want 1m30s", v)
 	}
 	if v := argValue(args, "-key-file"); v != "/etc/miniagent/key" {
 		t.Errorf("-key-file = %q, want /etc/miniagent/key", v)
 	}
 }
 
-// TestBuildArgs_V2OptionalFlags_Omitted confirms the v2.0.0/v3.0.0 flags stay
+// TestBuildArgs_V2OptionalFlags_Omitted confirms the optional flags stay
 // absent at zero values so a default config does not pass them (the CLI would
 // still accept them, but the bridge should not invent settings the user did
-// not set).
+// not set). -config is intentionally NOT in this list: it is always emitted
+// in v3.1+ config-only mode.
 func TestBuildArgs_V2OptionalFlags_Omitted(t *testing.T) {
 	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
 	args := c.buildArgs(RunOptions{Model: "m"})
 	for _, f := range []string{
-		"-max-iterations", "-shell-timeout", "-key-file",
-		"-mode", "-thinking", "-context-window",
-		"-chat-url", "-config", "-session",
+		"-max-iterations", "-key-file",
+		"-mode", "-thinking",
+		"-session",
 	} {
 		if contains(args, f) {
 			t.Errorf("zero-value flag %s should be omitted: %v", f, args)
@@ -326,7 +332,6 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	c := New(Config{
 		CLIPath:    "/bin/ma",
 		APIKey:     "k",
-		ChatURL:    "https://ex.com/v1/chat/completions", // must be IGNORED in config mode
 		ConfigPath: "/etc/miniagent/miniagent.json",
 		Mode:       "default", // client default still emits -mode in config mode
 		Thinking:   "off",     // client default still emits -thinking in config mode
@@ -364,16 +369,16 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	}
 }
 
-// TestBuildArgs_V3ModeThinkingContextWindow verifies the v3 -mode/-thinking/
-// -context-window flags appear with their configured values when set on the
-// client (the per-chat "" path: RunOptions.Mode/Thinking empty → client default).
-func TestBuildArgs_V3ModeThinkingContextWindow(t *testing.T) {
+// TestBuildArgs_V3ModeThinking verifies the v3 -mode/-thinking flags appear
+// with their configured values when set on the client (the per-chat "" path:
+// RunOptions.Mode/Thinking empty → client default). (-context-window moved to
+// miniagent.json in v3.1.)
+func TestBuildArgs_V3ModeThinking(t *testing.T) {
 	c := New(Config{
-		CLIPath:       "/bin/ma",
-		APIKey:        "k",
-		Mode:          "auto",
-		Thinking:      "high",
-		ContextWindow: 128000,
+		CLIPath:  "/bin/ma",
+		APIKey:   "k",
+		Mode:     "auto",
+		Thinking: "high",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
 	if v := argValue(args, "-mode"); v != "auto" {
@@ -381,9 +386,6 @@ func TestBuildArgs_V3ModeThinkingContextWindow(t *testing.T) {
 	}
 	if v := argValue(args, "-thinking"); v != "high" {
 		t.Errorf("-thinking = %q, want high", v)
-	}
-	if v := argValue(args, "-context-window"); v != "128000" {
-		t.Errorf("-context-window = %q, want 128000", v)
 	}
 }
 

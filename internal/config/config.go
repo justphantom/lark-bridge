@@ -258,25 +258,24 @@ type StatusMonitor struct {
 }
 
 // MiniAgent configures the miniagent backend (cmd/miniagent-back). The bridge
-// forks the miniagent CLI per turn; these fields map to CLI flags. v3.0.0
-// replaced -base-url/-confine with full URLs + -mode (see buildArgs).
+// forks the miniagent CLI per turn; these fields map to CLI flags. miniagent
+// v3.1+ removed bare CLI mode entirely (-chat-url/-models-url/-context-window/
+// -shell-timeout are gone) and requires config mode: the endpoints and the
+// removed run settings live in the miniagent.json referenced by ConfigPath,
+// generated at deploy time by deploy.sh. The bridge therefore passes
+// -config <ConfigPath> and only the per-turn flags below; endpoint/shell-timeout
+// /context-window must be edited in miniagent-cli.json, not here.
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
-	// pull from the environment. Bare-mode fallback: $MINIAGENT_API_KEY.
+	// pull from the environment; reaches the subprocess as $MINIAGENT_API_KEY
+	// (the upstream key chain is provider.key → -key-file → $MINIAGENT_API_KEY).
 	APIKey string `json:"api_key,omitempty"`
-	// ChatURL is the FULL chat completions URL (e.g. ".../v1/chat/completions"),
-	// required in bare mode (config_path empty). v3 removed -base-url. [P1]
-	ChatURL string `json:"chat_url,omitempty"`
-	// ModelsURL is the FULL models URL (e.g. ".../v1/models"), optional in bare
-	// mode but effectively required for /models (ListAvailableModels errors when
-	// both ModelsURL and static models are empty). [P1]
-	ModelsURL string `json:"models_url,omitempty"`
-	// Model is the model id passed as -model. Bare mode = bare id; config mode
-	// = "provider/id". Required: ${MINIAGENT_DEFAULT_MODEL}.
+	// Model is the model id passed as -model each turn (config mode: a bare id
+	// also accepted by the upstream CLI). Required: ${MINIAGENT_DEFAULT_MODEL}.
 	Model string `json:"model,omitempty"`
-	// SystemPrompt is prepended to every turn. Empty → default persona.
+	// SystemPrompt is prepended to every turn (-system). Empty → default persona.
 	SystemPrompt string `json:"system_prompt,omitempty"`
-	// MaxTokens caps one completion's output tokens. <=0 → 4096.
+	// MaxTokens caps one completion's output tokens (-max-tokens). <=0 → 4096.
 	MaxTokens int `json:"max_tokens,omitempty"`
 	// StreamHistory caps per-run raw NDJSON captures under
 	// {stateDir}/streams/miniagent/. 0 → 50; negative → disable.
@@ -289,8 +288,6 @@ type MiniAgent struct {
 	Stream bool `json:"stream,omitempty"`
 	// MaxIterations caps one turn's LLM-call count (-max-iterations). <=0 → 20.
 	MaxIterations int `json:"max_iterations,omitempty"`
-	// ShellTimeout caps one shell-tool command. Duration string. <=0 → 60s.
-	ShellTimeout Duration `json:"shell_timeout,omitempty"`
 	// Mode is the permission mode (-mode): "default" (write confined to workdir
 	// + shell rejects 11 privilege escalators) or "auto" (unrestricted). Default
 	// "default" (applyDefaults). v3 replaced -confine. [P2]
@@ -298,16 +295,14 @@ type MiniAgent struct {
 	// Thinking is the reasoning effort (-thinking): off|minimal|low|medium|high|
 	// xhigh|max. Default "off" (applyDefaults). [P2]
 	Thinking string `json:"thinking,omitempty"`
-	// ContextWindow caps model context (tokens); >0 enables summary compaction
-	// of the session jsonl mid-section. Pairs with per-chat sessions (P3). [P2]
-	ContextWindow int `json:"context_window,omitempty"`
 	// KeyFile reads the API key from a file (-key-file) instead of
 	// $MINIAGENT_API_KEY (avoids /proc/$PPID/environ leak to shell grandchildren).
 	KeyFile string `json:"key_file,omitempty"`
-	// ConfigPath, when non-empty, switches to miniagent v3 config mode: the
-	// bridge passes -config <abspath> and does NOT pass chat/models-url. The
-	// miniagent.json is generated at deploy time from .env (NOT by bridge code,
-	// R3). [P4]
+	// ConfigPath is REQUIRED (v3.1+ config-only mode): the bridge passes
+	// -config <abspath> and the endpoints + removed run settings (shell-timeout,
+	// context-window, ...) are read from this miniagent.json. deploy.sh generates
+	// it at /etc/lark-bridge/miniagent-cli.json from .env. [P4: required, enforced
+	// in cmd/miniagent-back/main.go]
 	ConfigPath string `json:"config_path,omitempty"`
 }
 

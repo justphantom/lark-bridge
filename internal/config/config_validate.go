@@ -133,7 +133,7 @@ func validate(cfg *Config) error {
 
 	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
 	// reaching validate with "" means an explicit clear; the default values
-	// themselves are valid. (WorkspaceRoot/ChatURL requireds are binary-specific
+	// themselves are valid. (WorkspaceRoot/ConfigPath requireds are binary-specific
 	// → enforced in cmd/miniagent-back/main.go, per this func's header comment.)
 	switch cfg.MiniAgent.Mode {
 	case "default", "auto", "":

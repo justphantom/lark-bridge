@@ -88,8 +88,8 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.WorkspaceRoot == "" {
 		return fmt.Errorf("miniagent.workspace_root is required (v3 -mode default needs a workdir; /cd picker disabled without it)")
 	}
-	if cfg.MiniAgent.ConfigPath == "" && cfg.MiniAgent.ChatURL == "" {
-		return fmt.Errorf("miniagent: bare mode requires chat_url (or set config_path for v3 config mode)")
+	if cfg.MiniAgent.ConfigPath == "" {
+		return fmt.Errorf("miniagent.config_path is required (v3.1+ config-only mode; deploy.sh generates /etc/lark-bridge/miniagent-cli.json)")
 	}
 	// Per-backend router file (R2): without persistence every redeploy resets
 	// all per-chat model/directory pins, and sharing one file with the other
@@ -153,16 +153,12 @@ func run(cfgPath string) error {
 	client := miniclient.New(miniclient.Config{
 		CLIPath:       cliPath,
 		APIKey:        cfg.MiniAgent.APIKey,
-		ChatURL:       cfg.MiniAgent.ChatURL,
-		ModelsURL:     cfg.MiniAgent.ModelsURL,
 		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
 		MaxTokens:     cfg.MiniAgent.MaxTokens,
 		Stream:        cfg.MiniAgent.Stream,
 		MaxIterations: cfg.MiniAgent.MaxIterations,
-		ShellTimeout:  time.Duration(cfg.MiniAgent.ShellTimeout),
 		Mode:          cfg.MiniAgent.Mode,
 		Thinking:      cfg.MiniAgent.Thinking,
-		ContextWindow: cfg.MiniAgent.ContextWindow,
 		KeyFile:       cfg.MiniAgent.KeyFile,
 		ConfigPath:    cfg.MiniAgent.ConfigPath,
 	}, logger)
