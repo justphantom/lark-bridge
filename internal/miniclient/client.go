@@ -118,6 +118,13 @@ func (c *Client) DefaultThinking() string {
 	return c.thinking
 }
 
+// DefaultMaxIterations returns the configured -max-iterations default. 0 means
+// unset: buildArgs then omits the flag and the upstream CLI picks its own
+// default (20). Used by the miniagent handler to display the effective cap.
+func (c *Client) DefaultMaxIterations() int {
+	return c.maxIterations
+}
+
 // RunOptions describes one miniagent turn.
 type RunOptions struct {
 	Prompt   string
@@ -125,8 +132,11 @@ type RunOptions struct {
 	Workdir  string
 	Mode     string // [P2] per-chat override; "" → client default
 	Thinking string // [P2] per-chat override; "" → client default
-	Session  string // [P3] absolute jsonl path; "" → stateless turn
-	Sink     io.Writer
+	// MaxIterations is the per-chat -max-iterations override. <=0 → client
+	// default (which itself 0/unset → upstream CLI default of 20).
+	MaxIterations int
+	Session       string // [P3] absolute jsonl path; "" → stateless turn
+	Sink          io.Writer
 }
 
 // Run starts one miniagent subprocess for opts and returns the event
@@ -241,8 +251,13 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 		// requires a v2.0.0+ binary (older binaries exit(2) on the unknown flag).
 		a = append(a, "-stream")
 	}
-	if c.maxIterations > 0 {
-		a = append(a, "-max-iterations", strconv.Itoa(c.maxIterations))
+	// -max-iterations：每轮覆盖 > client 默认。<=0 全不传 → 上游 CLI 默认 20。
+	maxIter := opts.MaxIterations
+	if maxIter <= 0 {
+		maxIter = c.maxIterations
+	}
+	if maxIter > 0 {
+		a = append(a, "-max-iterations", strconv.Itoa(maxIter))
 	}
 	if c.shellTimeout > 0 {
 		a = append(a, "-shell-timeout", c.shellTimeout.String())

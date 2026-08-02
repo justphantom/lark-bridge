@@ -410,3 +410,39 @@ func TestBuildArgs_PerTurnModeThinkingOverride(t *testing.T) {
 		t.Errorf("-thinking = %q, want per-turn override max", v)
 	}
 }
+
+// TestBuildArgs_PerTurnMaxIterOverride verifies a >0 RunOptions.MaxIterations
+// overrides the client's configured default — the per-chat pin path
+// (handler.activeMaxIter → binding.MaxIterations). A per-turn 0 does NOT
+// override: 0 is the "unset" sentinel, so it falls back to the client default.
+func TestBuildArgs_PerTurnMaxIterOverride(t *testing.T) {
+	c := New(Config{
+		CLIPath:       "/bin/ma",
+		APIKey:        "k",
+		MaxIterations: 30, // global default
+	}, nil)
+	// Per-chat pin wins over the global default.
+	args := c.buildArgs(RunOptions{Model: "m", MaxIterations: 50})
+	if v := argValue(args, "-max-iterations"); v != "50" {
+		t.Errorf("-max-iterations = %q, want per-turn override 50", v)
+	}
+	// Per-turn 0 (= unset) falls back to the client default of 30.
+	args = c.buildArgs(RunOptions{Model: "m"})
+	if v := argValue(args, "-max-iterations"); v != "30" {
+		t.Errorf("-max-iterations = %q, want client default 30 when per-turn is 0", v)
+	}
+}
+
+// TestDefaultMaxIterations verifies the accessor surfaces the configured
+// -max-iterations default (0 when unset), which the miniagent handler uses for
+// /maxiter display.
+func TestDefaultMaxIterations(t *testing.T) {
+	unset := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
+	if got := unset.DefaultMaxIterations(); got != 0 {
+		t.Errorf("unset DefaultMaxIterations = %d, want 0", got)
+	}
+	set := New(Config{CLIPath: "/bin/ma", APIKey: "k", MaxIterations: 25}, nil)
+	if got := set.DefaultMaxIterations(); got != 25 {
+		t.Errorf("DefaultMaxIterations = %d, want 25", got)
+	}
+}

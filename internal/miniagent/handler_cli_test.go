@@ -380,6 +380,40 @@ func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
 	}
 }
 
+// TestActiveMaxIter_PerChatOverrideAndDefault verifies activeMaxIter returns the
+// per-chat pin (>0) when set, and falls back to the client default (0 with no
+// client wired) otherwise — same precedence shape as activeMode/activeThinking.
+// 0 is the clear value: a pinned 0 must NOT shadow the client default.
+func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
+	r, err := router.New(filepath.Join(t.TempDir(), "r.json"), log.Nop())
+	if err != nil {
+		t.Fatalf("router.New: %v", err)
+	}
+	defer r.Close()
+	r.Bind("c1", "", "", "", "", "")
+	h := New(&captureSender{}, log.Nop(), r, "/root", "m", nil, 0, "", false)
+
+	// No pin → client default (client nil → 0).
+	if got := h.activeMaxIter("c1"); got != 0 {
+		t.Errorf("default activeMaxIter = %d, want 0", got)
+	}
+	// Pin > 0 surfaces verbatim.
+	r.SetMaxIterations("c1", 50)
+	if got := h.activeMaxIter("c1"); got != 50 {
+		t.Errorf("pinned activeMaxIter = %d, want 50", got)
+	}
+	// A pinned 0 (= clear) falls back to the client default again — this is
+	// why activeMaxIter gates on >0, not != 0.
+	r.SetMaxIterations("c1", 0)
+	if got := h.activeMaxIter("c1"); got != 0 {
+		t.Errorf("after clear activeMaxIter = %d, want 0", got)
+	}
+	// Unbound chat → client default.
+	if got := h.activeMaxIter("no-such-chat"); got != 0 {
+		t.Errorf("unbound activeMaxIter = %d, want 0", got)
+	}
+}
+
 // --- Phase 3: per-chat session (sessionPath / -session wiring / R4) ---
 
 // newSessionHandler builds a Handler whose stateDir (and thus sessionRoot) is a

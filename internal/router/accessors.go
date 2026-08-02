@@ -120,3 +120,11 @@ func (r *Router) SetMode(chatID, mode string) {
 func (r *Router) SetThinking(chatID, thinking string) {
 	r.mutate(chatID, func(b *Binding) { b.Thinking = thinking })
 }
+
+// SetMaxIterations replaces the pinned miniagent -max-iterations on the binding
+// for chatID and persists the change. No-op when the binding does not exist.
+// Pass 0 to clear: 0 is the zero value and means "do not pass the flag", so the
+// upstream CLI picks its own default (20).
+func (r *Router) SetMaxIterations(chatID string, n int) {
+	r.mutate(chatID, func(b *Binding) { b.MaxIterations = n })
+}

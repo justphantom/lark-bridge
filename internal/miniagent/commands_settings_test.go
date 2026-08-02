@@ -170,6 +170,74 @@ func TestCmdThinking_Clear(t *testing.T) {
 	}
 }
 
+// TestCmdMaxIter_ShowDefault verifies /maxiter with no arg reports the effective
+// cap. With no client wired the default is 0 → "默认（上游 CLI，约 20）".
+func TestCmdMaxIter_ShowDefault(t *testing.T) {
+	h, _ := newSettingsHandler(t)
+	level, _, body := h.cmdMaxIter(context.Background(), "c1", "")
+	if level != "info" {
+		t.Errorf("level = %q, want info", level)
+	}
+	if !strings.Contains(body, "默认") {
+		t.Errorf("body = %q, want it to mention the default (upstream ~20)", body)
+	}
+}
+
+// TestCmdMaxIter_PinValid verifies /maxiter <N> pins N, persists it, reports
+// success, and a subsequent /maxiter (no arg) shows the pinned value.
+func TestCmdMaxIter_PinValid(t *testing.T) {
+	h, r := newSettingsHandler(t)
+	level, _, _ := h.cmdMaxIter(context.Background(), "c1", "50")
+	if level != "success" {
+		t.Errorf("level = %q, want success", level)
+	}
+	b, _ := r.Lookup("c1")
+	if b.MaxIterations != 50 {
+		t.Errorf("binding.MaxIterations = %d, want 50", b.MaxIterations)
+	}
+	_, _, body := h.cmdMaxIter(context.Background(), "c1", "")
+	if !strings.Contains(body, "50") {
+		t.Errorf("/maxiter display = %q should contain pinned 50", body)
+	}
+}
+
+// TestCmdMaxIter_BadValueRejected verifies <1 and non-numeric args are rejected
+// with an error AND do NOT create a binding (ensureBinding runs only on the
+// success paths, mirroring cmdMode).
+func TestCmdMaxIter_BadValueRejected(t *testing.T) {
+	h, r := newSettingsHandler(t)
+	for _, bad := range []string{"0", "-1", "abc", "1.5"} {
+		level, _, _ := h.cmdMaxIter(context.Background(), "c1", bad)
+		if level != "error" {
+			t.Errorf("arg=%q: level = %q, want error", bad, level)
+		}
+		if _, ok := r.Lookup("c1"); ok {
+			t.Errorf("arg=%q: bad /maxiter must not create a binding", bad)
+		}
+	}
+}
+
+// TestCmdMaxIter_Clear verifies /maxiter clear zeroes the pin (0 = unset) and
+// the body mentions the global default. Runs after an explicit pin so the
+// binding exists; clear must set the field to 0 without dropping the binding.
+func TestCmdMaxIter_Clear(t *testing.T) {
+	h, r := newSettingsHandler(t)
+	r.Bind("c1", "", "", "", "", "")
+	r.SetMaxIterations("c1", 50)
+
+	level, _, body := h.cmdMaxIter(context.Background(), "c1", "clear")
+	if level != "success" {
+		t.Errorf("level = %q, want success", level)
+	}
+	b, _ := r.Lookup("c1")
+	if b.MaxIterations != 0 {
+		t.Errorf("after clear: MaxIterations = %d, want 0", b.MaxIterations)
+	}
+	if !strings.Contains(body, "默认") {
+		t.Errorf("clear body = %q should mention global default", body)
+	}
+}
+
 // --- Phase 3: /clear (per-chat session jsonl deletion, R2) ---
 
 // newClearHandler builds a Handler with a real stateDir so sessionRoot is

@@ -117,6 +117,24 @@ func TestSetThinking(t *testing.T) {
 	}
 }
 
+// TestSetMaxIterations verifies the miniagent -max-iterations field round-trips
+// (int, unlike the string miniagent pins). 0 is the clear value: it means "do
+// not pass the flag", matching buildArgs's >0 gate.
+func TestSetMaxIterations(t *testing.T) {
+	r := newTestRouter(t, "c1")
+	r.SetMaxIterations("c1", 50)
+	b, _ := r.Lookup("c1")
+	if b.MaxIterations != 50 {
+		t.Errorf("MaxIterations = %d, want 50", b.MaxIterations)
+	}
+	// 0 clears the pin.
+	r.SetMaxIterations("c1", 0)
+	b, _ = r.Lookup("c1")
+	if b.MaxIterations != 0 {
+		t.Errorf("after clear: MaxIterations = %d, want 0", b.MaxIterations)
+	}
+}
+
 // TestSetMode_PersistsAcrossReload verifies SetMode writes through to disk:
 // after Close, a fresh Router loading the same persistPath must surface the
 // pinned mode. Guards the saveAsync coalescer end-to-end for the new field.
@@ -129,6 +147,7 @@ func TestSetMode_PersistsAcrossReload(t *testing.T) {
 	r1.Bind("c1", "", "", "", "", "")
 	r1.SetMode("c1", "auto")
 	r1.SetThinking("c1", "max")
+	r1.SetMaxIterations("c1", 42)
 	r1.Close()
 
 	r2, err := New(path, log.Nop())
@@ -146,6 +165,9 @@ func TestSetMode_PersistsAcrossReload(t *testing.T) {
 	if b.Thinking != "max" {
 		t.Errorf("Thinking after reload = %q, want max", b.Thinking)
 	}
+	if b.MaxIterations != 42 {
+		t.Errorf("MaxIterations after reload = %d, want 42", b.MaxIterations)
+	}
 }
 
 // TestSetMethods_LeaveOtherFieldsUntouched verifies each Set* mutates only its
@@ -162,6 +184,7 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	r.SetSettingsFile("c1", "/k.json")
 	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
+	r.SetMaxIterations("c1", 30)
 
 	// Now change only ModelSpec; everything else must stay.
 	r.SetModelSpec("c1", "opus")
@@ -171,7 +194,7 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	}
 	if b.Agent != "build" || b.SessionID != "sess-1" || b.Directory != "/work" ||
 		b.PermissionMode != "plan" || b.EffortLevel != "max" || b.SettingsFile != "/k.json" ||
-		b.Mode != "auto" || b.Thinking != "high" {
+		b.Mode != "auto" || b.Thinking != "high" || b.MaxIterations != 30 {
 		t.Errorf("SetModelSpec corrupted other fields: %+v", b)
 	}
 }
@@ -193,6 +216,7 @@ func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
 	r.SetSettingsFile("ghost", "x")
 	r.SetMode("ghost", "x")
 	r.SetThinking("ghost", "x")
+	r.SetMaxIterations("ghost", 5)
 	if _, ok := r.Lookup("ghost"); ok {
 		t.Fatal("Set* on missing binding must not create one")
 	}

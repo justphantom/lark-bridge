@@ -22,6 +22,7 @@ import (
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
 	model, workdir, mode, thinking := h.activeTurnConfig(chatID)
+	maxIter := h.activeMaxIter(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
@@ -43,13 +44,14 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	}
 
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
-		Prompt:   prompt,
-		Model:    model,
-		Workdir:  workdir,
-		Mode:     mode,
-		Thinking: thinking,
-		Session:  h.sessionPath(chatID),
-		Sink:     sink,
+		Prompt:        prompt,
+		Model:         model,
+		Workdir:       workdir,
+		Mode:          mode,
+		Thinking:      thinking,
+		MaxIterations: maxIter,
+		Session:       h.sessionPath(chatID),
+		Sink:          sink,
 	})
 	if err != nil {
 		h.logger.Warn("miniagent start failed",
@@ -298,6 +300,29 @@ func (h *Handler) activeThinking(chatID string) string {
 		}
 	}
 	return h.clientDefaultThinking()
+}
+
+// activeMaxIter returns the -max-iterations the CLI would be invoked with for
+// this chat (used by /current, /maxiter display, and runViaCLI). Same precedence
+// as activeTurnConfig: per-chat pin (>0) > client default. 0 means "do not pass
+// the flag" (upstream CLI default of 20).
+func (h *Handler) activeMaxIter(chatID string) int {
+	if h.router != nil {
+		if b, ok := h.router.Lookup(chatID); ok && b.MaxIterations > 0 {
+			return b.MaxIterations
+		}
+	}
+	return h.clientDefaultMaxIter()
+}
+
+// clientDefaultMaxIter is the global -max-iterations fallback (config.
+// MiniAgent.MaxIterations via miniclient). 0 when the client is nil (tests) or
+// the operator left it unset.
+func (h *Handler) clientDefaultMaxIter() int {
+	if h.client != nil {
+		return h.client.DefaultMaxIterations()
+	}
+	return 0
 }
 
 // ensureBinding returns the binding for chatID, creating one on first use.

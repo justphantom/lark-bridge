@@ -34,6 +34,7 @@ type Binding struct {
 	SettingsFile   string `json:"settingsFile,omitempty"`   // claude
 	Mode           string `json:"mode,omitempty"`           // miniagent
 	Thinking       string `json:"thinking,omitempty"`       // miniagent
+	MaxIterations  int    `json:"maxIterations,omitempty"`  // miniagent (-max-iterations; 0 = unset)
 }
 
 // Router is safe for concurrent use.

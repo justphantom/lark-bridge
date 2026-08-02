@@ -29,6 +29,7 @@ var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg s
 	"/cd":       (*Handler).cmdDirectory,
 	"/mode":     (*Handler).cmdMode,
 	"/thinking": (*Handler).cmdThinking,
+	"/maxiter":  (*Handler).cmdMaxIter,
 	"/clear":    (*Handler).cmdClear,
 	"/send":     (*Handler).cmdSend,
 	"/pull":     (*Handler).cmdPull,
@@ -87,6 +88,6 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 // cmdCurrent reports the per-chat model + directory + mode + thinking the next
 // fork will use. Falls back to the global defaults when the chat has no pin.
 func (h *Handler) cmdCurrent(_ context.Context, chatID, _ string) (level, title, body string) {
-	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n权限模式：%s\n思考级别：%s",
-		h.activeModel(chatID), h.activeDir(chatID), h.activeMode(chatID), h.activeThinking(chatID))
+	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n权限模式：%s\n思考级别：%s\n迭代上限：%s",
+		h.activeModel(chatID), h.activeDir(chatID), h.activeMode(chatID), h.activeThinking(chatID), h.formatMaxIter(h.activeMaxIter(chatID)))
 }
