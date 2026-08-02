@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
@@ -114,6 +115,112 @@ func (c *Client) DefaultThinking() string {
 // default (20). Used by the miniagent handler to display the effective cap.
 func (c *Client) DefaultMaxIterations() int {
 	return c.maxIterations
+}
+
+// readyTimeout bounds the `miniagent --version` health check performed by
+// IsReady. Kept short so a missing/misconfigured CLI fails fast.
+const readyTimeout = 10 * time.Second
+
+// minSupportedVersion is the minimum upstream miniagent version the bridge
+// requires. Versions below this may emit event shapes the bridge doesn't
+// handle (e.g. missing `finish` field, absent `reasoning_delta`). The bridge
+// special-cases "dev" (local untagged build) to always pass.
+const minSupportedVersion = "3.1.0"
+
+// DetectVersion runs `miniagent --version` and returns the parsed version
+// string (e.g. "3.1.2") or "dev" for untagged builds. Returns an error only
+// when the binary cannot be invoked at all.
+func (c *Client) DetectVersion(ctx context.Context) (string, error) {
+	if c.cliPath == "" {
+		return "", fmt.Errorf("miniclient: cli_path is empty")
+	}
+	// #nosec G204 -- c.cliPath comes from trusted config; args are built internally.
+	cmd := exec.CommandContext(ctx, c.cliPath, "--version")
+	cmd.Env = cmdutil.SanitizeChildEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("miniagent --version: %w", err)
+	}
+	s := strings.TrimSpace(string(out))
+	// "miniagent 1.2.3\n" or "miniagent dev\n" → strip the prefix.
+	if idx := strings.Index(s, " "); idx >= 0 {
+		s = s[idx+1:]
+	}
+	return strings.TrimPrefix(s, "v"), nil
+}
+
+// satisfiesVersion reports whether v is >= min using component-wise numeric
+// comparison (NOT lexicographic), so 3.10.0 correctly exceeds 3.2.0. "dev"
+// (untagged local build) always passes so developers are not blocked. A
+// trailing pre-release suffix (e.g. "-rc1") is stripped and treated as the
+// release version.
+func satisfiesVersion(v, min string) bool {
+	if v == "dev" {
+		return true
+	}
+	return compareVersion(v, min) >= 0
+}
+
+// compareVersion returns -1, 0, or +1 for a<b, a==b, a>b by comparing the
+// numeric dot-separated prefixes of two version strings component by
+// component; a shorter version's missing components count as 0.
+func compareVersion(a, b string) int {
+	ra := numericVersion(a)
+	rb := numericVersion(b)
+	n := len(ra)
+	if len(rb) > n {
+		n = len(rb)
+	}
+	for i := 0; i < n; i++ {
+		va, vb := 0, 0
+		if i < len(ra) {
+			va = ra[i]
+		}
+		if i < len(rb) {
+			vb = rb[i]
+		}
+		switch {
+		case va < vb:
+			return -1
+		case va > vb:
+			return 1
+		}
+	}
+	return 0
+}
+
+// numericVersion parses the leading numeric dot-separated components of a
+// version string into ints, stopping at the first non-numeric component. A
+// trailing pre-release suffix after '-' is dropped first: "3.10.0-rc1" →
+// [3, 10, 0].
+func numericVersion(s string) []int {
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s = s[:i]
+	}
+	var out []int
+	for _, part := range strings.Split(s, ".") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			break
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// IsReady verifies the CLI is installed and invocable by running
+// `<cliPath> --version`. Returns an error suitable for a startup health gate.
+func (c *Client) IsReady(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
+	defer cancel()
+	v, err := c.DetectVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("miniagent CLI not ready: %w", err)
+	}
+	if !satisfiesVersion(v, minSupportedVersion) {
+		return fmt.Errorf("miniagent %s does not meet minimum required version %s", v, minSupportedVersion)
+	}
+	return nil
 }
 
 // RunOptions describes one miniagent turn.

@@ -1,12 +1,66 @@
 package miniagent
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
+
+// memoryRecord matches one line in .miniagent/memory.jsonl. The upstream
+// format is {type, topic, content} with an optional id; the bridge re-parses
+// because upstream's readMemoryRecords is an internal-only helper in a
+// separate Go module and cannot be imported.
+type memoryRecord struct {
+	Type    string `json:"type"`
+	Topic   string `json:"topic,omitempty"`
+	Content string `json:"content"`
+}
+
+// readMemoryRecords reads the project-level memory file under workdir and
+// returns a slice of parsed records. Returns nil (not an error) when the
+// file does not exist — the caller surfaces a friendly "no memory" notice
+// instead of an error card.
+func readMemoryRecords(workdir string) ([]memoryRecord, error) {
+	p := filepath.Join(workdir, ".miniagent", "memory.jsonl")
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	var out []memoryRecord
+	// NDJSON: one JSON object per line. Parse each line independently so a
+	// single malformed record (truncated write, partial flush) is skipped
+	// without corrupting stream position — json.Decoder does not resync to a
+	// line boundary after a Decode error, so a streaming decoder would drop
+	// or misparse records after a bad line. Allow up to 1 MiB per line;
+	// memory content is unbounded.
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var r memoryRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // cmdHelp lists the available commands. The persistent per-chat state is the
 // router binding (model + directory + mode + thinking) plus the per-chat
@@ -36,6 +90,7 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/push           在当前工作目录执行 git push\n")
 	sb.WriteString("/session-abort  中止当前任务\n")
 	sb.WriteString("/running        显示运行中的会话\n")
+	sb.WriteString("/memory         查看项目级记忆（.miniagent/memory.jsonl）\n")
 	sb.WriteString("/help           显示本帮助\n")
 	sb.WriteString("\n直接发送消息即可与 AI 对话。")
 	return "info", "帮助", sb.String()
@@ -60,4 +115,33 @@ func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title,
 	}
 	sb.WriteString("\n💡 如需中止，请发送 `/session-abort`")
 	return "info", "运行中会话", sb.String()
+}
+
+// cmdMemory shows the project-level memory file (.miniagent/memory.jsonl)
+// in the chat's active workdir. This is P2: upstream's readMemoryRecords
+// is internal-only and in a separate module, so bridge implements its own
+// lightweight jsonl parser. The write path goes through miniagent's `write`
+// tool (path=memory) which the user triggers via normal chat, not via a
+// slash command.
+func (h *Handler) cmdMemory(_ context.Context, chatID, _ string) (level, title, body string) {
+	workdir := h.activeDir(chatID) // already falls back to workspaceRoot
+	if workdir == "" {
+		return "warning", "记忆", "请先用 /cd 设置工作目录。"
+	}
+	records, err := readMemoryRecords(workdir)
+	if err != nil {
+		return "error", "记忆", "读取失败：" + err.Error()
+	}
+	if len(records) == 0 {
+		return "info", "项目记忆", "暂无记忆（在 miniagent 中用 write tool path=memory 追加）。"
+	}
+	var sb strings.Builder
+	for _, r := range records {
+		fmt.Fprintf(&sb, "- [%s]", r.Type)
+		if r.Topic != "" {
+			fmt.Fprintf(&sb, " %s:", r.Topic)
+		}
+		fmt.Fprintf(&sb, " %s\n", r.Content)
+	}
+	return "info", "项目记忆", sb.String()
 }

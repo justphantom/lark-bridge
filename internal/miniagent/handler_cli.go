@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -123,6 +124,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 		if incomplete && text == "" {
 			text = "已达到最大推理步数，未产出最终回答。可尝试拆分任务或细化问题后重试。"
 		}
+		turnDur := time.Since(start)
 		h.logger.Info("miniagent turn done",
 			log.FieldChatID, chatID,
 			log.FieldPromptID, promptID,
@@ -131,7 +133,16 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			"incomplete", incomplete,
 			"input_tokens", ev.InputTokens,
 			"output_tokens", ev.OutputTokens,
-			log.FieldDuration, time.Since(start).Milliseconds())
+			log.FieldDuration, turnDur.Milliseconds())
+		// Per-turn metrics: surface turn duration, token counts, and
+		// completion status for SLO aggregation (P1).
+		eventmetrics.MiniAgentTurnCount.Inc()
+		eventmetrics.MiniAgentTurnDurationMs.Add(int64(turnDur.Milliseconds()))
+		eventmetrics.MiniAgentTurnInputTokens.Add(int64(ev.InputTokens))
+		eventmetrics.MiniAgentTurnOutputTokens.Add(int64(ev.OutputTokens))
+		if incomplete {
+			eventmetrics.MiniAgentTurnIncomplete.Inc()
+		}
 		h.sendTerminalCtrl(&protocol.Control{
 			Type:     protocol.TypeResult,
 			PromptID: promptID,

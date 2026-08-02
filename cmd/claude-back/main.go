@@ -84,7 +84,7 @@ func buildClaudeRunner() *backendhost.CLIRunner[*claudebridge.Handler] {
 					PermissionDefault:   cfg.Claude.PermissionMode,
 					StateDir:            cfg.StateDir,
 					StreamHistory:       cfg.Claude.StreamHistory,
-					StreamArchiveRedact: cfg.StreamArchiveRedact,
+					StreamArchiveRedact: cfg.RedactStreams(),
 					PromptTimeout:       time.Duration(cfg.Timeouts.PromptTimeout),
 					DebugRedact:         cfg.LogDebugRedact,
 					WorkspaceRoot:       os.Getenv("WORKSPACE_ROOT"),

@@ -42,6 +42,23 @@ var ClaudeResultLenientHit Counter
 // schema break.
 var ClaudeResultParseFail Counter
 
+// ---- MiniAgent per-turn counters ----
+
+// MiniAgentTurnCount counts how many turns the miniagent backend completed.
+var MiniAgentTurnCount Counter
+
+// MiniAgentTurnDurationMs tracks per-turn wall-clock duration in milliseconds.
+// Reset is a no-op: this is an append-only counter (cumulative ms).
+var MiniAgentTurnDurationMs Counter
+
+// MiniAgentTurnInputTokens and MiniAgentTurnOutputTokens track token usage.
+var MiniAgentTurnInputTokens Counter
+var MiniAgentTurnOutputTokens Counter
+
+// MiniAgentTurnIncomplete counts turns that ended with FinishMaxIterations
+// (hit the LLM-call cap) rather than a clean stop.
+var MiniAgentTurnIncomplete Counter
+
 // OMPTextEndFallback counts how many times the bridge used text_end content
 // as fallback because no text_delta was received in an assistant round. A
 // hit means the OMP CLI omitted text_delta for a message.

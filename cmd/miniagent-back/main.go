@@ -91,6 +91,9 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.ConfigPath == "" {
 		return fmt.Errorf("miniagent.config_path is required (v3.1+ config-only mode; deploy.sh generates /etc/lark-bridge/miniagent-cli.json)")
 	}
+	if !filepath.IsAbs(cfg.MiniAgent.ConfigPath) {
+		return fmt.Errorf("miniagent.config_path must be an absolute path, got %q", cfg.MiniAgent.ConfigPath)
+	}
 	// Per-backend router file (R2): without persistence every redeploy resets
 	// all per-chat model/directory pins, and sharing one file with the other
 	// backends lost-updates it. miniagent now owns
@@ -108,29 +111,6 @@ func run(cfgPath string) error {
 		return fmt.Errorf("router: %w", err)
 	}
 	defer r.Close()
-
-	connOpts := backendrpc.ConnectOptions{
-		BackendID:   cfg.BackendID,
-		BackendType: "miniagent",
-		FrontendURL: cfg.FrontendURL,
-		Secret:      cfg.IPCSecret,
-		Version:     version,
-		// 进程级钉扎一个后端令牌：本进程所有 client（含重连派生的）与所有
-		// POST 携带同一令牌，否则 SSE 握手注册的令牌会与 POST 令牌互异，
-		// 被前端 validateBackendToken 以 403 拒绝（见 docs/STATUS_CARD_BACKEND_METRICS_FIX.md）。
-		BackendToken: backendrpc.NewBackendToken(),
-		// M10-1: TLS client config for https frontend_url (CA pinning +
-		// optional mTLS client certificate).
-		TLSCAFile:         cfg.IPCTLSCAFile,
-		TLSClientCertFile: cfg.IPCTLSClientCertFile,
-		TLSClientKeyFile:  cfg.IPCTLSClientKeyFile,
-	}
-	rpc, err := backendrpc.Connect(connOpts)
-	if err != nil {
-		return fmt.Errorf("connect frontend: %w", err)
-	}
-	rpc.SetLogger(logger)
-	defer rpc.Close()
 
 	// CLI subprocess mode: miniagent-back forks miniagent per turn.
 	// The CLI binary (github.com/justphantom/miniagent) lives alongside
@@ -163,7 +143,39 @@ func run(cfgPath string) error {
 		ConfigPath:    cfg.MiniAgent.ConfigPath,
 	}, logger)
 
-	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.StreamArchiveRedact)
+	// P0: startup health gate. Run BEFORE connecting to the frontend so a
+	// missing or too-old CLI fails fast here, instead of registering with the
+	// frontend and tearing down on the first turn.
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	defer healthCancel()
+	if err := client.IsReady(healthCtx); err != nil {
+		return fmt.Errorf("miniagent health: %w", err)
+	}
+
+	connOpts := backendrpc.ConnectOptions{
+		BackendID:   cfg.BackendID,
+		BackendType: "miniagent",
+		FrontendURL: cfg.FrontendURL,
+		Secret:      cfg.IPCSecret,
+		Version:     version,
+		// 进程级钉扎一个后端令牌：本进程所有 client（含重连派生的）与所有
+		// POST 携带同一令牌，否则 SSE 握手注册的令牌会与 POST 令牌互异，
+		// 被前端 validateBackendToken 以 403 拒绝（见 docs/STATUS_CARD_BACKEND_METRICS_FIX.md）。
+		BackendToken: backendrpc.NewBackendToken(),
+		// M10-1: TLS client config for https frontend_url (CA pinning +
+		// optional mTLS client certificate).
+		TLSCAFile:         cfg.IPCTLSCAFile,
+		TLSClientCertFile: cfg.IPCTLSClientCertFile,
+		TLSClientKeyFile:  cfg.IPCTLSClientKeyFile,
+	}
+	rpc, err := backendrpc.Connect(connOpts)
+	if err != nil {
+		return fmt.Errorf("connect frontend: %w", err)
+	}
+	rpc.SetLogger(logger)
+	defer rpc.Close()
+
+	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.RedactStreams())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

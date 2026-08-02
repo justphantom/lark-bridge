@@ -96,7 +96,7 @@ func buildOpencodeRunner() *backendhost.CLIRunner[*opencodebridge.Handler] {
 					DefaultDirectory:    cfg.Opencode.DefaultDirectory,
 					StateDir:            cfg.StateDir,
 					StreamHistory:       cfg.Opencode.StreamHistory,
-					StreamArchiveRedact: cfg.StreamArchiveRedact,
+					StreamArchiveRedact: cfg.RedactStreams(),
 					PromptTimeout:       time.Duration(cfg.Timeouts.PromptTimeout),
 					IdleTimeout:         time.Duration(cfg.Timeouts.IdleTimeout),
 					DebugRedact:         cfg.LogDebugRedact,

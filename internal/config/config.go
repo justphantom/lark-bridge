@@ -77,10 +77,15 @@ type Config struct {
 	// —— Stream archive redaction ——
 	// StreamArchiveRedact enables field-level redaction of sensitive content
 	// (prompt, text, content, input, output, file_text) in stream archives.
-	// Default false (keep existing behavior). When enabled, each NDJSON line
-	// written to the archive is parsed and sensitive fields are replaced with
-	// "[REDACTED]". Unparseable lines pass through verbatim.
-	StreamArchiveRedact bool `json:"stream_archive_redact,omitempty"`
+	// It is a *bool so the zero value (nil) can mean "unset → default ON": an
+	// operator who omits the field gets redaction, while an explicit
+	// stream_archive_redact: false disables it. A plain bool cannot tell
+	// "omitted" from "explicit false" (both unmarshal to false), so the earlier
+	// "force true when false" default made the opt-out impossible. When
+	// enabled, each NDJSON line written to the archive is parsed and sensitive
+	// fields are replaced with "[REDACTED]". Unparseable lines pass through
+	// verbatim. Read the resolved value via RedactStreams().
+	StreamArchiveRedact *bool `json:"stream_archive_redact,omitempty"`
 
 	// —— 防重放：feishu-front 用，后端忽略 ——
 	Dedup DedupConfig `json:"dedup,omitempty"`

@@ -105,7 +105,7 @@ func buildOmpRunner() *backendhost.CLIRunner[*ompbridge.Handler] {
 					PermissionDefault:   cfg.OMP.ApprovalMode,
 					StateDir:            cfg.StateDir,
 					StreamHistory:       cfg.OMP.StreamHistory,
-					StreamArchiveRedact: cfg.StreamArchiveRedact,
+					StreamArchiveRedact: cfg.RedactStreams(),
 					PromptTimeout:       time.Duration(cfg.Timeouts.PromptTimeout),
 					IdleTimeout:         time.Duration(cfg.Timeouts.IdleTimeout),
 					DebugRedact:         cfg.LogDebugRedact,

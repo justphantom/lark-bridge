@@ -175,6 +175,14 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Timeouts.CardPatchDelay == 0 {
 		cfg.Timeouts.CardPatchDelay = Duration(5 * time.Second)
 	}
+	// StreamArchiveRedact defaults to true (P1): NDJSON archives contain
+	// prompts, file contents, and tool output that may include secrets. The
+	// field is *bool, so nil (omitted) → default ON and explicit false → OFF.
+	// RedactStreams() resolves the final value.
+	if cfg.StreamArchiveRedact == nil {
+		t := true
+		cfg.StreamArchiveRedact = &t
+	}
 	// FileConvert: only apply defaults when the operator has opted in
 	// (Enabled). An absent / disabled section keeps the legacy "reject file
 	// messages" behaviour; we do not synthesise inbox paths the operator
@@ -196,4 +204,13 @@ func applyDefaults(cfg *Config, cfgPath string) {
 			cfg.FileConvert.XlsxFormulaMode = "value"
 		}
 	}
+}
+
+// RedactStreams reports whether stream-archive redaction is enabled, resolving
+// the tri-state StreamArchiveRedact: nil (operator left it unset) defaults to
+// true; an explicit *false disables redaction. applyDefaults normalizes
+// nil → &true at load time, so the nil branch is a defensive fallback for any
+// caller that runs before defaults are applied.
+func (c *Config) RedactStreams() bool {
+	return c.StreamArchiveRedact == nil || *c.StreamArchiveRedact
 }
