@@ -1,0 +1,4 @@
+*.log
+cache/
+# 记忆文件（可能含敏感信息），按需保留
+memory.jsonl
