@@ -5,6 +5,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **miniagent health gate**（760620b）。`cmd/miniagent-back` 在连接前端前调用 `client.IsReady`，
+  CLI 缺失或版本过旧时快速失败，避免注册后在首次 turn 才崩。
+- **`/memory` 命令**（760620b）。`internal/miniagent` 新增 `/memory` 读/写项目级
+  `.miniagent/memory.jsonl`（格式：`{type, topic, content}` NDJSON），支持
+  `/memory` 查看、`/memory add <type> <topic> <content>` 追加。
+- **MiniAgent 指标**（760620b）。`internal/eventmetrics` 新增 `MiniAgentTurnCount`、
+  `MiniAgentTurnDurationMs`、`MiniAgentTurnInputTokens`、`MiniAgentTurnOutputTokens`、
+  `MiniAgentTurnIncomplete` 五个计数器，按 turn 聚合 SLO。
+
+### Changed
+
+- **`StreamArchiveRedact` 默认值翻转**（760620b）。字段类型由 `bool` 改为 `*bool`，
+  nil（省略）→ 默认开启 true；显式 `false` 可关闭。新增 `RedactStreams()` 辅助方法，
+  四个 backend main.go 同步更新。`config.example.json` 中 `stream_archive_redact: false`
+  保持显式关闭行为，operator 可按需迁移。
+- **`config_path` 绝对路径校验**（760620b）。`cmd/miniagent-back` 启动时拒绝相对路径，
+  防止误写入进程 cwd 而非预期路径。
+
+### Fixed
+
+- **lint 4 项**（760620b）。`commands_misc.go` 补 `f.Close()` error 检查、
+  `client.go` 改 `intrange` 循环并避免预声明标识符冲突、
+  `handler_cli.go` 去除冗余 `int64` 转换。
+
+### Notes
+
+- `config_path` 字段在 v3.1+ 已进入必填状态；本次追加绝对路径约束。
+- `.miniagent/memory.jsonl` 和 `.miniagent/cache/` 已加入 `.gitignore`（上版 commit）。
+
 ## [1.10.0] - 2026-08-02
 
 miniagent **v2.0.0** 全量接入。主线：吸收上游 v2.0.0 的外部契约破坏（`shell` 退出码语义）+

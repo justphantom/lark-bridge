@@ -802,6 +802,41 @@ func TestLoadOMPMaxAutoRetriesOverride(t *testing.T) {
 	}
 }
 
+// TestLoad_StreamArchiveRedact_DefaultsTrue pins the tri-state default:
+// omitted field → nil → defaults to true via applyDefaults, RedactStreams
+// reports true. An explicit false survives and is reported false.
+func TestLoad_StreamArchiveRedact_DefaultsTrue(t *testing.T) {
+	// Omitted: defaults to true.
+	p := writeConfig(t, `{}`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RedactStreams() {
+		t.Error("RedactStreams() = false when field omitted, want true")
+	}
+
+	// Explicit true.
+	p = writeConfig(t, `{"stream_archive_redact": true}`)
+	cfg, err = Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RedactStreams() {
+		t.Error("RedactStreams() = false when explicitly true, want true")
+	}
+
+	// Explicit false — must survive; operator must be able to opt out.
+	p = writeConfig(t, `{"stream_archive_redact": false}`)
+	cfg, err = Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedactStreams() {
+		t.Error("RedactStreams() = true when explicitly false, want false")
+	}
+}
+
 // TestLoadConfigExample validates that the repo-root config.example.json is
 // always loadable. It is the source template for deploy.sh / upgrade-monitor.sh
 // / upgrade-status.sh; a broken example (e.g. an explicit "0s" duration that

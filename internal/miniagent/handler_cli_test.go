@@ -667,3 +667,61 @@ func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
 	}
 	h.endTurn("c", mine)
 }
+
+// TestCmdMemory_NoMemorySurface pins the empty-memory path: when no
+// .miniagent/memory.jsonl exists in the active workdir, cmdMemory returns the
+// "暂无记忆" info card rather than an error.
+func TestCmdMemory_NoMemorySurface(t *testing.T) {
+	dir := t.TempDir()
+	sender := &captureSender{}
+	h := New(sender, log.Nop(), nil, dir, "test-model", nil, 0, "", false)
+	defer h.Close()
+
+	// No memory file exists; cmdMemory should surface the empty notice.
+	level, title, body := h.cmdMemory(context.Background(), "c", "")
+	if level != "info" {
+		t.Errorf("level = %q, want info", level)
+	}
+	if title != "项目记忆" {
+		t.Errorf("title = %q, want 项目记忆", title)
+	}
+	if !strings.Contains(body, "暂无记忆") {
+		t.Errorf("body = %q, want '暂无记忆' notice", body)
+	}
+}
+
+// TestCmdMemory_WithRecords renders existing memory records. Writes a valid
+// NDJSON memory file and asserts each record appears in the rendered body.
+func TestCmdMemory_WithRecords(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, ".miniagent")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	memFile := filepath.Join(memDir, "memory.jsonl")
+	records := []string{
+		`{"type":"fact","topic":"project","content":"test fact"}`,
+		`{"type":"rule","content":"a rule without topic"}`,
+	}
+	if err := os.WriteFile(memFile, []byte(strings.Join(records, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write memory: %v", err)
+	}
+
+	sender := &captureSender{}
+	h := New(sender, log.Nop(), nil, dir, "test-model", nil, 0, "", false)
+	defer h.Close()
+
+	level, title, body := h.cmdMemory(context.Background(), "c", "")
+	if level != "info" {
+		t.Errorf("level = %q, want info", level)
+	}
+	if title != "项目记忆" {
+		t.Errorf("title = %q, want 项目记忆", title)
+	}
+	if !strings.Contains(body, "test fact") {
+		t.Errorf("body missing 'test fact': %q", body)
+	}
+	if !strings.Contains(body, "a rule without topic") {
+		t.Errorf("body missing rule content: %q", body)
+	}
+}

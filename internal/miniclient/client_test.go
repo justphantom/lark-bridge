@@ -1,7 +1,9 @@
 package miniclient
 
 import (
+	"context"
 	"testing"
+	"time"
 )
 
 func TestParseEvent_ToolUse(t *testing.T) {
@@ -446,5 +448,18 @@ func TestDefaultMaxIterations(t *testing.T) {
 	set := New(Config{CLIPath: "/bin/ma", APIKey: "k", MaxIterations: 25}, nil)
 	if got := set.DefaultMaxIterations(); got != 25 {
 		t.Errorf("DefaultMaxIterations = %d, want 25", got)
+	}
+}
+
+// TestIsReady_MissingBinary fails fast when the CLI is absent: IsReady returns
+// an error rather than silently proceeding. This is the startup health gate
+// tested here; happy-path version checks are implicit in the v3.1 gate.
+func TestIsReady_MissingBinary(t *testing.T) {
+	c := New(Config{CLIPath: "/nonexistent/miniagent-binary", APIKey: "k"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := c.IsReady(ctx)
+	if err == nil {
+		t.Fatal("IsReady with missing CLI should return an error")
 	}
 }

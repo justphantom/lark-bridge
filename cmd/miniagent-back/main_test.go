@@ -108,3 +108,23 @@ func TestRun_ConfigPathSatisfiesGate(t *testing.T) {
 		t.Errorf("config_path set must satisfy the gate; err = %q", err.Error())
 	}
 }
+
+// TestRun_ConfigPathRelativeRejected pins the absolute-path gate: a relative
+// config_path is rejected before the backend registers with the frontend.
+// This prevents the operator from accidentally pointing at a cwd-relative
+// path and polluting a non-obvious directory.
+func TestRun_ConfigPathRelativeRejected(t *testing.T) {
+	p := writeMiniAgentConfig(t, `{
+		"api_key":        "sk-test",
+		"model":          "main/kimi",
+		"workspace_root": "/tmp/miniagent-ws",
+		"config_path":    "relative/miniagent.json"
+	}`)
+	err := run(p)
+	if err == nil {
+		t.Fatal("run with relative config_path should return an error")
+	}
+	if !strings.Contains(err.Error(), "absolute") && !strings.Contains(err.Error(), "config_path") {
+		t.Errorf("err = %q, want it to mention absolute path or config_path", err)
+	}
+}

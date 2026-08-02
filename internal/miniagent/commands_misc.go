@@ -35,7 +35,7 @@ func readMemoryRecords(workdir string) ([]memoryRecord, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []memoryRecord
 	// NDJSON: one JSON object per line. Parse each line independently so a
 	// single malformed record (truncated write, partial flush) is skipped

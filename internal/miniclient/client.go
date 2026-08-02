@@ -154,11 +154,11 @@ func (c *Client) DetectVersion(ctx context.Context) (string, error) {
 // (untagged local build) always passes so developers are not blocked. A
 // trailing pre-release suffix (e.g. "-rc1") is stripped and treated as the
 // release version.
-func satisfiesVersion(v, min string) bool {
+func satisfiesVersion(v, minVer string) bool {
 	if v == "dev" {
 		return true
 	}
-	return compareVersion(v, min) >= 0
+	return compareVersion(v, minVer) >= 0
 }
 
 // compareVersion returns -1, 0, or +1 for a<b, a==b, a>b by comparing the
@@ -171,7 +171,7 @@ func compareVersion(a, b string) int {
 	if len(rb) > n {
 		n = len(rb)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		va, vb := 0, 0
 		if i < len(ra) {
 			va = ra[i]

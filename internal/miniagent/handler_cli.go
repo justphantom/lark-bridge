@@ -137,7 +137,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 		// Per-turn metrics: surface turn duration, token counts, and
 		// completion status for SLO aggregation (P1).
 		eventmetrics.MiniAgentTurnCount.Inc()
-		eventmetrics.MiniAgentTurnDurationMs.Add(int64(turnDur.Milliseconds()))
+		eventmetrics.MiniAgentTurnDurationMs.Add(turnDur.Milliseconds())
 		eventmetrics.MiniAgentTurnInputTokens.Add(int64(ev.InputTokens))
 		eventmetrics.MiniAgentTurnOutputTokens.Add(int64(ev.OutputTokens))
 		if incomplete {
