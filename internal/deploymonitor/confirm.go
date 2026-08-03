@@ -39,7 +39,7 @@ func (h *Handler) confirmAndDeploy(ctx context.Context, chatID, promptID, cardMs
 			RequestID:        requestID,
 			PromptID:         promptID,
 			TakeOverProgress: true,
-			Message:          "即将执行全量部署（feishu / claude / opencode / omp / miniagent），确认继续？",
+			Message:          "即将执行全量部署（feishu / claude / miniagent），确认继续？",
 			Options: []protocol.PermissionOption{
 				{Label: "确认部署", Value: "confirm"},
 				{Label: "取消", Value: "cancel"},

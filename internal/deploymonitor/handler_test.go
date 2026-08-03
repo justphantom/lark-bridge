@@ -791,7 +791,7 @@ func waitForQuestion(rpc *fakeSender) *protocol.Control {
 }
 
 // TestHandleEvent_DeploySome_EmitsMultiSelectCard pins the card shape: a
-// TypeQuestion with Multiple=true and the four business-service options.
+// TypeQuestion with Multiple=true and the three business-service options.
 func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
 	rpc := &fakeSender{}
 	cmd := &fakeCommander{}
@@ -815,8 +815,8 @@ func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
 	if !item.Multiple {
 		t.Errorf("question item must be Multiple=true for /deploy-some")
 	}
-	if got := strings.Join(item.Options, ","); got != "feishu,claude,opencode,omp,miniagent" {
-		t.Errorf("options = %q, want feishu,claude,opencode,omp,miniagent", got)
+	if got := strings.Join(item.Options, ","); got != "feishu,claude,miniagent" {
+		t.Errorf("options = %q, want feishu,claude,miniagent", got)
 	}
 	if !q.Question.TakeOverProgress {
 		t.Errorf("deploy-some picker must TakeOverProgress")
