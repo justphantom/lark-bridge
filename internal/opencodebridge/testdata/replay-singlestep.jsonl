@@ -1,5 +1,0 @@
-{"type":"step_start","sessionID":"s-oc-1","part":{"type":"step-start"}}
-{"type":"text","sessionID":"s-oc-1","part":{"type":"text","text":"answer "}}
-{"type":"text","sessionID":"s-oc-1","part":{"type":"text","text":"body"}}
-{"type":"step_finish","sessionID":"s-oc-1","part":{"type":"step_finish","reason":"stop","tokens":{"total":1500,"input":1000,"output":500,"cache":{"read":300,"write":50}},"cost":0.02}}
-{"type":"finish","sessionID":"s-oc-1","part":{"type":"finish"},"session":{"id":"s-oc-1"},"text":"answer body"}
