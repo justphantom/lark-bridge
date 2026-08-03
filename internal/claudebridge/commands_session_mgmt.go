@@ -136,7 +136,7 @@ func summarizeClean(count int, failed []string) (body, level string) {
 //   - /use      → pop a selection card of the directory's sessions
 //     (excluding the currently bound one — switching to itself is a no-op)
 //   - /use <n>  → switch directly to the n-th session of the sorted
-//     list (1-based, same numbering as /session-list)
+//     list (1-based, same numbering as /session)
 //
 // Resume is cwd-bound (verified): every candidate lives under the bound
 // directory, so repointing the binding + letting the next --resume run is
@@ -244,8 +244,8 @@ func (h *Handler) applySessionSwitch(chatID, messageID string, sess claude.Sessi
 }
 
 // sortSessionsByUpdated returns a copy of sessions sorted most-recent-first.
-// /session-list (formatSessionList) and /use share this ordering so
-// the 1-based numbering the user reads off /session-list matches the index
+// /session (formatSessionList) and /use share this ordering so
+// the 1-based numbering the user reads off /session matches the index
 // they pass to /use <n>.
 func sortSessionsByUpdated(sessions []claude.Session) []claude.Session {
 	sorted := make([]claude.Session, len(sessions))
@@ -261,7 +261,7 @@ func sortSessionsByUpdated(sessions []claude.Session) []claude.Session {
 	return sorted
 }
 
-// formatSessionList renders the listing for /session-list. Sorted by updated
+// formatSessionList renders the listing for /session. Sorted by updated
 // desc; the currently bound session (if any) is marked with ★ so the user
 // sees which row /clean will keep.
 func formatSessionList(sessions []claude.Session, currentID string) string {

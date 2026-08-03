@@ -36,7 +36,7 @@ type Session struct {
 var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // maxSessionTitleRunes caps the derived title so one verbose opening prompt
-// cannot blow out the /session-list row width. Mirrors opencode's display cap.
+// cannot blow out the /session row width. Mirrors opencode's display cap.
 const maxSessionTitleRunes = 60
 
 // encodeProjectDir encodes a cwd absolute path into the directory name the
@@ -233,7 +233,7 @@ func fileModTimeMs(path string) int64 {
 }
 
 // FormatSessionTime renders a millisecond timestamp as a relative string. It
-// mirrors omp/opencode's bands so the /session-list and /use rows
+// mirrors omp/opencode's bands so the /session and /use rows
 // read the same shape across backends.
 func FormatSessionTime(ms int64) string {
 	if ms == 0 {

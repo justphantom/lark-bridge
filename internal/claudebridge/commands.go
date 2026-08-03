@@ -22,7 +22,7 @@ func init() {
 	commands = bridgebase.NewCommands([]bridgebase.CommandSpec[*Handler]{
 		{Spec: cmdutil.Spec{Name: "/running", Summary: "显示所有运行中的 Claude 会话",
 			Level: "info"}, Handler: (*Handler).cmdRunning},
-		{Spec: cmdutil.Spec{Name: "/session-list", Summary: "列出当前工作目录下的所有 Claude 会话",
+		{Spec: cmdutil.Spec{Name: "/session", Summary: "列出当前工作目录下的所有 Claude 会话",
 			Level: "info"}, Handler: (*Handler).cmdListSessions},
 		{Spec: cmdutil.Spec{Name: "/new", Summary: "开启新的 Claude 对话（保留工作目录，重置上下文）",
 			Title: "已开启新对话", Level: "success"}, Handler: (*Handler).cmdNew},

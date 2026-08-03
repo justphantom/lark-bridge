@@ -27,7 +27,7 @@
 ## 斜杠命令
 
 - 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
-- claude-back：`/running` `/session-list` `/new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/send` `/pull` `/push` `/help`。
+- claude-back：`/running` `/session` `/new` `/session-abort` `/session-del` `/current` `/model` `/cd` `/settings` `/perm` `/effort` `/send` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/models` `/cd` `/new` `/send` `/pull` `/push` `/running` `/session-abort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/deploy-some` `/pull` `/push` `/running`。
 - status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。

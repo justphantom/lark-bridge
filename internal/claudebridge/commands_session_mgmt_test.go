@@ -15,7 +15,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// sessionFakeAgent is a claudeAPI fake for /session-list, /clean and
+// sessionFakeAgent is a claudeAPI fake for /session, /clean and
 // /use tests. It records every DeleteSession call (id + dir) behind a
 // mutex so the test can assert ordering and counts after the async
 // confirmation goroutines settle.
@@ -99,7 +99,7 @@ func waitCond(timeout time.Duration, pred func() bool) bool {
 	return false
 }
 
-// --- /session-list ---
+// --- /session ---
 
 func TestCmdSessionList_NoBinding(t *testing.T) {
 	h, _ := newSessionTestHandler(t, &sessionFakeAgent{})

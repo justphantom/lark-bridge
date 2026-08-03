@@ -311,15 +311,15 @@ v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incompl
 
 ## [1.8.0] - 2026-07-31
 
-v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/use`/`/clean`/`/session-list`、
-omp `/session-list`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
+v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/use`/`/clean`/`/session`、
+omp `/session`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
 `LARK_RUN_MODE` 双模式）、**事件流健壮性**（超长行截断、未知事件计数、流归档字段脱敏），以及修复
 **inflight 会话状态不一致导致的部署死锁**。无协议层 breaking change，新增功能 → 按 semver 升 minor。
 **发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
 
 ### Added
 
-- **claude 会话管理命令对齐 omp/opencode**（`6a15532`）。此前 claude 的 `/session-list` 只读
+- **claude 会话管理命令对齐 omp/opencode**（`6a15532`）。此前 claude 的 `/session` 只读
   本地 chat→session 绑定表（注释自承 "The Claude backend has no central session registry"），
   且缺 `/use`/`/clean`。现按 claude 的 `~/.claude/projects/<编码cwd>/` 落盘布局
   实现文件系统会话驱动，三命令全部对齐：
@@ -327,7 +327,7 @@ omp `/session-list`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/depl
     `ListSessions`（枚举目录下 `*.jsonl`，按 mtime 倒序）、`DeleteSession`（删 `.jsonl` + 同名
     子目录，保留项目级共享 `memory/`）。编码规则、resume 的 cwd-bound 语义、删除等同 `--resume`
     失效（命中 `IsStaleSession`）均经实测确认。
-  - `/session-list` 改枚举当前绑定目录下真实会话，当前绑定会话标 `★`（不再读 `router.AllBindings()`）。
+  - `/session` 改枚举当前绑定目录下真实会话，当前绑定会话标 `★`（不再读 `router.AllBindings()`）。
   - `/use` 新增：同目录会话切换，无参弹选择卡、带参支持序号/id；切到当前会话 no-op。
   - `/clean` 新增：无参删当前目录除当前会话外的全部，带参仅删指定 id；走 `AskPermission`
     确认卡 + 原地 PATCH 刷新；保护当前绑定会话不可删。
@@ -335,7 +335,7 @@ omp `/session-list`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/depl
     覆盖无绑定/无目录/保护当前会话/确认删除/取消五条路径。
 
 - **omp 会话管理命令补齐**（`49c3d5b`）。omp 的 session store 是 cwd-bound 且慢，此前仅部分
-  命令可达。现 `/session-list`/`/use`/`/clean`/`/session-gc` 全部走磁盘 session
+  命令可达。现 `/session`/`/use`/`/clean`/`/session-gc` 全部走磁盘 session
   store；新增配置 `omp.agent_dir`、`omp.gc_cold_archive_after_days`/`gc_retain_newest_per_cwd`/
   `gc_timeout`；terminal-event 检测加固。
 
@@ -464,7 +464,7 @@ v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后�
     `approval_options` / `thinking_options` / `model_options`。
   - 安全对齐既有后端：`cmdutil.SanitizeChildEnv()`（剥离桥接自身 secret）+
     `cmdutil.ApplyGroupCancel()`（进程组 + ctx 取消 + WaitDeadline）。
-  - **设计性缺失**：不支持 `/session-list` / `/use`——omp 的 session store 是
+  - **设计性缺失**：不支持 `/session` / `/use`——omp 的 session store 是
     cwd-bound 且慢（见 `internal/ompbridge/deps.go` 注释），非缺陷。
 - **omp-back 动态 `/model` picker**（`39c849d`）：picker 选项改为 fork `omp models --json`
   取真实 provider/id selector 列表（冷启动 ~100-150s，故带 TTL 缓存）；fetch 失败时回退
