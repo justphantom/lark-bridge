@@ -23,35 +23,6 @@
     "settings_cache_ttl":  3600
   },
 
-  "opencode": {
-    "cli_path":          "opencode",
-    "default_directory": "${STATE_DIR}/opencode",
-    "max_concurrent":    4,
-    "stream_history":    50,
-    "list_cache_ttl":    3600
-  },
-
-  "omp": {
-    "cli_path":            "omp",
-    "default_directory":   "${STATE_DIR}/omp",
-    "max_concurrent":      4,
-    "stream_history":      50,
-    "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
-    "approval_mode":       "write",
-    "thinking_level":      "auto",
-    "max_auto_retries":    3,
-    "model_options":       ["claude-haiku", "claude-sonnet", "opus", "glm-5.2"],
-    "approval_options":    ["always-ask", "write", "yolo"],
-    "thinking_options":    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"],
-    "model_list_timeout":  "300s",
-    "list_cache_ttl":      3600,
-
-    "agent_dir":                  "",
-    "gc_cold_archive_after_days": 30,
-    "gc_retain_newest_per_cwd":   5,
-    "gc_timeout":                 "300s"
-  },
-
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",
     "model":           "${MINIAGENT_DEFAULT_MODEL}",

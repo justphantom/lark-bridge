@@ -1,7 +1,7 @@
 # lark-bridge build and test entry points.
 #
 # Targets:
-#   build       compile the seven binaries into bin/ (version-stamped)
+#   build       compile the five binaries into bin/ (version-stamped)
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
@@ -10,7 +10,7 @@
 #   prerelease  test + lint — the pre-tag gate, run before `git tag v1.x.0`
 #   deploy-smoke bash helper unit tests (deploy/tests/smoke.sh)
 #   deploy      build, then install as systemd services via deploy/deploy.sh
-#   pack        build all seven binaries and bundle into a distributable tarball
+#   pack        build all five binaries and bundle into a distributable tarball
 #               (bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz); cross-compile via
 #               GOOS=/GOARCH= on the command line
 #   clean       rm -rf bin/
@@ -25,7 +25,7 @@
 
 .PHONY: build build-check test vet fmt lint prerelease clean deploy upgrade-monitor upgrade-status pack
 
-# Default to `build` so a bare `make` produces the seven binaries.
+# Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
 
 # VERSION is the short commit hash (dirty-suffixed when the worktree has
@@ -38,7 +38,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
-# build-check compiles every package (not just the seven cmds) so a syntax/type
+# build-check compiles every package (not just the five cmds) so a syntax/type
 # error in an internal package fails fast instead of surfacing only under test.
 build-check:
 	go build ./...
@@ -47,8 +47,6 @@ build:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-feishu-front ./cmd/feishu-front
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
-	go build -ldflags "$(LDFLAGS)" -o bin/lark-opencode-back ./cmd/opencode-back
-	go build -ldflags "$(LDFLAGS)" -o bin/lark-omp-back ./cmd/omp-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-status-monitor ./cmd/status-monitor
@@ -59,7 +57,7 @@ build:
 pack:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT; \
 	mkdir -p bin; \
-	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-opencode-back:cmd/opencode-back lark-omp-back:cmd/omp-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor; do \
+	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor; do \
 		out=$${name%%:*}; src=./$${name##*:}; \
 		echo "build  $$out ($(GOOS)/$(GOARCH))"; \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $$tmp/$$out $$src; \
@@ -105,8 +103,8 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
-# Note: deploy.sh manages the 5 business services (feishu / claude / opencode
-# / omp / miniagent). lark-deploy-monitor is managed independently
+# Note: deploy.sh manages the 3 business services (feishu / claude
+# / miniagent). lark-deploy-monitor is managed independently
 # by upgrade-monitor.sh (it triggers deploy, so self-managing would be a
 # circular dependency).
 deploy:

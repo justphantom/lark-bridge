@@ -27,29 +27,26 @@ source "$DEPLOY_DIR_SRC/lib-common.sh"
 # -- service mapping table ----------------------------------------------------
 check "svc_unit feishu"      "$(svc_unit feishu)"      "lark-feishu-front"
 check "svc_unit claude"      "$(svc_unit claude)"      "lark-claude-back"
-check "svc_unit opencode"    "$(svc_unit opencode)"    "lark-opencode-back"
-check "svc_unit omp"         "$(svc_unit omp)"         "lark-omp-back"
 check "svc_unit miniagent"   "$(svc_unit miniagent)"   "lark-miniagent-back"
 check "svc_config feishu"    "$(svc_config feishu)"    "feishu-config.json"
-check "svc_config omp"       "$(svc_config omp)"       "omp-config.json"
 check "svc_depends feishu"   "$(svc_depends feishu)"   ""
 check "svc_depends claude"   "$(svc_depends claude)"   "lark-feishu-front"
-check "svc_depends omp"      "$(svc_depends omp)"      "lark-feishu-front"
 check "svc_privileged feishu" "$(svc_privileged feishu)" "false"
 check "svc_privileged claude" "$(svc_privileged claude)" "true"
-check "svc_privileged omp"   "$(svc_privileged omp)"   "true"
 check "svc_cli feishu"       "$(svc_cli feishu)"       ""
-check "svc_cli opencode"     "$(svc_cli opencode)"     "opencode"
-check "svc_cli omp"          "$(svc_cli omp)"          "omp"
+check "svc_cli claude"       "$(svc_cli claude)"       "claude"
 if svc_unit bogus >/dev/null 2>&1; then bad "svc_unit bogus should fail"; else ok "svc_unit bogus fails"; fi
+# opencode/omp are no longer valid services: svc_unit must reject them.
+if svc_unit opencode >/dev/null 2>&1; then bad "svc_unit opencode should fail"; else ok "svc_unit opencode fails"; fi
+if svc_unit omp >/dev/null 2>&1; then bad "svc_unit omp should fail"; else ok "svc_unit omp fails"; fi
 
 # -- SELECTED/SERVICES sync ----------------------------------------------------
-SELECTED=(feishu claude opencode omp miniagent)
+SELECTED=(feishu claude miniagent)
 rebuild_services
-check "rebuild_services"     "${SERVICES[*]}"          "lark-feishu-front lark-claude-back lark-opencode-back lark-omp-back lark-miniagent-back"
-drop_service opencode
-check "drop_service SELECTED" "${SELECTED[*]}"         "feishu claude omp miniagent"
-check "drop_service SERVICES" "${SERVICES[*]}"         "lark-feishu-front lark-claude-back lark-omp-back lark-miniagent-back"
+check "rebuild_services"     "${SERVICES[*]}"          "lark-feishu-front lark-claude-back lark-miniagent-back"
+drop_service claude
+check "drop_service SELECTED" "${SELECTED[*]}"         "feishu miniagent"
+check "drop_service SERVICES" "${SERVICES[*]}"         "lark-feishu-front lark-miniagent-back"
 
 # -- update_env_key: sed-metacharacter escaping --------------------------------
 tmp="$(mktemp)"
