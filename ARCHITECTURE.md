@@ -9,7 +9,7 @@
 
 ### 1.1 定位与目标
 
-**lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code / opencode / miniagent 等 CLI agent 完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
+**lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code CLI 或 miniagent（LLM 直调）完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
 
 - 仓库：`github.com/justphantom/lark-bridge`
 - 当前版本：**v1.10.0**（git tag）
@@ -23,7 +23,7 @@
 | 飞书长连接收事件 / REST 发卡片 | 自实现 WebSocket + REST 客户端（`internal/lark/`） |
 | chat→后端路由（Layer-1） | `internal/router/` + `internal/feishufront/routing.go` |
 | 双向 IPC 协议（SSE + POST） | `internal/protocol/` + `internal/backendrpc/` + `internal/feishufront/ipcserver*.go` |
-| agent CLI 子进程驱动 | `internal/claude/`、`internal/opencode/`、`internal/miniclient/` |
+| agent CLI 子进程驱动 | `internal/claude/`、`internal/miniclient/` |
 | 流式进度卡 / 权限卡 / 问答卡 / 结果卡 | `internal/feishufront/renderer/` + `cardkit/` |
 | 斜杠命令体系 | 各 `*bridge/commands*.go` + `internal/cmdutil/` |
 | 单飞部署触发 | `internal/deploymonitor/` |
@@ -63,15 +63,13 @@
 
 ```
 lark-bridge/
-├── cmd/                      # 7 个二进制入口
+├── cmd/                      # 5 个二进制入口
 │   ├── feishu-front/         # 前端：飞书 WS Bot + IPC server + 调度器
 │   ├── claude-back/          # Claude CLI 后端
-│   ├── opencode-back/        # opencode CLI 后端
-│   ├── omp-back/             # Oh My Pi (omp) CLI 后端
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
 │   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
 │   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
-├── internal/                 # 29 个内部包（详见第 5 节）
+├── internal/                 # 内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
 │   ├── router/               # chatID ↔ 后端绑定持久化
 │   ├── config/               # JSON 配置加载/默认值/校验
@@ -89,10 +87,6 @@ lark-bridge/
 │   ├── clibase/              # CLI 子进程就绪探测（--version 健康检查）公共段
 │   ├── claude/               # claude CLI 子进程驱动（stream-json 解析）
 │   ├── claudebridge/         # claude-back 业务逻辑
-│   ├── opencode/             # opencode CLI 子进程驱动（NDJSON 解析）
-│   ├── opencodebridge/       # opencode-back 业务逻辑
-│   ├── omp/                  # omp CLI 子进程驱动（NDJSON 解析 + models 列表缓存）
-│   ├── ompbridge/            # omp-back 业务逻辑
 │   ├── miniagent/            # miniagent-back 业务逻辑
 │   ├── miniclient/           # miniagent CLI 子进程封装
 │   ├── deploymonitor/        # /deploy 单飞执行器
@@ -120,29 +114,27 @@ lark-bridge/
 
 | 目录 | 职责 | 备注 |
 |---|---|---|
-| `cmd/` | 7 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
-| `internal/` | 全部业务代码，34 个包 | 不对外暴露 |
-| `deploy/` | `deploy.sh`（业务 5 服务：feishu/claude/opencode/omp/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
+| `cmd/` | 5 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
+| `internal/` | 全部业务代码 | 不对外暴露 |
+| `deploy/` | `deploy.sh`（业务 3 服务：feishu/claude/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
-| `bin/` | `make build` 产物（7 个二进制） | gitignore |
+| `bin/` | `make build` 产物（5 个二进制） | gitignore |
 
 ---
 
 ## 4. `cmd/` 入口点
 
-7 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+5 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
 | **feishu-front** | `cmd/feishu-front/main.go:57` | `lark-feishu-front` | 持有飞书 WS Bot，提供 IPC server，分发消息与卡片回调 | `feishu.NewBotWithLogger` (:100) + `feishufront.NewLayer1Router` (:114) + `NewBackendRegistry` (:120) + `NewIPCServer` (:121) + `NewTurnManager` (:125) + `NewDispatcher` (:126) |
 | **claude-back** | `cmd/claude-back/main.go:31` | `lark-claude-back` | 每 prompt fork 一次 `claude` CLI | `claude.New` (:83) + `router.New` (:68) + `usage.New` (:77) + `backendrpc.Connect` (:93) + `claudebridge.NewWithLogger` (:100) + `backendrpc.Run` (:134) |
-| **opencode-back** | `cmd/opencode-back/main.go:31` | `lark-opencode-back` | 每 prompt fork 一次 `opencode run` | `opencode.New` (:66) + 其余同 claude-back（:97/:105/:127） |
-| **omp-back** | `cmd/omp-back/main.go:48` | `lark-omp-back` | 每 prompt fork 一次 `omp -p --mode json` | `buildOmpRunner` (:67) → `omp.New` + `ompbridge.NewWithLogger` + `backendhost.CLIRunner.Run` |
 | **miniagent-back** | `cmd/miniagent-back/main.go:37` | `lark-miniagent-back` | 每 prompt fork 一次 `miniagent` 二进制（独立项目） | `miniclient.New` (:105) + `miniagent.New` (:113) + `backendrpc.Run` (:129) |
 | **deploy-monitor** | `cmd/deploy-monitor/main.go:33` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` (:72) + `backendrpc.Run` (:96) + 优雅 drain (:110) |
 | **status-monitor** | `cmd/status-monitor/main.go:29` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` (:66) + `backendrpc.Run` (:82)（独立部署） |
 
-> **注意**：`cmd/` 下共 7 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 5 个业务服务（feishu / claude / opencode / omp / miniagent）。
+> **注意**：`cmd/` 下共 5 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 3 个业务服务（feishu / claude / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:32`），`git describe --tags --always --dirty`。
 
@@ -193,9 +185,9 @@ v1.3.0 的核心改动。
 | `ws/dispatcher.go` | 分片重组（`reassembler`，按 message_id+seq）+ 事件路由 |
 | `ws/session.go` | 会话状态 |
 
-### 5.3 `claudebridge/`（4265 行，28 文件）与 `opencodebridge/`（4182 行，25 文件）——后端业务
+### 5.3 `claudebridge/`——后端业务
 
-两个 bridge 高度对称（共享 `bridgebase`）。
+claude-back 的业务逻辑，共享 `bridgebase` 脊梁。
 
 | 文件（claudebridge 为例） | 职责 |
 |---|---|
@@ -210,8 +202,6 @@ v1.3.0 的核心改动。
 | `deps.go` | `claudeAPI` 接口（便于测试 fake） |
 | `domain.go` | 业务领域类型 |
 | `dir_cache.go` | `/cd` 目录扫描缓存 |
-
-`opencodebridge` 多一个 `commands_abort.go`、`commands_session_mgmt.go`（`/session-use`），少 `effort/settings`（`CHANGELOG.md:30-31, 39-40`）。
 
 ### 5.4 `bridgebase/`（3156 行，23 文件）——后端通用脊梁
 
@@ -230,11 +220,10 @@ v1.3.0 的核心改动。
 | `throttle.go` | 节流 |
 | `dir_cache.go` | `/cd` 工作目录缓存 |
 
-### 5.5 `opencode/`（2188 行）与 `claude/`（2170 行）——CLI 驱动层
+### 5.5 `claude/`（2170 行）——CLI 驱动层
 
-封装对应 CLI 子进程的 fork + 事件流解析。
+封装 claude CLI 子进程的 fork + 事件流解析。
 - `claude/`：`claude-go-sdk` 内联（`CHANGELOG.md:44-47`），`doc.go` 声明包为 "wraps the Claude Code CLI as a standalone SDK"。文件含 `client.go`（fork）、`stream.go`、`event*.go`（stream-json 解析）、`permission.go`、`settings.go`、`ready.go`（健康门）。
-- `opencode/`：`opencode run` 子进程驱动，解析 NDJSON 事件流。
 
 ### 5.6 `miniagent/`（1701 行）与 `miniclient/`（677 行）
 
@@ -261,7 +250,7 @@ v1.3.0 的核心改动。
 
 | 文件 | 职责 |
 |---|---|
-| `config.go` | **`Config`** 顶层结构（:30）+ 各后端子结构（Claude/Opencode/DeployMonitor/MiniAgent）+ `Load`（:296，5 步 pipeline）+ `expandEnvVars`（:263） |
+| `config.go` | **`Config`** 顶层结构（:30）+ 各后端子结构（Claude/DeployMonitor/MiniAgent）+ `Load`（:296，5 步 pipeline）+ `expandEnvVars`（:263） |
 | `config_defaults.go` | `applyDefaults`（:11）：所有零值字段的默认值 |
 | `config_validate.go` | `validate`：跨字段一致性校验 |
 
@@ -467,11 +456,10 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `router_path` | 共用 | router 持久化文件路径 |
 | `claude{}` | claude-back | cli_path/permission_mode/default_directory/max_concurrent/stream_history/model_options/permission_options/effort_options/settings_dir/settings_cache_ttl |
-| `opencode{}` | opencode-back | cli_path/default_directory/max_concurrent/stream_history/list_cache_ttl |
 | `miniagent{}` | miniagent-back | api_key/base_url/model/system_prompt/max_tokens/workspace_root |
 | `deploy_monitor{}` | deploy-monitor | project_root/deploy_target |
 | `log_level`/`log_output`/`log_format`/`log_debug_redact` | 共用 | 日志 |
-| `component_log_levels{}` | 共用 | 分组件级别（router/opencode/feishu/bridge/dedup/deploy_monitor） |
+| `component_log_levels{}` | 共用 | 分组件级别（router/feishu/bridge/dedup/deploy_monitor） |
 | `state_dir` | 共用 | 持久化根目录 |
 | `timeouts{}` | 共用 | backend_health/prompt_timeout/usage_session_ttl/card_patch_delay |
 | `dedup{}` | feishu-front | stale_window/event_ttl/event_max_entries |
@@ -489,26 +477,26 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ### 8.1 运行形态：**1 个长驻前端 + N 个长驻后端 + 1 个独立部署监控**
 
-不是 CLI 工具，而是 **5 个长驻 systemd 服务**（`deploy/README.md:151`）。
+不是 CLI 工具，而是 **3 个业务长驻 systemd 服务**（`deploy/README.md:151`）+ 2 个独立监控。
 
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-   ┌──────────┬──────────┬─────────────────────┬──────────────┐
-claude-back opencode-back miniagent-back           deploy-monitor
-(Claude CLI)(opencode CLI)(LLM API 直调)           (make deploy)
-                                                     ↑ 独立部署
+   ┌──────────┬──────────────┬─────────────────────┐
+claude-back miniagent-back  deploy-monitor
+(Claude CLI)(LLM API 直调)  (make deploy)
+                              ↑ 独立部署
 ```
 
 ### 8.2 部署矩阵
 
 | 命令 | 作用 | 范围 |
 |---|---|---|
-| `make build` | 编译 7 二进制到 `bin/`，注入 git 版本号 | 本机 |
+| `make build` | 编译 5 二进制到 `bin/`，注入 git 版本号 | 本机 |
 | `make pack [GOOS= GOARCH=]` | 交叉编译 + 打 tarball（`bin/lark-bridge-<ver>-<os>-<arch>.tar.gz`） | 分发 |
-| `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **5 个业务服务** | systemd |
+| `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **3 个业务服务** | systemd |
 | `make deploy ARGS=--init` | 首次：从示例生成 config.json + .env | systemd |
-| `make deploy ARGS=--services opencode` | 只部署子集 | systemd |
+| `make deploy ARGS=--services claude` | 只部署子集 | systemd |
 | `make deploy ARGS=--binaries <tar>` | 从 tarball 部署（目标机免 Go） | systemd |
 | `make upgrade-monitor [ARGS=--init]` | 单独升级 deploy-monitor（~2s 离线） | systemd |
 
@@ -542,7 +530,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
    ↑↓
 业务层 (feishufront.dispatcher / *bridge)            卡片渲染 + CLI 驱动
    ↑↓
-适配层 (claude / opencode / miniclient)              各 CLI 子进程封装
+适配层 (claude / miniclient)              各 CLI 子进程封装
 ```
 
 `internal/feishu/` 是 `lark/`（协议）与 `feishufront`（业务）之间的刻意适配层，下游零改动。
@@ -557,7 +545,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
 
 ### 9.3 后端无关脊梁（bridgebase）
 
-三个 agent 后端的非业务逻辑抽到 `bridgebase.Core`（router/rpc/cancel/answers/emit/git/usage）。`claudebridge.Handler` 与 `opencodebridge.Handler` 嵌入 `*bridgebase.Core`（handler.go:20），各自只加 agent client + 命令。新增 agent 类型成本可控（miniagent 是范例，仅 ~1700 行）。
+claude-back 的非业务逻辑抽到 `bridgebase.Core`（router/rpc/cancel/answers/emit/git/usage），`claudebridge.Handler` 嵌入 `*bridgebase.Core`（handler.go:20），只加 agent client + 命令。新增 CLI agent 后端成本可控（miniagent 是范例，因 run shape 不同未嵌入 Core，仅 ~1700 行）。
 
 ### 9.4 零外部依赖
 

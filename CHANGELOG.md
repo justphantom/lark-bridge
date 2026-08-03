@@ -31,6 +31,28 @@
   `client.go` 改 `intrange` 循环并避免预声明标识符冲突、
   `handler_cli.go` 去除冗余 `int64` 转换。
 
+### Removed
+
+- **`opencode-back` 与 `omp-back` 整体移除**。后端对接收敛到 claude + miniagent
+  两个 agent。本次移除包括：
+  - `cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、
+    `internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）。
+  - `config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；
+    `OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`。
+  - `Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；
+    `config.example.json` 的 `opencode{}` / `omp{}` 块。
+  - `deploy.sh` 服务列表、产物检查、config 派生、CLI 警告；`lib-common.sh` 的
+    `svc_unit`/`svc_config`/`svc_cli` 映射；`smoke.sh` 对应断言。
+  - `deploy.sh` 的 `cleanup_legacy` 扩展：升级时自动 `disable --now` 并删除
+    `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）unit、
+    `STATE_DIR` 下的 `opencode-router.json` / `usage-opencode.json` / `omp-router.json` /
+    `usage-omp.json`、`CONFIG_DIR` 下的 `opencode-config.json` / `omp-config.json`。
+  - `upgrade-monitor.sh` / `upgrade-status.sh` 新增遗留清理：升级时 sed 剥离已部署
+    `deploy-monitor-config.json` / `status-monitor-config.json` 里残留的 `opencode` / `omp`
+    块（`DisallowUnknownFields` 下未知字段会让 monitor 反复 crash）。
+- **operator 升级提示**：`make deploy` 会自动清理上述 unit/state/config；已绑定
+  opencode/omp 的群需重新 `/backend` 切到 claude 或 miniagent。
+
 ### Notes
 
 - `config_path` 字段在 v3.1+ 已进入必填状态；本次追加绝对路径约束。

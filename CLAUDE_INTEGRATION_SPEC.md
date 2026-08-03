@@ -43,7 +43,7 @@ lark-claude-back -version
 
 ### 2.3 共享配置
 
-- `backend_id`、`frontend_url`、`ipc_secret`、`router_path`、`state_dir`、`log_*`、`timeouts` 与 opencode-back 共享，见 `config.example.json`。
+- `backend_id`、`frontend_url`、`ipc_secret`、`router_path`、`state_dir`、`log_*`、`timeouts` 与其它后端共享，见 `config.example.json`。
 - 环境变量 `WORKSPACE_ROOT` 限制 `/cd` 选择器范围。
 - fork CLI 子进程前，`cmdutil.SanitizeChildEnv()` 会移除包含 `SECRET`、`TOKEN`、`ENCRYPT`、`PASS`、`PRIVATE_KEY`、`CREDENTIAL` 子串的环境变量，防止 `Bash` 工具读取桥接机密；但保留 CLI 自身所需的 `*_API_KEY`。
 

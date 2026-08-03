@@ -16,8 +16,8 @@
 | Lint 工具 | **golangci-lint v2**（`version: "2"`），采用社区 "golden config"（maratori/golangci-lint-config） | `.golangci.yml:1-10` |
 | Formatter | **goimports**（含 `local-prefixes` 分组） | `.golangci.yml:16-24` |
 | 构建工具 | Make（默认目标 `build`），ldflags 注入 git 版本号 | `Makefile` |
-| 部署形态 | 7 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
-| 平台约束 | `//go:build linux || darwin`（agent 子进程包） | `internal/claude/*`、`internal/opencode/*` |
+| 部署形态 | 5 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
+| 平台约束 | `//go:build linux || darwin`（agent 子进程包） | `internal/claude/*`、`internal/miniclient/*` |
 
 设计哲学（从配置文件中明示）：
 - **显式允许名单制**：`.golangci.yml` 用 `default: none` + 显式 `enable:`，**不**用 `default: all`，并把每个**未启用**的 linter 都附上理由注释（`.golangci.yml:76-148`）——「这份文件就是项目的风格契约」。
@@ -60,19 +60,18 @@ golangci-lint run   # 风格检查（手动）
 
 ```
 lark-bridge/
-├── cmd/                         # 7 个二进制入口，每个一个子目录
+├── cmd/                         # 5 个二进制入口，每个一个子目录
 │   ├── feishu-front/            #   main.go (+ main_test.go)
 │   ├── claude-back/
-│   ├── opencode-back/
 │   ├── miniagent-back/
 │   ├── deploy-monitor/
 │   └── status-monitor/
-├── internal/                    # ~24 个包，禁止跨项目引用
+├── internal/                    # 禁止跨项目引用
 │   ├── atomicwrite/             # 单一职责小包
 │   ├── backendrpc/              # 后端→前端 IPC 客户端
-│   ├── bridgebase/              # 三桥（claude/opencode/miniagent）共享脊柱
+│   ├── bridgebase/              # CLI 后端共享脊柱（claudebridge 嵌入）
 │   ├── claude/                  # 内联的 claude-go-sdk（带 doc.go）
-│   ├── claudebridge/  opencodebridge/  miniagent/
+│   ├── claudebridge/  miniagent/
 │   ├── cmdutil/                 # 斜杠命令基础设施
 │   ├── config/                  # JSON 配置 load+validate+defaults
 │   ├── deploymonitor/
@@ -117,7 +116,7 @@ lark-bridge/
 - 单词：`core.go`、`answer.go`、`conn.go`、`dial.go`、`auth.go`、`debouncer.go`
 - 下划线分组：`commands_session_mgmt.go`、`dispatcher_backend.go`、`dispatcher_control.go`、`dispatcher_interactive.go`、`bot_dispatch.go`、`bot_send.go`、`config_defaults.go`、`config_validate.go`、`event_parse_content.go`、`client_session.go`、`wsclient_test.go`
 
-依据：`internal/feishufront/`、`internal/opencodebridge/`、`internal/claude/` 全部文件名。
+依据：`internal/feishufront/`、`internal/claudebridge/`、`internal/claude/` 全部文件名。
 
 ### 3.3 标识符
 - **导出**：PascalCase。例：`Config`、`Core`、`NewCore`、`Emit`、`EmitLogged`、`EmitAsync`、`FieldError`、`TypePrompt`。
@@ -392,8 +391,8 @@ type Core struct { ... }
 ## 7. 代码组织规范
 
 ### 7.1 函数长度
-- **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（claudebridge.streamRun, opencodebridge.streamRun），拆分反而降低可读性」。
-- **软目标**：单文件 ≤300 行（项目惯例，源自历史 AGENTS.md/CLAUDE.md）。当前 14 个文件超 300 行，其中最大的 `internal/lark/ws/frame.go` 422 行、`internal/opencodebridge/commands_session_mgmt.go` 400 行被 review 标为「建议触及时拆分」。
+- **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（claudebridge.streamRun），拆分反而降低可读性」。
+- **软目标**：单文件 ≤300 行（项目惯例，源自历史 AGENTS.md/CLAUDE.md）。当前最大的 `internal/lark/ws/frame.go` 422 行被 review 标为「建议触及时拆分」。
 
 ### 7.2 函数顺序
 **按语义关注点分组**（生命周期 / emit / state），**不**按可见性。`.golangci.yml:135-139` 禁用 `funcorder`，理由「按可见性重排会把相关方法打散」。
@@ -510,10 +509,9 @@ func TestControlRoundTrip(t *testing.T) {
 | 符号 | 位置 | 调用分布 | 保留理由 |
 |------|------|---------|---------|
 | `backendrpc.ConnectWithHTTPClient` | `backendrpc/client.go` | 跨包（feishufront 测试） | 跨包测试注入自定义 `http.Client` 起假 SSE server |
-| `bridgebase.AnswerBroker.PendingIDs` | `bridgebase/answer.go` | 跨包（claudebridge / opencodebridge 测试） | 跨包测试取待选槽 requestID（picker 刚注册的槽） |
+| `bridgebase.AnswerBroker.PendingIDs` | `bridgebase/answer.go` | 跨包（claudebridge 测试） | 跨包测试取待选槽 requestID（picker 刚注册的槽） |
 | `lark/websocket.ComputeAccept` | `lark/websocket/dial.go` | 跨包（lark/ws 测试） | 假 test server 构造 `Sec-WebSocket-Accept` 握手回执 |
 | `claude.ParseEvent` | `claude/event_parse.go` | 跨包（claudebridge 测试）+ 同包 | 跨包回放抓包的真实 stream-json 行 |
-| `opencode.ParseEvent` | `opencode/event_parse.go` | 跨包（opencodebridge 测试）+ 同包 | 跨包测试构造 `Event`（同构理由） |
 | `feishufront.TurnManager.TurnsByBackend` | `feishufront/turn.go` | 仅同包测试 | 零生产调用（原服务 `OnBackendOffline` 清理，该路径已废弃）；保留作外部诊断接口 |
 | `usage.Store.Snapshot` | `usage/usage.go` | 仅同包测试 | 同包测试断言用量快照；保留供未来跨包诊断/CLI 复用 |
 
@@ -549,7 +547,7 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 ```
 make deploy                  # 构建 + 4 业务服务 systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
-make deploy ARGS=--services opencode   # 子集部署
+make deploy ARGS=--services claude   # 子集部署
 make upgrade-monitor         # ~2s 离线升级 deploy-monitor
 ```
 环境变量：`IPC_ADDR`、`STATE_DIR` 可命令行覆盖（`Makefile:19-21`）。
