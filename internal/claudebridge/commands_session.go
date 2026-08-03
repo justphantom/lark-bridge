@@ -14,7 +14,7 @@ import (
 // via the CLI) surface too. The bound directory MUST be set via /cd; a chat
 // with no binding or no directory pin has nothing to list. The scan is
 // sub-ms local I/O, so it runs synchronously (no async banner). The currently
-// bound session is marked ★ so the user sees which row /session-clean keeps.
+// bound session is marked ★ so the user sees which row /clean keeps.
 func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) (commandResult, error) {
 	b, ok := h.Router.Lookup(chatID)
 	if !ok {

@@ -311,8 +311,8 @@ v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incompl
 
 ## [1.8.0] - 2026-07-31
 
-v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/use`/`/session-clean`/`/session-list`、
-omp `/session-list`/`/use`/`/session-clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
+v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/use`/`/clean`/`/session-list`、
+omp `/session-list`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
 `LARK_RUN_MODE` 双模式）、**事件流健壮性**（超长行截断、未知事件计数、流归档字段脱敏），以及修复
 **inflight 会话状态不一致导致的部署死锁**。无协议层 breaking change，新增功能 → 按 semver 升 minor。
 **发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
@@ -321,7 +321,7 @@ omp `/session-list`/`/use`/`/session-clean`/`/session-gc`）、**部署加固**�
 
 - **claude 会话管理命令对齐 omp/opencode**（`6a15532`）。此前 claude 的 `/session-list` 只读
   本地 chat→session 绑定表（注释自承 "The Claude backend has no central session registry"），
-  且缺 `/use`/`/session-clean`。现按 claude 的 `~/.claude/projects/<编码cwd>/` 落盘布局
+  且缺 `/use`/`/clean`。现按 claude 的 `~/.claude/projects/<编码cwd>/` 落盘布局
   实现文件系统会话驱动，三命令全部对齐：
   - 新增 `internal/claude/sessions.go`：`encodeProjectDir`（cwd 绝对路径每个 `/`→`-`，含前导）、
     `ListSessions`（枚举目录下 `*.jsonl`，按 mtime 倒序）、`DeleteSession`（删 `.jsonl` + 同名
@@ -329,13 +329,13 @@ omp `/session-list`/`/use`/`/session-clean`/`/session-gc`）、**部署加固**�
     失效（命中 `IsStaleSession`）均经实测确认。
   - `/session-list` 改枚举当前绑定目录下真实会话，当前绑定会话标 `★`（不再读 `router.AllBindings()`）。
   - `/use` 新增：同目录会话切换，无参弹选择卡、带参支持序号/id；切到当前会话 no-op。
-  - `/session-clean` 新增：无参删当前目录除当前会话外的全部，带参仅删指定 id；走 `AskPermission`
+  - `/clean` 新增：无参删当前目录除当前会话外的全部，带参仅删指定 id；走 `AskPermission`
     确认卡 + 原地 PATCH 刷新；保护当前绑定会话不可删。
   - `claudeAPI` 接口 +2 方法（`ListSessions`/`DeleteSession`），所有 fake 补实现；表驱动测试
     覆盖无绑定/无目录/保护当前会话/确认删除/取消五条路径。
 
 - **omp 会话管理命令补齐**（`49c3d5b`）。omp 的 session store 是 cwd-bound 且慢，此前仅部分
-  命令可达。现 `/session-list`/`/use`/`/session-clean`/`/session-gc` 全部走磁盘 session
+  命令可达。现 `/session-list`/`/use`/`/clean`/`/session-gc` 全部走磁盘 session
   store；新增配置 `omp.agent_dir`、`omp.gc_cold_archive_after_days`/`gc_retain_newest_per_cwd`/
   `gc_timeout`；terminal-event 检测加固。
 
@@ -418,7 +418,7 @@ omp `/session-list`/`/use`/`/session-clean`/`/session-gc`）、**部署加固**�
 
 - **提交后翻灰 + 延迟兜底 PATCH**（`3846b89`）。问答/权限卡提交后按钮置灰、显示「已提交/✓ …」；
   追加延迟兜底 PATCH 绕过飞书点击处理窗口（~3-5s）的静默回退。`0eebfae` 修复 notice-patch 时
-  未释放 interactive binding 致延迟兜底 PATCH 误命中的连带 bug（`/session-clean` 悬卡）。
+  未释放 interactive binding 致延迟兜底 PATCH 误命中的连带 bug（`/clean` 悬卡）。
 
 - **status-monitor `/status` 按需刷新**（`3846b89`）。`buildStatusReport` 抽取共用，`/status`/
   `/refresh` 立即推一张总览卡（不等 `interval`）；`/running`/`/help` 分派对齐 deploy-monitor。
@@ -501,7 +501,7 @@ v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后�
 ### Fixed
 
 - **feishufront：confirm/cancel 卡片选项本地化 + 补 submitSummary 测试**（`39e3239`）。
-  opencode `/session-clean` 的确认卡片用 `Value:"confirm"/"cancel"`，提交回显经
+  opencode `/clean` 的确认卡片用 `Value:"confirm"/"cancel"`，提交回显经
   `choiceLabel` 命中 default 分支，显示英文原文而非中文。`choiceLabel` 补
   `confirm→确认`/`cancel→取消` 映射；`submitSummary`/`questionAnswerSummary`/`choiceLabel`/
   `parseQuestionFormValue` 四个纯函数补单测覆盖。

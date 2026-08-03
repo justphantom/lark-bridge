@@ -14,9 +14,9 @@ import (
 
 // cmdSessionClean deletes Claude sessions under the chat's bound directory.
 // Forms (both require a prior /cd):
-//   - /session-clean             → delete every session under dir EXCEPT the
+//   - /clean             → delete every session under dir EXCEPT the
 //     currently bound one (the active conversation)
-//   - /session-clean <sessionID> → delete only the given session by id
+//   - /clean <sessionID> → delete only the given session by id
 //
 // Always confirmation-gated: a permission card (确认 / 取消) pops up first,
 // and only after the user confirms does deletion proceed. Deletion is a
@@ -240,7 +240,7 @@ func (h *Handler) applySessionSwitch(chatID, messageID string, sess claude.Sessi
 		title = "(未命名会话)"
 	}
 	h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换会话",
-		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /use 切回（/session-clean 会清理未绑定的会话）。", title))
+		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /use 切回（/clean 会清理未绑定的会话）。", title))
 }
 
 // sortSessionsByUpdated returns a copy of sessions sorted most-recent-first.
@@ -263,7 +263,7 @@ func sortSessionsByUpdated(sessions []claude.Session) []claude.Session {
 
 // formatSessionList renders the listing for /session-list. Sorted by updated
 // desc; the currently bound session (if any) is marked with ★ so the user
-// sees which row /session-clean will keep.
+// sees which row /clean will keep.
 func formatSessionList(sessions []claude.Session, currentID string) string {
 	if len(sessions) == 0 {
 		return "当前目录下没有任何会话。"

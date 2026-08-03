@@ -28,7 +28,7 @@ func init() {
 			Title: "已开启新对话", Level: "success"}, Handler: (*Handler).cmdNew},
 		{Spec: cmdutil.Spec{Name: "/use", Summary: "切换到同目录下其他会话；不带参数弹出选择",
 			Args: "[n]", Title: "已切换会话", Level: "success"}, Handler: (*Handler).cmdSessionUse},
-		{Spec: cmdutil.Spec{Name: "/session-clean", Summary: "清理会话：无参删当前目录除当前会话外的全部；带参仅删指定 ID",
+		{Spec: cmdutil.Spec{Name: "/clean", Summary: "清理会话：无参删当前目录除当前会话外的全部；带参仅删指定 ID",
 			Args: "[sessionID]", Title: "清理完成", Level: "success"}, Handler: (*Handler).cmdSessionClean},
 		{Spec: cmdutil.Spec{Name: "/session-abort", Summary: "中止当前正在执行的 Claude 调用",
 			Title: "已请求中止", Level: "success"}, Handler: (*Handler).cmdSessionAbort},

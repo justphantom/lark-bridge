@@ -946,7 +946,7 @@ func TestSubmit_DelayedFallbackSkippedAfterFinalize(t *testing.T) {
 
 // TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate verifies the delayed-PATCH
 // guard also holds when the terminal frame is a TypeNotice patching the card in
-// place (UpdateMessageID) rather than a turn Result — the path /session-clean's
+// place (UpdateMessageID) rather than a turn Result — the path /clean's
 // EmitCardUpdate takes. Before the fix, sendNoticeControl did not release the
 // interactive binding, so the fallback re-sent the grey submitted bytes and
 // overwrote the green result card, stranding it on "你选择了" forever.
@@ -964,7 +964,7 @@ func TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A /session-clean permission card ships STANDALONE: the slash command
+	// A /clean permission card ships STANDALONE: the slash command
 	// returned Handled before opening a progress turn, so TakeOverProgress
 	// is unset and PromptID is empty. confirm/cancel map to the generic
 	// "确认"/"取消" echo via choiceLabel.
@@ -997,7 +997,7 @@ func TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate(t *testing.T) {
 	}
 
 	// Backend resolves the answer, deletes, and patches the SAME card with a
-	// success notice — the /session-clean result path. This must release the
+	// success notice — the /clean result path. This must release the
 	// interactive binding so the armed fallback PATCH skips.
 	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
 		Type:   protocol.TypeNotice,

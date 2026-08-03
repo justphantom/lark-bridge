@@ -8,7 +8,7 @@ import (
 
 // TestSubmitSummary_PermissionChoice covers the permission-card branch:
 // value["choice"] drives choiceLabel. The allow/deny pair predates this test;
-// confirm/cancel pin the G1 fix (opencode /session-clean confirmation cards
+// confirm/cancel pin the G1 fix (/clean confirmation cards
 // previously echoed the raw English value).
 func TestSubmitSummary_PermissionChoice(t *testing.T) {
 	cases := map[string]string{

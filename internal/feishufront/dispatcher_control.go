@@ -384,7 +384,7 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 			// window; the fallback's guard skips only once the binding
 			// is gone. Without this release the fallback overwrites the
 			// terminal notice, stranding the card on the submitted
-			// state — the /session-clean symptom. (No-op when the
+			// state — the /clean symptom. (No-op when the
 			// patched card was never an interactive card.)
 			d.evictInteractiveByMessageID(n.UpdateMessageID, "")
 		}
