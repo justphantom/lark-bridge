@@ -133,9 +133,9 @@ func summarizeClean(count int, failed []string) (body, level string) {
 
 // cmdSessionUse switches the chat's binding to another session of the same
 // working directory. Forms:
-//   - /session-use      → pop a selection card of the directory's sessions
+//   - /use      → pop a selection card of the directory's sessions
 //     (excluding the currently bound one — switching to itself is a no-op)
-//   - /session-use <n>  → switch directly to the n-th session of the sorted
+//   - /use <n>  → switch directly to the n-th session of the sorted
 //     list (1-based, same numbering as /session-list)
 //
 // Resume is cwd-bound (verified): every candidate lives under the bound
@@ -208,7 +208,7 @@ func (h *Handler) runSessionUsePicker(chatID, replyToID string, sorted []claude.
 		}
 		sess, ok := candidates[choice]
 		if !ok {
-			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /session-use。")
+			h.EmitPromptNotice(chatID, replyToID, "error", "切换失败", "选项已失效，请重新发起 /use。")
 			return
 		}
 		h.applySessionSwitch(chatID, messageID, sess, curSession)
@@ -240,13 +240,13 @@ func (h *Handler) applySessionSwitch(chatID, messageID string, sess claude.Sessi
 		title = "(未命名会话)"
 	}
 	h.EmitCardUpdateLogged(chatID, messageID, "success", "已切换会话",
-		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /session-use 切回（/session-clean 会清理未绑定的会话）。", title))
+		fmt.Sprintf("已切换到会话「%s」。旧会话保留，可用 /use 切回（/session-clean 会清理未绑定的会话）。", title))
 }
 
 // sortSessionsByUpdated returns a copy of sessions sorted most-recent-first.
-// /session-list (formatSessionList) and /session-use share this ordering so
+// /session-list (formatSessionList) and /use share this ordering so
 // the 1-based numbering the user reads off /session-list matches the index
-// they pass to /session-use <n>.
+// they pass to /use <n>.
 func sortSessionsByUpdated(sessions []claude.Session) []claude.Session {
 	sorted := make([]claude.Session, len(sessions))
 	copy(sorted, sessions)

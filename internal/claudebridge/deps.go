@@ -20,7 +20,7 @@ type claudeAPI interface {
 	// ListSessions enumerates the claude sessions under dir (filesystem scan
 	// of ~/.claude/projects/<encoded-cwd>). dir MUST be absolute; a relative
 	// path encodes to a different bucket and yields nothing. Used by
-	// /session-list, /session-clean and /session-use.
+	// /session-list, /session-clean and /use.
 	ListSessions(ctx context.Context, dir string) ([]claude.Session, error)
 	// DeleteSession removes the session transcript (and optional sidecar dir)
 	// whose id equals sessionID under dir. The project-level shared memory/

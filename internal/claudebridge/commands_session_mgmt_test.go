@@ -16,7 +16,7 @@ import (
 )
 
 // sessionFakeAgent is a claudeAPI fake for /session-list, /session-clean and
-// /session-use tests. It records every DeleteSession call (id + dir) behind a
+// /use tests. It records every DeleteSession call (id + dir) behind a
 // mutex so the test can assert ordering and counts after the async
 // confirmation goroutines settle.
 type sessionFakeAgent struct {
@@ -307,7 +307,7 @@ func TestCmdSessionClean_Batch_NothingToDelete(t *testing.T) {
 	}
 }
 
-// --- /session-use ---
+// --- /use ---
 
 func TestCmdSessionUse_NoBinding(t *testing.T) {
 	h, _ := newSessionTestHandler(t, &sessionFakeAgent{})

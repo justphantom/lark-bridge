@@ -6,7 +6,7 @@ import (
 
 // Bind forcibly maps chatID to the given sessionID, directory, title,
 // modelSpec and agent, overwriting any prior binding for chatID. Used by
-// claude ensureBinding (with agent=""), /new and /session-use. The modelSpec /
+// claude ensureBinding (with agent=""), /new and /use. The modelSpec /
 // agent fields are written verbatim; pass "" to clear.
 func (r *Router) Bind(chatID, sessionID, directory, title, modelSpec, agent string) {
 	r.mu.Lock()

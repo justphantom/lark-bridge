@@ -563,7 +563,7 @@ make upgrade-monitor         # ~2s 离线升级 deploy-monitor
 **轻量 Conventional Commits**，全部**英文、祈使句、单行、首字母大写**。统计最近 50 条：
 - 严格 Conventional（`type(scope): desc`）约占 6 条：`fix(feishufront): ...`、`fix(ws): ...`。
 - **`scope:` 前缀无 type**（最常见）：`feishufront: ...`、`lark: ...`、`deploy: ...`、`renderer: ...`、`vendor: ...`、`opencode: ...`、`claude-back: ...`、`deploy.sh: ...`。
-- **自由句首大写**（描述性）：`Refine /backend picker: in-place outcome flip + 10min TTL`、`Slim progress card: drop step banner dup, fix dead SessionInit path`、`Remove opencode-serve-back; port /session-use to opencode-back (CLI)`。
+- **自由句首大写**（描述性）：`Refine /backend picker: in-place outcome flip + 10min TTL`、`Slim progress card: drop step banner dup, fix dead SessionInit path`、`Remove opencode-serve-back; port /use to opencode-back (CLI)`。
 - **阶段化代号**：`P0 fixes: ...`、`P1 hardening: ...`、`P2 cleanup: ...`、`P3 engineering: ...`（一组连续提交的工程化整改）。
 
 **典型示例**（`git log --oneline -30`）：

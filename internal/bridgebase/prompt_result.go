@@ -368,7 +368,7 @@ func HandleTerminalEmitError(c *Core, ctx context.Context, chatID, replyToID str
 		Notice: &protocol.NoticePayload{
 			Level:   "warning",
 			Title:   "回复投递失败",
-			Message: "对话已完成但结果投递失败，请重新提问或使用 /session-use 恢复会话。",
+			Message: "对话已完成但结果投递失败，请重新提问或使用 /use 恢复会话。",
 		},
 	}); err != nil {
 		c.Logger.Warn("fallback notice also failed",

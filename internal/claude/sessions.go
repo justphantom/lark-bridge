@@ -233,7 +233,7 @@ func fileModTimeMs(path string) int64 {
 }
 
 // FormatSessionTime renders a millisecond timestamp as a relative string. It
-// mirrors omp/opencode's bands so the /session-list and /session-use rows
+// mirrors omp/opencode's bands so the /session-list and /use rows
 // read the same shape across backends.
 func FormatSessionTime(ms int64) string {
 	if ms == 0 {
