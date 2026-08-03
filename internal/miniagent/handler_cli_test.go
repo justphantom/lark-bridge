@@ -725,3 +725,85 @@ func TestCmdMemory_WithRecords(t *testing.T) {
 		t.Errorf("body missing rule content: %q", body)
 	}
 }
+
+// TestReadMemoryRecords_HomeFallback pins the v3.3.0 dual-layer discovery
+// (1ac831e): when <workdir>/.miniagent/memory.jsonl is ABSENT, the home layer
+// (~/.miniagent/memory.jsonl) is the fallback. Before this alignment the
+// bridge reported "暂无记忆" while the agent itself had home memory injected
+// into its system prompt — a visible inconsistency. The workdir layer
+// overrides (not merges) the home layer, so a workdir file shadows the home
+// file entirely (covered by TestCmdMemory_WithRecords above, where the
+// workdir temp dir has no HOME-relative memory).
+func TestReadMemoryRecords_HomeFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // readMemoryRecords falls back to os.UserHomeDir
+
+	// No workdir memory file; home has one record.
+	memDir := filepath.Join(home, ".miniagent")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	memFile := filepath.Join(memDir, "memory.jsonl")
+	want := `{"type":"fact","topic":"global","content":"home-layer fact"}`
+	if err := os.WriteFile(memFile, []byte(want+"\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// workdir is a non-empty temp dir WITHOUT a .miniagent/memory.jsonl →
+	// the home layer must be returned.
+	workdir := t.TempDir()
+	got, err := readMemoryRecords(workdir)
+	if err != nil {
+		t.Fatalf("readMemoryRecords: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "home-layer fact" {
+		t.Errorf("got %+v, want one home-layer record", got)
+	}
+}
+
+// TestReadMemoryRecords_WorkdirOverridesHome pins the override-not-merge
+// semantics: a workdir memory file shadows the home file completely. Even
+// if the home file has more records, only the workdir layer is returned
+// (matches upstream loadProjectRules's per-file override).
+func TestReadMemoryRecords_WorkdirOverridesHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	homeMem := filepath.Join(home, ".miniagent", "memory.jsonl")
+	if err := os.MkdirAll(filepath.Dir(homeMem), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(homeMem, []byte(`{"type":"fact","content":"home-only"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write home: %v", err)
+	}
+
+	workdir := t.TempDir()
+	wdMem := filepath.Join(workdir, ".miniagent", "memory.jsonl")
+	if err := os.MkdirAll(filepath.Dir(wdMem), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(wdMem, []byte(`{"type":"rule","content":"workdir-wins"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write workdir: %v", err)
+	}
+
+	got, err := readMemoryRecords(workdir)
+	if err != nil {
+		t.Fatalf("readMemoryRecords: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "workdir-wins" {
+		t.Errorf("got %+v, want only the workdir record (override, not merge)", got)
+	}
+}
+
+// TestReadMemoryRecords_NeitherExists returns nil-nil when neither the workdir
+// nor the home memory file is present — cmdMemory surfaces the friendly
+// "暂无记忆" notice rather than an error card.
+func TestReadMemoryRecords_NeitherExists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	got, err := readMemoryRecords(t.TempDir())
+	if err != nil {
+		t.Fatalf("readMemoryRecords: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %+v, want nil when no memory file exists", got)
+	}
+}

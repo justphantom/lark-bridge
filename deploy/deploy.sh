@@ -480,15 +480,25 @@ stage_configs() {
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
     # miniagent CLI 自己的配置（v3.1+ config-only 模式所必需）：端点 + 已删 flag
-    # 对应的 run 参数（shell_timeout 等）从这里来，不再走 CLI flag。${MINIAGENT_*}
-    # 占位符由 miniagent 加载时用子进程 env 展开（不在 deploy 期 envsubst，与
-    # config.example.json 的 ${VAR} 同一思路，改 .env 即生效）。quoted heredoc
-    # （'EOF'）阻止 bash 展开 ${...}。config_path 在 config.example.json 里已是
+    # 对应的 run 参数（shell_timeout 等）从这里来，不再走 CLI flag。
+    #
+    # 注意：miniagent v3.3.0（c51d91c）移除了 config 加载期的 ${VAR} 展开，config
+    # 按字面量读取，故必须在 deploy 期把 ${MINIAGENT_*} 从 repo-root .env 读出
+    # （env_get）并由 bash 在 unquoted heredoc 里展开为字面量值。deploy.sh 本身
+    # 不 source .env（.env 只供 systemd 的 EnvironmentFile 使用，与 IPC_ADDR 一样
+    # 靠 env_get 读取），所以必须先 env_get 到局部变量再展开——直接写
+    # ${MINIAGENT_*} 会在 set -u 下 unbound variable 崩溃。缺值时 env_get 返回
+    # 空串 → 写入空 URL/model → miniagent 启动期 URL 校验 fatal（与 feishu-front
+    # 的 expandEnvVars 同样硬失败）。config_path 在 config.example.json 里已是
     # 字面量 /etc/lark-bridge/miniagent-cli.json，无需 sed 注入。
-    cat > "$STAGE/miniagent-cli.json" <<'EOF'
+    local miniagent_chat_url miniagent_models_url miniagent_default_model
+    miniagent_chat_url="$(env_get MINIAGENT_CHAT_URL)"
+    miniagent_models_url="$(env_get MINIAGENT_MODELS_URL)"
+    miniagent_default_model="$(env_get MINIAGENT_DEFAULT_MODEL)"
+    cat > "$STAGE/miniagent-cli.json" <<EOF
 {
-  "providers": [{"name": "default", "chat_url": "${MINIAGENT_CHAT_URL}", "models_url": "${MINIAGENT_MODELS_URL}"}],
-  "defaults": {"model": "${MINIAGENT_DEFAULT_MODEL}"},
+  "providers": [{"name": "default", "chat_url": "${miniagent_chat_url}", "models_url": "${miniagent_models_url}"}],
+  "defaults": {"model": "${miniagent_default_model}"},
   "run": {"shell_timeout": "60s"}
 }
 EOF

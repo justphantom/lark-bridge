@@ -9,8 +9,15 @@ import (
 // subagent is checked first (claude renders subagents as "<Type> Agent" /
 // "Shell"; a subagent whose name coincidentally starts with "Read" must not be
 // miscounted as a read), then read/exec/edit/write/mcp by normalised name.
-// Unclassified tools (WebSearch/Cron/Worktree/…) return "" and are omitted from
-// the summary rather than reserved — they appear in the recent-rows window.
+// Unclassified tools (WebSearch/Cron/Worktree/MultiEdit/…) return "" and are
+// omitted from the summary rather than reserved — they appear in the
+// recent-rows window.
+//
+// miniagent v3.2.0 removed the standalone `multi_edit` tool (merged into
+// `edit`'s `edits` array, edd6ba5/S3), so a `Multi_edit` row from miniagent is
+// no longer emitted; the case for it was dropped. claude's `MultiEdit`
+// (distinct PascalCase name) was never classified and stays in the unclassified
+// bucket — this is not a regression, just an explicit pin.
 func toolCategory(t toolRow) string {
 	if t.isSubagent {
 		return "sub"
@@ -23,7 +30,7 @@ func toolCategory(t toolRow) string {
 	// "Shell" never reaches here — isSubagent is checked above.
 	case t.name == "Bash" || t.name == "Shell":
 		return "exec"
-	case t.name == "Edit" || t.name == "Multi_edit":
+	case t.name == "Edit":
 		return "edit"
 	case t.name == "Write":
 		return "write"

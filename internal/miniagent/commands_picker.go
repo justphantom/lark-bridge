@@ -67,6 +67,17 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 }
 
 // cmdModels lists available models from the OpenAI-compatible endpoint.
+//
+// miniagent v3.3.0 (256c875) changed -list-models output: a single-provider
+// config emits bare model ids; a multi-provider config emits "provider/model_id"
+// so the operator can disambiguate. The "→ current" mark uses sameModelID: it
+// only matches specs of the SAME form (both bare, or both "provider/"-prefixed
+// and fully equal). A bare current pin (the global default cfgModel is always
+// bare) never matches a prefixed list row, so under a multi-provider config the
+// current row is simply unmarked rather than risk lighting up every provider
+// that shares the model id. Display-only; SetModelSpec still stores the raw
+// choice the user clicks (provider/model_id in multi-provider setups, which
+// matches the -model provider/id form miniagent's Resolve expects).
 func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title, body string) {
 	models, err := h.client.ListModels(ctx)
 	if err != nil {
@@ -80,13 +91,34 @@ func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title
 	sb.WriteString("可用模型：\n")
 	for _, m := range models {
 		mark := "  "
-		if m == cur {
+		if sameModelID(m, cur) {
 			mark = "→ "
 		}
 		sb.WriteString(mark + m + "\n")
 	}
 	sb.WriteString("\n/model <ID> 切换。")
 	return "info", "模型列表", sb.String()
+}
+
+// sameModelID reports whether two model specs refer to the same model for the
+// purpose of marking the "→ current" row in /models. miniagent v3.3.0's
+// -list-models emits "provider/model_id" under multi-provider configs and bare
+// "model_id" under single-provider; the current pin (activeModel) may be either
+// form. The two forms are NEVER treated as equal — a bare spec only matches
+// another bare spec, and a "provider/"-prefixed spec only matches an identical
+// prefixed spec.
+//
+// Refusing to cross forms is deliberate. The one case where a bare current pin
+// (the global default cfgModel is always bare) meets a prefixed list row is a
+// multi-provider config with a bare default; matching on the model-id segment
+// alone there would light up EVERY provider that shares the id (both
+// "main/gpt-4o" and "alt/gpt-4o"), so the current row stays unmarked instead.
+// A bare default under multi-provider cannot be resolved by miniagent anyway.
+func sameModelID(a, b string) bool {
+	if strings.Contains(a, "/") != strings.Contains(b, "/") {
+		return false
+	}
+	return a == b
 }
 
 // cmdDirectory pins/clears/selects the per-chat working directory:

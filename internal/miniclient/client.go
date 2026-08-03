@@ -37,7 +37,9 @@ const defaultMaxConcurrent = 4
 // miniagent v3.1+ is config-only: endpoints + removed run settings
 // (shell-timeout/context-window) live in the miniagent.json at ConfigPath, not
 // here. ChatURL/ModelsURL/ShellTimeout/ContextWindow were deleted along with
-// their CLI flags.
+// their CLI flags. v3.3.0 further removed ${VAR} expansion from config loading
+// (c51d91c): the bridge's deploy.sh now envsubst's miniagent-cli.json at deploy
+// time instead of relying on the CLI to expand placeholders.
 type Config struct {
 	CLIPath       string
 	APIKey        string
@@ -122,13 +124,16 @@ func (c *Client) DefaultMaxIterations() int {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Versions below this may emit event shapes the bridge doesn't
-// handle (e.g. missing `finish` field, absent `reasoning_delta`). The bridge
-// special-cases "dev" (local untagged build) to always pass.
-const minSupportedVersion = "3.1.0"
+// requires. Bumped to 3.3.0 because: v3.2.0 deleted 9 CLI flags + multi_edit
+// tool + split HTTPClient into ChatClient/StreamClient; v3.3.0 removed ${VAR}
+// expansion from config loading (c51d91c) and added dual-layer .miniagent/
+// rule discovery. Versions below this may emit event/tool shapes the bridge
+// doesn't handle, or silently mis-load config (pre-3.3 literal ${VAR} URLs).
+// The bridge special-cases "dev" (local untagged build) to always pass.
+const minSupportedVersion = "3.3.0"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
-// string (e.g. "3.1.2") or "dev" for untagged builds. Returns an error only
+// string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only
 // when the binary cannot be invoked at all.
 func (c *Client) DetectVersion(ctx context.Context) (string, error) {
 	if c.cliPath == "" {

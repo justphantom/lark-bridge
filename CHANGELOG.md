@@ -5,6 +5,47 @@
 
 ## [Unreleased]
 
+### miniagent v3.2.0 → v3.3.0 跟进
+
+上游 miniagent v3.2.0（删 9 个 CLI flag + `multi_edit` 工具 + 拆 `HTTPClient`→
+`ChatClient`/`StreamClient`）与 v3.3.0（删 config `${VAR}` 展开 + 双层 `.miniagent/`
+规则查找 + 多 provider `-list-models` 聚合）的破坏性跟进。协议层（事件 NDJSON、
+session、CLI flag 子集）零改动——bridge 的 config-only 子集策略天然免疫 v3.2 删 flag。
+
+#### Fixed
+
+- **deploy 期 `${VAR}` 展开（P0，升级即崩）**。miniagent v3.3.0 `c51d91c` 移除了
+  config 加载时的 `${VAR}` 环境变量展开，改按字面量读取。`deploy.sh` 生成
+  `miniagent-cli.json` 的 heredoc 原先带 `'EOF'` 引号（阻止 bash 展开），导致
+  `chat_url: "${MINIAGENT_CHAT_URL}"` 被字面量传给 miniagent → URL 解析 fatal →
+  每次 turn 崩。改为 unquoted heredoc 让 bash 在 deploy 期展开为字面量 URL，
+  与 bridge 自身 config（仍走 feishu-front 的 `expandEnvVars`，不受影响）解耦。
+  `env.example` 的过时注释同步订正。
+
+#### Changed
+
+- **`minSupportedVersion` 3.1.0 → 3.3.0**（P1）。`internal/miniclient/client.go`
+  版本门提升，health gate 明确拒绝旧版二进制，避免 operator 误装 v3.1.0/v3.2.0 后
+  在实际 turn 时才崩。新增 `TestCompareVersion`/`TestSatisfiesVersion` 钉死
+  component-wise 比较（3.10.0 > 3.2.0）与 `dev`/pre-release 放行规则。
+- **renderer 删除 `Multi_edit` 死分支**（P1）。miniagent v3.2.0 `edd6ba5` 将
+  `multi_edit` 并入 `edit` 的 `edits` 数组，上游不再 emit `Multi_edit`。
+  `progress_category.go` 移除对应 `case`，`progress_category_test.go` 钉死其
+  归一化后落入未分类 bucket。claude 的 `MultiEdit`（PascalCase）原本就未分类，
+  行为不变。
+- **`/models` 当前模型标记对齐**（P1）。v3.3.0 `256c875` 让多 provider 时
+  `-list-models` 输出 `provider/model_id`，单 provider 仍为裸 `model_id`。
+  `cmdModels` 用 `sameModelID` 标记当前模型：仅同形式比较（两边都裸，或两边
+  都带 `provider/` 前缀且全等），跨形式（裸 id vs `provider/id`）不匹配——避免
+  多 provider + 裸默认 cur 时按 id 段误点亮所有同名 provider 行。
+
+#### Added
+
+- **`/memory` 双层查找对齐**（P2）。`readMemoryRecords` 实现 workdir > home
+  （`~/.miniagent/memory.jsonl`）回退，与上游 v3.3.0 `1ac831e` 的 `loadProjectRules`
+  per-file override 语义一致。原先 workdir 无记忆但 home 有时会误报「暂无记忆」，
+  而 agent 实际已注入 home 记忆——可见不一致已消除。
+
 ### Added
 
 - **miniagent health gate**（760620b）。`cmd/miniagent-back` 在连接前端前调用 `client.IsReady`，

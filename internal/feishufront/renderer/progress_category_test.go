@@ -17,7 +17,11 @@ func TestToolCategory_NormalisedNames(t *testing.T) {
 		{"read", "read"},
 		{"write", "write"},
 		{"edit", "edit"},
-		{"multi_edit", "edit"}, // v2.0.0 tool; normalises to Multi_edit → edit
+		// miniagent v3.2.0 merged multi_edit into edit's `edits` array; the
+		// standalone tool is gone, so a leftover Multi_edit row now falls into
+		// the unclassified bucket (omitted from the grouped summary). This
+		// pins the v3.3 follow-up: the renderer no longer special-cases it.
+		{"multi_edit", ""},
 		{"shell", "exec"},
 		// claude/opencode/omp (already PascalCase).
 		{"Read", "read"},
@@ -29,6 +33,8 @@ func TestToolCategory_NormalisedNames(t *testing.T) {
 		// Unclassified → "" (omitted from the grouped summary).
 		{"WebSearch", ""},
 		{"Cron", ""},
+		// claude's MultiEdit (distinct PascalCase name) was never classified.
+		{"MultiEdit", ""},
 	}
 	for _, c := range cases {
 		name := normalizeToolName(c.raw)

@@ -453,7 +453,7 @@ func TestDefaultMaxIterations(t *testing.T) {
 
 // TestIsReady_MissingBinary fails fast when the CLI is absent: IsReady returns
 // an error rather than silently proceeding. This is the startup health gate
-// tested here; happy-path version checks are implicit in the v3.1 gate.
+// tested here; happy-path version checks are implicit in the v3.3.0 gate.
 func TestIsReady_MissingBinary(t *testing.T) {
 	c := New(Config{CLIPath: "/nonexistent/miniagent-binary", APIKey: "k"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -461,5 +461,59 @@ func TestIsReady_MissingBinary(t *testing.T) {
 	err := c.IsReady(ctx)
 	if err == nil {
 		t.Fatal("IsReady with missing CLI should return an error")
+	}
+}
+
+// TestCompareVersion pins the component-wise numeric comparison: lexicographic
+// would mis-order 3.10.0 < 3.2.0 (string "10" < "2"), so the bridge must
+// compare integer components. Also covers the shorter-version padding
+// (3.3 == 3.3.0) and the pre-release suffix strip (3.3.0-rc1 == 3.3.0).
+func TestCompareVersion(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"3.3.0", "3.3.0", 0},
+		{"3.10.0", "3.2.0", 1},  // NOT lexicographic (10 > 2, not "10" < "2")
+		{"3.2.0", "3.10.0", -1}, // symmetric
+		{"3.3.0", "3.3", 0},     // shorter pads missing components as 0
+		{"3.3", "3.3.1", -1},
+		{"3.3.0-rc1", "3.3.0", 0}, // pre-release suffix stripped
+		{"3.3.1", "3.3.0", 1},
+		{"3.0.0", "3.3.0", -1},
+		{"4.0.0", "3.3.0", 1},
+	}
+	for _, c := range cases {
+		if got := compareVersion(c.a, c.b); got != c.want {
+			t.Errorf("compareVersion(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestSatisfiesVersion pins the version-gate logic the startup health check
+// (IsReady) uses against minSupportedVersion. "dev" (untagged local build)
+// always passes so local development is not blocked. A pre-release of the
+// minimum (3.3.0-rc1) is treated as the release version and passes.
+func TestSatisfiesVersion(t *testing.T) {
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"dev", true}, // untagged local build — always pass
+		{"3.3.0", true},
+		{"3.3.1", true},
+		{"3.10.0", true},
+		{"4.0.0", true},
+		{"3.3.0-rc1", true}, // pre-release strips to 3.3.0
+		{"3.3", true},       // == 3.3.0
+		{"3.2.5", false},    // below 3.3.0
+		{"3.1.0", false},    // the previous floor — now rejected
+		{"3.0.0", false},
+		{"2.0.0", false},
+	}
+	for _, c := range cases {
+		if got := satisfiesVersion(c.v, minSupportedVersion); got != c.want {
+			t.Errorf("satisfiesVersion(%q, %q) = %v, want %v", c.v, minSupportedVersion, got, c.want)
+		}
 	}
 }

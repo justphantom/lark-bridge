@@ -22,17 +22,46 @@ type memoryRecord struct {
 	Content string `json:"content"`
 }
 
-// readMemoryRecords reads the project-level memory file under workdir and
-// returns a slice of parsed records. Returns nil (not an error) when the
-// file does not exist — the caller surfaces a friendly "no memory" notice
-// instead of an error card.
+// readMemoryRecords reads the project-level memory file and returns parsed
+// records. As of miniagent v3.3.0 (1ac831e) the upstream does dual-layer
+// discovery: <workdir>/.miniagent/memory.jsonl takes precedence, falling back
+// to ~/.miniagent/memory.jsonl when the workdir copy is absent (workdir >
+// home > empty, per-file override — NOT a merge). The bridge mirrors that so
+// /memory shows the same records miniagent itself injects into the system
+// prompt; before, a workdir without a memory file but with a home file would
+// wrongly report "暂无记忆" while the agent actually had memory injected.
+//
+// Returns nil (not an error) when neither file exists — the caller surfaces a
+// friendly "no memory" notice. A read/parse error from the chosen file is
+// returned (the home fallback is only tried when the workdir file is ABSENT,
+// not when it is malformed: a malformed workdir file is a real signal).
 func readMemoryRecords(workdir string) ([]memoryRecord, error) {
-	p := filepath.Join(workdir, ".miniagent", "memory.jsonl")
+	if workdir != "" {
+		p := filepath.Join(workdir, ".miniagent", "memory.jsonl")
+		if _, err := os.Stat(p); err == nil {
+			return parseMemoryFile(p)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	// Fallback: ~/.miniagent/memory.jsonl. os.UserHomeDir failure (no HOME)
+	// means no home layer — treat as "no memory".
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		p := filepath.Join(home, ".miniagent", "memory.jsonl")
+		if _, err := os.Stat(p); err == nil {
+			return parseMemoryFile(p)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+// parseMemoryFile reads and parses one memory.jsonl file. Shared by the
+// workdir-first and home-fallback paths of readMemoryRecords.
+func parseMemoryFile(p string) ([]memoryRecord, error) {
 	f, err := os.Open(p)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
@@ -117,12 +146,13 @@ func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title,
 	return "info", "运行中会话", sb.String()
 }
 
-// cmdMemory shows the project-level memory file (.miniagent/memory.jsonl)
-// in the chat's active workdir. This is P2: upstream's readMemoryRecords
-// is internal-only and in a separate module, so bridge implements its own
-// lightweight jsonl parser. The write path goes through miniagent's `write`
-// tool (path=memory) which the user triggers via normal chat, not via a
-// slash command.
+// cmdMemory shows the project-level memory (.miniagent/memory.jsonl) the agent
+// itself reads. As of miniagent v3.3.0 the upstream does dual-layer discovery:
+// <workdir>/.miniagent/memory.jsonl overrides ~/.miniagent/memory.jsonl (the
+// bridge mirrors this in readMemoryRecords), so this command surfaces exactly
+// what the agent injects into its system prompt. The write path goes through
+// miniagent's `write` tool (path=memory) which the user triggers via normal
+// chat, not via a slash command.
 func (h *Handler) cmdMemory(_ context.Context, chatID, _ string) (level, title, body string) {
 	workdir := h.activeDir(chatID) // already falls back to workspaceRoot
 	if workdir == "" {
