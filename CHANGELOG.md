@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/models` 当前模型标记适配 miniagent v3.3.0+1 输出格式**。上游 `b9a38fa` 将 `-list-models` 统一输出为 `provider/model_id`（单 provider 也带前缀），导致全局默认模型为裸 id 时 `/models` 无法标记当前行。`cmdModels` 现检测列表是否来自单 provider，若是则将裸 current 规范化为 `provider/model_id` 后再比较；多 provider 下的裸 default 仍保持不标记，避免误点亮所有同名 provider 行。
+
 ### miniagent v3.2.0 → v3.3.0 跟进
 
 上游 miniagent v3.2.0（删 9 个 CLI flag + `multi_edit` 工具 + 拆 `HTTPClient`→
