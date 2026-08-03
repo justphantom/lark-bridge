@@ -275,69 +275,6 @@ func TestLoadClaudeSettingsCacheTTL(t *testing.T) {
 	}
 }
 
-// TestLoadOpencodeFields verifies opencode defaults when an opencode section is
-// present.
-func TestLoadOpencodeFields(t *testing.T) {
-	path := writeConfig(t, `{"opencode":{}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Opencode.CLIPath != "opencode" {
-		t.Errorf("default cli_path = %q, want opencode", cfg.Opencode.CLIPath)
-	}
-	if cfg.Opencode.MaxConcurrent != 4 {
-		t.Errorf("default max_concurrent = %d, want 4", cfg.Opencode.MaxConcurrent)
-	}
-	if cfg.Opencode.StreamHistory != 50 {
-		t.Errorf("default stream_history = %d, want 50", cfg.Opencode.StreamHistory)
-	}
-	if cfg.Opencode.ListCacheTTL != 3600 {
-		t.Errorf("default list_cache_ttl = %d, want 3600", cfg.Opencode.ListCacheTTL)
-	}
-}
-
-// TestLoadOpencodeStreamHistoryOverride ensures an explicit opencode
-// stream_history survives applyDefaults.
-func TestLoadOpencodeStreamHistoryOverride(t *testing.T) {
-	path := writeConfig(t, `{"opencode":{"stream_history":7}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Opencode.StreamHistory != 7 {
-		t.Errorf("stream_history = %d, want 7", cfg.Opencode.StreamHistory)
-	}
-}
-
-// TestLoadOpencodeListCacheTTLOverride ensures an explicit list_cache_ttl
-// survives applyDefaults (0 is the JSON zero value, so the test uses a
-// non-zero override to prove the value is passed through).
-func TestLoadOpencodeListCacheTTLOverride(t *testing.T) {
-	path := writeConfig(t, `{"opencode":{"list_cache_ttl":120}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Opencode.ListCacheTTL != 120 {
-		t.Errorf("list_cache_ttl = %d, want 120", cfg.Opencode.ListCacheTTL)
-	}
-}
-
-// TestLoadOpencodeListCacheTTLNegativeSurvives ensures a negative
-// list_cache_ttl (the documented "disable caching" sentinel) is NOT replaced
-// by the 3600 default — applyDefaults only fills the zero value.
-func TestLoadOpencodeListCacheTTLNegativeSurvives(t *testing.T) {
-	path := writeConfig(t, `{"opencode":{"list_cache_ttl":-1}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Opencode.ListCacheTTL != -1 {
-		t.Errorf("list_cache_ttl = %d, want -1 (negative must survive to disable caching)", cfg.Opencode.ListCacheTTL)
-	}
-}
-
 // TestLoadStreamHistoryOverride ensures an explicit stream_history survives
 // applyDefaults (the ==0 coercion only fills the unset value).
 func TestLoadStreamHistoryOverride(t *testing.T) {
@@ -357,7 +294,7 @@ func TestLoadStreamHistoryOverride(t *testing.T) {
 // history<=0 disable branch unreachable). The negative value must reach the
 // sink so the disable branch fires.
 func TestLoadStreamHistoryNegativeDisables(t *testing.T) {
-	for _, backend := range []string{"claude", "opencode", "omp", "miniagent"} {
+	for _, backend := range []string{"claude", "miniagent"} {
 		path := writeConfig(t, `{"`+backend+`":{"stream_history":-1}}`)
 		cfg, err := Load(path)
 		if err != nil {
@@ -367,10 +304,6 @@ func TestLoadStreamHistoryNegativeDisables(t *testing.T) {
 		switch backend {
 		case "claude":
 			got = cfg.Claude.StreamHistory
-		case "opencode":
-			got = cfg.Opencode.StreamHistory
-		case "omp":
-			got = cfg.OMP.StreamHistory
 		case "miniagent":
 			got = cfg.MiniAgent.StreamHistory
 		}
@@ -411,7 +344,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{"bad feishu log level", `{"feishu_log_level":"trace"}`, "feishu_log_level"},
 		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
 		{"claude negative concurrency", `{"claude":{"max_concurrent":-1}}`, "claude.max_concurrent"},
-		{"opencode negative concurrency", `{"opencode":{"max_concurrent":-1}}`, "opencode.max_concurrent"},
 		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
 		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
 		{"prompt_timeout too short", `{"timeouts":{"prompt_timeout":"100ms"}}`, "timeouts.prompt_timeout"},
@@ -769,36 +701,16 @@ func TestLoadFileConvert_XlsxPromptTemplateSyntaxChecked(t *testing.T) {
 	}
 }
 
-// TestLoadOMPAndMiniAgentStreamDefaults pins the F4/F9 defaults: OMP's
-// auto-retry cap and both StreamHistory retention caps must survive a config
-// that leaves them unset.
-func TestLoadOMPAndMiniAgentStreamDefaults(t *testing.T) {
-	path := writeConfig(t, `{"omp":{},"miniagent":{}}`)
+// TestLoadMiniAgentStreamDefaults pins the StreamHistory retention cap default
+// for miniagent (must survive a config that leaves it unset).
+func TestLoadMiniAgentStreamDefaults(t *testing.T) {
+	path := writeConfig(t, `{"miniagent":{}}`)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if cfg.OMP.MaxAutoRetries != 3 {
-		t.Errorf("default omp max_auto_retries = %d, want 3", cfg.OMP.MaxAutoRetries)
-	}
-	if cfg.OMP.StreamHistory != 50 {
-		t.Errorf("default omp stream_history = %d, want 50", cfg.OMP.StreamHistory)
 	}
 	if cfg.MiniAgent.StreamHistory != 50 {
 		t.Errorf("default miniagent stream_history = %d, want 50", cfg.MiniAgent.StreamHistory)
-	}
-}
-
-// TestLoadOMPMaxAutoRetriesOverride: an explicit max_auto_retries survives
-// defaults application (and -1 disables the cap).
-func TestLoadOMPMaxAutoRetriesOverride(t *testing.T) {
-	path := writeConfig(t, `{"omp":{"max_auto_retries":7}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.OMP.MaxAutoRetries != 7 {
-		t.Errorf("max_auto_retries = %d, want 7", cfg.OMP.MaxAutoRetries)
 	}
 }
 

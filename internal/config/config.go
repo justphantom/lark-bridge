@@ -58,8 +58,6 @@ type Config struct {
 
 	// —— 后端运行时：各后端按需 ——
 	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
-	Opencode      Opencode      `json:"opencode,omitempty"`       // opencode-back 用
-	OMP           OMP           `json:"omp,omitempty"`            // omp-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 	StatusMonitor StatusMonitor `json:"status_monitor,omitempty"` // status-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
@@ -141,107 +139,6 @@ type Claude struct {
 	SettingsCacheTTL int `json:"settings_cache_ttl,omitempty"`
 }
 
-// Opencode holds settings for the local opencode CLI subprocess that acts
-// as the agent backend. The opencode-back binary shells out to the `opencode`
-// CLI per turn and reads an NDJSON event flow from stdout.
-//
-// The legacy HTTP-mode fields (base_url/username/password) are retained for
-// backward compatibility with existing config files but are no longer used by
-// opencode-back in CLI mode; they are ignored.
-// Opencode holds settings for the opencode-back CLI subprocess mode. The
-// bridge shells out to the `opencode` binary per turn via `opencode run`.
-type Opencode struct {
-	// CLI mode (current):
-	CLIPath          string `json:"cli_path,omitempty"`          // path to the opencode binary (default "opencode")
-	DefaultDirectory string `json:"default_directory,omitempty"` // base dir for per-chat session working dirs
-	MaxConcurrent    int    `json:"max_concurrent,omitempty"`    // max parallel CLI invocations (default 4)
-
-	// StreamHistory caps how many recent per-run raw NDJSON captures
-	// are kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
-	// archiving entirely (streamarchive.NewSink history<=0 branch). The archive
-	// is best-effort and stores lines verbatim (no redaction); see opencodebridge.
-	StreamHistory int `json:"stream_history,omitempty"`
-	// ListCacheTTL bounds how long ListModels/ListAgents results stay cached
-	// (seconds). The opencode CLI takes 25-50s to list, so caching makes
-	// repeated /model and /agent pickers instant. <=0/unset -> 3600 (1h).
-	// Set to a negative value to disable caching entirely.
-	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
-}
-
-// OMP holds settings for the local Oh My Pi (omp) CLI subprocess that acts
-// as the agent backend. The omp-back binary shells out to the `omp` binary
-// per turn via `omp -p --mode json` and reads an NDJSON event flow from
-// stdout. OMP's approval/thinking/model axes mirror claude's
-// permission/effort/model (there is no agent concept), so the picker
-// command set is /perm /thinking /model.
-type OMP struct {
-	// CLIPath is the path to the omp binary (default "omp").
-	CLIPath string `json:"cli_path,omitempty"`
-	// DefaultDirectory is the base dir for per-chat session working dirs.
-	DefaultDirectory string `json:"default_directory,omitempty"`
-	// MaxConcurrent caps parallel omp subprocesses (default 4).
-	MaxConcurrent int `json:"max_concurrent,omitempty"`
-	// StreamHistory caps how many recent per-run raw NDJSON captures are
-	// kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
-	// archiving entirely. The archive is best-effort, verbatim (no redaction).
-	StreamHistory int `json:"stream_history,omitempty"`
-	// AppendSystemPrompt is passed verbatim as --append-system-prompt.
-	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
-	// AgentDir overrides the directory where omp persists sessions. Empty
-	// uses omp's default (~/.omp/agent), matching the CLI when neither
-	// PI_CODING_AGENT_DIR nor --session-dir is set. ListSessions enumerates
-	// {AgentDir}/sessions for /session-list, /session-use and /session-clean.
-	AgentDir string `json:"agent_dir,omitempty"`
-	// ApprovalMode is the default --approval-mode. Empty defaults to "write"
-	// (≈ claude acceptEdits): the CLI's "always-ask" mode prompts
-	// interactively, which stalls the non-interactive -p stream; "yolo"
-	// (≈ bypassPermissions) auto-executes dangerous tool calls and is left
-	// as an explicit operator opt-in.
-	ApprovalMode string `json:"approval_mode,omitempty"`
-	// ThinkingLevel is the default --thinking level (e.g. "auto"). Empty
-	// defaults to "auto".
-	ThinkingLevel string `json:"thinking_level,omitempty"`
-	// ModelOptions is the static fallback for the /model picker card, used
-	// when the dynamic `omp models --json` fetch fails or returns nothing.
-	// nil/unset leaves the picker with dynamic options only (plus the
-	// custom-input box). Model availability is deployment-dependent, so no
-	// default list is compiled in.
-	ModelOptions []string `json:"model_options,omitempty"`
-	// ApprovalOptions lists the modes offered in the interactive /perm
-	// picker card. nil/unset -> [always-ask, write, yolo].
-	ApprovalOptions []string `json:"approval_options,omitempty"`
-	// ThinkingOptions lists the levels offered in the interactive /thinking
-	// picker card. nil/unset -> [off, minimal, low, medium, high, xhigh,
-	// max, auto].
-	ThinkingOptions []string `json:"thinking_options,omitempty"`
-	// ModelListTimeout bounds the `omp models --json` fork that backs the
-	// dynamic /model picker. The subcommand fetches the provider catalog
-	// over the network and was measured at ~137s on omp/17.1.8, so the
-	// default "300s" gives headroom. The picker's outer cap
-	// (bridgebase.listFnTimeout, also 300s) caps any value above that, so
-	// setting this lower makes omp fail fast rather than wait the full
-	// budget. Empty/unset -> 300s.
-	ModelListTimeout Duration `json:"model_list_timeout,omitempty"`
-	// ListCacheTTL bounds how long ListModels results stay cached
-	// (seconds). The catalog fetch is minutes-long, so caching makes
-	// repeated /model pickers instant. 0/unset -> 3600 (1h); negative
-	// disables caching entirely (every call forks).
-	ListCacheTTL int `json:"list_cache_ttl,omitempty"`
-	// MaxAutoRetries caps how many consecutive auto_retry_start events are
-	// tolerated before the bridge aborts the turn. <=0/unset -> 3 (the
-	// default). Set to a negative value to disable the limit entirely.
-	MaxAutoRetries int `json:"max_auto_retries,omitempty"`
-	// GCColdArchiveAfterDays is passed to `omp gc --cold-archive-after-days`
-	// when /session-gc runs. <=0/unset -> 30.
-	GCColdArchiveAfterDays int `json:"gc_cold_archive_after_days,omitempty"`
-	// GCRetainNewestPerCwd is passed to `omp gc --retain-newest-per-cwd`
-	// when /session-gc runs. <=0/unset -> 5.
-	GCRetainNewestPerCwd int `json:"gc_retain_newest_per_cwd,omitempty"`
-	// GCTimeout bounds the `omp gc --apply ...` fork for /session-gc. Measured
-	// at ~16-26s on a warm cache; 300s gives headroom. 0/unset -> 300s.
-	GCTimeout Duration `json:"gc_timeout,omitempty"`
-}
-
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which
 // receives /deploy prompts and runs `make <DeployTarget>` in ProjectRoot.
 type DeployMonitor struct {
@@ -314,8 +211,6 @@ type MiniAgent struct {
 // ComponentLogLevel configures per-component log level overrides.
 type ComponentLogLevel struct {
 	Router        string `json:"router,omitempty"`
-	Opencode      string `json:"opencode,omitempty"`
-	Omp           string `json:"omp,omitempty"`
 	Feishu        string `json:"feishu,omitempty"`
 	Bridge        string `json:"bridge,omitempty"`
 	Dedup         string `json:"dedup,omitempty"`

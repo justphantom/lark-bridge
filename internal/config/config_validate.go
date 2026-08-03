@@ -61,8 +61,6 @@ func validate(cfg *Config) error {
 	// Validate component log levels.
 	for comp, level := range map[string]string{
 		"router":         cfg.ComponentLogLevels.Router,
-		"opencode":       cfg.ComponentLogLevels.Opencode,
-		"omp":            cfg.ComponentLogLevels.Omp,
 		"feishu":         cfg.ComponentLogLevels.Feishu,
 		"bridge":         cfg.ComponentLogLevels.Bridge,
 		"dedup":          cfg.ComponentLogLevels.Dedup,
@@ -91,45 +89,6 @@ func validate(cfg *Config) error {
 	if cfg.Claude.MaxConcurrent < 1 {
 		return fmt.Errorf("claude.max_concurrent must be >= 1, got %d", cfg.Claude.MaxConcurrent)
 	}
-
-	// Opencode CLI fields. applyDefaults always populates cfg.Opencode. A value
-	// < 1 is rejected; applyDefaults rewrites an unset (0) value to the default,
-	// so 0 reaching here can only be an explicit negative number.
-	if cfg.Opencode.MaxConcurrent < 1 {
-		return fmt.Errorf("opencode.max_concurrent must be >= 1, got %d", cfg.Opencode.MaxConcurrent)
-	}
-
-	// OMP CLI fields. applyDefaults always populates cfg.OMP (cli_path,
-	// approval_mode, thinking_level, max_concurrent, ...).
-	switch cfg.OMP.ApprovalMode {
-	case "always-ask", "write", "yolo", "":
-	default:
-		return fmt.Errorf("omp.approval_mode must be one of always-ask/write/yolo, got %q", cfg.OMP.ApprovalMode)
-	}
-	switch cfg.OMP.ThinkingLevel {
-	case "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto", "":
-	default:
-		return fmt.Errorf("omp.thinking_level must be one of off/minimal/low/medium/high/xhigh/max/auto, got %q", cfg.OMP.ThinkingLevel)
-	}
-	if cfg.OMP.MaxConcurrent < 1 {
-		return fmt.Errorf("omp.max_concurrent must be >= 1, got %d", cfg.OMP.MaxConcurrent)
-	}
-	if cfg.OMP.AgentDir != "" {
-		if !filepath.IsAbs(cfg.OMP.AgentDir) {
-			return fmt.Errorf("omp.agent_dir must be an absolute path, got %q", cfg.OMP.AgentDir)
-		}
-		if err := ensureDir("omp.agent_dir", cfg.OMP.AgentDir, false); err != nil {
-			return err
-		}
-	}
-	if cfg.OMP.GCColdArchiveAfterDays < 0 {
-		return fmt.Errorf("omp.gc_cold_archive_after_days must be >= 0, got %d", cfg.OMP.GCColdArchiveAfterDays)
-	}
-	if cfg.OMP.GCRetainNewestPerCwd < 0 {
-		return fmt.Errorf("omp.gc_retain_newest_per_cwd must be >= 0, got %d", cfg.OMP.GCRetainNewestPerCwd)
-	}
-	// GCTimeout is a Duration: UnmarshalJSON already rejects non-positive
-	// explicit values; applyDefaults fills zero to 300s, so no extra check.
 
 	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
 	// reaching validate with "" means an explicit clear; the default values
