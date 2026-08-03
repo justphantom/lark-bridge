@@ -98,13 +98,13 @@ func (h *Handler) formatMaxIter(n int) string {
 	return "默认（上游 CLI，约 20）"
 }
 
-// cmdClear deletes this chat's session jsonl so the next prompt starts a fresh
+// cmdNew deletes this chat's session jsonl so the next prompt starts a fresh
 // conversation (R2). It runs inside the per-chat turn slot (handleSessionCommand
 // → startTurn), so it cannot race an in-flight runTurn on the same chat — the
-// busy-then-drop that serialises prompts also guards /clear. A missing file is
+// busy-then-drop that serialises prompts also guards /new. A missing file is
 // a no-op (first prompt ever, or already cleared); sessionRoot unset (stateDir
 // empty, e.g. some tests) → warning, since there is nothing to forget.
-func (h *Handler) cmdClear(_ context.Context, chatID, _ string) (level, title, body string) {
+func (h *Handler) cmdNew(_ context.Context, chatID, _ string) (level, title, body string) {
 	p := h.sessionPath(chatID)
 	if p == "" {
 		return "warning", "清除会话", "会话目录未配置，无历史可清。"

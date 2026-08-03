@@ -93,7 +93,7 @@ func parseMemoryFile(p string) ([]memoryRecord, error) {
 
 // cmdHelp lists the available commands. The persistent per-chat state is the
 // router binding (model + directory + mode + thinking) plus the per-chat
-// session jsonl (/clear deletes it so the next prompt starts fresh).
+// session jsonl (/new deletes it so the next prompt starts fresh).
 func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, body string) {
 	var sb strings.Builder
 	sb.WriteString("可用命令：\n\n")
@@ -114,7 +114,7 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/maxiter        显示当前迭代上限\n")
 	sb.WriteString("/maxiter <N>    设置每轮 LLM 调用上限（≥1）\n")
 	sb.WriteString("/maxiter clear  恢复默认迭代上限\n")
-	sb.WriteString("/clear          清空当前会话历史（下次提问开始新会话）\n")
+	sb.WriteString("/new            清空当前会话历史（下次提问开始新会话）\n")
 	sb.WriteString("/pull           在当前工作目录执行 git pull --ff-only\n")
 	sb.WriteString("/push           在当前工作目录执行 git push\n")
 	sb.WriteString("/session-abort  中止当前任务\n")

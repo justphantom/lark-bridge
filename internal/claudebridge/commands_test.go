@@ -25,7 +25,7 @@ func TestParseCommand(t *testing.T) {
 		{"/help", "/help", []string{}},
 		{"hello world", "", nil},
 		{"   /current   ", "/current", []string{}},
-		{"/session-new", "/session-new", []string{}},
+		{"/new", "/new", []string{}},
 	}
 	for _, tc := range tests {
 		gotCmd, gotArgs := cmdutil.ParseCommand(tc.in)
@@ -210,16 +210,16 @@ func TestCmdPermission_Pins(t *testing.T) {
 	}
 }
 
-// TestCmdSessionNew_NoBinding verifies /session-new on a chat with no binding
+// TestCmdNew_NoBinding verifies /new on a chat with no binding
 // reports the no-session message instead of creating one.
-func TestCmdSessionNew_NoBinding(t *testing.T) {
+func TestCmdNew_NoBinding(t *testing.T) {
 	h, r := newCmdTestHandler(t)
-	res, err := h.cmdSessionNew(context.Background(), "chat-1", nil)
+	res, err := h.cmdNew(context.Background(), "chat-1", nil)
 	if err != nil {
-		t.Fatalf("cmdSessionNew: %v", err)
+		t.Fatalf("cmdNew: %v", err)
 	}
 	if _, ok := r.Lookup("chat-1"); ok {
-		t.Error("expected no binding to be created on /session-new with no prior binding")
+		t.Error("expected no binding to be created on /new with no prior binding")
 	}
 	if res.Body == "" {
 		t.Error("expected non-empty body explaining there is no session")

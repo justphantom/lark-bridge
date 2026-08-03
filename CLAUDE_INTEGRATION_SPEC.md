@@ -184,7 +184,7 @@ claude-back 支持以下斜杠命令：
 |---|---|
 | `/running` | 显示运行中的 Claude 会话 |
 | `/session-list` | 列出本群绑定的会话 |
-| `/session-new` | 新对话（保留目录，重置上下文） |
+| `/new` | 新对话（保留目录，重置上下文） |
 | `/session-abort` | 中止当前调用 |
 | `/session-del` | 删除当前群绑定的会话 |
 | `/current` | 显示当前会话/目录/模型/权限/effort |

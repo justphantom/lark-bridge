@@ -8,7 +8,7 @@ import (
 
 // Session management commands. The persistent per-chat state is the router
 // binding (Directory + ModelSpec + Mode + Thinking) plus the per-chat session
-// jsonl under sessionRoot (P3, /clear deletes it). Every command below
+// jsonl under sessionRoot (P3, /new deletes it). Every command below
 // reads/writes the binding via h.Router.
 //
 // Each command returns the Notice level/title/body the dispatcher emits.
@@ -30,7 +30,7 @@ var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg s
 	"/mode":     (*Handler).cmdMode,
 	"/thinking": (*Handler).cmdThinking,
 	"/maxiter":  (*Handler).cmdMaxIter,
-	"/clear":    (*Handler).cmdClear,
+	"/new":      (*Handler).cmdNew,
 	"/send":     (*Handler).cmdSend,
 	"/pull":     (*Handler).cmdPull,
 	"/push":     (*Handler).cmdPush,

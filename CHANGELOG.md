@@ -137,12 +137,12 @@ miniagent **v3.0.0** 全面落地（破坏性迁移）。主线：吸收上游 v
   （v2.0.0 重新暴露 `-list-models`，回归 v1.1.0 前 behavior）。
 - **`multi_edit` 工具分类**（`4635804`）。`renderer.toolCategory` 把 `multi_edit`（→`Multi_edit`）归入 edit 类，进度卡
   summary「编辑 N」段纳入；`grep`/`glob` 经 `isReadTool` 早被归入 read。
-- **`/mode`、`/thinking`、`/clear` 命令**（`a3cdfef`）。每 chat 钉住 `-mode`/`-thinking`（覆盖全局默认，
-  经 `router.SetMode`/`SetThinking` 持久化）；`/clear` 删除本 chat 的会话 jsonl，下次提问开新对话。`/help`
+- **`/mode`、`/thinking`、`/new` 命令**（`a3cdfef`）。每 chat 钉住 `-mode`/`-thinking`（覆盖全局默认，
+  经 `router.SetMode`/`SetThinking` 持久化）；`/new` 删除本 chat 的会话 jsonl，下次提问开新对话。`/help`
   与 `/current` 同步纳入新命令。`-mode default`（新默认）：写工具限 workdir + shell 拒 11 类提权器
   （sudo/doas/su/…）；`-mode auto`：放开。
 - **每 chat 自动会话记忆**（`a3cdfef`）。`miniagent.Handler` 在 `{state_dir}/miniagent-sessions/<sha256(chatID)>.jsonl`
-  落 v3 `-session`，第二轮记得第一轮内容；`/clear` 清空。同 chat 串行由既有 `startTurn` busy-then-drop
+  落 v3 `-session`，第二轮记得第一轮内容；`/new` 清空。同 chat 串行由既有 `startTurn` busy-then-drop
   保证（busy 时第二个 prompt 直接被「处理中」拒），单进程下不依赖 v3 跨进程 `flock`。chatID 经 sha256 hex
   防路径穿越/碰撞。
 - **可选 `config_path` 多 provider 模式**（`a3cdfef`）。`miniagent.config_path` 指向 `miniagent.json` 时进入
@@ -457,7 +457,7 @@ v1.6.0 之后的增量。主线是**新增 omp-back（Oh My Pi CLI）agent 后�
   二进制 `lark-omp-back`，第 5 个业务后端。每个 prompt fork 一次 `omp -p --mode json`
   子进程，消费其 NDJSON 事件流。对接规范见 `OMP_INTEGRATION_SPEC.md`。
   - 新增 `internal/omp`（CLI 子进程驱动 + models 列表缓存）、`internal/ompbridge`
-    （业务逻辑）。斜杠命令对齐 claude/opencode：`/running` `/session-new` `/session-abort`
+    （业务逻辑）。斜杠命令对齐 claude/opencode：`/running` `/new` `/session-abort`
     `/session-del` `/current` `/model` `/perm` `/thinking` `/cd` `/send` `/pull` `/push` `/help`。
   - 配置段 `omp.*`：`cli_path` / `default_directory` / `max_concurrent` / `stream_history` /
     `append_system_prompt` / `approval_mode`（默认 `write`）/ `thinking_level`（默认 `auto`）/

@@ -272,7 +272,7 @@ func (s *Store) saveLoop() {
 // s.mu; safe to call concurrent with Add (which also locks).
 //
 // Without this sweep the sessions map and the persisted JSON would grow
-// without bound: every /session-new or /session-del + next-prompt creates a
+// without bound: every /new or /session-del + next-prompt creates a
 // new sessionID that Add records forever. The sweep bounds steady-state
 // memory and the per-save serialisation cost (which is O(len(sessions))).
 func (s *Store) pruneLocked() {

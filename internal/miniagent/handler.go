@@ -32,7 +32,7 @@ type controlSender = backendrpc.ControlSender
 // turns. Same-chat writes are serialised by startTurn's busy-then-drop (R4),
 // not by a per-chat lock. The only other persistent per-chat state is the
 // router binding (Directory + ModelSpec + Mode + Thinking); all are spliced
-// into the miniagent CLI flags at fork time. /clear deletes the jsonl so the
+// into the miniagent CLI flags at fork time. /new deletes the jsonl so the
 // next prompt starts a fresh conversation.
 //
 // cancelBy enforces busy-then-drop per chat: a chat with an in-flight turn

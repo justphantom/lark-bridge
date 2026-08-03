@@ -19,7 +19,7 @@ func TestParseCommand(t *testing.T) {
 		{"/help", "/help", []string{}},
 		{"hello world", "", nil},
 		{"   /current   ", "/current", []string{}},
-		{"/session-new", "/session-new", []string{}},
+		{"/new", "/new", []string{}},
 		{"/settings ~/.claude/kimi-settings.json", "/settings", []string{"~/.claude/kimi-settings.json"}},
 		{"/model   a   b  c", "/model", []string{"a", "b", "c"}},
 	}

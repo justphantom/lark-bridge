@@ -30,12 +30,12 @@ func (h *Handler) cmdListSessions(_ context.Context, chatID string, _ []string) 
 	return commandResult{Body: formatSessionList(sessions, b.SessionID)}, nil
 }
 
-// cmdSessionNew resets the bound session id so the next prompt starts a
+// cmdNew resets the bound session id so the next prompt starts a
 // fresh Claude conversation. The working directory is preserved (files
 // on disk remain); only the conversational context (the --resume id)
 // is dropped. Any in-flight prompt is aborted first so the old session
 // is not resumed mid-turn.
-func (h *Handler) cmdSessionNew(_ context.Context, chatID string, _ []string) (commandResult, error) {
+func (h *Handler) cmdNew(_ context.Context, chatID string, _ []string) (commandResult, error) {
 	if _, ok := h.Router.Lookup(chatID); !ok {
 		return commandResult{Body: "当前群尚无会话，直接发送消息即可开始。"}, nil
 	}
@@ -54,7 +54,7 @@ func (h *Handler) cmdSessionAbort(_ context.Context, chatID string, _ []string) 
 }
 
 // cmdSessionDel removes the binding entirely; the next prompt recreates
-// a fresh binding (new directory + new session). Use /session-new to
+// a fresh binding (new directory + new session). Use /new to
 // keep the directory but reset the conversation.
 func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (commandResult, error) {
 	if _, ok := h.Router.Lookup(chatID); !ok {

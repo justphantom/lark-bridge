@@ -238,22 +238,22 @@ func TestCmdMaxIter_Clear(t *testing.T) {
 	}
 }
 
-// --- Phase 3: /clear (per-chat session jsonl deletion, R2) ---
+// --- Phase 3: /new (per-chat session jsonl deletion, R2) ---
 
-// newClearHandler builds a Handler with a real stateDir so sessionRoot is
-// non-empty and /clear has a directory to delete from. client/router stay nil:
-// cmdClear only needs sessionPath, not the binding or fork path.
-func newClearHandler(t *testing.T) *Handler {
+// newNewHandler builds a Handler with a real stateDir so sessionRoot is
+// non-empty and /new has a directory to delete from. client/router stay nil:
+// cmdNew only needs sessionPath, not the binding or fork path.
+func newNewHandler(t *testing.T) *Handler {
 	t.Helper()
 	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, 0, t.TempDir(), false)
 	return h
 }
 
-// TestCmdClear_DeletesExistingFile verifies /clear removes the chat's session
+// TestCmdNew_DeletesExistingFile verifies /new removes the chat's session
 // jsonl so the next prompt starts a fresh conversation (R2). Writes a sentinel
-// file at the sha256-hashed path, then /clear must delete it and report success.
-func TestCmdClear_DeletesExistingFile(t *testing.T) {
-	h := newClearHandler(t)
+// file at the sha256-hashed path, then /new must delete it and report success.
+func TestCmdNew_DeletesExistingFile(t *testing.T) {
+	h := newNewHandler(t)
 	p := h.sessionPath("oc_chat_1")
 	if p == "" {
 		t.Fatal("precondition: sessionPath must be non-empty with stateDir set")
@@ -265,7 +265,7 @@ func TestCmdClear_DeletesExistingFile(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	level, title, body := h.cmdClear(context.Background(), "oc_chat_1", "")
+	level, title, body := h.cmdNew(context.Background(), "oc_chat_1", "")
 	if level != "success" {
 		t.Errorf("level = %q, want success", level)
 	}
@@ -273,22 +273,22 @@ func TestCmdClear_DeletesExistingFile(t *testing.T) {
 		t.Errorf("title = %q, want 清除 in title", title)
 	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Errorf("after /clear: stat session file = %v, want IsNotExist", err)
+		t.Errorf("after /new: stat session file = %v, want IsNotExist", err)
 	}
 	_ = body // body text asserted in the no-op test below
 }
 
-// TestCmdClear_MissingFileIsNoOp verifies /clear on a chat with no session file
+// TestCmdNew_MissingFileIsNoOp verifies /new on a chat with no session file
 // (first prompt ever, or already cleared) is still a success — there is nothing
 // to forget, and the user should not see a scary error.
-func TestCmdClear_MissingFileIsNoOp(t *testing.T) {
-	h := newClearHandler(t)
+func TestCmdNew_MissingFileIsNoOp(t *testing.T) {
+	h := newNewHandler(t)
 	p := h.sessionPath("oc_never")
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// No file seeded.
-	level, _, body := h.cmdClear(context.Background(), "oc_never", "")
+	level, _, body := h.cmdNew(context.Background(), "oc_never", "")
 	if level != "success" {
 		t.Errorf("level = %q, want success (missing file is a no-op)", level)
 	}
@@ -296,16 +296,16 @@ func TestCmdClear_MissingFileIsNoOp(t *testing.T) {
 		t.Errorf("body = %q, want it to mention starting a new session", body)
 	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Errorf("after /clear on missing: file now exists (unexpected): %v", err)
+		t.Errorf("after /new on missing: file now exists (unexpected): %v", err)
 	}
 }
 
-// TestCmdClear_EmptySessionRootWarns verifies /clear with no sessionRoot
+// TestCmdNew_EmptySessionRootWarns verifies /new with no sessionRoot
 // configured (stateDir empty) returns a warning, not a silent success: the
 // operator likely misconfigured stateDir, and clearing "nothing" would hide that.
-func TestCmdClear_EmptySessionRootWarns(t *testing.T) {
+func TestCmdNew_EmptySessionRootWarns(t *testing.T) {
 	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, 0, "", false)
-	level, title, body := h.cmdClear(context.Background(), "oc_x", "")
+	level, title, body := h.cmdNew(context.Background(), "oc_x", "")
 	if level != "warning" {
 		t.Errorf("level = %q, want warning when sessionRoot unset", level)
 	}

@@ -44,7 +44,7 @@ func (h *Handler) cmdSessionClean(ctx context.Context, chatID string, args []str
 	if len(args) > 0 {
 		target := args[0]
 		if target == curSession {
-			return commandResult{Body: "不能删除当前绑定的会话；如需重置请用 /session-new。"}, nil
+			return commandResult{Body: "不能删除当前绑定的会话；如需重置请用 /new。"}, nil
 		}
 		bridgebase.GoSafe(h.Logger, "session-clean-confirm:"+chatID, func() {
 			h.runSessionCleanConfirm(chatID, replyToID, dir, []string{target}, false)
