@@ -2,6 +2,8 @@ package miniclient
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -286,6 +288,9 @@ func argValue(args []string, flag string) string {
 // as CLI flags are emitted with their values when configured. Zero/empty
 // omission is covered by TestBuildArgs_Minimal's shape (these fields are
 // absent from that Config). (-shell-timeout moved to miniagent.json in v3.1.)
+// KeyFile is intentionally NOT a flag: miniagent removed -key-file post-3.4.0,
+// so even when KeyFile is configured it must stay out of buildArgs (the bridge
+// reads the file and injects the key via env; see TestEffectiveAPIKey).
 func TestBuildArgs_V2OptionalFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:       "/bin/ma",
@@ -298,8 +303,8 @@ func TestBuildArgs_V2OptionalFlags(t *testing.T) {
 	if v := argValue(args, "-max-iterations"); v != "30" {
 		t.Errorf("-max-iterations = %q, want 30", v)
 	}
-	if v := argValue(args, "-key-file"); v != "/etc/miniagent/key" {
-		t.Errorf("-key-file = %q, want /etc/miniagent/key", v)
+	if contains(args, "-key-file") {
+		t.Errorf("-key-file must NOT appear (removed upstream): %v", args)
 	}
 }
 
@@ -515,5 +520,33 @@ func TestSatisfiesVersion(t *testing.T) {
 		if got := satisfiesVersion(c.v, minSupportedVersion); got != c.want {
 			t.Errorf("satisfiesVersion(%q, %q) = %v, want %v", c.v, minSupportedVersion, got, c.want)
 		}
+	}
+}
+
+// TestEffectiveAPIKey pins the post-3.4.0 KeyFile semantics: miniagent removed
+// -key-file, so the bridge resolves the key itself. KeyFile takes precedence
+// over APIKey when set (its contents, trimmed), and a missing key_file errors.
+func TestEffectiveAPIKey(t *testing.T) {
+	// APIKey path (no KeyFile).
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "sk-inline"}, nil)
+	if k, err := c.effectiveAPIKey(); err != nil || k != "sk-inline" {
+		t.Fatalf("no KeyFile: got %q err=%v, want sk-inline", k, err)
+	}
+
+	// KeyFile takes precedence over APIKey and is trimmed.
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "key")
+	if err := os.WriteFile(keyFile, []byte("  sk-from-file\n"), 0o600); err != nil {
+		t.Fatalf("write keyfile: %v", err)
+	}
+	c2 := New(Config{CLIPath: "/bin/ma", APIKey: "sk-inline", KeyFile: keyFile}, nil)
+	if k, err := c2.effectiveAPIKey(); err != nil || k != "sk-from-file" {
+		t.Fatalf("KeyFile: got %q err=%v, want sk-from-file", k, err)
+	}
+
+	// Missing key_file errors (so Run/ListModels fail fast, not at the CLI).
+	c3 := New(Config{CLIPath: "/bin/ma", KeyFile: filepath.Join(dir, "nope")}, nil)
+	if _, err := c3.effectiveAPIKey(); err == nil {
+		t.Fatal("missing key_file should error")
 	}
 }

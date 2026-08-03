@@ -29,30 +29,26 @@ const listModelsMaxBytes = 4 << 20
 //
 // miniagent v3.1+ is config-only: -list-models resolves the provider from the
 // miniagent.json at -config (须 defaults.model 或单一 provider，否则 CLI 报错).
-// The bridge never passes -chat-url/-models-url (those flags are gone).
-//
-// The API key follows the same routing as Run: $MINIAGENT_API_KEY env by
-// default, or -key-file (a path, not the key) when KeyFile is configured — in
-// which case the key is kept out of the subprocess env.
+// The bridge never passes -chat-url/-models-url (those flags are gone), nor
+// -key-file (removed upstream post-3.4.0): the key is resolved via
+// effectiveAPIKey (KeyFile path → read by the bridge) and injected as
+// $MINIAGENT_API_KEY, same routing as Run.
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if c.cliPath == "" {
 		return nil, fmt.Errorf("miniclient: cli_path is empty")
 	}
+	apiKey, err := c.effectiveAPIKey()
+	if err != nil {
+		return nil, err
+	}
 	// config-only：configPath 由 main.go 强校验非空。
 	args := []string{"-list-models", "-config", c.configPath}
-	if c.keyFile != "" {
-		args = append(args, "-key-file", c.keyFile)
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
 	defer cancel()
 	// #nosec G204 -- c.cliPath comes from trusted config; args are built internally.
 	cmd := exec.CommandContext(ctx, c.cliPath, args...)
-	if c.keyFile == "" {
-		cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+c.apiKey)
-	} else {
-		cmd.Env = cmdutil.SanitizeChildEnv()
-	}
+	cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+apiKey)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)

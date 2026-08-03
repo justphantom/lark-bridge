@@ -243,12 +243,11 @@ func TestRun_PassesAPIKeyViaEnv(t *testing.T) {
 	}
 }
 
-// TestRun_KeyFileOmitsEnvKey verifies the v2.0.0 -key-file path's security
-// property: when KeyFile is set, neither the configured APIKey value NOR the
-// key file's contents enter the subprocess env (so /proc/$PPID/environ cannot
-// leak them to a shell grandchild), and the -key-file flag is passed so the CLI
-// knows where to read. The probe script dumps its own env + args to a marker.
-func TestRun_KeyFileOmitsEnvKey(t *testing.T) {
+// TestRun_KeyFileReadIntoEnv verifies the post-3.4.0 KeyFile path: miniagent
+// removed -key-file, so the bridge reads the file itself and injects its
+// contents as $MINIAGENT_API_KEY (KeyFile takes precedence over APIKey). The
+// probe script dumps its own env + args to a marker.
+func TestRun_KeyFileReadIntoEnv(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -277,17 +276,18 @@ func TestRun_KeyFileOmitsEnvKey(t *testing.T) {
 		t.Fatalf("read marker: %v", err)
 	}
 	s := string(got)
-	// The configured APIKey value must NOT reach the subprocess env.
+	// KeyFile contents ARE injected as $MINIAGENT_API_KEY now (miniagent no
+	// longer accepts -key-file, so env injection is the only route).
+	if !strings.Contains(s, "KEY=[sk-from-file]") {
+		t.Errorf("key file contents not injected into env:\n%s", s)
+	}
+	// KeyFile takes precedence: the configured APIKey value must NOT be used.
 	if strings.Contains(s, "sk-should-not-leak") {
-		t.Errorf("APIKey value leaked into env despite KeyFile:\n%s", s)
+		t.Errorf("APIKey value used despite KeyFile:\n%s", s)
 	}
-	// The key file's contents must NOT reach the env either.
-	if strings.Contains(s, "sk-from-file") {
-		t.Errorf("key file contents leaked into env:\n%s", s)
-	}
-	// The -key-file flag must be passed so the CLI reads the key from the file.
-	if !strings.Contains(s, "-key-file "+keyFile) {
-		t.Errorf("-key-file flag missing from args:\n%s", s)
+	// The removed -key-file flag must NOT be passed.
+	if strings.Contains(s, "-key-file") {
+		t.Errorf("-key-file flag passed (removed upstream):\n%s", s)
 	}
 }
 

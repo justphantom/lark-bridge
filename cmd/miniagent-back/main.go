@@ -70,10 +70,10 @@ func run(cfgPath string) error {
 	if err := backendrpc.ValidateBackendConfig(cfg.IPCSecret, cfg.BackendID, cfg.FrontendURL); err != nil {
 		return err
 	}
-	// The API key is required, supplied one of two ways (mutually exclusive in
-	// effect): inline via api_key (→ $MINIAGENT_API_KEY env on the subprocess)
-	// or via key_file (→ -key-file; the key then stays out of the subprocess
-	// env). miniclient.New takes both; only one needs to be set.
+	// The API key is required, supplied one of two ways: inline via api_key,
+	// or via key_file (the bridge reads the file and injects the value as
+	// $MINIAGENT_API_KEY on the subprocess — miniagent removed -key-file
+	// post-3.4.0). miniclient.New takes both; only one needs to be set.
 	if cfg.MiniAgent.APIKey == "" && cfg.MiniAgent.KeyFile == "" {
 		return fmt.Errorf("miniagent.api_key is required (use ${MINIAGENT_API_KEY}, or set key_file to load it from a file)")
 	}

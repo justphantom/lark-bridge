@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -117,6 +118,28 @@ func (c *Client) DefaultThinking() string {
 // default (20). Used by the miniagent handler to display the effective cap.
 func (c *Client) DefaultMaxIterations() int {
 	return c.maxIterations
+}
+
+// effectiveAPIKey returns the API key to inject as $MINIAGENT_API_KEY on the
+// miniagent subprocess. KeyFile takes precedence over APIKey when set: its
+// contents are read fresh each call so a rotated key file is picked up without
+// a restart.
+//
+// miniagent removed -key-file (post-3.4.0): the key can no longer stay out of
+// the subprocess env via a file-path flag. With KeyFile the bridge reads the
+// file itself and still injects the value via $MINIAGENT_API_KEY, so the
+// KeyFile config keeps working. Key isolation now relies on OS permissions
+// (dedicated low-privilege user, 0600 config/key files) — matching miniagent's
+// own README, which states shell grandchildren can read /proc/$PPID/environ.
+func (c *Client) effectiveAPIKey() (string, error) {
+	if c.keyFile != "" {
+		b, err := os.ReadFile(c.keyFile)
+		if err != nil {
+			return "", fmt.Errorf("miniclient: read key_file %q: %w", c.keyFile, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	return c.apiKey, nil
 }
 
 // readyTimeout bounds the `miniagent --version` health check performed by
@@ -250,6 +273,12 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	if c.cliPath == "" {
 		return nil, fmt.Errorf("miniclient: cli_path is empty")
 	}
+	// Resolve the API key before acquiring the turn slot so a missing/unread
+	// key_file fails fast instead of consuming a semaphore permit.
+	apiKey, err := c.effectiveAPIKey()
+	if err != nil {
+		return nil, err
+	}
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -263,16 +292,11 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	// API key injection. Inherit a SANITISED parent env (bridge's own secrets
 	// — FEISHU_APP_SECRET / IPC_SECRET / ENCRYPT_KEY … — are stripped so a
 	// user-run shell tool inside miniagent cannot read them). The key itself
-	// is passed via $MINIAGENT_API_KEY (the CLI has no -api-key flag) UNLESS
-	// KeyFile is set: then buildArgs already added -key-file (a path, not the
-	// key), and the key must NOT also enter the env — that would defeat the
-	// file-based path's whole purpose (keeping the key out of the process env
-	// so /proc/$PPID/environ can't leak it to a shell grandchild).
-	if c.keyFile == "" {
-		cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+c.apiKey)
-	} else {
-		cmd.Env = cmdutil.SanitizeChildEnv()
-	}
+	// rides $MINIAGENT_API_KEY (the CLI has no -api-key flag); miniagent
+	// removed -key-file (post-3.4.0), so even the KeyFile path is resolved by
+	// the bridge and injected here — the value can no longer stay out of the
+	// subprocess env.
+	cmd.Env = append(cmdutil.SanitizeChildEnv(), "MINIAGENT_API_KEY="+apiKey)
 	// Tree-wide SIGKILL on ctx cancel: the CLI spawns tool subprocesses
 	// (bash, git …) that inherit the stdout pipe write end. Without a
 	// process group + WaitDelay, those grandchildren keep the scanner
@@ -308,12 +332,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 }
 
 // buildArgs assembles miniagent CLI flags. The API key is NOT a flag: it rides
-// $MINIAGENT_API_KEY on the subprocess env (set in Run) unless KeyFile is set
-// (then -key-file points at a path). miniagent v3.1+ is config-only: endpoints
-// + the removed run settings (shell-timeout/context-window) come from the
-// miniagent.json at -config, so buildArgs never passes -chat-url/-models-url/
-// -context-window/-shell-timeout. Flag form is single-dash to match the
-// miniagent README.
+// $MINIAGENT_API_KEY on the subprocess env (resolved in Run via
+// effectiveAPIKey, which also handles the KeyFile path). miniagent v3.1+ is
+// config-only: endpoints + the removed run settings (shell-timeout/context-
+// window) come from the miniagent.json at -config, so buildArgs never passes
+// -chat-url/-models-url/-context-window/-shell-timeout. -key-file was removed
+// upstream (post-3.4.0) and is therefore never emitted. Flag form is
+// single-dash to match the miniagent README.
 func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{"-model", opts.Model}
 	// config-only：端点/key/run 参数由 miniagent.json 解析。configPath 由 main.go
@@ -362,9 +387,6 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 		// 会话 jsonl 绝对路径（v3 -session，含 / 或 . 视为路径）。同一 chat 由
 		// handler 的 startTurn busy-then-drop 串行，无并发写竞争（R4）。
 		a = append(a, "-session", opts.Session)
-	}
-	if c.keyFile != "" {
-		a = append(a, "-key-file", c.keyFile)
 	}
 	return a
 }

@@ -170,7 +170,9 @@ type StatusMonitor struct {
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
 	// pull from the environment; reaches the subprocess as $MINIAGENT_API_KEY
-	// (the upstream key chain is provider.key → -key-file → $MINIAGENT_API_KEY).
+	// (the upstream key chain is provider.key → $MINIAGENT_API_KEY; -key-file
+	// was removed post-3.4.0 — KeyFile, if set, is read by the bridge and
+	// injected via this same env var, taking precedence over APIKey).
 	APIKey string `json:"api_key,omitempty"`
 	// Model is the model id passed as -model each turn (config mode: a bare id
 	// also accepted by the upstream CLI). Required: ${MINIAGENT_DEFAULT_MODEL}.
@@ -197,8 +199,12 @@ type MiniAgent struct {
 	// Thinking is the reasoning effort (-thinking): off|minimal|low|medium|high|
 	// xhigh|max. Default "off" (applyDefaults). [P2]
 	Thinking string `json:"thinking,omitempty"`
-	// KeyFile reads the API key from a file (-key-file) instead of
-	// $MINIAGENT_API_KEY (avoids /proc/$PPID/environ leak to shell grandchildren).
+	// KeyFile reads the API key from a file. miniagent removed -key-file
+	// (post-3.4.0), so the bridge reads the file itself and injects the value
+	// via $MINIAGENT_API_KEY on the subprocess — KeyFile now only keeps the key
+	// out of lark-bridge's own config/env, not out of the miniagent subprocess
+	// env. Key isolation relies on OS permissions (dedicated user + 0600),
+	// matching miniagent's README. Takes precedence over APIKey when set.
 	KeyFile string `json:"key_file,omitempty"`
 	// ConfigPath is REQUIRED (v3.1+ config-only mode): the bridge passes
 	// -config <abspath> and the endpoints + removed run settings (shell-timeout,
