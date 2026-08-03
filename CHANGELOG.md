@@ -2,106 +2,47 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
-
 ## [Unreleased]
 
-### Fixed
+## [1.12.0] - 2026-08-03
 
-- **`/models` 当前模型标记适配 miniagent v3.3.0+1 输出格式**。上游 `b9a38fa` 将 `-list-models` 统一输出为 `provider/model_id`（单 provider 也带前缀），导致全局默认模型为裸 id 时 `/models` 无法标记当前行。`cmdModels` 现检测列表是否来自单 provider，若是则将裸 current 规范化为 `provider/model_id` 后再比较；多 provider 下的裸 default 仍保持不标记，避免误点亮所有同名 provider 行。
-
-### miniagent v3.2.0 → v3.3.0 跟进
-
-上游 miniagent v3.2.0（删 9 个 CLI flag + `multi_edit` 工具 + 拆 `HTTPClient`→
-`ChatClient`/`StreamClient`）与 v3.3.0（删 config `${VAR}` 展开 + 双层 `.miniagent/`
-规则查找 + 多 provider `-list-models` 聚合）的破坏性跟进。协议层（事件 NDJSON、
-session、CLI flag 子集）零改动——bridge 的 config-only 子集策略天然免疫 v3.2 删 flag。
-
-#### Fixed
-
-- **deploy 期 `${VAR}` 展开（P0，升级即崩）**。miniagent v3.3.0 `c51d91c` 移除了
-  config 加载时的 `${VAR}` 环境变量展开，改按字面量读取。`deploy.sh` 生成
-  `miniagent-cli.json` 的 heredoc 原先带 `'EOF'` 引号（阻止 bash 展开），导致
-  `chat_url: "${MINIAGENT_CHAT_URL}"` 被字面量传给 miniagent → URL 解析 fatal →
-  每次 turn 崩。改为 unquoted heredoc 让 bash 在 deploy 期展开为字面量 URL，
-  与 bridge 自身 config（仍走 feishu-front 的 `expandEnvVars`，不受影响）解耦。
-  `env.example` 的过时注释同步订正。
-
-#### Changed
-
-- **`minSupportedVersion` 3.1.0 → 3.3.0**（P1）。`internal/miniclient/client.go`
-  版本门提升，health gate 明确拒绝旧版二进制，避免 operator 误装 v3.1.0/v3.2.0 后
-  在实际 turn 时才崩。新增 `TestCompareVersion`/`TestSatisfiesVersion` 钉死
-  component-wise 比较（3.10.0 > 3.2.0）与 `dev`/pre-release 放行规则。
-- **renderer 删除 `Multi_edit` 死分支**（P1）。miniagent v3.2.0 `edd6ba5` 将
-  `multi_edit` 并入 `edit` 的 `edits` 数组，上游不再 emit `Multi_edit`。
-  `progress_category.go` 移除对应 `case`，`progress_category_test.go` 钉死其
-  归一化后落入未分类 bucket。claude 的 `MultiEdit`（PascalCase）原本就未分类，
-  行为不变。
-- **`/models` 当前模型标记对齐**（P1）。v3.3.0 `256c875` 让多 provider 时
-  `-list-models` 输出 `provider/model_id`，单 provider 仍为裸 `model_id`。
-  `cmdModels` 用 `sameModelID` 标记当前模型：仅同形式比较（两边都裸，或两边
-  都带 `provider/` 前缀且全等），跨形式（裸 id vs `provider/id`）不匹配——避免
-  多 provider + 裸默认 cur 时按 id 段误点亮所有同名 provider 行。
-
-#### Added
-
-- **`/memory` 双层查找对齐**（P2）。`readMemoryRecords` 实现 workdir > home
-  （`~/.miniagent/memory.jsonl`）回退，与上游 v3.3.0 `1ac831e` 的 `loadProjectRules`
-  per-file override 语义一致。原先 workdir 无记忆但 home 有时会误报「暂无记忆」，
-  而 agent 实际已注入 home 记忆——可见不一致已消除。
+主线：**opencode / omp 后端整体移除**（13 个 commit）+ **claude 会话命令命名精简**（`/session-new/list/clean/use` → `/new` / `/session` / `/clean` / `/use`）+ **miniagent v3.3.0+1 / v3.4.0 跟进**（deploy `${VAR}` 展开修复、health gate 升级、`-key-file` flag 移除适配）+ **项目级 `.miniagent/` 记忆系统**。协议层零 breaking change，新增 / 重构均升 minor。
 
 ### Added
 
-- **miniagent health gate**（760620b）。`cmd/miniagent-back` 在连接前端前调用 `client.IsReady`，
-  CLI 缺失或版本过旧时快速失败，避免注册后在首次 turn 才崩。
-- **`/memory` 命令**（760620b）。`internal/miniagent` 新增 `/memory` 读/写项目级
-  `.miniagent/memory.jsonl`（格式：`{type, topic, content}` NDJSON），支持
-  `/memory` 查看、`/memory add <type> <topic> <content>` 追加。
-- **MiniAgent 指标**（760620b）。`internal/eventmetrics` 新增 `MiniAgentTurnCount`、
-  `MiniAgentTurnDurationMs`、`MiniAgentTurnInputTokens`、`MiniAgentTurnOutputTokens`、
-  `MiniAgentTurnIncomplete` 五个计数器，按 turn 聚合 SLO。
+- **`.miniagent/` 项目级记忆系统**（`6aab413`）。新增 `.miniagent/persona.md` / `rules.md` / `scripts.json` / `README.md` 四文件，合并进 miniagent system prompt；`memory.jsonl` 由会话结束自动追加，`.gitignore` 排除含敏感信息的记忆文件。`scripts.json` 将本地 `make` 目标注册为 `script_<name>` 工具，CLI 可直接调用。
+- **`/memory` 命令**（760620b，v1.11.0 合入）。`internal/miniagent` 新增 `/memory` 读/写项目级 `.miniagent/memory.jsonl`（格式：`{type, topic, content}` NDJSON），支持 `/memory` 查看、`/memory add <type> <topic> <content>` 追加。
+- **miniagent health gate**（760620b，v1.11.0 合入）。`cmd/miniagent-back` 连接前端前调用 `client.IsReady`，CLI 缺失或版本过旧时快速失败。
+- **MiniAgent 指标**（760620b，v1.11.0 合入）。`internal/eventmetrics` 新增 `MiniAgentTurnCount`、`MiniAgentTurnDurationMs`、`MiniAgentTurnInputTokens`、`MiniAgentTurnOutputTokens`、`MiniAgentTurnIncomplete` 五个计数器。
 
 ### Changed
 
-- **`StreamArchiveRedact` 默认值翻转**（760620b）。字段类型由 `bool` 改为 `*bool`，
-  nil（省略）→ 默认开启 true；显式 `false` 可关闭。新增 `RedactStreams()` 辅助方法，
-  四个 backend main.go 同步更新。`config.example.json` 中 `stream_archive_redact: false`
-  保持显式关闭行为，operator 可按需迁移。
-- **`config_path` 绝对路径校验**（760620b）。`cmd/miniagent-back` 启动时拒绝相对路径，
-  防止误写入进程 cwd 而非预期路径。
+- **claude 会话命令命名精简**（`b5b3017` / `7d1b37f` / `ae0e9de` / `4ecbd59`）。`/session-new` → `/new`、`/session-use` → `/use`、`/session-clean` → `/clean`、`/session-list` → `/session`，与 miniagent-back 命名对齐。涉及命令注册、实现函数注释、错误提示、feishufront 卡名同步及文档。
+- **`minSupportedVersion` 3.1.0 → 3.3.0**（`0414716`）。`internal/miniclient/client.go` 版本门提升，health gate 明确拒绝旧版二进制。新增 `TestCompareVersion` / `TestSatisfiesVersion` 钉死 component-wise 比较规则。
+- **`StreamArchiveRedact` 默认值翻转**（760620b，v1.11.0 合入）。字段类型由 `bool` 改为 `*bool`，nil → 默认 true；新增 `RedactStreams()` 辅助方法。
+- **`config_path` 绝对路径校验**（760620b，v1.11.0 合入）。`cmd/miniagent-back` 启动时拒绝相对路径。
+- **miniagent v3.4.0 `-key-file` flag 移除**（`712ed9b`）。上游移除 `-key-file`，bridge 改由 `effectiveAPIKey()` 直接读取 `key_file` 并将内容注入 `$MINIAGENT_API_KEY`；KeyFile 取代之 APIKey 优先，每次 `Run` 新鲜读取以支持密钥轮换。
 
 ### Fixed
 
-- **lint 4 项**（760620b）。`commands_misc.go` 补 `f.Close()` error 检查、
-  `client.go` 改 `intrange` 循环并避免预声明标识符冲突、
-  `handler_cli.go` 去除冗余 `int64` 转换。
+- **deploy 期 `${VAR}` 展开（P0，升级即崩）**（`0414716`）。miniagent v3.3.0 `c51d91c` 移除了 config 加载时的 `${VAR}` 展开，`deploy.sh` 生成 `miniagent-cli.json` 的 heredoc 原先带 `'EOF'` 引号导致 URL 被字面量传递。改为 unquoted heredoc 让 bash 在 deploy 期展开，与 bridge 自身 config（仍走 `expandEnvVars`）解耦。
+- **`/models` 当前模型标记适配 v3.3.0+1**（`8a472c2`）。上游 `b9a38fa` 统一输出为 `provider/model_id`，`cmdModels` 现检测单 provider 后将裸 current 规范化为 `provider/model_id` 再比较；多 provider 下裸 default 保持不标记。
+- **deploymonitor 服务列表移除 opencode / omp**（`018597e`）。`deployServices` 精简为 `feishu` / `claude` / `miniagent`，与已移除后端对齐。
+- **lint 4 项**（760620b，v1.11.0 合入）。
+- **renderer 删除 `Multi_edit` 死分支**（`0414716`）。miniagent v3.2.0 `edd6ba5` 将 `multi_edit` 并入 `edit` 的 `edits` 数组，`progress_category.go` 移除对应 case。
 
 ### Removed
 
-- **`opencode-back` 与 `omp-back` 整体移除**。后端对接收敛到 claude + miniagent
-  两个 agent。本次移除包括：
-  - `cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、
-    `internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）。
-  - `config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；
-    `OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`。
-  - `Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；
-    `config.example.json` 的 `opencode{}` / `omp{}` 块。
-  - `deploy.sh` 服务列表、产物检查、config 派生、CLI 警告；`lib-common.sh` 的
-    `svc_unit`/`svc_config`/`svc_cli` 映射；`smoke.sh` 对应断言。
-  - `deploy.sh` 的 `cleanup_legacy` 扩展：升级时自动 `disable --now` 并删除
-    `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）unit、
-    `STATE_DIR` 下的 `opencode-router.json` / `usage-opencode.json` / `omp-router.json` /
-    `usage-omp.json`、`CONFIG_DIR` 下的 `opencode-config.json` / `omp-config.json`。
-  - `upgrade-monitor.sh` / `upgrade-status.sh` 新增遗留清理：升级时 sed 剥离已部署
-    `deploy-monitor-config.json` / `status-monitor-config.json` 里残留的 `opencode` / `omp`
-    块（`DisallowUnknownFields` 下未知字段会让 monitor 反复 crash）。
-- **operator 升级提示**：`make deploy` 会自动清理上述 unit/state/config；已绑定
-  opencode/omp 的群需重新 `/backend` 切到 claude 或 miniagent。
+- **`opencode-back` 与 `omp-back` 整体移除**（`e22ac59` / `45bd5ea` / `7ffda4c`）。后端对接收敛到 claude + miniagent 两个 agent。移除范围：`cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、`internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）；`config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；`OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`；`Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；`config.example.json` 的 `opencode{}` / `omp{}` 块；`deploy.sh` 服务列表、产物检查、config 派生、CLI 警告及 `lib-common.sh` 映射；`upgrade-monitor.sh` / `upgrade-status.sh` 遗留清理扩展。
+- **`/session-new` 等 claude 会话命令旧名**（`b5b3017` / `7d1b37f` / `ae0e9de` / `4ecbd59`）。`/session-new` / `/session-use` / `/session-clean` / `/session-list` 旧名从命令注册表中移除，统一替换为 `/new` / `/use` / `/clean` / `/session`。
 
 ### Notes
 
+- **operator 升级提示**：`make deploy` 会自动清理 `lark-opencode-back` / `lark-omp-back` unit、state 及 config；已绑定 opencode/omp 的群需重新 `/backend` 切到 claude 或 miniagent。
+- **`/new` vs `/session-del`**：`/new` 保留工作目录仅重置会话上下文；`/session-del` 删除绑定（含目录）。claude 与 miniagent 行为一致。
+- **`key_file` 安全提示**：miniagent v3.4.0 后 `-key-file` flag 已移除，bridge 自身读取文件并注入 `$MINIAGENT_API_KEY` 到子进程 env。key 隔离依赖 OS 权限（dedicated user + 0600 config/key files）。
 - `config_path` 字段在 v3.1+ 已进入必填状态；本次追加绝对路径约束。
-- `.miniagent/memory.jsonl` 和 `.miniagent/cache/` 已加入 `.gitignore`（上版 commit）。
+- `.miniagent/memory.jsonl` 和 `.miniagent/cache/` 已加入 `.gitignore`。
 
 ## [1.10.0] - 2026-08-02
 
