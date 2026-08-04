@@ -226,45 +226,6 @@ func TestCmdNew_NoBinding(t *testing.T) {
 	}
 }
 
-// TestCmdSessionDel_NoBinding verifies /session-del on a chat with no binding
-// reports the no-binding message instead of erroring.
-func TestCmdSessionDel_NoBinding(t *testing.T) {
-	h, r := newCmdTestHandler(t)
-	res, err := h.cmdSessionDel(context.Background(), "chat-1", nil)
-	if err != nil {
-		t.Fatalf("cmdSessionDel: %v", err)
-	}
-	if _, ok := r.Lookup("chat-1"); ok {
-		t.Error("expected no binding to be created on /session-del with no prior binding")
-	}
-	if res.Body == "" {
-		t.Error("expected non-empty body explaining there is no binding")
-	}
-}
-
-// TestCmdSessionDel_RemovesBinding verifies /session-del removes an existing
-// binding entirely.
-func TestCmdSessionDel_RemovesBinding(t *testing.T) {
-	h, r := newCmdTestHandler(t)
-	// Create a binding via /cd so a directory is allocated. The dir must be
-	// under workspaceRoot to pass the new validation.
-	workspace := t.TempDir()
-	dir := filepath.Join(workspace, "proj")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	h.DirCache = bridgebase.NewDirCache(workspace)
-	if _, err := h.cmdDirectory(context.Background(), "chat-1", []string{dir}); err != nil {
-		t.Fatalf("cmdDirectory: %v", err)
-	}
-	if _, err := h.cmdSessionDel(context.Background(), "chat-1", nil); err != nil {
-		t.Fatalf("cmdSessionDel: %v", err)
-	}
-	if _, ok := r.Lookup("chat-1"); ok {
-		t.Error("expected binding to be removed after /session-del")
-	}
-}
-
 // TestCmdAbort_Idle verifies /abort with nothing in flight
 // reports that there is no running call (returns no error).
 func TestCmdAbort_Idle(t *testing.T) {

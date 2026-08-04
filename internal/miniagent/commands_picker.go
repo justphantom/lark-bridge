@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
@@ -64,101 +63,6 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 	h.ensureBinding(chatID)
 	h.router.SetModelSpec(chatID, arg)
 	return "success", "已切换模型", fmt.Sprintf("已切换到模型 %s（下次提问生效）。", arg)
-}
-
-// cmdModels lists available models from the OpenAI-compatible endpoint.
-//
-// miniagent v3.3.0 (256c875) originally made -list-models emit "provider/model_id"
-// only under multi-provider configs; the v3.3.0+1 commit (b9a38fa) unified output
-// so single-provider configs also emit "provider/model_id". The "→ current" mark
-// uses sameModelID on a canonical current spec: if the global default is a bare
-// model id and every listed model shares the same provider prefix, the current
-// spec is canonicalized to "provider/model_id" before comparison. This keeps the
-// marker accurate for the common single-provider+bare-default case without risking
-// multi-provider mis-marking (a bare default under multi-provider stays unmarked
-// because the listed providers differ). Display-only; SetModelSpec still stores
-// the raw choice the user clicks, which matches the -model provider/id form.
-func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title, body string) {
-	models, err := h.client.ListModels(ctx, h.activeConfig(chatID))
-	if err != nil {
-		return "error", "模型列表", "获取失败：" + err.Error()
-	}
-	if len(models) == 0 {
-		return "info", "模型列表", "端点未返回任何模型。"
-	}
-	cur := h.activeModel(chatID)
-	cur = canonicalModelID(cur, models)
-	var sb strings.Builder
-	sb.WriteString("可用模型：\n")
-	for _, m := range models {
-		mark := "  "
-		if sameModelID(m, cur) {
-			mark = "→ "
-		}
-		sb.WriteString(mark + m + "\n")
-	}
-	sb.WriteString("\n/model <ID> 切换。")
-	return "info", "模型列表", sb.String()
-}
-
-// canonicalModelID returns a form of cur suitable for marking the current row in
-// /models. If cur is already prefixed or the listed models do not share a single
-// provider prefix, cur is returned unchanged. If cur is bare and every model in
-// the list has the same provider prefix, cur is returned as "provider/cur" — but
-// only when that exact prefixed value actually appears in models, so a bare pin
-// that does not match any listed model is not falsely marked.
-func canonicalModelID(cur string, models []string) string {
-	if strings.Contains(cur, "/") {
-		return cur
-	}
-	provider, ok := commonProviderPrefix(models)
-	if !ok {
-		return cur
-	}
-	canon := provider + "/" + cur
-	for _, m := range models {
-		if m == canon {
-			return canon
-		}
-	}
-	return cur
-}
-
-// commonProviderPrefix returns the provider prefix shared by every model spec in
-// models, if and only if all non-empty entries have the same "provider/" prefix.
-// It is used to detect a single-provider -list-models output so a bare default
-// model id can be canonicalized for display without conflating providers.
-func commonProviderPrefix(models []string) (string, bool) {
-	var provider string
-	for _, m := range models {
-		if m == "" {
-			continue
-		}
-		p, _, ok := strings.Cut(m, "/")
-		if !ok {
-			return "", false
-		}
-		if provider == "" {
-			provider = p
-			continue
-		}
-		if p != provider {
-			return "", false
-		}
-	}
-	return provider, provider != ""
-}
-
-// sameModelID reports whether two model specs refer to the same model for the
-// purpose of marking the "→ current" row in /models. Both specs are expected to
-// be in the same form: canonicalModelID already normalizes a bare current spec
-// to "provider/model_id" when the list is known to come from a single provider.
-// Cross-form comparison is intentionally not performed here.
-func sameModelID(a, b string) bool {
-	if strings.Contains(a, "/") != strings.Contains(b, "/") {
-		return false
-	}
-	return a == b
 }
 
 // cmdDirectory pins/clears/selects the per-chat working directory:

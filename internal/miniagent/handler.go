@@ -216,7 +216,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return nil
 	}
 
-	// Slash commands (/current /model /models /cd /help) are handled inline
+	// Slash commands (/current /model /cd /help) are handled inline
 	// before the LLM turn and replied to as a Notice. See commands.go.
 	if isSessionCommand(prompt) {
 		return h.handleSessionCommand(ctx, chatID, promptID, prompt)

@@ -101,7 +101,7 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/model          切换模型（弹出选择卡）\n")
 	sb.WriteString("/model <id>     直接指定模型\n")
 	sb.WriteString("/model clear    恢复默认模型\n")
-	sb.WriteString("/models         列出可用模型\n")
+
 	sb.WriteString("/cd             切换工作目录（弹出选择卡）\n")
 	sb.WriteString("/cd <path>     直接指定目录\n")
 	sb.WriteString("/cd clear       恢复默认目录\n")

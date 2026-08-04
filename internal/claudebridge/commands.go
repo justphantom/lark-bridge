@@ -32,8 +32,6 @@ func init() {
 			Args: "[sessionID]", Title: "清理完成", Level: "success"}, Handler: (*Handler).cmdSessionClean},
 		{Spec: cmdutil.Spec{Name: "/abort", Summary: "中止当前正在执行的 Claude 调用",
 			Title: "已请求中止", Level: "success"}, Handler: (*Handler).cmdAbort},
-		{Spec: cmdutil.Spec{Name: "/session-del", Summary: "删除当前群绑定的会话（下次提问会重建）",
-			Title: "已删除", Level: "success"}, Handler: (*Handler).cmdSessionDel},
 		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前会话、目录与模型",
 			Level: "info"}, Handler: (*Handler).cmdCurrent},
 		{Spec: cmdutil.Spec{Name: "/model", Summary: "设置模型；不带参数弹出选择；传 clear 清除",

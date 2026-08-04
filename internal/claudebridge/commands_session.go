@@ -53,19 +53,6 @@ func (h *Handler) cmdAbort(_ context.Context, chatID string, _ []string) (comman
 	return commandResult{Body: "当前没有正在执行的 Claude 调用。"}, nil
 }
 
-// cmdSessionDel removes the binding entirely; the next prompt recreates
-// a fresh binding (new directory + new session). Use /new to
-// keep the directory but reset the conversation.
-func (h *Handler) cmdSessionDel(_ context.Context, chatID string, _ []string) (commandResult, error) {
-	if _, ok := h.Router.Lookup(chatID); !ok {
-		return commandResult{Body: "当前群尚无会话绑定。"}, nil
-	}
-	h.AbortChat(chatID)
-	h.Router.Unbind(chatID)
-	h.Logger.Info("binding deleted", log.FieldChatID, chatID)
-	return commandResult{Body: "已删除会话绑定。下次提问将创建新会话与新目录。"}, nil
-}
-
 // cmdCurrent shows the current binding's directory, session id, and model.
 // If the chat has no binding yet (no conversation started), one is created
 // lazily so the command reflects the pre-prompt configuration.

@@ -25,7 +25,6 @@ import (
 var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg string) (level, title, body string){
 	"/current":  (*Handler).cmdCurrent,
 	"/model":    (*Handler).cmdModel,
-	"/models":   (*Handler).cmdModels,
 	"/cd":       (*Handler).cmdDirectory,
 	"/config":   (*Handler).cmdConfig,
 	"/mode":     (*Handler).cmdMode,

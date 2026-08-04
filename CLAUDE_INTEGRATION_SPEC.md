@@ -186,7 +186,6 @@ claude-back 支持以下斜杠命令：
 | `/session` | 列出本群绑定的会话 |
 | `/new` | 新对话（保留目录，重置上下文） |
 | `/abort` | 中止当前调用 |
-| `/session-del` | 删除当前群绑定的会话 |
 | `/current` | 显示当前会话/目录/模型/权限/effort |
 | `/model [model\|clear]` | 设置模型 |
 | `/cd [dir\|clear]` | 切换工作目录 |
