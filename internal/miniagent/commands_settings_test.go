@@ -22,7 +22,7 @@ func newSettingsHandler(t *testing.T) (*Handler, *router.Router) {
 		t.Fatalf("router.New: %v", err)
 	}
 	t.Cleanup(func() { r.Close() })
-	h := New(&captureSender{}, log.Nop(), r, "/root", "test-model", nil, 0, "", false)
+	h := New(&captureSender{}, log.Nop(), r, "/root", "test-model", nil, "", 0, "", false)
 	return h, r
 }
 
@@ -245,7 +245,7 @@ func TestCmdMaxIter_Clear(t *testing.T) {
 // cmdNew only needs sessionPath, not the binding or fork path.
 func newNewHandler(t *testing.T) *Handler {
 	t.Helper()
-	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, 0, t.TempDir(), false)
+	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, "", 0, t.TempDir(), false)
 	return h
 }
 
@@ -304,7 +304,7 @@ func TestCmdNew_MissingFileIsNoOp(t *testing.T) {
 // configured (stateDir empty) returns a warning, not a silent success: the
 // operator likely misconfigured stateDir, and clearing "nothing" would hide that.
 func TestCmdNew_EmptySessionRootWarns(t *testing.T) {
-	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, 0, "", false)
+	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, "", 0, "", false)
 	level, title, body := h.cmdNew(context.Background(), "oc_x", "")
 	if level != "warning" {
 		t.Errorf("level = %q, want warning when sessionRoot unset", level)

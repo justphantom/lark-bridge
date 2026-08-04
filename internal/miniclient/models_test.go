@@ -39,7 +39,7 @@ func TestListModels_OK(t *testing.T) {
 	p := writeModelsScript(t, t.TempDir(), "ok.sh",
 		[]string{"gpt-4o", "gpt-4o-mini", "", "  deepseek-chat  "}, "", 0)
 	c := New(Config{CLIPath: p, APIKey: "k", ConfigPath: "/etc/miniagent/miniagent.json"}, nil)
-	got, err := c.ListModels(context.Background())
+	got, err := c.ListModels(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestListModels_Empty(t *testing.T) {
 	}
 	p := writeModelsScript(t, t.TempDir(), "empty.sh", nil, "", 0)
 	c := New(Config{CLIPath: p, APIKey: "k"}, nil)
-	got, err := c.ListModels(context.Background())
+	got, err := c.ListModels(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListModels on empty: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestListModels_NonZeroExit(t *testing.T) {
 	}
 	p := writeModelsScript(t, t.TempDir(), "fail.sh", nil, "endpoint returned 404", 1)
 	c := New(Config{CLIPath: p, APIKey: "k"}, nil)
-	_, err := c.ListModels(context.Background())
+	_, err := c.ListModels(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for non-zero exit, got nil")
 	}
@@ -117,7 +117,7 @@ func TestListModels_ConfigModeArgs(t *testing.T) {
 		APIKey:     "k",
 		ConfigPath: "/etc/miniagent/miniagent.json",
 	}, nil)
-	got, err := c.ListModels(context.Background())
+	got, err := c.ListModels(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -130,5 +130,32 @@ func TestListModels_ConfigModeArgs(t *testing.T) {
 	}
 	if strings.Contains(joined, "-models-url") {
 		t.Errorf("-models-url must NOT appear (removed in v3.1): %v", got)
+	}
+}
+
+// TestListModels_ConfigModeArgs_Override verifies the per-chat -config override
+// on the -list-models fork: a non-empty configPath (the chat's /config pin)
+// replaces the client's startup ConfigPath, so /model and /models list models
+// for the chat's currently pinned config rather than the global default.
+func TestListModels_ConfigModeArgs_Override(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	p := writeArgsEchoScript(t, t.TempDir(), "echo.sh")
+	c := New(Config{
+		CLIPath:    p,
+		APIKey:     "k",
+		ConfigPath: "/etc/miniagent/miniagent.json", // startup default
+	}, nil)
+	got, err := c.ListModels(context.Background(), "/home/u/.miniagent/kimi-miniagent.json")
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "-config /home/u/.miniagent/kimi-miniagent.json") {
+		t.Errorf("override: -config should be the kimi path; got %v", got)
+	}
+	if strings.Contains(joined, "/etc/miniagent/miniagent.json") {
+		t.Errorf("override: startup default must NOT appear; got %v", got)
 	}
 }

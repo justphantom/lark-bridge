@@ -183,7 +183,12 @@ func run(cfgPath string) error {
 	rpc.SetLogger(logger)
 	defer rpc.Close()
 
-	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.RedactStreams())
+	// configDir bounds the /config picker: the directory scanned for
+	// miniagent.json / *-miniagent.json. Same resolution the startup config-path
+	// scan used (ResolveConfigPath), so the picker offers exactly what startup
+	// picked from.
+	configDir := config.ResolveConfigDir(cfg)
+	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, configDir, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.RedactStreams())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

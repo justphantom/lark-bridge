@@ -162,33 +162,37 @@ func applyDefaults(cfg *Config, cfgPath string) {
 // The returned path is always absolute (or empty when no default was found).
 // When empty, the bridge omits -config from the CLI args and lets miniagent
 // fall back to its own ~/.miniagent/miniagent.json default.
-func ResolveConfigPath(cfg *Config) string {
-	// resolveConfigDir returns the absolute ConfigDir, defaulting to ~/.miniagent.
-	resolveConfigDir := func() string {
-		if cfg.MiniAgent.ConfigDir != "" {
-			if filepath.IsAbs(cfg.MiniAgent.ConfigDir) {
-				return cfg.MiniAgent.ConfigDir
-			}
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return cfg.MiniAgent.ConfigDir
-			}
-			if cfg.MiniAgent.ConfigDir == "~" {
-				return home
-			}
-			if strings.HasPrefix(cfg.MiniAgent.ConfigDir, "~/") {
-				return filepath.Join(home, cfg.MiniAgent.ConfigDir[2:])
-			}
-			return filepath.Join(home, cfg.MiniAgent.ConfigDir)
+// ResolveConfigDir returns the absolute directory scanned for the miniagent
+// config file, defaulting to ~/.miniagent when ConfigDir is unset. It mirrors
+// the resolution inside ResolveConfigPath so the /config picker lists exactly
+// the directory the startup scan read. Returns "" only when ConfigDir is unset
+// AND the home directory cannot be determined.
+func ResolveConfigDir(cfg *Config) string {
+	if cfg.MiniAgent.ConfigDir != "" {
+		if filepath.IsAbs(cfg.MiniAgent.ConfigDir) {
+			return cfg.MiniAgent.ConfigDir
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ""
+			return cfg.MiniAgent.ConfigDir
 		}
-		return filepath.Join(home, ".miniagent")
+		if cfg.MiniAgent.ConfigDir == "~" {
+			return home
+		}
+		if strings.HasPrefix(cfg.MiniAgent.ConfigDir, "~/") {
+			return filepath.Join(home, cfg.MiniAgent.ConfigDir[2:])
+		}
+		return filepath.Join(home, cfg.MiniAgent.ConfigDir)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".miniagent")
+}
 
-	cfgDir := resolveConfigDir()
+func ResolveConfigPath(cfg *Config) string {
+	cfgDir := ResolveConfigDir(cfg)
 	cp := cfg.MiniAgent.ConfigPath
 
 	// Explicit ConfigPath: resolve to absolute.

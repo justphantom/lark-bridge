@@ -864,3 +864,34 @@ func TestResolveConfigPath(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveConfigDir verifies the directory the /config picker scans. It must
+// mirror the resolution ResolveConfigPath relies on (default ~/.miniagent,
+// absolute verbatim, ~ expanded against HOME).
+func TestResolveConfigDir(t *testing.T) {
+	t.Run("default home", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		cfg := &Config{MiniAgent: MiniAgent{}}
+		want := filepath.Join(home, ".miniagent")
+		if got := ResolveConfigDir(cfg); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("absolute", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: cfgDir}}
+		if got := ResolveConfigDir(cfg); got != cfgDir {
+			t.Errorf("got %q, want %q", got, cfgDir)
+		}
+	})
+	t.Run("tilde", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: "~/.miniagent"}}
+		want := filepath.Join(home, ".miniagent")
+		if got := ResolveConfigDir(cfg); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}

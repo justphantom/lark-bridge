@@ -376,6 +376,31 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	}
 }
 
+// TestBuildArgs_ConfigPathOverride verifies the per-chat -config override
+// (set by miniagent /config): RunOptions.ConfigPath wins over the client's
+// startup ConfigPath; empty falls back to the startup default so existing
+// turns keep their pre-/config behaviour.
+func TestBuildArgs_ConfigPathOverride(t *testing.T) {
+	c := New(Config{
+		CLIPath:    "/bin/ma",
+		APIKey:     "k",
+		ConfigPath: "/etc/miniagent/miniagent.json", // startup default
+	}, nil)
+	// Per-turn override wins.
+	args := c.buildArgs(RunOptions{
+		Model:      "m",
+		ConfigPath: "/home/u/.miniagent/kimi-miniagent.json",
+	})
+	if v := argValue(args, "-config"); v != "/home/u/.miniagent/kimi-miniagent.json" {
+		t.Errorf("override: -config = %q, want kimi path", v)
+	}
+	// Empty override falls back to the startup default.
+	args = c.buildArgs(RunOptions{Model: "m"})
+	if v := argValue(args, "-config"); v != "/etc/miniagent/miniagent.json" {
+		t.Errorf("fallback: -config = %q, want startup default", v)
+	}
+}
+
 // TestBuildArgs_V3ModeThinking verifies the v3 -mode/-thinking flags appear
 // with their configured values when set on the client (the per-chat "" path:
 // RunOptions.Mode/Thinking empty → client default). (-context-window moved to

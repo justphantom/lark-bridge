@@ -107,6 +107,22 @@ func TestSetMode(t *testing.T) {
 	}
 }
 
+// TestSetConfigFile verifies the miniagent -config path field round-trips.
+func TestSetConfigFile(t *testing.T) {
+	r := newTestRouter(t, "c1")
+	r.SetConfigFile("c1", "/home/u/.miniagent/kimi-miniagent.json")
+	b, _ := r.Lookup("c1")
+	if b.ConfigFile != "/home/u/.miniagent/kimi-miniagent.json" {
+		t.Errorf("ConfigFile = %q, want the kimi path", b.ConfigFile)
+	}
+	// "" clears the pin (falls back to the client startup default at fork time).
+	r.SetConfigFile("c1", "")
+	b, _ = r.Lookup("c1")
+	if b.ConfigFile != "" {
+		t.Errorf("after clear: ConfigFile = %q, want empty", b.ConfigFile)
+	}
+}
+
 // TestSetThinking verifies the miniagent -thinking field round-trips.
 func TestSetThinking(t *testing.T) {
 	r := newTestRouter(t, "c1")

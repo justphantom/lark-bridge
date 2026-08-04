@@ -128,3 +128,10 @@ func (r *Router) SetThinking(chatID, thinking string) {
 func (r *Router) SetMaxIterations(chatID string, n int) {
 	r.mutate(chatID, func(b *Binding) { b.MaxIterations = n })
 }
+
+// SetConfigFile replaces the pinned miniagent -config path on the binding for
+// chatID and persists the change. No-op when the binding does not exist. Pass ""
+// to clear (the client's startup config path is used on the next turn).
+func (r *Router) SetConfigFile(chatID, configPath string) {
+	r.mutate(chatID, func(b *Binding) { b.ConfigFile = configPath })
+}

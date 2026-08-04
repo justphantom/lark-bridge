@@ -22,7 +22,7 @@ import (
 // owns IPC + per-chat binding (Directory/ModelSpec) + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	model, workdir, mode, thinking := h.activeTurnConfig(chatID)
+	model, workdir, mode, thinking, config := h.activeTurnConfig(chatID)
 	maxIter := h.activeMaxIter(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
@@ -51,6 +51,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		Mode:          mode,
 		Thinking:      thinking,
 		MaxIterations: maxIter,
+		ConfigPath:    config,
 		Session:       h.sessionPath(chatID),
 		Sink:          sink,
 	})
@@ -233,6 +234,27 @@ func (h *Handler) clientDefaultThinking() string {
 	return "off"
 }
 
+// clientDefaultConfig is the global -config fallback (the path main.go resolved
+// at startup via config.ResolveConfigPath and pinned on the client), used when
+// a chat has no per-chat ConfigFile pin. "" when the client is nil (tests).
+func (h *Handler) clientDefaultConfig() string {
+	if h.client != nil {
+		return h.client.DefaultConfigPath()
+	}
+	return ""
+}
+
+// activeConfig returns the -config path the CLI would be invoked with for this
+// chat (used by /current display). Same precedence as activeTurnConfig.
+func (h *Handler) activeConfig(chatID string) string {
+	if h.router != nil {
+		if b, ok := h.router.Lookup(chatID); ok && b.ConfigFile != "" {
+			return b.ConfigFile
+		}
+	}
+	return h.clientDefaultConfig()
+}
+
 // activeTurnConfig returns the (model, workdir, mode, thinking) the CLI
 // subprocess should be invoked with for this chat. Per-chat binding fields
 // (router.Lookup) win; empty fields fall back to the bridge's global defaults
@@ -241,17 +263,18 @@ func (h *Handler) clientDefaultThinking() string {
 // When no binding exists the globals are returned directly — the binding is
 // created lazily by /model, /cd, /mode or /thinking, not by the first prompt
 // (miniagent has no session to seed).
-func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinking string) {
+func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinking, config string) {
 	model = h.cfgModel
 	workdir = h.workspaceRoot
 	mode = h.clientDefaultMode()
 	thinking = h.clientDefaultThinking()
+	config = h.clientDefaultConfig()
 	if h.router == nil {
-		return model, workdir, mode, thinking
+		return model, workdir, mode, thinking, config
 	}
 	b, ok := h.router.Lookup(chatID)
 	if !ok {
-		return model, workdir, mode, thinking
+		return model, workdir, mode, thinking, config
 	}
 	if b.ModelSpec != "" {
 		model = b.ModelSpec
@@ -265,7 +288,10 @@ func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinkin
 	if b.Thinking != "" {
 		thinking = b.Thinking
 	}
-	return model, workdir, mode, thinking
+	if b.ConfigFile != "" {
+		config = b.ConfigFile
+	}
+	return model, workdir, mode, thinking, config
 }
 
 // activeModel returns the model the CLI would be invoked with for this chat

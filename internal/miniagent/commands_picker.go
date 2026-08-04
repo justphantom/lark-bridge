@@ -36,7 +36,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 		go func() { //nolint:gosec // G118: picker outlives the request ctx — the user's click may come minutes later
 			pickCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			models, err := h.client.ListModels(pickCtx)
+			models, err := h.client.ListModels(pickCtx, h.activeConfig(chatID))
 			if err != nil {
 				h.notifyWithPromptID(chatID, promptID, "error", "选择失败", err.Error())
 				return
@@ -79,7 +79,7 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 // because the listed providers differ). Display-only; SetModelSpec still stores
 // the raw choice the user clicks, which matches the -model provider/id form.
 func (h *Handler) cmdModels(ctx context.Context, chatID, _ string) (level, title, body string) {
-	models, err := h.client.ListModels(ctx)
+	models, err := h.client.ListModels(ctx, h.activeConfig(chatID))
 	if err != nil {
 		return "error", "模型列表", "获取失败：" + err.Error()
 	}

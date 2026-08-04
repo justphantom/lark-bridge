@@ -105,6 +105,8 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/cd             切换工作目录（弹出选择卡）\n")
 	sb.WriteString("/cd <path>     直接指定目录\n")
 	sb.WriteString("/cd clear       恢复默认目录\n")
+	sb.WriteString("/config         切换配置文件（弹出选择卡）\n")
+	sb.WriteString("/config clear   恢复默认配置文件\n")
 	sb.WriteString("/mode           显示当前权限模式\n")
 	sb.WriteString("/mode <m>       设置权限模式（default | auto）\n")
 	sb.WriteString("/mode clear     恢复默认权限模式\n")

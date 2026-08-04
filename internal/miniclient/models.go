@@ -33,7 +33,7 @@ const listModelsMaxBytes = 4 << 20
 // -key-file (removed upstream post-3.4.0): the key is resolved via
 // effectiveAPIKey (KeyFile path → read by the bridge) and injected as
 // $MINIAGENT_API_KEY, same routing as Run.
-func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+func (c *Client) ListModels(ctx context.Context, configPath string) ([]string, error) {
 	if c.cliPath == "" {
 		return nil, fmt.Errorf("miniclient: cli_path is empty")
 	}
@@ -41,8 +41,11 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// config-only：configPath 由 main.go 强校验非空。
-	args := []string{"-list-models", "-config", c.configPath}
+	// config-only：configPath 每轮覆盖（/config per-chat 切换）> client 启动默认。
+	if configPath == "" {
+		configPath = c.configPath
+	}
+	args := []string{"-list-models", "-config", configPath}
 
 	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
 	defer cancel()

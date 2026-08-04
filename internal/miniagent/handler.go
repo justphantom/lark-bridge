@@ -51,6 +51,7 @@ type Handler struct {
 	archiveRedact   bool               // redact sensitive fields in stream archives
 	stateDir        string             // streams root dir
 	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat jsonl
+	configDir       string             // directory scanned by /config picker (default ~/.miniagent)
 	git             *bridgebase.GitRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
@@ -73,8 +74,9 @@ type Handler struct {
 // no slash command runs); client is the per-turn fork runner. cfgModel is
 // the global default model used when a chat has no ModelSpec pin;
 // workspaceRoot bounds the /cd picker and serves as the global default
-// workdir when a chat has no Directory pin.
-func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel string, client *miniclient.Client, streamHistory int, stateDir string, archiveRedact bool) *Handler {
+// workdir when a chat has no Directory pin. configDir bounds the /config
+// picker (the directory scanned for miniagent.json / *-miniagent.json).
+func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel string, client *miniclient.Client, configDir string, streamHistory int, stateDir string, archiveRedact bool) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -86,6 +88,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
 		client:        client,
+		configDir:     configDir,
 		streamHistory: streamHistory,
 		archiveRedact: archiveRedact,
 		stateDir:      stateDir,

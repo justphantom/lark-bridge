@@ -120,6 +120,13 @@ func (c *Client) DefaultMaxIterations() int {
 	return c.maxIterations
 }
 
+// DefaultConfigPath returns the configured -config path (set at startup from
+// config.ResolveConfigPath, always non-empty in production). Used by the
+// miniagent handler as the global fallback when a chat has no ConfigFile pin.
+func (c *Client) DefaultConfigPath() string {
+	return c.configPath
+}
+
 // effectiveAPIKey returns the API key to inject as $MINIAGENT_API_KEY on the
 // miniagent subprocess. KeyFile takes precedence over APIKey when set: its
 // contents are read fresh each call so a rotated key file is picked up without
@@ -262,7 +269,11 @@ type RunOptions struct {
 	// default (which itself 0/unset → upstream CLI default of 20).
 	MaxIterations int
 	Session       string // [P3] absolute jsonl path; "" → stateless turn
-	Sink          io.Writer
+	// ConfigPath is the per-chat -config override (absolute path resolved by
+	// the bridge via /config). "" → client default (c.configPath, set at
+	// startup from config.ResolveConfigPath).
+	ConfigPath string
+	Sink       io.Writer
 }
 
 // Run starts one miniagent subprocess for opts and returns the event
@@ -341,9 +352,13 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 // single-dash to match the miniagent README.
 func (c *Client) buildArgs(opts RunOptions) []string {
 	a := []string{"-model", opts.Model}
-	// config-only：端点/key/run 参数由 miniagent.json 解析。configPath 由 main.go
-	// 强校验非空，这里直接追加。
-	a = append(a, "-config", c.configPath)
+	// config-only：端点/key/run 参数由 miniagent.json 解析。-config 每轮覆盖
+	// （/config 命令 per-chat 切换）> client 启动默认；main.go 保证后者非空。
+	configPath := opts.ConfigPath
+	if configPath == "" {
+		configPath = c.configPath
+	}
+	a = append(a, "-config", configPath)
 	if c.system != "" {
 		a = append(a, "-system", c.system)
 	}
