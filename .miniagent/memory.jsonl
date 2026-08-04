@@ -5,3 +5,4 @@
 {"type":"note","topic":"多后端config隔离","content":"多后端共享同一个 config JSON 文件，各进程只读自己需要的字段（如 claude{} / miniagent{} / opencode{}），通过 DisallowUnknownFields 拒绝未知字段。"}
 {"type":"note","topic":"指令命名规范","content":"跨后端功能对称的指令应统一命名：/abort（原 /session-abort）、/config（claude-back 原 /settings → 对齐 miniagent-back）。内部方法名可不跟随改名，以保持与底层 API 术语一致。"}
 {"type":"note","topic":"测试习惯","content":"make test 含 race 检测；改 miniagent-back 或 miniclient 后优先跑 bridge_test 耦合测试。claude-back 二进制产物未加入 .gitignore。"}
+{"type":"note","topic":"已移除指令","content":"/models（miniagent-back）已移除：/model 无参数弹出选择器已覆盖模型列表功能，/models 纯冗余。/session-del（claude-back）已移除：绑定重置可通过 /cd + /new 组合替代（/cd 换目录、/new 重置会话上下文）。"}
