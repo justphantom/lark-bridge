@@ -28,7 +28,7 @@ func renderTurns(snap *protocol.StatusSnapshot) string {
 	for _, t := range snap.Turns {
 		fmt.Fprintf(&sb, "- %s · %s · %s\n", t.BackendID, shortID(t.ChatID), formatElapsed(t.ElapsedS))
 	}
-	sb.WriteString("\n会话不会自动结束，如需结束请发送 /session-abort。")
+	sb.WriteString("\n会话不会自动结束，如需结束请发送 /abort。")
 	return sb.String()
 }
 

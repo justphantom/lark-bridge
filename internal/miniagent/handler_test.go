@@ -86,11 +86,11 @@ func TestHandleEvent_MissingPromptIDErrors(t *testing.T) {
 	}
 }
 
-// TestAbort_IdleReply verifies /session-abort when no turn is in flight
+// TestAbort_IdleReply verifies /abort when no turn is in flight
 // returns a "无可中止" notice instead of erroring.
 func TestAbort_IdleReply(t *testing.T) {
 	h, rpc := newTestHandler()
-	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/session-abort"}}
+	ev := &protocol.Event{Type: protocol.TypePrompt, PromptID: "p", Prompt: &protocol.PromptPayload{ChatID: "c", Text: "/abort"}}
 	if err := h.HandleEvent(context.Background(), ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}

@@ -995,7 +995,7 @@ func TestDebouncer_NormalFlushDropsOnCancelledCtx(t *testing.T) {
 }
 
 // TestOnBackendOffline_KeepsInFlightTurn pins the policy: a turn ends ONLY
-// when the user sends /session-abort, never because its backend went offline.
+// when the user sends /abort, never because its backend went offline.
 // OnBackendOffline must leave the turn and its progress state in place — they
 // are visible via GET /v1/status's turns list so the user can decide to abort.
 func TestOnBackendOffline_KeepsInFlightTurn(t *testing.T) {
@@ -1010,7 +1010,7 @@ func TestOnBackendOffline_KeepsInFlightTurn(t *testing.T) {
 	d.OnBackendOffline("back-A", "claude")
 
 	if _, ok := d.turns.Get("p-1"); !ok {
-		t.Fatal("in-flight turn must survive its backend going offline (only /session-abort ends it)")
+		t.Fatal("in-flight turn must survive its backend going offline (only /abort ends it)")
 	}
 	d.progressMu.Lock()
 	_, leak := d.progress["p-1"]

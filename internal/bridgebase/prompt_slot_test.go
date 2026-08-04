@@ -122,7 +122,7 @@ func TestAbortChat_CancelsCtx(t *testing.T) {
 }
 
 // TestAbortChat_NoRunning verifies aborting a chat with no slot returns
-// false and is otherwise a no-op (used by /session-abort to distinguish
+// false and is otherwise a no-op (used by /abort to distinguish
 // "nothing to abort" from "aborting").
 func TestAbortChat_NoRunning(t *testing.T) {
 	c := newTestCore(t)

@@ -45,8 +45,8 @@ func (h *Handler) cmdNew(_ context.Context, chatID string, _ []string) (commandR
 	return commandResult{Body: "已重置会话上下文。工作目录保留，发送消息即开始新对话。"}, nil
 }
 
-// cmdSessionAbort cancels the in-flight Claude turn for this chat, if any.
-func (h *Handler) cmdSessionAbort(_ context.Context, chatID string, _ []string) (commandResult, error) {
+// cmdAbort cancels the in-flight Claude turn for this chat, if any.
+func (h *Handler) cmdAbort(_ context.Context, chatID string, _ []string) (commandResult, error) {
 	if h.AbortChat(chatID) {
 		return commandResult{Body: "已中止当前 Claude 调用。"}, nil
 	}

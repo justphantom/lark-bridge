@@ -228,7 +228,7 @@ claude-back 的业务逻辑，共享 `bridgebase` 脊梁。
 ### 5.6 `miniagent/`（1701 行）与 `miniclient/`（677 行）
 
 - `miniclient/`：fork `miniagent` 二进制（独立项目 `github.com/justphantom/miniagent`），`Run`（client.go:88）启动子进程，信号量限并发，ctx 取消走 SIGKILL 进程组。
-- `miniagent/`：handler + 斜杠命令（`/current` `/model` `/models` `/cd` `/pull` `/push` `/running` `/session-abort`）+ 模型列表（GET /v1/models）。**stateless**（无 session/memory）。
+- `miniagent/`：handler + 斜杠命令（`/current` `/model` `/models` `/cd` `/pull` `/push` `/running` `/abort`）+ 模型列表（GET /v1/models）。**stateless**（无 session/memory）。
 
 ### 5.7 `feishu/`（1490 行）——飞书业务封装层
 

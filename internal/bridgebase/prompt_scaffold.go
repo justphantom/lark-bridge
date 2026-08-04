@@ -98,7 +98,7 @@ func (c *Core) RunPromptScaffold(
 }
 
 // IsPromptTimeout reports whether ctx was cancelled by the PromptTimeout
-// timer (vs a user /session-abort). Backends use this in their terminal emit
+// timer (vs a user /abort). Backends use this in their terminal emit
 // path to pick the right copy ("请求超时" vs "已取消").
 func IsPromptTimeout(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), context.DeadlineExceeded)

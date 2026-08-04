@@ -612,7 +612,7 @@ func TestRender_ThreeZoneOrder(t *testing.T) {
 }
 
 // TestRender_NoAbortButton verifies the progress card never carries an abort
-// button — the button was removed; users stop via /session-abort text command.
+// button — the button was removed; users stop via /abort text command.
 func TestRender_NoAbortButton(t *testing.T) {
 	s := NewProgressState()
 	s.AddToolUse("bash", "ls", false, "") // running

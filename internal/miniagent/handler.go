@@ -203,11 +203,11 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		return nil
 	}
 
-	// /session-abort: cancels the in-flight turn. Handled BEFORE session
+	// /abort: cancels the in-flight turn. Handled BEFORE session
 	// commands and startTurn because the turn it must cancel is the one
 	// currently holding the slot — startTurn would reject us as busy. The
 	// aborted turn's runTurn emits the "已中止" notice as it unwinds.
-	if prompt == "/session-abort" {
+	if prompt == "/abort" {
 		if h.abortChat(chatID) {
 			h.notifyWithPromptID(chatID, promptID, "success", "已请求中止", "正在停止当前任务。")
 		} else {

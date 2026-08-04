@@ -84,7 +84,7 @@ func FormatRunning(sessions []RunningSession) string {
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("💡 如需中止，请到对应群内发送 `/session-abort`")
+	sb.WriteString("💡 如需中止，请到对应群内发送 `/abort`")
 	return sb.String()
 }
 

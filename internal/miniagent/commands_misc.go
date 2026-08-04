@@ -119,7 +119,7 @@ func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, 
 	sb.WriteString("/new            清空当前会话历史（下次提问开始新会话）\n")
 	sb.WriteString("/pull           在当前工作目录执行 git pull --ff-only\n")
 	sb.WriteString("/push           在当前工作目录执行 git push\n")
-	sb.WriteString("/session-abort  中止当前任务\n")
+	sb.WriteString("/abort          中止当前任务\n")
 	sb.WriteString("/running        显示运行中的会话\n")
 	sb.WriteString("/memory         查看项目级记忆（.miniagent/memory.jsonl）\n")
 	sb.WriteString("/help           显示本帮助\n")
@@ -144,7 +144,7 @@ func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title,
 	for _, s := range filtered {
 		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, bridgebase.FormatDuration(s.Duration))
 	}
-	sb.WriteString("\n💡 如需中止，请发送 `/session-abort`")
+	sb.WriteString("\n💡 如需中止，请发送 `/abort`")
 	return "info", "运行中会话", sb.String()
 }
 

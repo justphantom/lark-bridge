@@ -19,7 +19,7 @@ import (
 // Adding a command means adding one entry here (and the method); isSession
 // recognition and dispatch both read this table.
 //
-// /running and /session-abort are NOT in this map: they are dispatched
+// /running and /abort are NOT in this map: they are dispatched
 // earlier in HandleEvent (before startTurn) because they must not occupy
 // the per-chat turn slot.
 var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg string) (level, title, body string){

@@ -26,7 +26,7 @@ const (
 )
 
 // PromptCancel is the cancel entry of one in-flight prompt, registered under
-// its chatID so /session-abort and Close can cancel exactly one chat's run
+// its chatID so /abort and Close can cancel exactly one chat's run
 // without disturbing others.
 type PromptCancel struct {
 	Cancel    context.CancelFunc
@@ -37,7 +37,7 @@ type PromptCancel struct {
 // CoreConfig carries the scalar runtime config every bridge's Handler reads,
 // populated from the config file by each backend's main.go. PromptTimeout
 // defaults to 0 (disabled): the CLI exits on its own when the turn is done,
-// and users abort via /session-abort.
+// and users abort via /abort.
 type CoreConfig struct {
 	DefaultDirectory string
 	// PermissionDefault is the process-level permission mode. A per-chat pin

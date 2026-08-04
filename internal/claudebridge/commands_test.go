@@ -265,13 +265,13 @@ func TestCmdSessionDel_RemovesBinding(t *testing.T) {
 	}
 }
 
-// TestCmdSessionAbort_Idle verifies /session-abort with nothing in flight
+// TestCmdAbort_Idle verifies /abort with nothing in flight
 // reports that there is no running call (returns no error).
-func TestCmdSessionAbort_Idle(t *testing.T) {
+func TestCmdAbort_Idle(t *testing.T) {
 	h, _ := newCmdTestHandler(t)
-	_, err := h.cmdSessionAbort(context.Background(), "chat-1", nil)
+	_, err := h.cmdAbort(context.Background(), "chat-1", nil)
 	if err != nil {
-		t.Fatalf("cmdSessionAbort idle: %v", err)
+		t.Fatalf("cmdAbort idle: %v", err)
 	}
 }
 

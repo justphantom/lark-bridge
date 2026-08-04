@@ -32,7 +32,7 @@ type Handler struct {
 // interactive pickers) sit at this layer.
 //
 // PromptTimeout defaults to 0 (disabled): the CLI exits on its own when the
-// turn is done, and users abort via /session-abort.
+// turn is done, and users abort via /abort.
 type HandlerConfig struct {
 	bridgebase.CoreConfig
 

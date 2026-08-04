@@ -405,7 +405,7 @@ func TestHandleEvent_Running_ListsTurns(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 	body := lastNoticeMessage(sender.snapshot())
-	for _, want := range []string{"运行中会话（2）", "claude-1", "opencode-1", "2m10s", "45s", "/session-abort"} {
+	for _, want := range []string{"运行中会话（2）", "claude-1", "opencode-1", "2m10s", "45s", "/abort"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\nbody: %s", want, body)
 		}
