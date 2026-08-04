@@ -1,0 +1,13 @@
+{"type":"fact","topic":"项目概述","content":"lark-bridge 是将飞书群聊桥接到本地编程 agent 的 Go 项目，支持 claude、opencode、omp、miniagent 四种后端。"}
+{"type":"fact","topic":"技术栈","content":"Go 1.25+，无第三方模块。飞书 WebSocket 和 protobuf 由 internal/lark/ 自实现。"}
+{"type":"fact","topic":"架构","content":"1 前端 + N 后端，前端通过 SSE/POST 与后端通信，配置通过 JSON 文件管理。"}
+{"type":"note","topic":"记忆机制","content":"使用 miniagent 的 write(path=\"memory\") 工具追加记忆，read 命令查看。记忆文件位于 .miniagent/memory.jsonl。"}
+{"type":"note","topic":"项目路径","content":"lark-bridge 项目实际路径为 /home/user/ZCodeProject/lark-bridge"}
+{"type":"note","topic":"miniagent配置","content":"miniagent CLI 默认从 ~/.miniagent/miniagent.json 读取配置；lark-bridge 的 miniclient.Config 提供 ConfigPath 字段可覆盖该路径"}
+{"type":"note","topic":"claude-back设置机制","content":"claude-back 通过 Config.SettingsDir 字段指定设置目录，ListSettings 扫描 settings.json 和 *-settings.json 两种模式"}
+{"type":"note","topic":"miniagent配置","content":"miniclient.Config 已有 ConfigPath 字段，可覆盖 miniagent CLI 默认配置路径；miniagent CLI 支持 --config 参数，默认读取 ~/.miniagent/miniagent.json"}
+{"type":"note","topic":"claude-back参考模式","content":"claude-back 通过 Config.SettingsDir 指定设置目录，ListSettings 扫描 settings.json 和 *-settings.json 两种文件模式"}
+{"type":"note","topic":"指令重命名","content":"将 /session-abort 统一重命名为 /abort，涉及 claudebridge 和 miniagent 两个后端（opencodebridge/ompbridge 无此指令）"}
+{"type":"note","topic":"abort 指令位置","content":"/abort 在 miniagent/handler.go 中处理于 startTurn 之前，以避免占用 per-chat turn slot；在 claudebridge 中通过 cmdAbort 方法实现"}
+{"type":"note","topic":"abort 相关修改文件","content":"重命名涉及：internal/claudebridge/commands.go、commands_session.go、handler.go、commands_test.go；internal/miniagent/handler.go、commands_misc.go、commands.go、handler_test.go；internal/bridgebase/core.go、prompt_scaffold.go、prompt_slot_test.go、running.go、deploymonitor/render.go"}
+{"type":"note","topic":"项目文件变更","content":"指令 /session-abort 统一重命名为 /abort，涉及 bridgebase/running.go、bridgebase/core.go、bridgebase/prompt_scaffold.go、bridgebase/prompt_slot_test.go、deploymonitor/render.go 等文件的注释和提示文案同步更新"}

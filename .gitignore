@@ -20,5 +20,4 @@ skills-lock.json
 /omp-back
 /docs/
 # miniagent project-level files (memory is sensitive, rules/persona are tracked)
-/.miniagent/memory.jsonl
 /.miniagent/cache/
