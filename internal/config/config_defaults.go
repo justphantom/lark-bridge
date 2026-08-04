@@ -1,7 +1,10 @@
 package config
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -144,6 +147,99 @@ func applyDefaults(cfg *Config, cfgPath string) {
 			cfg.FileConvert.XlsxFormulaMode = "value"
 		}
 	}
+}
+
+// ResolveConfigPath resolves the miniagent config path for the bridge.
+// Logic (mirrors claude-back's resolveSettingsDir + ListSettings):
+//   - If ConfigPath is explicitly set:
+//   - Absolute path → used as-is.
+//   - Relative or "~" path → anchored at ConfigDir (default ~/.miniagent).
+//   - If ConfigPath is empty:
+//   - Scan ConfigDir (default ~/.miniagent) for miniagent.json first,
+//     then *-miniagent.json (operator-named variants). The first match wins.
+//   - If nothing found, return "" so the CLI uses its own default.
+//
+// The returned path is always absolute (or empty when no default was found).
+// When empty, the bridge omits -config from the CLI args and lets miniagent
+// fall back to its own ~/.miniagent/miniagent.json default.
+func ResolveConfigPath(cfg *Config) string {
+	// resolveConfigDir returns the absolute ConfigDir, defaulting to ~/.miniagent.
+	resolveConfigDir := func() string {
+		if cfg.MiniAgent.ConfigDir != "" {
+			if filepath.IsAbs(cfg.MiniAgent.ConfigDir) {
+				return cfg.MiniAgent.ConfigDir
+			}
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return cfg.MiniAgent.ConfigDir
+			}
+			if cfg.MiniAgent.ConfigDir == "~" {
+				return home
+			}
+			if strings.HasPrefix(cfg.MiniAgent.ConfigDir, "~/") {
+				return filepath.Join(home, cfg.MiniAgent.ConfigDir[2:])
+			}
+			return filepath.Join(home, cfg.MiniAgent.ConfigDir)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(home, ".miniagent")
+	}
+
+	cfgDir := resolveConfigDir()
+	cp := cfg.MiniAgent.ConfigPath
+
+	// Explicit ConfigPath: resolve to absolute.
+	if cp != "" {
+		if filepath.IsAbs(cp) {
+			return cp
+		}
+		// Expand "~" prefix (Go's filepath.Join treats "~" as literal).
+		if cp == "~" {
+			home, _ := os.UserHomeDir()
+			return home
+		}
+		if strings.HasPrefix(cp, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return cp
+			}
+			return filepath.Join(home, cp[2:])
+		}
+		// Relative name → anchored at ConfigDir.
+		if cfgDir != "" {
+			return filepath.Join(cfgDir, cp)
+		}
+		return cp
+	}
+
+	// Empty ConfigPath: scan ConfigDir for the default config.
+	if cfgDir == "" {
+		return ""
+	}
+	// First try the canonical name.
+	p := filepath.Join(cfgDir, "miniagent.json")
+	if _, err := os.Stat(p); err == nil {
+		abs, _ := filepath.Abs(p)
+		return abs
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// Stat error (e.g. permission denied) — surface it rather than
+		// silently falling through, so the operator can diagnose.
+		return ""
+	}
+	// Then scan for operator-named variants (*-miniagent.json).
+	matches, err := filepath.Glob(filepath.Join(cfgDir, "*-miniagent.json"))
+	if err != nil {
+		return ""
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	// Pick the first match (sorted by Glob's lexicographic order).
+	abs, _ := filepath.Abs(matches[0])
+	return abs
 }
 
 // RedactStreams reports whether stream-archive redaction is enabled, resolving

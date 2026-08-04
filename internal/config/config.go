@@ -206,11 +206,19 @@ type MiniAgent struct {
 	// env. Key isolation relies on OS permissions (dedicated user + 0600),
 	// matching miniagent's README. Takes precedence over APIKey when set.
 	KeyFile string `json:"key_file,omitempty"`
-	// ConfigPath is REQUIRED (v3.1+ config-only mode): the bridge passes
-	// -config <abspath> and the endpoints + removed run settings (shell-timeout,
-	// context-window, ...) are read from this miniagent.json. deploy.sh generates
-	// it at /etc/lark-bridge/miniagent-cli.json from .env. [P4: required, enforced
-	// in cmd/miniagent-back/main.go]
+	// ConfigDir is the directory scanned for the miniagent config file
+	// (miniagent.json or *-miniagent.json). Empty/unset → ~/.miniagent at
+	// runtime via os.UserHomeDir, so the config layer stays independent of
+	// the process user's HOME. When set, the bridge resolves the concrete
+	// ConfigPath before forking the CLI; leaving it unset lets the CLI use
+	// its own default (~/.miniagent/miniagent.json).
+	ConfigDir string `json:"config_dir,omitempty"`
+	// ConfigPath is the path passed as -config to the miniagent CLI (optional:
+	// empty means the CLI falls back to its own default ~/.miniagent/miniagent.json).
+	// When set, it may be a bare name (e.g. "kimi-miniagent.json") — the bridge
+	// resolves it relative to ConfigDir if it is not absolute. deploy.sh still
+	// generates /etc/lark-bridge/miniagent-cli.json for the default deployment
+	// path. The resolved absolute path is stored in ConfigPath after applyDefaults.
 	ConfigPath string `json:"config_path,omitempty"`
 }
 

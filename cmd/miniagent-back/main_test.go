@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,17 +69,21 @@ func TestRun_WorkspaceRootRequired(t *testing.T) {
 // TestRun_ConfigPathRequired pins the v3.1+ config-only gate: an empty
 // miniagent.config_path makes run() fail fast. v3.1 removed bare CLI mode
 // (-chat-url/-models-url), so the endpoint must come from config_path →
-// miniagent.json.
+// miniagent.json. When ConfigPath is empty AND ConfigDir points to a non-existent
+// directory (or is unset with no ~/.miniagent present), the resolve function
+// returns empty and the gate fires.
 func TestRun_ConfigPathRequired(t *testing.T) {
-	// api_key/model/workspace_root set; config_path empty.
+	// api_key/model/workspace_root set; config_path empty; config_dir points
+	// at an empty temp dir so auto-discovery cannot find a file.
 	p := writeMiniAgentConfig(t, `{
 		"api_key":        "sk-test",
 		"model":          "kimi",
-		"workspace_root": "/tmp/miniagent-ws"
+		"workspace_root": "/tmp/miniagent-ws",
+		"config_dir":     "`+t.TempDir()+`"
 	}`)
 	err := run(p)
 	if err == nil {
-		t.Fatal("run with empty config_path should return an error")
+		t.Fatal("run with empty config_path and empty config_dir should return an error")
 	}
 	if !strings.Contains(err.Error(), "config_path") {
 		t.Errorf("err = %q, want it to mention config_path", err.Error())
@@ -88,12 +93,9 @@ func TestRun_ConfigPathRequired(t *testing.T) {
 	}
 }
 
-// TestRun_ConfigPathSatisfiesGate pins the v3.1+ config-only path: a non-empty
-// config_path satisfies the startup gate. run() proceeds past the gate (it
-// will still fail later — no real frontend, no miniagent binary — but the
-// FAILURE MUST NOT be the config_path-required gate). This is the
-// negative-space assertion for TestRun_ConfigPathRequired.
-func TestRun_ConfigPathSatisfiesGate(t *testing.T) {
+// TestRun_ConfigPathExplicitAbsolute passes when an explicit absolute
+// config_path is set — the gate is satisfied and the CLI receives it verbatim.
+func TestRun_ConfigPathExplicitAbsolute(t *testing.T) {
 	p := writeMiniAgentConfig(t, `{
 		"api_key":        "sk-test",
 		"model":          "main/kimi",
@@ -109,22 +111,27 @@ func TestRun_ConfigPathSatisfiesGate(t *testing.T) {
 	}
 }
 
-// TestRun_ConfigPathRelativeRejected pins the absolute-path gate: a relative
-// config_path is rejected before the backend registers with the frontend.
-// This prevents the operator from accidentally pointing at a cwd-relative
-// path and polluting a non-obvious directory.
-func TestRun_ConfigPathRelativeRejected(t *testing.T) {
-	p := writeMiniAgentConfig(t, `{
+// TestRun_ConfigPathRelativeResolved verifies a relative config_path is
+// resolved against ConfigDir (default ~/.miniagent) rather than rejected.
+// The resolved absolute path must be used by the CLI.
+func TestRun_ConfigPathRelativeResolved(t *testing.T) {
+	cfgDir := t.TempDir()
+	// Write a minimal miniagent.json under cfgDir so resolveConfigPath finds it.
+	miniCfgPath := filepath.Join(cfgDir, "miniagent.json")
+	if err := os.WriteFile(miniCfgPath, []byte(`{"providers":[]}`), 0o600); err != nil {
+		t.Fatalf("write miniagent.json: %v", err)
+	}
+	p := writeMiniAgentConfig(t, fmt.Sprintf(`{
 		"api_key":        "sk-test",
 		"model":          "main/kimi",
 		"workspace_root": "/tmp/miniagent-ws",
-		"config_path":    "relative/miniagent.json"
-	}`)
+		"config_dir":     %q,
+		"config_path":    "miniagent.json"
+	}`, cfgDir))
 	err := run(p)
-	if err == nil {
-		t.Fatal("run with relative config_path should return an error")
-	}
-	if !strings.Contains(err.Error(), "absolute") && !strings.Contains(err.Error(), "config_path") {
-		t.Errorf("err = %q, want it to mention absolute path or config_path", err)
+	// run() will fail later (no real frontend / binary) but must NOT fail on
+	// the config_path gate — the relative path must have been resolved.
+	if err != nil && strings.Contains(err.Error(), "config_path") {
+		t.Errorf("resolved config_path must not trigger the required gate; err = %q", err.Error())
 	}
 }

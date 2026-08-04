@@ -779,3 +779,88 @@ func TestLoadConfigExample(t *testing.T) {
 		t.Fatalf("config.example.json failed to load: %v", err)
 	}
 }
+
+// TestResolveConfigPath verifies the miniagent config path resolution logic.
+func TestResolveConfigPath(t *testing.T) {
+	// No ConfigPath, no ConfigDir, no ~/.miniagent → empty.
+	t.Run("empty defaults", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		cfg := &Config{MiniAgent: MiniAgent{}}
+		if got := ResolveConfigPath(cfg); got != "" {
+			t.Errorf("empty defaults = %q, want empty", got)
+		}
+	})
+	// ConfigDir with miniagent.json present.
+	t.Run("config_dir with miniagent.json", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(cfgDir, "miniagent.json"), []byte(`{}`), 0o600); err != nil {
+			t.Fatalf("write miniagent.json: %v", err)
+		}
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: cfgDir}}
+		got := ResolveConfigPath(cfg)
+		want := filepath.Join(cfgDir, "miniagent.json")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	// ConfigDir with only *-miniagent.json variant.
+	t.Run("config_dir with variant", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(cfgDir, "kimi-miniagent.json"), []byte(`{}`), 0o600); err != nil {
+			t.Fatalf("write variant: %v", err)
+		}
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: cfgDir}}
+		got := ResolveConfigPath(cfg)
+		want := filepath.Join(cfgDir, "kimi-miniagent.json")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	// ConfigPath explicit absolute.
+	t.Run("explicit absolute", func(t *testing.T) {
+		cfg := &Config{MiniAgent: MiniAgent{ConfigPath: "/etc/miniagent/miniagent.json"}}
+		got := ResolveConfigPath(cfg)
+		if got != "/etc/miniagent/miniagent.json" {
+			t.Errorf("got %q, want /etc/miniagent/miniagent.json", got)
+		}
+	})
+	// ConfigPath relative resolved against ConfigDir.
+	t.Run("relative resolved", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: cfgDir, ConfigPath: "miniagent.json"}}
+		got := ResolveConfigPath(cfg)
+		want := filepath.Join(cfgDir, "miniagent.json")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	// ConfigPath with ~ prefix.
+	t.Run("tilde prefix", func(t *testing.T) {
+		home := t.TempDir()
+		cfg := &Config{MiniAgent: MiniAgent{ConfigPath: "~/.miniagent/miniagent.json"}}
+		t.Setenv("HOME", home)
+		got := ResolveConfigPath(cfg)
+		want := filepath.Join(home, ".miniagent", "miniagent.json")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	// ConfigDir with ~ prefix.
+	t.Run("tilde config_dir", func(t *testing.T) {
+		home := t.TempDir()
+		cfgDir := filepath.Join(home, ".miniagent")
+		if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(cfgDir, "miniagent.json"), []byte(`{}`), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cfg := &Config{MiniAgent: MiniAgent{ConfigDir: "~/.miniagent"}}
+		t.Setenv("HOME", home)
+		got := ResolveConfigPath(cfg)
+		want := filepath.Join(cfgDir, "miniagent.json")
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}

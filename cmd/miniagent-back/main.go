@@ -88,12 +88,20 @@ func run(cfgPath string) error {
 	if cfg.MiniAgent.WorkspaceRoot == "" {
 		return fmt.Errorf("miniagent.workspace_root is required (v3 -mode default needs a workdir; /cd picker disabled without it)")
 	}
-	if cfg.MiniAgent.ConfigPath == "" {
-		return fmt.Errorf("miniagent.config_path is required (v3.1+ config-only mode; deploy.sh generates /etc/lark-bridge/miniagent-cli.json)")
+	// Resolve config_path: if empty, scan ConfigDir (default ~/.miniagent) for
+	// miniagent.json or *-miniagent.json. The CLI no longer accepts bare mode,
+	// so a resolvable config path is effectively required.
+	resolvedPath := config.ResolveConfigPath(cfg)
+	if resolvedPath == "" {
+		return fmt.Errorf("miniagent.config_path is required (set config_dir/config_path, or place miniagent.json/*-miniagent.json under the default ~/.miniagent)")
 	}
-	if !filepath.IsAbs(cfg.MiniAgent.ConfigPath) {
-		return fmt.Errorf("miniagent.config_path must be an absolute path, got %q", cfg.MiniAgent.ConfigPath)
+	// Guard against relative paths in explicit config: resolveConfigPath already
+	// anchors relative paths at ConfigDir, but an explicit ConfigPath that was
+	// set by an operator who meant an absolute path must stay absolute.
+	if !filepath.IsAbs(resolvedPath) {
+		return fmt.Errorf("miniagent.config_path resolved to a relative path %q — check config_dir", resolvedPath)
 	}
+	cfg.MiniAgent.ConfigPath = resolvedPath
 	// Per-backend router file (R2): without persistence every redeploy resets
 	// all per-chat model/directory pins, and sharing one file with the other
 	// backends lost-updates it. miniagent now owns

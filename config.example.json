@@ -35,7 +35,8 @@
     "mode":            "default",
     "thinking":        "off",
     "key_file":        "",
-    "config_path":     "/etc/lark-bridge/miniagent-cli.json"
+    "config_path":     "/etc/lark-bridge/miniagent-cli.json",
+    "config_dir":      ""
   },
 
   "deploy_monitor": {
