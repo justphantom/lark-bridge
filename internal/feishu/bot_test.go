@@ -39,6 +39,12 @@ type fakeClient struct {
 	downloadBody   string
 	downloadErr    error
 	downloadCalled atomic.Int32
+	// getMessageContent is the stored card content returned by GetMessage on
+	// read-back; getMessageErr short-circuits with an error. getCalls counts
+	// read-backs so the verify-loop test can assert retry behaviour.
+	getMessageContent string
+	getMessageErr     error
+	getCalls          atomic.Int32
 }
 
 func (f *fakeClient) Send(context.Context, *lark.SendInput) (*lark.SendResult, error) {
@@ -54,6 +60,13 @@ func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
 		return f.patchErr
 	}
 	return nil
+}
+func (f *fakeClient) GetMessage(_ context.Context, _ string) ([]byte, error) {
+	f.getCalls.Add(1)
+	if f.getMessageErr != nil {
+		return nil, f.getMessageErr
+	}
+	return []byte(f.getMessageContent), nil
 }
 func (f *fakeClient) DownloadResource(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
 	f.downloadCalled.Add(1)

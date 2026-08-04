@@ -429,7 +429,7 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 		// itself so the goroutine never hangs.
 		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 		defer cancel()
-		if err := d.bot.UpdateCard(patchCtx, msgID, card); err != nil {
+		if err := d.bot.UpdateCardVerified(patchCtx, msgID, card); err != nil {
 			d.logger.Load().Warn("delayed picker UpdateCard failed",
 				log.FieldMessageID, msgID,
 				log.FieldError, err.Error())

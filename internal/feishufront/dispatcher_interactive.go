@@ -106,7 +106,7 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 			time.Sleep(delay)
 			patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 			defer cancel()
-			if err := d.bot.UpdateCard(patchCtx, msgID, card); err != nil {
+			if err := d.bot.UpdateCardVerified(patchCtx, msgID, card); err != nil {
 				if l := d.logger.Load(); l != nil {
 					l.Warn("delayed picker refresh UpdateCard failed",
 						log.FieldMessageID, msgID, log.FieldError, err.Error())
@@ -353,9 +353,9 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 						}
 						patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 						defer cancel()
-						if err := d.bot.UpdateCard(patchCtx, fbMsgID, fbBytes); err != nil {
+						if err := d.bot.UpdateCardVerified(patchCtx, fbMsgID, fbBytes); err != nil {
 							if l := d.logger.Load(); l != nil {
-								l.Warn("delayed submit UpdateCard failed",
+								l.Warn("delayed submit verified update failed",
 									log.FieldChatID, fbChatID,
 									log.FieldMessageID, fbMsgID,
 									log.FieldError, err.Error())

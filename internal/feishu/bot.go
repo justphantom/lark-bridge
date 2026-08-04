@@ -17,6 +17,7 @@ import (
 type feishuClient interface {
 	Send(ctx context.Context, in *lark.SendInput) (*lark.SendResult, error)
 	PatchMessage(ctx context.Context, messageID, content string) error
+	GetMessage(ctx context.Context, messageID string) ([]byte, error)
 	DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error)
 	UploadFile(ctx context.Context, fileName, fileType string, r io.Reader) (string, error)
 	SetHandler(h lark.Handler)

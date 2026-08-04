@@ -51,6 +51,12 @@ const maxPromptBytes = 64 << 10 // 64 KiB
 type CardSink interface {
 	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (string, error)
 	UpdateCard(ctx context.Context, messageID string, card []byte) error
+	// UpdateCardVerified PATCHes the card then read-back confirms the header
+	// template persisted, re-PATCHing if Feishu silently reverted it. Used only
+	// by the three terminal/submitted delayed-PATCH sites where the click-
+	// handling window can roll a PATCH back; streaming progress keeps plain
+	// UpdateCard (no click window there).
+	UpdateCardVerified(ctx context.Context, messageID string, card []byte) error
 	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }
 

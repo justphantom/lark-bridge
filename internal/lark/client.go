@@ -143,6 +143,14 @@ func (c *Client) PatchMessage(ctx context.Context, messageID, content string) er
 	return c.rest.PatchMessage(ctx, messageID, content)
 }
 
+// GetMessage fetches one message's body content (the stored card JSON for an
+// interactive card). Used by Bot.UpdateCardVerified to read back whether a
+// PATCH persisted. Independent of the WS connection state; uses the REST
+// client under the hood.
+func (c *Client) GetMessage(ctx context.Context, messageID string) ([]byte, error) {
+	return c.rest.GetMessage(ctx, messageID)
+}
+
 // DownloadResource fetches a binary resource (file/image) attached to a
 // message. The returned reader MUST be closed by the caller. Independent of
 // the WS connection state; uses the REST client under the hood.

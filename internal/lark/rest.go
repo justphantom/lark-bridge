@@ -86,6 +86,38 @@ func (r *restClient) PatchMessage(ctx context.Context, messageID, content string
 	return r.doJSON(ctx, http.MethodPatch, path, "", body, nil)
 }
 
+// getMessageData is the data payload of GET /open-apis/im/v1/messages/{id}: a
+// single-element items array carrying the message body. For an interactive
+// card, body.content holds the stored card JSON string.
+type getMessageData struct {
+	Items []struct {
+		Body struct {
+			Content string `json:"content"`
+		} `json:"body"`
+	} `json:"items"`
+}
+
+// GetMessage fetches one message's body content. For an interactive card this
+// is the stored card JSON; UpdateCardVerified parses it to confirm a PATCH
+// persisted (Feishu's click-handling window can silently revert a PATCH).
+// Requires the app token to hold the im:message:read scope — without it the
+// call fails with code 99991661 and verification degrades to a best-effort
+// single PATCH.
+func (r *restClient) GetMessage(ctx context.Context, messageID string) ([]byte, error) {
+	if messageID == "" {
+		return nil, fmt.Errorf("lark: empty message_id")
+	}
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	var data getMessageData
+	if err := r.doJSON(ctx, http.MethodGet, path, "", nil, &data); err != nil {
+		return nil, err
+	}
+	if len(data.Items) == 0 {
+		return nil, fmt.Errorf("lark: get message returned no items")
+	}
+	return []byte(data.Items[0].Body.Content), nil
+}
+
 // encodeSendContent picks msg_type and builds the inner-JSON content string
 // for a SendInput. Text → {"text":"..."}; Card → the card string verbatim;
 // FileKey → {"file_key":"..."} for a msg_type=file message. Exactly one of the

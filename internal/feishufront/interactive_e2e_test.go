@@ -59,6 +59,14 @@ func (f *fakeSink) UpdateCard(_ context.Context, messageID string, card []byte) 
 	return f.updateErr
 }
 
+// UpdateCardVerified records into the same updates slice as UpdateCard: the
+// dispatcher-level fakes have no real Feishu to bounce a PATCH off, so they
+// treat the verified path as a plain update for assertion purposes. The Bot's
+// own verify loop is exercised in internal/feishu.
+func (f *fakeSink) UpdateCardVerified(ctx context.Context, messageID string, card []byte) error {
+	return f.UpdateCard(ctx, messageID, card)
+}
+
 // SendText records a plain-text fallback send so tests can assert the
 // result-card-rejected fallback delivered the reply as text.
 func (f *fakeSink) SendText(_ context.Context, chatID, text, replyToID string) (string, error) {

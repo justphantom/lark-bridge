@@ -191,6 +191,125 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) err
 	return nil
 }
 
+// cardVerify loop tunables. var (not const) so tests can shrink the backoff
+// to keep the PATCH→read-back→retry loop instant; production keeps the
+// defaults below.
+var (
+	// cardVerifyMaxAttempts: attempt 0 is the real PATCH; later ones re-PATCH
+	// after Feishu silently reverted the colour. Three is enough — if the
+	// platform's persistence layer has not settled after two re-PATCHes the
+	// card is effectively ungovernable, so stop rather than hammer the API.
+	cardVerifyMaxAttempts = 3
+	// cardVerifyBackoff is the sleep between a failed verification (colour
+	// reverted or GET failed) and the next re-PATCH. Kept short: the first
+	// PATCH already slept past the ~3-5s click window, so a revert here is the
+	// platform's persistence layer, which usually settles within a second or two.
+	cardVerifyBackoff = 2 * time.Second
+	// cardVerifyTimeout bounds the whole PATCH→GET→retry loop so a stalled
+	// Feishu API cannot keep the background goroutine alive forever. Detached
+	// from the caller's ctx via WithoutCancel because these run in fire-and-
+	// forget goroutines whose request ctx dies when the click handler returns.
+	cardVerifyTimeout = 30 * time.Second
+)
+
+// ErrCardVerifyMismatch signals that a PATCH shipped but did not persist after
+// cardVerifyMaxAttempts read-back checks — Feishu kept reverting the header
+// colour. Surfaced (not silent) so logs can tell "bounced" from "stuck".
+var ErrCardVerifyMismatch = errors.New("feishu: card update did not persist after verification")
+
+// UpdateCardVerified PATCHes the card, then read-back verifies the header
+// template colour persisted, re-PATCHing up to cardVerifyMaxAttempts times if
+// Feishu silently reverted it. Guards the three delayed-PATCH sites (picker
+// outcome, /send refresh, submitted fallback) where the card.action.trigger
+// click-handling window can roll a PATCH back even after cardPatchDelay.
+//
+// Verification uses a header.template colour fingerprint, NOT a full content
+// compare: Feishu normalizes the stored content JSON (reorders keys, injects
+// defaults), so byte/key equality would always mismatch and thrash into a
+// re-PATCH loop. The template colour is exactly the user-visible signal of a
+// bounce-back ("turned green then reverted to the old card"), so it is both
+// sufficient and robust.
+//
+// Degrades gracefully: a headerless card (want=="") trusts the PATCH without a
+// read-back; a card withdrawn mid-loop (IsCardGone) returns immediately since
+// no re-PATCH can succeed; a GET failure (missing im:message:read scope,
+// timeout) retries once then surfaces the last error rather than looping
+// blindly. The whole loop runs under a self-managed cardVerifyTimeout.
+func (b *Bot) UpdateCardVerified(ctx context.Context, messageID string, card []byte) error {
+	if len(card) == 0 {
+		return errors.New("feishu: empty card body")
+	}
+	want := extractHeaderTemplate(card)
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cardVerifyTimeout)
+	defer cancel()
+
+	var lastErr error
+	for attempt := 0; attempt < cardVerifyMaxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(cardVerifyBackoff):
+			case <-vctx.Done():
+				if lastErr == nil {
+					lastErr = vctx.Err()
+				}
+				return lastErr
+			}
+		}
+		if err := b.UpdateCard(vctx, messageID, card); err != nil {
+			lastErr = err
+			if IsCardGone(err) {
+				return err // withdrawn: re-PATCH can never succeed
+			}
+			continue // transient/network — retry the PATCH
+		}
+		if want == "" {
+			return nil // headerless card: nothing to verify, trust the PATCH
+		}
+		got, err := b.client.GetMessage(vctx, messageID)
+		if err != nil {
+			lastErr = err
+			continue // cannot confirm — retry (loop cap bounds thrash)
+		}
+		if extractHeaderTemplate(got) == want {
+			return nil // colour persisted
+		}
+		lastErr = ErrCardVerifyMismatch // reverted — loop re-PATCHes
+	}
+	return lastErr
+}
+
+// extractHeaderTemplate pulls the header.template colour out of a card JSON
+// blob. Handles both the schema 1.0 layout we send (top-level
+// {header:{template}}) and the schema 2.0 wrapper Feishu may return on
+// read-back ({data:{template:{header:{template}}}}), so a compare never
+// reports a phantom mismatch just because the envelope differs. Returns "" for
+// a headerless card or an unparseable blob — callers treat "" as "no
+// fingerprint to check, trust the PATCH".
+func extractHeaderTemplate(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	var v1 struct {
+		Header struct {
+			Template string `json:"template"`
+		} `json:"header"`
+	}
+	if err := json.Unmarshal(b, &v1); err == nil && v1.Header.Template != "" {
+		return v1.Header.Template
+	}
+	var v2 struct {
+		Data struct {
+			Template struct {
+				Header struct {
+					Template string `json:"template"`
+				} `json:"header"`
+			} `json:"template"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(b, &v2)
+	return v2.Data.Template.Header.Template
+}
+
 // updateFallbackCard re-patches messageID with a minimal card after the
 // original content was rejected as too large (230025).
 func (b *Bot) updateFallbackCard(ctx context.Context, messageID string) error {
