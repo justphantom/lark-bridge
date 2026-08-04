@@ -162,7 +162,7 @@ func TestCmdEffort_Pins(t *testing.T) {
 	}
 }
 
-// TestCmdSettings_RejectsCustomPath verifies /settings <path> is no longer
+// TestCmdSettings_RejectsCustomPath verifies /config <path> is no longer
 // accepted: the file must come from the picker list, not a free-form argument.
 // Any non-"clear" argument is rejected and nothing is pinned.
 func TestCmdSettings_RejectsCustomPath(t *testing.T) {

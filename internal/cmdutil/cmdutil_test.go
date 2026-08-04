@@ -20,7 +20,7 @@ func TestParseCommand(t *testing.T) {
 		{"hello world", "", nil},
 		{"   /current   ", "/current", []string{}},
 		{"/new", "/new", []string{}},
-		{"/settings ~/.claude/kimi-settings.json", "/settings", []string{"~/.claude/kimi-settings.json"}},
+		{"/config ~/.claude/kimi-settings.json", "/config", []string{"~/.claude/kimi-settings.json"}},
 		{"/model   a   b  c", "/model", []string{"a", "b", "c"}},
 	}
 	for _, tc := range tests {

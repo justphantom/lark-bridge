@@ -38,7 +38,7 @@ lark-claude-back -version
 | `model_options` | []string | `["haiku","sonnet","opus"]` | `/model` 选择器选项 |
 | `permission_options` | []string | `["acceptEdits","plan","bypassPermissions"]` | `/perm` 选择器选项 |
 | `effort_options` | []string | `["low","medium","high","xhigh","max"]` | `/effort` 选择器选项 |
-| `settings_dir` | string | `"~/.claude"` | `/settings` 扫描目录 |
+| `settings_dir` | string | `"~/.claude"` | `/config` 扫描目录 |
 | `settings_cache_ttl` | int | 3600 | settings 列表缓存秒数 |
 
 ### 2.3 共享配置
@@ -190,7 +190,7 @@ claude-back 支持以下斜杠命令：
 | `/current` | 显示当前会话/目录/模型/权限/effort |
 | `/model [model\|clear]` | 设置模型 |
 | `/cd [dir\|clear]` | 切换工作目录 |
-| `/settings [clear]` | 设置 `--settings` 文件 |
+| `/config [clear]` | 设置 `--settings` 文件 |
 | `/perm [mode\|clear]` | 设置权限模式 |
 | `/effort [level\|clear]` | 设置推理级别 |
 | `/pull` / `/push` | 在当前目录执行 git 操作 |
@@ -199,7 +199,7 @@ claude-back 支持以下斜杠命令：
 
 ### 8.1 交互卡片机制
 
-- `/model`、`/cd`、`/settings`、`/perm`、`/effort` 无参数时发送 `Question`/`Permission` 卡片，通过 `AnswerBroker` 阻塞等待用户选择。
+- `/model`、`/cd`、`/config`、`/perm`、`/effort` 无参数时发送 `Question`/`Permission` 卡片，通过 `AnswerBroker` 阻塞等待用户选择。
 - 选择器使用 `TakeOverProgress` 把原命令的进度卡片变形为选择卡片，保持单卡片交互。
 - 等待超时约 9 分钟。
 - `/pull`、`/push`、`/send` 每 chat 单飞，git 命令超时 5 分钟，输出保留最后 500 rune。

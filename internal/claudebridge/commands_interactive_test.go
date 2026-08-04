@@ -308,7 +308,7 @@ func (settingsFakeAgent) DeleteSession(context.Context, string, string) error {
 }
 
 // newSettingsPickerHandler wires a Handler with a settingsFakeAgent so the
-// /settings picker can be exercised end to end.
+// /config picker can be exercised end to end.
 func newSettingsPickerHandler(t *testing.T, paths []string) (*Handler, *router.Router) {
 	t.Helper()
 	r, err := router.New("", log.Nop())
@@ -325,7 +325,7 @@ func newSettingsPickerHandler(t *testing.T, paths []string) (*Handler, *router.R
 	return h, r
 }
 
-// TestCmdSettings_Picker_Success drives the settings picker: /settings (no
+// TestCmdSettings_Picker_Success drives the settings picker: /config (no
 // args) → agent lists paths → card shows basenames → user picks → full path
 // pinned on the binding.
 func TestCmdSettings_Picker_Success(t *testing.T) {
@@ -363,7 +363,7 @@ func TestCmdSettings_Picker_Success(t *testing.T) {
 	}
 }
 
-// TestCmdSettings_Clear verifies /settings clear removes an existing pin.
+// TestCmdSettings_Clear verifies /config clear removes an existing pin.
 func TestCmdSettings_Clear(t *testing.T) {
 	h, r := defaultPickerHandler(t)
 	// The picker is the only way to pin a settings file now; emulate a prior

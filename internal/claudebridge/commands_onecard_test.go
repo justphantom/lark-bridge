@@ -55,7 +55,7 @@ func drainOfType(t *testing.T, reg *feishufront.BackendRegistry, wantType string
 }
 
 // failingListClaude is a claudeAPI whose ListSettings always errors, to drive
-// the /settings picker's pre-answer failure branch.
+// the /config picker's pre-answer failure branch.
 type failingListClaude struct{}
 
 func (failingListClaude) Run(context.Context, claude.RunOptions) (<-chan claude.Event, error) {
@@ -143,7 +143,7 @@ func TestCmdModel_Picker_AnswerFailureOneCard(t *testing.T) {
 func TestCmdSettings_Picker_PreAnswerFailureOneCard(t *testing.T) {
 	h, _, reg := newOneCardHandler(t, failingListClaude{}, HandlerConfig{})
 
-	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/settings", "om_cmd")
+	go commands.Dispatch(h, h.Emit, h.Logger, context.Background(), "chat-1", "/config", "om_cmd")
 
 	n := drainOfType(t, reg, protocol.TypeNotice)
 	if n.PromptID != "om_cmd" {

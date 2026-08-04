@@ -16,7 +16,7 @@ import (
 //   - /config clear : restore the startup default config path.
 //
 // A free-form path argument is intentionally NOT accepted (mirrors claude
-// /settings): the file must come from the directory scan so only files an
+// /config): the file must come from the directory scan so only files an
 // operator placed there are selectable — no path traversal, no arbitrary
 // -config target. Switching config does NOT reset the session; the new file
 // takes effect on the next prompt, same as /model and /mode.

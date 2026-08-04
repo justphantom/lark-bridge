@@ -15,7 +15,7 @@ type claudeAPI interface {
 	// (result/error) precedes close.
 	Run(ctx context.Context, opts claude.RunOptions) (<-chan claude.Event, error)
 	// ListSettings returns absolute paths of settings files in the settings
-	// directory, for the interactive /settings picker. Cached per config.
+	// directory, for the interactive /config picker. Cached per config.
 	ListSettings(ctx context.Context) ([]string, error)
 	// ListSessions enumerates the claude sessions under dir (filesystem scan
 	// of ~/.claude/projects/<encoded-cwd>). dir MUST be absolute; a relative

@@ -127,14 +127,14 @@ type Claude struct {
 	// custom-input box; the picker restricts selection to listed values.
 	EffortOptions []string `json:"effort_options,omitempty"`
 
-	// SettingsDir is the directory scanned for the interactive /settings
+	// SettingsDir is the directory scanned for the interactive /config
 	// picker (settings.json and *-settings.json). Empty/unset → the Client
 	// resolves to ~/.claude at runtime via os.UserHomeDir, so the config
 	// layer stays independent of the process user's HOME.
 	SettingsDir string `json:"settings_dir,omitempty"`
 	// SettingsCacheTTL bounds how long ListSettings results stay cached
 	// (seconds). The scan is cheap (local fs), but caching keeps repeated
-	// /settings pickers instant and mirrors opencode's list_cache_ttl.
+	// /config pickers instant and mirrors opencode's list_cache_ttl.
 	// 0/unset → 3600; negative disables caching.
 	SettingsCacheTTL int `json:"settings_cache_ttl,omitempty"`
 }

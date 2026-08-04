@@ -104,10 +104,10 @@ func clearPermissionMode(h *Handler, chatID, oldMode string) commandResult {
 
 // cmdSettings interactively selects or clears the Claude --settings file for
 // the current chat. Forms:
-//   - /settings          → pop a selection card listing settings files found
+//   - /config           → pop a selection card listing settings files found
 //     in the settings directory (selection restricted to
 //     listed files; no custom-input box)
-//   - /settings clear    → clear the pin
+//   - /config clear     → clear the pin
 //
 // A free-form path argument is intentionally NOT accepted: the file must come
 // from the settings directory scan so only files an operator placed there are
@@ -124,7 +124,7 @@ func (h *Handler) cmdSettings(ctx context.Context, chatID string, args []string)
 	if args[0] == "clear" {
 		return clearSettingsFile(h, chatID, b.SettingsFile), nil
 	}
-	return cmdutil.ErrorResult("不支持自定义路径；用法：/settings（从列表选择）或 /settings clear")
+	return cmdutil.ErrorResult("不支持自定义路径；用法：/config（从列表选择）或 /config clear")
 }
 
 // runSettingsPicker drives the interactive settings-file selection. It lists
@@ -180,7 +180,7 @@ func (h *Handler) runSettingsPicker(chatID, oldFile, replyToID string) commandRe
 	return commandResult{Handled: true}
 }
 
-// clearSettingsFile is the /settings clear path.
+// clearSettingsFile is the /config clear path.
 func clearSettingsFile(h *Handler, chatID, oldFile string) commandResult {
 	old := oldFile
 	if old == "" {
