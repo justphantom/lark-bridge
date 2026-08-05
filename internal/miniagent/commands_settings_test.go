@@ -242,27 +242,28 @@ func TestCmdMaxIter_Clear(t *testing.T) {
 
 // newNewHandler builds a Handler with a real stateDir so sessionRoot is
 // non-empty and /new has a directory to delete from. client/router stay nil:
-// cmdNew only needs sessionPath, not the binding or fork path.
+// cmdNew only needs sessionIDFile, not the binding or fork path.
 func newNewHandler(t *testing.T) *Handler {
 	t.Helper()
 	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, "", 0, t.TempDir(), false)
 	return h
 }
 
-// TestCmdNew_DeletesExistingFile verifies /new removes the chat's session
-// jsonl so the next prompt starts a fresh conversation (R2). Writes a sentinel
-// file at the sha256-hashed path, then /new must delete it and report success.
+// TestCmdNew_DeletesExistingFile verifies /new removes the chat's session-id
+// mapping so the next prompt starts a fresh conversation (R2). Writes a
+// sentinel id at the sha256-hashed .id path, then /new must delete it and
+// report success.
 func TestCmdNew_DeletesExistingFile(t *testing.T) {
 	h := newNewHandler(t)
-	p := h.sessionPath("oc_chat_1")
+	p := h.sessionIDFile("oc_chat_1")
 	if p == "" {
-		t.Fatal("precondition: sessionPath must be non-empty with stateDir set")
+		t.Fatal("precondition: sessionIDFile must be non-empty with stateDir set")
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(p, []byte(`{"role":"user","content":"hi"}`), 0o600); err != nil {
-		t.Fatalf("seed session: %v", err)
+	if err := os.WriteFile(p, []byte("old-session-id"), 0o600); err != nil {
+		t.Fatalf("seed mapping: %v", err)
 	}
 
 	level, title, body := h.cmdNew(context.Background(), "oc_chat_1", "")
@@ -283,7 +284,7 @@ func TestCmdNew_DeletesExistingFile(t *testing.T) {
 // to forget, and the user should not see a scary error.
 func TestCmdNew_MissingFileIsNoOp(t *testing.T) {
 	h := newNewHandler(t)
-	p := h.sessionPath("oc_never")
+	p := h.sessionIDFile("oc_never")
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

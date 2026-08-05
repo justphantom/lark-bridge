@@ -18,6 +18,13 @@ const (
 	KindToolResult     = "tool_result"
 	KindTextDelta      = "text_delta"
 	KindReasoningDelta = "reasoning_delta"
+
+	// KindSession is the stdout NDJSON session event (type=session) emitted as
+	// the FIRST line by miniagent v4.0.1+ when started with -save-session. It
+	// carries the freshly-generated session id (in SessionID) so the bridge can
+	// persist a chatID→id mapping and resume via -session on later turns. Never
+	// emitted on -session (resume) or stateless turns. Absent on <v4.0.1.
+	KindSession = "session"
 )
 
 // Finish reason constants reported on result events (miniagent v1.1.0+). Empty
@@ -65,6 +72,10 @@ type Event struct {
 	// error event fields.
 	Message string
 
+	// session event fields (KindSession only, v4.0.1+). The miniagent-generated
+	// session id for a -save-session turn; the bridge persists it per-chat.
+	SessionID string
+
 	// Derived: true for KindResult and KindError.
 	IsTerminal bool
 }
@@ -95,6 +106,9 @@ type rawEvent struct {
 
 	// streaming delta fields (v2.0.0+, -stream only).
 	Step int `json:"step,omitempty"`
+
+	// session event field (v4.0.1+, type=session). The miniagent-generated id.
+	ID string `json:"id,omitempty"`
 }
 
 // parseEvent decodes one NDJSON line into an Event. Returns ok=false on
@@ -123,6 +137,7 @@ func parseEvent(line []byte) (Event, bool) {
 		ExitCode:     raw.ExitCode,
 		Step:         raw.Step,
 		Message:      raw.Message,
+		SessionID:    raw.ID,
 	}
 	switch raw.Type {
 	case KindResult, KindError:

@@ -319,7 +319,7 @@ func TestBuildArgs_V2OptionalFlags_Omitted(t *testing.T) {
 	for _, f := range []string{
 		"-max-iterations", "-key-file",
 		"-mode", "-thinking",
-		"-session",
+		"-session", "-save-session",
 	} {
 		if contains(args, f) {
 			t.Errorf("zero-value flag %s should be omitted: %v", f, args)
@@ -346,7 +346,7 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	args := c.buildArgs(RunOptions{
 		Model:   "main/gpt-4o",
 		Workdir: "/w",
-		Session: "/var/lib/lark-bridge/miniagent-sessions/abc.jsonl",
+		Session: "abc-session-id",
 	})
 	if v := argValue(args, "-config"); v != "/etc/miniagent/miniagent.json" {
 		t.Errorf("-config = %q, want miniagent.json path", v)
@@ -371,8 +371,36 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	if v := argValue(args, "-thinking"); v != "off" {
 		t.Errorf("-thinking = %q, want off (config mode keeps per-turn thinking)", v)
 	}
-	if v := argValue(args, "-session"); v != "/var/lib/lark-bridge/miniagent-sessions/abc.jsonl" {
-		t.Errorf("-session = %q, want the per-chat jsonl path", v)
+	if v := argValue(args, "-session"); v != "abc-session-id" {
+		t.Errorf("-session = %q, want the per-chat session id", v)
+	}
+	// -save-session must NOT appear alongside -session (mutually exclusive upstream).
+	if contains(args, "-save-session") {
+		t.Errorf("-save-session must not appear with -session: %v", args)
+	}
+}
+
+// TestBuildArgs_SaveSession verifies the first-turn shape: empty Session +
+// SaveSession=true emits -save-session (and NOT -session). miniagent creates
+// the session and emits its id as a stdout type=session event.
+func TestBuildArgs_SaveSession(t *testing.T) {
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
+	args := c.buildArgs(RunOptions{Model: "m", SaveSession: true})
+	if !contains(args, "-save-session") {
+		t.Errorf("-save-session missing: %v", args)
+	}
+	if contains(args, "-session") {
+		t.Errorf("-session must not appear in create mode: %v", args)
+	}
+}
+
+// TestBuildArgs_Stateless verifies empty Session + SaveSession=false emits
+// neither flag, so miniagent runs a stateless turn (no sessionRoot configured).
+func TestBuildArgs_Stateless(t *testing.T) {
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
+	args := c.buildArgs(RunOptions{Model: "m"})
+	if contains(args, "-session") || contains(args, "-save-session") {
+		t.Errorf("stateless turn must omit both session flags: %v", args)
 	}
 }
 
@@ -529,17 +557,18 @@ func TestSatisfiesVersion(t *testing.T) {
 		v    string
 		want bool
 	}{
-		{"dev", true}, // untagged local build — always pass
-		{"3.5.0", true},
-		{"3.5.1", true},
-		{"3.10.0", true},
-		{"4.0.0", true},
-		{"3.5.0-rc1", true}, // pre-release strips to 3.5.0
-		{"3.5", true},       // == 3.5.0
-		{"3.4.0", false},    // below 3.5.0
-		{"3.3.0", false},    // the previous floor — now rejected
+		{"dev", true},   // untagged local build — always pass
+		{"4.0.1", true}, // exact floor
+		{"4.0.2", true}, // above floor
+		{"4.1.0", true},
+		{"5.0.0", true},
+		{"4.0.1-rc1", true}, // pre-release strips to 4.0.1
+		{"4.0.0", false},    // v4.0.0 emits session id on stderr, not stdout — rejected
+		{"4.0", false},      // == 4.0.0
+		{"3.5.0", false},    // the previous floor — now rejected
+		{"3.10.0", false},
+		{"3.5", false},
 		{"3.0.0", false},
-		{"2.0.0", false},
 	}
 	for _, c := range cases {
 		if got := satisfiesVersion(c.v, minSupportedVersion); got != c.want {

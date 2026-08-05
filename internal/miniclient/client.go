@@ -154,12 +154,13 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Bumped to 3.5.0: v3.5.0 removed -key-file (the bridge resolves and
-// injects the key via $MINIAGENT_API_KEY); v3.3.0 removed ${VAR} expansion from
-// config loading. Versions below this may emit event/tool shapes the bridge
-// doesn't handle, or silently mis-load config. The bridge special-cases "dev"
-// (local untagged build) to always pass.
-const minSupportedVersion = "3.5.0"
+// requires. Bumped to 4.0.1: v4.0.1 moved the -save-session session id from a
+// stderr text line to a stdout NDJSON type=session event (the bridge reads the
+// id from KindSession, not stderr); v4.0.0 split -session (resume by id; file
+// must pre-exist) from -save-session (create; id emitted on stdout). v3.5.0
+// removed -key-file (key injected via $MINIAGENT_API_KEY). The bridge
+// special-cases "dev" (local untagged build) to always pass.
+const minSupportedVersion = "4.0.1"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
 // string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only
@@ -267,7 +268,17 @@ type RunOptions struct {
 	// MaxIterations is the per-chat -max-iterations override. <=0 → client
 	// default (which itself 0/unset → upstream CLI default of 20).
 	MaxIterations int
-	Session       string // [P3] absolute jsonl path; "" → stateless turn
+	// Session is the miniagent session id to resume (v4.0.1+ -session <id>):
+	// non-empty → resume an existing chat. Empty + SaveSession=true → first
+	// turn for a chat (miniagent creates the session via -save-session and
+	// emits the id as a KindSession event the bridge persists). Empty +
+	// SaveSession=false → stateless turn (no sessionRoot configured).
+	Session string
+	// SaveSession triggers -save-session (create + persist a new session id).
+	// Only meaningful when Session==""; buildArgs emits -session, not
+	// -save-session, when Session is set (the two are mutually exclusive
+	// upstream).
+	SaveSession bool
 	// ConfigPath is the per-chat -config override (absolute path resolved by
 	// the bridge via /config). "" → client default (c.configPath, set at
 	// startup from config.ResolveConfigPath).
@@ -397,10 +408,16 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	if maxIter > 0 {
 		a = append(a, "-max-iterations", strconv.Itoa(maxIter))
 	}
-	if opts.Session != "" {
-		// 会话 jsonl 绝对路径（v3 -session，含 / 或 . 视为路径）。同一 chat 由
-		// handler 的 startTurn busy-then-drop 串行，无并发写竞争（R4）。
+	// Session/SaveSession — three-state (v4.0.1+): resume → -session <id>;
+	// first turn under sessionRoot → -save-session (miniagent generates the id
+	// and emits it as a stdout type=session event the bridge persists);
+	// stateless → neither. Mutually exclusive upstream. Same-chat writes are
+	// serialised by the handler's startTurn busy-then-drop (R4).
+	switch {
+	case opts.Session != "":
 		a = append(a, "-session", opts.Session)
+	case opts.SaveSession:
+		a = append(a, "-save-session")
 	}
 	return a
 }

@@ -414,10 +414,10 @@ func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
 	}
 }
 
-// --- Phase 3: per-chat session (sessionPath / -session wiring / R4) ---
+// --- Phase 3: per-chat session (sessionIDFile / -session/-save-session wiring / R4) ---
 
 // newSessionHandler builds a Handler whose stateDir (and thus sessionRoot) is a
-// real temp dir, so sessionPath returns non-empty absolute paths. client is nil
+// real temp dir, so sessionIDFile returns non-empty absolute paths. client is nil
 // by default; tests that need the CLI fork path wire a stub via setStubClient.
 func newSessionHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
@@ -426,50 +426,50 @@ func newSessionHandler(t *testing.T) (*Handler, string) {
 	return h, stateDir
 }
 
-// TestSessionPath_Deterministic verifies the same chatID resolves to the same
-// jsonl path (so miniagent re-feeds the same conversation across turns), and
+// TestSessionIDFile_Deterministic verifies the same chatID resolves to the same
+// mapping path (so the chatID→sessionID mapping is stable across turns), and
 // distinct chatIDs resolve to distinct paths (no cross-chat collision).
-func TestSessionPath_Deterministic(t *testing.T) {
+func TestSessionIDFile_Deterministic(t *testing.T) {
 	h, _ := newSessionHandler(t)
-	p1 := h.sessionPath("oc_chat_a")
-	p2 := h.sessionPath("oc_chat_a")
-	p3 := h.sessionPath("oc_chat_b")
+	p1 := h.sessionIDFile("oc_chat_a")
+	p2 := h.sessionIDFile("oc_chat_a")
+	p3 := h.sessionIDFile("oc_chat_b")
 	if p1 != p2 {
 		t.Errorf("same chatID must be stable: %q vs %q", p1, p2)
 	}
 	if p1 == p3 {
 		t.Errorf("distinct chatIDs must differ: both %q", p1)
 	}
-	// Path must equal sha256(chatID).jsonl under sessionRoot — the documented
-	// contract, so an operator can map a chatID to its file by hand if needed.
+	// Path must equal sha256(chatID).id under sessionRoot — the documented
+	// contract, so an operator can map a chatID to its mapping file by hand.
 	sum := sha256.Sum256([]byte("oc_chat_a"))
-	want := filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".jsonl")
+	want := filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".id")
 	if p1 != want {
 		t.Errorf("path = %q, want %q", p1, want)
 	}
 }
 
-// TestSessionPath_PathSafety verifies a malicious chatID cannot escape
+// TestSessionIDFile_PathSafety verifies a malicious chatID cannot escape
 // sessionRoot: chatIDs containing "..", "/", drive letters, or NUL must all
 // hash to a flat filename under sessionRoot. This is the R4/path-traversal
 // guard called out in §3.2 and §6 of the implementation manual.
-func TestSessionPath_PathSafety(t *testing.T) {
+func TestSessionIDFile_PathSafety(t *testing.T) {
 	h, _ := newSessionHandler(t)
 	for _, bad := range []string{
 		"../../../etc/passwd", "..", "/", "a/b/../../../c",
 		"\x00", "C:\\windows\\system32", "....//....//etc",
 	} {
-		p := h.sessionPath(bad)
+		p := h.sessionIDFile(bad)
 		if p == "" {
 			t.Errorf("chatID=%q: path empty for non-empty sessionRoot", bad)
 		}
 		if !strings.HasPrefix(p, h.sessionRoot+string(filepath.Separator)) {
 			t.Errorf("chatID=%q escaped sessionRoot: %q (root=%q)", bad, p, h.sessionRoot)
 		}
-		// The base name must be exactly 64 hex chars + ".jsonl" — no chatID
+		// The base name must be exactly 64 hex chars + ".id" — no chatID
 		// bytes leaked into the path.
 		base := filepath.Base(p)
-		wantSuffix := ".jsonl"
+		wantSuffix := ".id"
 		if !strings.HasSuffix(base, wantSuffix) {
 			t.Errorf("chatID=%q: base %q must end with %q", bad, base, wantSuffix)
 		}
@@ -480,30 +480,82 @@ func TestSessionPath_PathSafety(t *testing.T) {
 	}
 }
 
-// TestSessionPath_EmptyRootStateless verifies that when stateDir is unset (some
-// tests, or a misconfigured deploy) sessionPath returns "" → runViaCLI passes
-// "" → buildArgs omits -session → miniagent runs a stateless turn. This is the
-// graceful-degrade path.
-func TestSessionPath_EmptyRootStateless(t *testing.T) {
+// TestSessionIDFile_EmptyRootStateless verifies that when stateDir is unset
+// (some tests, or a misconfigured deploy) sessionIDFile returns "" →
+// lookupSessionID returns "" → runViaCLI runs a stateless turn (no -session /
+// -save-session). This is the graceful-degrade path.
+func TestSessionIDFile_EmptyRootStateless(t *testing.T) {
 	h := New(&captureSender{}, log.Nop(), nil, "", "m", nil, "", 0, "", false)
-	if got := h.sessionPath("any-chat"); got != "" {
-		t.Errorf("empty sessionRoot: sessionPath = %q, want empty", got)
+	if got := h.sessionIDFile("any-chat"); got != "" {
+		t.Errorf("empty sessionRoot: sessionIDFile = %q, want empty", got)
 	}
 }
 
-// TestRunViaCLI_PassesSessionArg verifies runViaCLI wires
-// h.sessionPath(chatID) into RunOptions.Session by driving a real
-// miniclient.Client whose cliPath is a stub shell script. The script captures
-// its argv to a file and emits one valid result event so runViaCLI completes
-// cleanly. We then assert the captured argv contains "-session <expected path>".
+// TestRunViaCLI_PassesSaveSession verifies the first turn for a chat (no
+// persisted session id) is forked with -save-session, and that the id miniagent
+// emits as a stdout type=session event is persisted to the chat's mapping file.
+// Drives a real miniclient.Client whose cliPath is a stub shell script: capture
+// argv, emit a session event (id), then a terminal result.
 //
 // This is the strongest feasible coverage without refactoring Handler.client
 // (a concrete *miniclient.Client) to an interface, which §3 does not list.
-func TestRunViaCLI_PassesSessionArg(t *testing.T) {
+func TestRunViaCLI_PassesSaveSession(t *testing.T) {
 	stateDir := t.TempDir()
 	captureFile := filepath.Join(stateDir, "argv")
-	// Stub binary: write "$@" to captureFile, then emit one terminal result
-	// event on stdout so the miniclient pump sees IsTerminal and closes.
+	stub := filepath.Join(stateDir, "stub.sh")
+	// Stub: capture argv, emit a session event (the id to persist), then a
+	// terminal result so the pump sees IsTerminal and closes.
+	script := "#!/bin/sh\n" +
+		`printf '%s\n' "$@" > ` + captureFile + "\n" +
+		`printf '{"type":"session","id":"stub-session-id"}\n'` + "\n" +
+		`printf '{"type":"result","text":"ok","model":"stub","steps":1}\n'` + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+
+	client := miniclient.New(miniclient.Config{CLIPath: stub, APIKey: "k"}, log.Nop())
+	sender := &captureSender{}
+	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 0, stateDir, false)
+	defer h.Close()
+
+	mapPath := h.sessionIDFile("oc_chat_1")
+	if mapPath == "" {
+		t.Fatal("precondition: sessionIDFile must be non-empty with stateDir set")
+	}
+
+	h.runViaCLI(context.Background(), "p1", "oc_chat_1", "hello")
+
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture: %v (did the stub run?)", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// First turn (no mapping) → -save-session, NOT -session.
+	if !argvHas(lines, "-save-session") {
+		t.Errorf("-save-session missing from argv: %v", lines)
+	}
+	if argvHas(lines, "-session") {
+		t.Errorf("-session must not appear on first turn: %v", lines)
+	}
+	// The emitted session id must be persisted to the mapping file.
+	gotID, err := os.ReadFile(mapPath)
+	if err != nil {
+		t.Fatalf("mapping file not written: %v", err)
+	}
+	if strings.TrimSpace(string(gotID)) != "stub-session-id" {
+		t.Errorf("persisted id = %q, want stub-session-id", gotID)
+	}
+	if !harnessHasResult(sender) {
+		t.Error("expected one TypeResult control after runViaCLI")
+	}
+}
+
+// TestRunViaCLI_ResumesWithSessionID verifies that once a session id is
+// persisted (a prior -save-session turn), the next turn forks with
+// -session <id> (resume), not -save-session.
+func TestRunViaCLI_ResumesWithSessionID(t *testing.T) {
+	stateDir := t.TempDir()
+	captureFile := filepath.Join(stateDir, "argv")
 	stub := filepath.Join(stateDir, "stub.sh")
 	script := "#!/bin/sh\n" +
 		`printf '%s\n' "$@" > ` + captureFile + "\n" +
@@ -517,9 +569,9 @@ func TestRunViaCLI_PassesSessionArg(t *testing.T) {
 	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 0, stateDir, false)
 	defer h.Close()
 
-	wantPath := h.sessionPath("oc_chat_1")
-	if wantPath == "" {
-		t.Fatal("precondition: sessionPath must be non-empty with stateDir set")
+	// Seed the mapping as a prior turn would have persisted it.
+	if err := os.WriteFile(h.sessionIDFile("oc_chat_1"), []byte("prior-id"), 0o600); err != nil {
+		t.Fatalf("seed mapping: %v", err)
 	}
 
 	h.runViaCLI(context.Background(), "p1", "oc_chat_1", "hello")
@@ -529,21 +581,38 @@ func TestRunViaCLI_PassesSessionArg(t *testing.T) {
 		t.Fatalf("read capture: %v (did the stub run?)", err)
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	// Find "-session" and assert the following arg is the expected abspath.
-	for i, ln := range lines {
-		if ln == "-session" && i+1 < len(lines) {
-			if lines[i+1] != wantPath {
-				t.Errorf("-session arg = %q, want %q", lines[i+1], wantPath)
-			}
-			// Confirm a Result control landed — proves runViaCLI drained the
-			// event stream to completion.
-			if !harnessHasResult(sender) {
-				t.Error("expected one TypeResult control after runViaCLI")
-			}
-			return
+	// Resume → -session prior-id, NOT -save-session.
+	if v := argvValue(lines, "-session"); v != "prior-id" {
+		t.Errorf("-session = %q, want prior-id (argv=%v)", v, lines)
+	}
+	if argvHas(lines, "-save-session") {
+		t.Errorf("-save-session must not appear on resume: %v", lines)
+	}
+	if !harnessHasResult(sender) {
+		t.Error("expected one TypeResult control after runViaCLI")
+	}
+}
+
+// argvHas reports whether flag appears as its own line in a captured argv dump
+// (printf '%s\n' "$@"). Needed because "-session" is a substring of
+// "-save-session" — a plain substring check would conflate them.
+func argvHas(lines []string, flag string) bool {
+	for _, ln := range lines {
+		if ln == flag {
+			return true
 		}
 	}
-	t.Errorf("-session flag missing from captured argv: %v", lines)
+	return false
+}
+
+// argvValue returns the argument following flag in a captured argv dump, or "".
+func argvValue(lines []string, flag string) string {
+	for i, ln := range lines {
+		if ln == flag && i+1 < len(lines) {
+			return lines[i+1]
+		}
+	}
+	return ""
 }
 
 // harnessHasResult reports whether sender captured a TypeResult control.

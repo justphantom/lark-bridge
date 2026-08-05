@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/eventmetrics"
@@ -44,6 +46,10 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		defer func() { _ = closeSink() }()
 	}
 
+	// Per-chat session (v4.0.1+): resume if we have a persisted id, else
+	// -save-session to create one (miniagent emits the id as a KindSession
+	// event we persist on arrival). Stateless when sessionRoot is unset.
+	sid := h.lookupSessionID(chatID)
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
 		Prompt:        prompt,
 		Model:         model,
@@ -52,7 +58,8 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		Thinking:      thinking,
 		MaxIterations: maxIter,
 		ConfigPath:    config,
-		Session:       h.sessionPath(chatID),
+		Session:       sid,
+		SaveSession:   h.sessionRoot != "" && sid == "",
 		Sink:          sink,
 	})
 	if err != nil {
@@ -170,6 +177,16 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			ChatID:   chatID,
 			Error:    &protocol.ErrorPayload{Message: ev.Message, Recoverable: true},
 		})
+	case miniclient.KindSession:
+		// -save-session turn: miniagent emitted the freshly-generated session
+		// id as stdout NDJSON (v4.0.1+). Persist the chatID→id mapping so the
+		// next turn resumes via -session. Not forwarded to the frontend — this
+		// is internal bridge state, not a user-visible event.
+		h.saveSessionID(chatID, ev.SessionID)
+		h.logger.Debug("miniagent session created",
+			log.FieldChatID, chatID,
+			log.FieldPromptID, promptID,
+			"session_id", ev.SessionID)
 	}
 }
 
@@ -375,18 +392,73 @@ func (h *Handler) ensureBinding(chatID string) {
 	h.router.Bind(chatID, "", "", "", "", "")
 }
 
-// sessionPath returns the absolute jsonl path for chatID's per-chat session,
-// or "" when no session root is configured (stateDir unset, e.g. some tests)
-// → runViaCLI passes "" → buildArgs omits -session → miniagent runs stateless.
-// v3 -session treats a value containing / or . as a literal path, so an
-// absolute path bypasses session.dir id resolution. chatID is external input
-// (Feishu chat id), so it is hashed (sha256 hex) — never concatenated raw —
-// to prevent path traversal/collision under sessionRoot. Same-chat write
-// serialisation is guaranteed by startTurn busy-then-drop (R4), not here.
-func (h *Handler) sessionPath(chatID string) string {
+// sessionIDFile returns the path to chatID's session-id mapping file, or ""
+// when no session root is configured (stateDir unset, e.g. some tests) →
+// runViaCLI runs the turn stateless. The file holds the miniagent-generated
+// session id (one line, no extension) so a later turn resumes via -session.
+//
+// chatID is external input (Feishu chat id), so it is hashed (sha256 hex) —
+// never concatenated raw — to prevent path traversal/collision under
+// sessionRoot. Same-chat write serialisation is guaranteed by startTurn
+// busy-then-drop (R4), not here. The session jsonl itself lives under
+// miniagent's own session.dir (the bridge does NOT configure session.dir) and
+// is managed by miniagent; this file is only the chatID→id indirection.
+func (h *Handler) sessionIDFile(chatID string) string {
 	if h.sessionRoot == "" {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(chatID))
-	return filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".jsonl")
+	return filepath.Join(h.sessionRoot, hex.EncodeToString(sum[:])+".id")
+}
+
+// lookupSessionID returns the persisted miniagent session id for chatID, or ""
+// if none yet (first turn for this chat, or mapping file missing/corrupt). A
+// corrupt or non-whitelist id is treated as "no session" so the turn creates a
+// fresh one via -save-session instead of failing upstream on a bad id.
+func (h *Handler) lookupSessionID(chatID string) string {
+	p := h.sessionIDFile(chatID)
+	if p == "" {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(b))
+	if !validSessionID(id) {
+		return ""
+	}
+	return id
+}
+
+// saveSessionID persists the miniagent-generated session id for chatID, called
+// when a KindSession event arrives (only on -save-session turns). Overwrites
+// any prior mapping. Same-chat serialisation (startTurn busy-then-drop, R4)
+// means this never races another write for the same chatID.
+func (h *Handler) saveSessionID(chatID, id string) {
+	p := h.sessionIDFile(chatID)
+	if p == "" || !validSessionID(id) {
+		return
+	}
+	if err := os.WriteFile(p, []byte(id), 0o600); err != nil {
+		h.logger.Warn("miniagent: persist session id failed",
+			log.FieldChatID, chatID, log.FieldPath, p, log.FieldError, err)
+	}
+}
+
+// validSessionID mirrors miniagent's id whitelist (latin letters/digits/'-')
+// so a corrupt or tampered mapping file is caught locally rather than failing
+// upstream. Matches miniagent's ValidateSessionID.
+func validSessionID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z', '0' <= r && r <= '9', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -98,19 +98,26 @@ func (h *Handler) formatMaxIter(n int) string {
 	return "默认（上游 CLI，约 20）"
 }
 
-// cmdNew deletes this chat's session jsonl so the next prompt starts a fresh
-// conversation (R2). It runs inside the per-chat turn slot (handleSessionCommand
-// → startTurn), so it cannot race an in-flight runTurn on the same chat — the
-// busy-then-drop that serialises prompts also guards /new. A missing file is
-// a no-op (first prompt ever, or already cleared); sessionRoot unset (stateDir
-// empty, e.g. some tests) → warning, since there is nothing to forget.
+// cmdNew deletes this chat's session-id mapping so the next prompt starts a
+// fresh conversation (R2): the bridge forgets the chatID→id mapping, so the
+// next turn passes -save-session and miniagent creates a new session. It runs
+// inside the per-chat turn slot (handleSessionCommand → startTurn), so it
+// cannot race an in-flight runTurn on the same chat — the busy-then-drop that
+// serialises prompts also guards /new. A missing file is a no-op (first prompt
+// ever, or already cleared); sessionRoot unset (stateDir empty, e.g. some
+// tests) → warning, since there is nothing to forget.
+//
+// NOTE: the miniagent session jsonl under miniagent's own session.dir is NOT
+// deleted here — the bridge does not configure session.dir and does not own
+// those files. It becomes an orphan (harmless; miniagent manages its session
+// store). Forgetting the mapping is enough to start fresh.
 func (h *Handler) cmdNew(_ context.Context, chatID, _ string) (level, title, body string) {
-	p := h.sessionPath(chatID)
+	p := h.sessionIDFile(chatID)
 	if p == "" {
 		return "warning", "清除会话", "会话目录未配置，无历史可清。"
 	}
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-		return "error", "清除会话", fmt.Sprintf("删除会话文件失败：%v", err)
+		return "error", "清除会话", fmt.Sprintf("删除会话映射失败：%v", err)
 	}
 	return "success", "已清除会话", "本轮对话历史已清空，下次提问开始新会话。"
 }

@@ -27,13 +27,16 @@ type controlSender = backendrpc.ControlSender
 // the picker/answer-broker machinery. One Handler per process; each turn
 // runs on its own goroutine.
 //
-// Per-chat memory lives in a jsonl under sessionRoot (one per chat, keyed by
-// sha256(chatID)); the path is passed as -session so miniagent re-feeds prior
-// turns. Same-chat writes are serialised by startTurn's busy-then-drop (R4),
-// not by a per-chat lock. The only other persistent per-chat state is the
-// router binding (Directory + ModelSpec + Mode + Thinking); all are spliced
-// into the miniagent CLI flags at fork time. /new deletes the jsonl so the
-// next prompt starts a fresh conversation.
+// Per-chat session state is a chatID→sessionID mapping file under sessionRoot
+// (one per chat, keyed by sha256(chatID), ".id" extension). miniagent owns the
+// session jsonl under its own session.dir (the bridge does NOT configure
+// session.dir); the bridge only persists the id miniagent emits as a stdout
+// type=session event on -save-session, then resumes via -session <id>. Same-
+// chat writes are serialised by startTurn's busy-then-drop (R4), not by a
+// per-chat lock. The only other persistent per-chat state is the router
+// binding (Directory + ModelSpec + Mode + Thinking); all are spliced into the
+// miniagent CLI flags at fork time. /new deletes the mapping so the next
+// prompt starts a fresh conversation.
 //
 // cancelBy enforces busy-then-drop per chat: a chat with an in-flight turn
 // rejects new prompts with a Notice instead of starting a second concurrent
@@ -50,7 +53,7 @@ type Handler struct {
 	streamHistory   int                // per-chat archive cap (0 = no archive)
 	archiveRedact   bool               // redact sensitive fields in stream archives
 	stateDir        string             // streams root dir
-	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat jsonl
+	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat chatID→sessionID ".id" mappings
 	configDir       string             // directory scanned by /config picker (default ~/.miniagent)
 	git             *bridgebase.GitRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
