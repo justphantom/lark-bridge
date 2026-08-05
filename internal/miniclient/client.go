@@ -154,13 +154,12 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Bumped to 3.3.0 because: v3.2.0 deleted 9 CLI flags + multi_edit
-// tool + split HTTPClient into ChatClient/StreamClient; v3.3.0 removed ${VAR}
-// expansion from config loading (c51d91c) and added dual-layer .miniagent/
-// rule discovery. Versions below this may emit event/tool shapes the bridge
-// doesn't handle, or silently mis-load config (pre-3.3 literal ${VAR} URLs).
-// The bridge special-cases "dev" (local untagged build) to always pass.
-const minSupportedVersion = "3.3.0"
+// requires. Bumped to 3.5.0: v3.5.0 removed -key-file (the bridge resolves and
+// injects the key via $MINIAGENT_API_KEY); v3.3.0 removed ${VAR} expansion from
+// config loading. Versions below this may emit event/tool shapes the bridge
+// doesn't handle, or silently mis-load config. The bridge special-cases "dev"
+// (local untagged build) to always pass.
+const minSupportedVersion = "3.5.0"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
 // string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only

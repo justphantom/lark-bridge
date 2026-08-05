@@ -523,21 +523,21 @@ func TestCompareVersion(t *testing.T) {
 // TestSatisfiesVersion pins the version-gate logic the startup health check
 // (IsReady) uses against minSupportedVersion. "dev" (untagged local build)
 // always passes so local development is not blocked. A pre-release of the
-// minimum (3.3.0-rc1) is treated as the release version and passes.
+// minimum (3.5.0-rc1) is treated as the release version and passes.
 func TestSatisfiesVersion(t *testing.T) {
 	cases := []struct {
 		v    string
 		want bool
 	}{
 		{"dev", true}, // untagged local build — always pass
-		{"3.3.0", true},
-		{"3.3.1", true},
+		{"3.5.0", true},
+		{"3.5.1", true},
 		{"3.10.0", true},
 		{"4.0.0", true},
-		{"3.3.0-rc1", true}, // pre-release strips to 3.3.0
-		{"3.3", true},       // == 3.3.0
-		{"3.2.5", false},    // below 3.3.0
-		{"3.1.0", false},    // the previous floor — now rejected
+		{"3.5.0-rc1", true}, // pre-release strips to 3.5.0
+		{"3.5", true},       // == 3.5.0
+		{"3.4.0", false},    // below 3.5.0
+		{"3.3.0", false},    // the previous floor — now rejected
 		{"3.0.0", false},
 		{"2.0.0", false},
 	}
