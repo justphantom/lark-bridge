@@ -3,6 +3,7 @@ package miniclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -21,19 +22,42 @@ const listModelsTimeout = 15 * time.Second
 // /v1/models catalog; past it we fail rather than swallow the whole output.
 const listModelsMaxBytes = 4 << 20
 
-// ListModels runs `miniagent -list-models` and returns the endpoint's model ids
-// (one id per stdout line). It replaces the bridge's former hand-rolled
-// GET /v1/models: v2.0.0 re-added -list-models (fe85c16 had removed it), so the
-// CLI owns the endpoint, auth, and retry once more — the bridge no longer
-// carries its own LLM HTTP code.
+// ModelRef is one available provider/model pair. It mirrors miniagent's
+// -list-models NDJSON model event ({"type":"model","provider","model"}).
 //
-// miniagent v3.1+ is config-only: -list-models resolves the provider from the
-// miniagent.json at -config (须 defaults.model 或单一 provider，否则 CLI 报错).
-// The bridge never passes -chat-url/-models-url (those flags are gone), nor
-// -key-file (removed upstream post-3.4.0): the key is resolved via
-// effectiveAPIKey (KeyFile path → read by the bridge) and injected as
-// $MINIAGENT_API_KEY, same routing as Run.
-func (c *Client) ListModels(ctx context.Context, configPath string) ([]string, error) {
+// provider and model are SEPARATE fields because a model id may itself contain
+// '/' (OpenRouter-style "org/model"), so a concatenated "provider/model"
+// string is ambiguous to split back. miniagent v4 (commits 02f8f81 + 2099241,
+// post-v4.0.1 / unreleased on the miniagent main branch) split the CLI into
+// paired -provider/-model flags and changed -list-models to emit one NDJSON
+// model event per line (aggregating ALL providers, each line carrying its own
+// provider). The bridge keeps the pair together end-to-end so it can pass them
+// back as a matched -provider/-model pair on Run.
+type ModelRef struct {
+	Provider string
+	Model    string
+}
+
+// ListModels runs `miniagent -list-models` and returns the endpoint's available
+// models as provider/model pairs (one ModelRef per stdout NDJSON model event).
+// It replaces the bridge's former hand-rolled GET /v1/models: v2.0.0 re-added
+// -list-models (fe85c16 had removed it), so the CLI owns the endpoint, auth,
+// and retry once more — the bridge no longer carries its own LLM HTTP code.
+//
+// miniagent v3.1+ is config-only: -list-models resolves the provider(s) from
+// the miniagent.json at -config. The bridge never passes -chat-url/-models-url
+// (those flags are gone), nor -key-file (removed upstream post-3.4.0): the key
+// is resolved via effectiveAPIKey (KeyFile path → read by the bridge) and
+// injected as $MINIAGENT_API_KEY, same routing as Run.
+//
+// Output contract (miniagent post-v4.0.1, 2099241): stdout is NDJSON, one JSON
+// object per line shaped {"type":"model","provider":"<name>","model":"<id>"}.
+// Non-JSON lines (stderr bleed-through under partial failure, where stdout and
+// stderr are merged by the capturing harness) and lines whose type != "model"
+// are skipped. NOTE: this is incompatible with the v4.0.1 tag's former
+// plain-text "provider/model_id" lines — the bridge now requires miniagent HEAD
+// (or the upcoming tagged release carrying 2099241).
+func (c *Client) ListModels(ctx context.Context, configPath string) ([]ModelRef, error) {
 	if c.cliPath == "" {
 		return nil, fmt.Errorf("miniclient: cli_path is empty")
 	}
@@ -77,11 +101,29 @@ func (c *Client) ListModels(ctx context.Context, configPath string) ([]string, e
 	if len(raw) > listModelsMaxBytes {
 		return nil, fmt.Errorf("miniagent -list-models：输出超过 %d 字节上限", listModelsMaxBytes)
 	}
-	var ids []string
+	// NDJSON: one model event per line. miniagent (2099241) exits 1 on partial
+	// failure but still emits the successful entries on stdout before doing so;
+	// that path is handled above (cmd.Wait err). Here every parse failure or
+	// non-model line is skipped rather than fatal, so a stray stderr line
+	// merged into stdout cannot blank the whole catalog.
+	var refs []ModelRef
 	for _, line := range strings.Split(string(raw), "\n") {
-		if id := strings.TrimSpace(line); id != "" {
-			ids = append(ids, id)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
+		var ev struct {
+			Type     string `json:"type"`
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		if ev.Type != "model" || ev.Model == "" {
+			continue
+		}
+		refs = append(refs, ModelRef{Provider: ev.Provider, Model: ev.Model})
 	}
-	return ids, nil
+	return refs, nil
 }

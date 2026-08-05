@@ -31,7 +31,7 @@ func TestRunViaCLI_ArchivesToStreamsMiniagent(t *testing.T) {
 	// runViaCLI's error path runs and the sink's deferred Close fires.
 	client := miniclient.New(miniclient.Config{}, log.Nop())
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 50, stateDir, false)
+	h := New(sender, log.Nop(), nil, "", "test-model", "", client, "", 50, stateDir, false)
 
 	h.runViaCLI(context.Background(), "prompt-archive", "chat-archive", "do something")
 
@@ -81,7 +81,7 @@ func TestRunViaCLI_NoArchiveWhenDisabled(t *testing.T) {
 	client := miniclient.New(miniclient.Config{}, log.Nop())
 	sender := &captureSender{}
 	// streamHistory = 0 → archive disabled.
-	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 0, stateDir, false)
+	h := New(sender, log.Nop(), nil, "", "test-model", "", client, "", 0, stateDir, false)
 
 	h.runViaCLI(context.Background(), "prompt-noarch", "chat-noarch", "hi")
 

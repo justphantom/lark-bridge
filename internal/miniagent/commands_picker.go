@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/miniclient"
 )
 
 // cmdModel pins or clears the per-chat model:
@@ -35,22 +36,43 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 		go func() { //nolint:gosec // G118: picker outlives the request ctx — the user's click may come minutes later
 			pickCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			models, err := h.client.ListModels(pickCtx, h.activeConfig(chatID))
+			refs, err := h.client.ListModels(pickCtx, h.activeConfig(chatID))
 			if err != nil {
 				h.notifyWithPromptID(chatID, promptID, "error", "选择失败", err.Error())
 				return
 			}
-			if len(models) == 0 {
+			if len(refs) == 0 {
 				h.notifyWithPromptID(chatID, promptID, "warning", "模型列表为空", "端点未返回任何模型；可用 /model <id> 手动指定。")
 				return
 			}
-			choice, messageID, err := h.askAndWait(pickCtx, chatID, promptID, "模型", models)
+			// 展示与回放：-list-models 每行带各自 provider（2099241）。单
+			// provider 只显 model id；多 provider 加 provider 前缀区分。选中
+			// 后按 label 反查 ModelRef，把 (provider,model) 成对写回 binding
+			// —— miniagent -provider/-model 须成对（02f8f81）。
+			multi := distinctProviders(refs) > 1
+			options := make([]string, len(refs))
+			labelToRef := make(map[string]miniclient.ModelRef, len(refs))
+			for i, m := range refs {
+				label := m.Model
+				if multi {
+					label = m.Provider + "/" + m.Model
+				}
+				options[i] = label
+				labelToRef[label] = m
+			}
+			choice, messageID, err := h.askAndWait(pickCtx, chatID, promptID, "模型", options)
 			if err != nil {
 				h.notifyWithPromptID(chatID, promptID, "warning", "选择失败", err.Error())
 				return
 			}
+			ref, ok := labelToRef[choice]
+			if !ok {
+				h.notifyWithCardUpdate(chatID, messageID, "error", "选择失败", "选中的模型不在列表中。")
+				return
+			}
 			h.ensureBinding(chatID)
-			h.router.SetModelSpec(chatID, choice)
+			h.router.SetModelSpec(chatID, ref.Model)
+			h.router.SetProvider(chatID, ref.Provider)
 			h.notifyWithCardUpdate(chatID, messageID, "success", "已切换模型", "已切换到模型 "+choice+"（下次提问生效）。")
 		}()
 		return "async", "", "" // sentinel: handleSessionCommand must not notify
@@ -58,11 +80,36 @@ func (h *Handler) cmdModel(_ context.Context, chatID, arg string) (level, title,
 	if arg == "clear" {
 		h.ensureBinding(chatID)
 		h.router.SetModelSpec(chatID, "")
-		return "success", "已恢复默认", fmt.Sprintf("已清除自定义模型，将使用全局默认 %s。", h.cfgModel)
+		h.router.SetProvider(chatID, "")
+		return "success", "已恢复默认", fmt.Sprintf("已清除自定义模型，将使用全局默认 %s。", displayModel(h.cfgProvider, h.cfgModel))
 	}
+	// /model <id>: 手动指定仅 model id，无 provider。清空 binding 上的旧
+	// provider（避免旧 provider 配新 model），activeTurnConfig 回落全局
+	// cfgProvider；若全局也未配，buildArgs 不传 -provider/-model，改由
+	// miniagent.json 的 defaults 生效。
 	h.ensureBinding(chatID)
 	h.router.SetModelSpec(chatID, arg)
+	h.router.SetProvider(chatID, "")
 	return "success", "已切换模型", fmt.Sprintf("已切换到模型 %s（下次提问生效）。", arg)
+}
+
+// distinctProviders counts unique provider names among refs. Drives whether the
+// model picker shows a "provider/model" prefix (multi) or just the model id.
+func distinctProviders(refs []miniclient.ModelRef) int {
+	seen := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		seen[r.Provider] = struct{}{}
+	}
+	return len(seen)
+}
+
+// displayModel formats a provider/model pair: "provider/model" when provider is
+// set, else the bare model id. Used by /current and the /model clear notice.
+func displayModel(provider, model string) string {
+	if provider != "" {
+		return provider + "/" + model
+	}
+	return model
 }
 
 // cmdDirectory pins/clears/selects the per-chat working directory:

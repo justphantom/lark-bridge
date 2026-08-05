@@ -90,5 +90,5 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 // the next fork will use. Falls back to the global defaults when the chat has no pin.
 func (h *Handler) cmdCurrent(_ context.Context, chatID, _ string) (level, title, body string) {
 	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n配置文件：%s\n权限模式：%s\n思考级别：%s\n迭代上限：%s",
-		h.activeModel(chatID), h.activeDir(chatID), h.activeConfig(chatID), h.activeMode(chatID), h.activeThinking(chatID), h.formatMaxIter(h.activeMaxIter(chatID)))
+		displayModel(h.activeProvider(chatID), h.activeModel(chatID)), h.activeDir(chatID), h.activeConfig(chatID), h.activeMode(chatID), h.activeThinking(chatID), h.formatMaxIter(h.activeMaxIter(chatID)))
 }

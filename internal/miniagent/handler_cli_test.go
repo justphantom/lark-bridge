@@ -22,7 +22,7 @@ import (
 func newCLIHandler(t *testing.T) (*Handler, *captureSender) {
 	t.Helper()
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", nil, "", 0, "", false)
+	h := New(sender, log.Nop(), nil, "", "test-model", "", nil, "", 0, "", false)
 	return h, sender
 }
 
@@ -296,7 +296,7 @@ func TestEmitCLIEvent_TextDelta_Dropped(t *testing.T) {
 // wired in newCLIHandler.
 func TestActiveTurnConfig_DefaultsNoBinding(t *testing.T) {
 	h, _ := newCLIHandler(t)
-	model, dir, mode, thinking, _ := h.activeTurnConfig("c1")
+	model, _, dir, mode, thinking, _ := h.activeTurnConfig("c1")
 	if model != "test-model" {
 		t.Errorf("model = %q, want test-model", model)
 	}
@@ -330,18 +330,18 @@ func TestActiveTurnConfig_BoundOverridesDefault(t *testing.T) {
 	r.SetModelSpec("c1", "kimi")
 	r.SetDirectory("c1", "/proj")
 
-	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", nil, "", 0, "", false)
+	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", "", nil, "", 0, "", false)
 
-	if model, _, _, _, _ := h.activeTurnConfig("c1"); model != "kimi" {
+	if model, _, _, _, _, _ := h.activeTurnConfig("c1"); model != "kimi" {
 		t.Errorf("bound model = %q, want kimi", model)
 	}
-	if _, dir, _, _, _ := h.activeTurnConfig("c1"); dir != "/proj" {
+	if _, _, dir, _, _, _ := h.activeTurnConfig("c1"); dir != "/proj" {
 		t.Errorf("bound dir = %q, want /proj", dir)
 	}
 
 	// A chat without a binding still gets the global defaults — proves the
 	// override is per-chat, not process-wide.
-	if model, dir, _, _, _ := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
+	if model, _, dir, _, _, _ := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
 		t.Errorf("unbound = (%q, %q), want (test-model, /global-root)", model, dir)
 	}
 }
@@ -359,23 +359,23 @@ func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
 	defer r.Close()
 	r.Bind("c1", "", "", "", "", "")
 
-	h := New(&captureSender{}, log.Nop(), r, "/root", "m", nil, "", 0, "", false)
+	h := New(&captureSender{}, log.Nop(), r, "/root", "m", "", nil, "", 0, "", false)
 
 	// Default effective values without any pin.
-	if _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
+	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
 		t.Errorf("defaults = (%q, %q), want (default, off)", mode, thinking)
 	}
 
 	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
-	if _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "auto" || thinking != "high" {
+	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "auto" || thinking != "high" {
 		t.Errorf("pinned = (%q, %q), want (auto, high)", mode, thinking)
 	}
 
 	// Clearing the pin returns the global default (no per-chat value).
 	r.SetMode("c1", "")
 	r.SetThinking("c1", "")
-	if _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
+	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
 		t.Errorf("after clear = (%q, %q), want (default, off)", mode, thinking)
 	}
 }
@@ -391,7 +391,7 @@ func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
 	}
 	defer r.Close()
 	r.Bind("c1", "", "", "", "", "")
-	h := New(&captureSender{}, log.Nop(), r, "/root", "m", nil, "", 0, "", false)
+	h := New(&captureSender{}, log.Nop(), r, "/root", "m", "", nil, "", 0, "", false)
 
 	// No pin → client default (client nil → 0).
 	if got := h.activeMaxIter("c1"); got != 0 {
@@ -422,7 +422,7 @@ func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
 func newSessionHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	stateDir := t.TempDir()
-	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", nil, "", 0, stateDir, false)
+	h := New(&captureSender{}, log.Nop(), nil, "", "test-model", "", nil, "", 0, stateDir, false)
 	return h, stateDir
 }
 
@@ -485,7 +485,7 @@ func TestSessionIDFile_PathSafety(t *testing.T) {
 // lookupSessionID returns "" → runViaCLI runs a stateless turn (no -session /
 // -save-session). This is the graceful-degrade path.
 func TestSessionIDFile_EmptyRootStateless(t *testing.T) {
-	h := New(&captureSender{}, log.Nop(), nil, "", "m", nil, "", 0, "", false)
+	h := New(&captureSender{}, log.Nop(), nil, "", "m", "", nil, "", 0, "", false)
 	if got := h.sessionIDFile("any-chat"); got != "" {
 		t.Errorf("empty sessionRoot: sessionIDFile = %q, want empty", got)
 	}
@@ -515,7 +515,7 @@ func TestRunViaCLI_PassesSaveSession(t *testing.T) {
 
 	client := miniclient.New(miniclient.Config{CLIPath: stub, APIKey: "k"}, log.Nop())
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 0, stateDir, false)
+	h := New(sender, log.Nop(), nil, "", "test-model", "", client, "", 0, stateDir, false)
 	defer h.Close()
 
 	mapPath := h.sessionIDFile("oc_chat_1")
@@ -566,7 +566,7 @@ func TestRunViaCLI_ResumesWithSessionID(t *testing.T) {
 
 	client := miniclient.New(miniclient.Config{CLIPath: stub, APIKey: "k"}, log.Nop())
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, "", "test-model", client, "", 0, stateDir, false)
+	h := New(sender, log.Nop(), nil, "", "test-model", "", client, "", 0, stateDir, false)
 	defer h.Close()
 
 	// Seed the mapping as a prior turn would have persisted it.
@@ -743,7 +743,7 @@ func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
 func TestCmdMemory_NoMemorySurface(t *testing.T) {
 	dir := t.TempDir()
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, dir, "test-model", nil, "", 0, "", false)
+	h := New(sender, log.Nop(), nil, dir, "test-model", "", nil, "", 0, "", false)
 	defer h.Close()
 
 	// No memory file exists; cmdMemory should surface the empty notice.
@@ -777,7 +777,7 @@ func TestCmdMemory_WithRecords(t *testing.T) {
 	}
 
 	sender := &captureSender{}
-	h := New(sender, log.Nop(), nil, dir, "test-model", nil, "", 0, "", false)
+	h := New(sender, log.Nop(), nil, dir, "test-model", "", nil, "", 0, "", false)
 	defer h.Close()
 
 	level, title, body := h.cmdMemory(context.Background(), "c", "")

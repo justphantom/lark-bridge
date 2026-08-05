@@ -38,7 +38,7 @@ func (f *gitFakeCommander) snapshot() (called bool, dir, name string, args []str
 
 func newMiniGitHandler(t *testing.T, cmd *gitFakeCommander, workspaceRoot string) *Handler {
 	t.Helper()
-	h := New(&captureSender{}, log.Nop(), nil, workspaceRoot, "test-model", nil, "", 0, "", false)
+	h := New(&captureSender{}, log.Nop(), nil, workspaceRoot, "test-model", "", nil, "", 0, "", false)
 	h.git = bridgebase.NewGitRunner(cmd, nil, 0)
 	return h
 }

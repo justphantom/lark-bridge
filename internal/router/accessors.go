@@ -63,6 +63,14 @@ func (r *Router) SetModelSpec(chatID, modelSpec string) {
 	r.mutate(chatID, func(b *Binding) { b.ModelSpec = modelSpec })
 }
 
+// SetProvider replaces the pinned miniagent -provider on the binding for chatID
+// and persists the change. No-op when the binding does not exist. Pass "" to
+// clear. Paired with ModelSpec: miniagent post-v4.0.1 (02f8f81) requires
+// -provider/-model as a matched pair, so the model picker sets both together.
+func (r *Router) SetProvider(chatID, provider string) {
+	r.mutate(chatID, func(b *Binding) { b.Provider = provider })
+}
+
 // SetAgent replaces the pinned agent on the binding for chatID and persists
 // the change. No-op when the binding does not exist. Pass "" to clear.
 func (r *Router) SetAgent(chatID, agent string) {

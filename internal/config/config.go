@@ -177,6 +177,12 @@ type MiniAgent struct {
 	// Model is the model id passed as -model each turn (config mode: a bare id
 	// also accepted by the upstream CLI). Required: ${MINIAGENT_DEFAULT_MODEL}.
 	Model string `json:"model,omitempty"`
+	// Provider is the provider name passed as -provider each turn, PAIRED with
+	// Model. miniagent post-v4.0.1 (02f8f81) split -model (bare id) from
+	// -provider and requires them together: a Model without Provider leaves the
+	// pair inert (buildArgs omits both and miniagent.json's defaults apply).
+	// Optional: ${MINIAGENT_DEFAULT_PROVIDER}.
+	Provider string `json:"provider,omitempty"`
 	// SystemPrompt is prepended to every turn (-system). Empty → default persona.
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// MaxTokens caps one completion's output tokens (-max-tokens). <=0 → 4096.

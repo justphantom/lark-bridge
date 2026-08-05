@@ -166,15 +166,17 @@ func TestBuildArgs_Full(t *testing.T) {
 		ConfigPath:   "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{
-		Prompt:  "hi",
-		Model:   "kimi",
-		Workdir: "/proj",
+		Prompt:   "hi",
+		Model:    "kimi",
+		Provider: "moonshot",
+		Workdir:  "/proj",
 	})
 	// Check the surviving flags are present. -api-key is intentionally absent:
 	// the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
-	// -config is always emitted (v3.1+ config-only mode).
+	// -config is always emitted (v3.1+ config-only mode). -provider/-model are
+	// emitted as a pair (miniagent post-v4.0.1 requires them together).
 	want := map[string]bool{
-		"-model": false, "-config": false,
+		"-provider": false, "-model": false, "-config": false,
 		"-system": false, "-max-tokens": false, "-workdir": false,
 	}
 	for _, a := range args {
@@ -198,9 +200,10 @@ func TestBuildArgs_Full(t *testing.T) {
 
 func TestBuildArgs_Minimal(t *testing.T) {
 	c := New(Config{CLIPath: "/bin/ma", APIKey: "k"}, nil)
-	args := c.buildArgs(RunOptions{Model: "m"})
-	// Only -model is guaranteed when others are empty. -api-key must NOT
-	// appear (the CLI has no such flag; the key goes via env).
+	args := c.buildArgs(RunOptions{Provider: "p", Model: "m"})
+	// -provider/-model are emitted as a pair when both are set (miniagent
+	// post-v4.0.1 requires them together). -api-key must NOT appear (the CLI
+	// has no such flag; the key goes via env).
 	hasFlag := func(f string) bool {
 		for i, a := range args {
 			if a == f && i+1 < len(args) {
@@ -209,8 +212,8 @@ func TestBuildArgs_Minimal(t *testing.T) {
 		}
 		return false
 	}
-	if !hasFlag("-model") {
-		t.Errorf("missing required flag -model: %v", args)
+	if !hasFlag("-model") || !hasFlag("-provider") {
+		t.Errorf("missing required -provider/-model pair: %v", args)
 	}
 	for _, a := range args {
 		if a == "-api-key" {
@@ -219,6 +222,26 @@ func TestBuildArgs_Minimal(t *testing.T) {
 	}
 	if hasFlag("-workdir") {
 		t.Errorf("workdir should be absent when empty: %v", args)
+	}
+}
+
+// TestBuildArgs_ModelWithoutProviderOmitted verifies the post-v4.0.1 pair rule:
+// a Model without a Provider is NOT emitted as a bare -model (miniagent would
+// reject the lone flag with exit 1). buildArgs omits BOTH so miniagent.json's
+// defaults pair applies instead. This is the fallback path a manual /model <id>
+// pin (no known provider) takes.
+func TestBuildArgs_ModelWithoutProviderOmitted(t *testing.T) {
+	c := New(Config{CLIPath: "/bin/ma", APIKey: "k", ConfigPath: "/c.json"}, nil)
+	args := c.buildArgs(RunOptions{Model: "lonely"})
+	if contains(args, "-model") {
+		t.Errorf("-model must NOT appear without -provider (pair rule): %v", args)
+	}
+	if contains(args, "-provider") {
+		t.Errorf("-provider must NOT appear without a model: %v", args)
+	}
+	// -config is still emitted (config-only mode is independent of the pair).
+	if !contains(args, "-config") {
+		t.Errorf("-config should still appear: %v", args)
 	}
 }
 
@@ -344,9 +367,10 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 		Thinking:   "off",     // client default still emits -thinking in config mode
 	}, nil)
 	args := c.buildArgs(RunOptions{
-		Model:   "main/gpt-4o",
-		Workdir: "/w",
-		Session: "abc-session-id",
+		Provider: "openrouter",
+		Model:    "main/gpt-4o",
+		Workdir:  "/w",
+		Session:  "abc-session-id",
 	})
 	if v := argValue(args, "-config"); v != "/etc/miniagent/miniagent.json" {
 		t.Errorf("-config = %q, want miniagent.json path", v)
@@ -357,8 +381,11 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	if contains(args, "-models-url") {
 		t.Errorf("-models-url must NOT appear in config mode: %v", args)
 	}
+	if v := argValue(args, "-provider"); v != "openrouter" {
+		t.Errorf("-provider = %q, want openrouter", v)
+	}
 	if v := argValue(args, "-model"); v != "main/gpt-4o" {
-		t.Errorf("-model = %q, want main/gpt-4o", v)
+		t.Errorf("-model = %q, want main/gpt-4o (model id may contain '/')", v)
 	}
 	if v := argValue(args, "-workdir"); v != "/w" {
 		t.Errorf("-workdir = %q, want /w", v)

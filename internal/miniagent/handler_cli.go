@@ -24,11 +24,12 @@ import (
 // owns IPC + per-chat binding (Directory/ModelSpec) + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	model, workdir, mode, thinking, config := h.activeTurnConfig(chatID)
+	model, provider, workdir, mode, thinking, config := h.activeTurnConfig(chatID)
 	maxIter := h.activeMaxIter(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
 		log.FieldPromptID, promptID,
+		"provider", provider,
 		"model", model,
 		"workdir", workdir)
 
@@ -53,6 +54,7 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	events, err := h.client.Run(ctx, miniclient.RunOptions{
 		Prompt:        prompt,
 		Model:         model,
+		Provider:      provider,
 		Workdir:       workdir,
 		Mode:          mode,
 		Thinking:      thinking,
@@ -272,29 +274,38 @@ func (h *Handler) activeConfig(chatID string) string {
 	return h.clientDefaultConfig()
 }
 
-// activeTurnConfig returns the (model, workdir, mode, thinking) the CLI
-// subprocess should be invoked with for this chat. Per-chat binding fields
-// (router.Lookup) win; empty fields fall back to the bridge's global defaults
-// from config.
+// activeTurnConfig returns the (model, provider, workdir, mode, thinking,
+// config) the CLI subprocess should be invoked with for this chat. Per-chat
+// binding fields (router.Lookup) win; empty fields fall back to the bridge's
+// global defaults from config. model+provider are tracked as a pair because
+// miniagent post-v4.0.1 requires -provider/-model together.
 //
 // When no binding exists the globals are returned directly — the binding is
 // created lazily by /model, /cd, /mode or /thinking, not by the first prompt
 // (miniagent has no session to seed).
-func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinking, config string) {
+func (h *Handler) activeTurnConfig(chatID string) (model, provider, workdir, mode, thinking, config string) {
 	model = h.cfgModel
+	provider = h.cfgProvider
 	workdir = h.workspaceRoot
 	mode = h.clientDefaultMode()
 	thinking = h.clientDefaultThinking()
 	config = h.clientDefaultConfig()
 	if h.router == nil {
-		return model, workdir, mode, thinking, config
+		return model, provider, workdir, mode, thinking, config
 	}
 	b, ok := h.router.Lookup(chatID)
 	if !ok {
-		return model, workdir, mode, thinking, config
+		return model, provider, workdir, mode, thinking, config
 	}
 	if b.ModelSpec != "" {
 		model = b.ModelSpec
+		// Provider: a picker-selected model carries its own provider on the
+		// binding; a manual /model <id> pin leaves Provider empty and falls
+		// back to the global cfgProvider. buildArgs only emits the
+		// -provider/-model pair when both end up non-empty.
+		if b.Provider != "" {
+			provider = b.Provider
+		}
 	}
 	if b.Directory != "" {
 		workdir = b.Directory
@@ -308,7 +319,7 @@ func (h *Handler) activeTurnConfig(chatID string) (model, workdir, mode, thinkin
 	if b.ConfigFile != "" {
 		config = b.ConfigFile
 	}
-	return model, workdir, mode, thinking, config
+	return model, provider, workdir, mode, thinking, config
 }
 
 // activeModel returns the model the CLI would be invoked with for this chat
@@ -320,6 +331,24 @@ func (h *Handler) activeModel(chatID string) string {
 		}
 	}
 	return h.cfgModel
+}
+
+// activeProvider returns the provider the CLI would be invoked with for this
+// chat (used by /current display). A picker-selected model carries its own
+// provider; a manual /model <id> pin has none and falls back to the global
+// cfgProvider. Same precedence as activeTurnConfig.
+func (h *Handler) activeProvider(chatID string) string {
+	if h.router != nil {
+		if b, ok := h.router.Lookup(chatID); ok {
+			if b.Provider != "" {
+				return b.Provider
+			}
+			if b.ModelSpec != "" {
+				return h.cfgProvider
+			}
+		}
+	}
+	return h.cfgProvider
 }
 
 // activeDir returns the workdir the CLI would be invoked with for this chat

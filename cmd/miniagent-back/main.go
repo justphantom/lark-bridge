@@ -188,7 +188,7 @@ func run(cfgPath string) error {
 	// scan used (ResolveConfigPath), so the picker offers exactly what startup
 	// picked from.
 	configDir := config.ResolveConfigDir(cfg)
-	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, client, configDir, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.RedactStreams())
+	h := miniagent.New(rpc, logger, r, cfg.MiniAgent.WorkspaceRoot, cfg.MiniAgent.Model, cfg.MiniAgent.Provider, client, configDir, cfg.MiniAgent.StreamHistory, cfg.StateDir, cfg.RedactStreams())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -28,6 +28,7 @@ type Binding struct {
 	Directory      string `json:"directory,omitempty"`
 	Title          string `json:"title,omitempty"`
 	ModelSpec      string `json:"modelSpec,omitempty"`
+	Provider       string `json:"provider,omitempty"`        // miniagent (-provider; paired with ModelSpec → -model)
 	Agent          string `json:"agent,omitempty"`          // opencode
 	PermissionMode string `json:"permissionMode,omitempty"` // claude
 	EffortLevel    string `json:"effortLevel,omitempty"`    // claude

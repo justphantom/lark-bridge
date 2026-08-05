@@ -154,12 +154,21 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Bumped to 4.0.1: v4.0.1 moved the -save-session session id from a
-// stderr text line to a stdout NDJSON type=session event (the bridge reads the
-// id from KindSession, not stderr); v4.0.0 split -session (resume by id; file
-// must pre-exist) from -save-session (create; id emitted on stdout). v3.5.0
-// removed -key-file (key injected via $MINIAGENT_API_KEY). The bridge
-// special-cases "dev" (local untagged build) to always pass.
+// requires. Kept at "4.0.1" because the post-v4.0.1 breaking changes the bridge
+// now depends on live on miniagent's main HEAD UNRELEASED (no tag yet), so there
+// is no higher semver to point at:
+//   - 02f8f81 split -model (bare id) from a new -provider flag and requires
+//     them as a matched pair — buildArgs emits both or neither;
+//   - 2099241 changed -list-models to NDJSON {"type":"model","provider","model"}
+//     — ListModels parses one ModelRef per line.
+// A v4.0.1 *tagged* binary PASSES this gate but is NOT compatible: it still
+// emits the old plain-text -list-models lines, which now parse to zero models.
+// Bump this to the tag once miniagent releases 02f8f81+2099241. "dev" (untagged
+// local build) always passes.
+//
+// Prior bumps: v4.0.1 moved -save-session session id from a stderr text line to
+// a stdout NDJSON type=session event; v4.0.0 split -session (resume) from
+// -save-session (create); v3.5.0 removed -key-file (key via $MINIAGENT_API_KEY).
 const minSupportedVersion = "4.0.1"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
@@ -260,8 +269,13 @@ func (c *Client) IsReady(ctx context.Context) error {
 
 // RunOptions describes one miniagent turn.
 type RunOptions struct {
-	Prompt   string
+	Prompt string
+	// Model + Provider are the paired -model/-provider override. miniagent
+	// post-v4.0.1 (02f8f81) split -model (now a bare id) from a new -provider
+	// flag and requires them as a matched pair; buildArgs emits the pair only
+	// when BOTH are non-empty.
 	Model    string
+	Provider string
 	Workdir  string
 	Mode     string // [P2] per-chat override; "" → client default
 	Thinking string // [P2] per-chat override; "" → client default
@@ -343,6 +357,7 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 	}
 
 	c.logger.Debug("miniagent started",
+		"provider", opts.Provider,
 		"model", opts.Model,
 		"workdir", opts.Workdir,
 		"prompt_len", len(opts.Prompt))
@@ -361,7 +376,16 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) (<-chan Event, error)
 // upstream (post-3.4.0) and is therefore never emitted. Flag form is
 // single-dash to match the miniagent README.
 func (c *Client) buildArgs(opts RunOptions) []string {
-	a := []string{"-model", opts.Model}
+	var a []string
+	// miniagent post-v4.0.1 (02f8f81): -model is a bare id and -provider is a
+	// separate flag; the two MUST be passed together (only-one is a resolve
+	// error, exit 1). Emit the pair only when both are non-empty; when either
+	// is empty we omit both and let miniagent.json's defaults pair apply. This
+	// never trips the pair check, at the cost that a model pin without a known
+	// provider falls back to the config defaults instead of overriding.
+	if opts.Provider != "" && opts.Model != "" {
+		a = append(a, "-provider", opts.Provider, "-model", opts.Model)
+	}
 	// config-only：端点/key/run 参数由 miniagent.json 解析。-config 每轮覆盖
 	// （/config 命令 per-chat 切换）> client 启动默认；main.go 保证后者非空。
 	configPath := opts.ConfigPath

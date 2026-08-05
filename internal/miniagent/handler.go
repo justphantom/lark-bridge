@@ -49,6 +49,7 @@ type Handler struct {
 	answers         *bridgebase.AnswerBroker
 	workspaceRoot   string             // global default for the /cd picker scope
 	cfgModel        string             // global default model (from config)
+	cfgProvider     string             // global default provider (from config); paired with cfgModel
 	client          *miniclient.Client // non-nil → CLI subprocess mode
 	streamHistory   int                // per-chat archive cap (0 = no archive)
 	archiveRedact   bool               // redact sensitive fields in stream archives
@@ -74,12 +75,13 @@ type Handler struct {
 
 // New builds a Handler. rpc emits Controls to the frontend; router holds
 // per-chat Directory/ModelSpec bindings (nil acceptable only in tests where
-// no slash command runs); client is the per-turn fork runner. cfgModel is
-// the global default model used when a chat has no ModelSpec pin;
-// workspaceRoot bounds the /cd picker and serves as the global default
+// no slash command runs); client is the per-turn fork runner. cfgModel +
+// cfgProvider are the global default -model/-provider pair used when a chat
+// has no ModelSpec pin (miniagent post-v4.0.1 requires them as a matched
+// pair); workspaceRoot bounds the /cd picker and serves as the global default
 // workdir when a chat has no Directory pin. configDir bounds the /config
 // picker (the directory scanned for miniagent.json / *-miniagent.json).
-func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel string, client *miniclient.Client, configDir string, streamHistory int, stateDir string, archiveRedact bool) *Handler {
+func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot, cfgModel, cfgProvider string, client *miniclient.Client, configDir string, streamHistory int, stateDir string, archiveRedact bool) *Handler {
 	if logger == nil {
 		logger = log.Nop()
 	}
@@ -90,6 +92,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		answers:       bridgebase.NewAnswerBroker(),
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
+		cfgProvider:   cfgProvider,
 		client:        client,
 		configDir:     configDir,
 		streamHistory: streamHistory,
