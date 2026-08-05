@@ -97,7 +97,7 @@ func parseMemoryFile(p string) ([]memoryRecord, error) {
 func (h *Handler) cmdHelp(_ context.Context, _ string, _ string) (level, title, body string) {
 	var sb strings.Builder
 	sb.WriteString("可用命令：\n\n")
-	sb.WriteString("/current        显示当前模型/工作目录/权限/思考\n")
+	sb.WriteString("/current        显示当前模型/工作目录/权限/思考/会话\n")
 	sb.WriteString("/model          切换模型（弹出选择卡）\n")
 	sb.WriteString("/model <id>     直接指定模型\n")
 	sb.WriteString("/model clear    恢复默认模型\n")
