@@ -1,9 +1,0 @@
-{"type":"note","topic":"miniagent配置","content":"miniagent CLI 默认从 ~/.miniagent/miniagent.json 读取配置；lark-bridge 的 miniclient.Config 提供 ConfigPath 字段可覆盖该路径，miniagent CLI 支持 --config 参数。"}
-{"type":"note","topic":"claude-back设置机制","content":"claude-back 通过 Config.SettingsDir 字段指定设置目录，ListSettings 扫描 settings.json 和 *-settings.json 两种文件模式。该模式被 miniagent /config 命令复用（扫描 miniagent.json 和 *-miniagent.json）。"}
-{"type":"note","topic":"abort指令设计","content":"/abort 在 miniagent/handler.go 中处理于 startTurn 之前，以避免占用 per-chat turn slot；在 claudebridge 中通过 cmdAbort 方法实现。opencodebridge/ompbridge 无此指令。"}
-{"type":"note","topic":"多后端config隔离","content":"多后端共享同一个 config JSON 文件，各进程只读自己需要的字段（如 claude{} / miniagent{} / opencode{}），通过 DisallowUnknownFields 拒绝未知字段。"}
-{"type":"note","topic":"指令命名规范","content":"跨后端功能对称的指令应统一命名：/abort（原 /session-abort）、/config（claude-back 原 /settings → 对齐 miniagent-back）。内部方法名可不跟随改名，以保持与底层 API 术语一致。"}
-{"type":"note","topic":"测试习惯","content":"make test 含 race 检测；改 miniagent-back 或 miniclient 后优先跑 bridge_test 耦合测试。claude-back 二进制产物未加入 .gitignore。"}
-{"type":"note","topic":"已移除指令","content":"/models（miniagent-back）已移除：/model 无参数弹出选择器已覆盖模型列表功能，/models 纯冗余。/session-del（claude-back）已移除：绑定重置可通过 /cd + /new 组合替代（/cd 换目录、/new 重置会话上下文）。"}
-{"type":"note","topic":"miniagent session管理对接","content":"miniagent后端已全面对接session管理：Handler持sessionRoot（per-chat jsonl目录）和sessionIDFile方法（sha256哈希chatID映射文件）；/new命令通过删除session id文件重置会话；miniclient.RunOptions含Session/SaveSession字段，buildArgs生成-session/-save-session参数；v4.0.1后session id通过stdout NDJSON type=session事件传递（而非stderr文本）。"}
-{"type":"note","topic":"miniagent命令体系","content":"miniagent后端命令集：/mode（default|auto）、/thinking（off/minimal/low/medium/high/xhigh/max）、/model（无参数弹出选择器）、/cd（切换目录）、/new（重置会话）、/abort（中止当前turn）。commands.go中sessionCmds映射command name到handler。"}
