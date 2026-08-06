@@ -21,3 +21,5 @@ skills-lock.json
 /docs/
 # miniagent project-level files (memory is sensitive, rules/persona are tracked)
 /.miniagent/cache/
+.opencode/
+.claude/
