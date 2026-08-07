@@ -65,7 +65,8 @@ func TestReplay_HelloTurn(t *testing.T) {
 	}, log.Nop())
 	r.Bind("c1", "", t.TempDir(), "", "", "")
 
-	res := h.streamRun(context.Background(), "c1", "p1", ch, "fallback-model")
+	b, _ := r.Lookup("c1")
+	res := h.streamRun(context.Background(), "c1", "p1", ch, "fallback-model", b.Generation)
 	if res.Err != nil {
 		t.Fatalf("streamRun: %v", res.Err)
 	}

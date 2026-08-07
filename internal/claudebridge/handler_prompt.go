@@ -60,20 +60,22 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		SettingsFile:   strutil.ExpandEnvVars(binding.SettingsFile),
 	}
 
-	result := h.runClaude(ctx, chatID, replyToID, opts, modelSpec)
+	result := h.runClaude(ctx, chatID, replyToID, opts, modelSpec, binding.Generation)
 
 	// Stale-session recovery: if --resume hit a session the CLI no longer
 	// knows, drop the binding's sessionID and retry once with a fresh session.
 	// The stale match itself is centralised in claude.IsStaleSession (set on
 	// the result by finalizeResult) so a CLI rewording fixes in one place.
+	// Guard the clear with the binding generation so a /session-del + new
+	// prompt that replaced the binding mid-turn is not clobbered.
 	if result.Err != nil && result.Stale && binding.SessionID != "" &&
 		ctx.Err() == nil {
 		h.Logger.Warn("stale claude session, retrying without --resume",
 			log.FieldChatID, chatID,
 			log.FieldSessionID, binding.SessionID)
-		h.Router.SetSessionID(chatID, "")
+		h.Router.SetSessionIDIfGeneration(chatID, "", binding.Generation)
 		opts.SessionID = ""
-		result = h.runClaude(ctx, chatID, replyToID, opts, modelSpec)
+		result = h.runClaude(ctx, chatID, replyToID, opts, modelSpec, binding.Generation)
 	}
 
 	// RecordUsage before EmitTerminal: EmitTerminal reads the store to fill
@@ -87,8 +89,11 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 }
 
 // runClaude starts one Claude subprocess, streams its events into Controls,
-// and reduces the stream to a bridgebase.PromptResult.
-func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts claude.RunOptions, modelSpec string) bridgebase.PromptResult {
+// and reduces the stream to a bridgebase.PromptResult. generation is the router
+// binding generation observed by the caller; the stream loop only writes the
+// lazily learned session id back when the binding generation still matches,
+// preventing a replaced binding from being clobbered mid-turn.
+func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts claude.RunOptions, modelSpec string, generation uint64) bridgebase.PromptResult {
 	// Archive the raw stream for this run before launching the subprocess so
 	// the sink is wired for the whole lifetime. Best-effort: nil sink = off.
 	// The sink is wrapped to drop thinking_tokens lines: the bridge never
@@ -109,5 +114,5 @@ func (h *Handler) runClaude(ctx context.Context, chatID, replyToID string, opts 
 			Model: modelSpec,
 		}
 	}
-	return h.streamRun(ctx, chatID, replyToID, events, modelSpec)
+	return h.streamRun(ctx, chatID, replyToID, events, modelSpec, generation)
 }

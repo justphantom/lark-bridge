@@ -14,8 +14,11 @@ import (
 
 // streamRun consumes a Claude event stream for one turn and translates each
 // event into a protocol.Control emitted via h.emit, while reducing the stream
-// to a bridgebase.PromptResult.
-func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan claude.Event, modelSpec string) bridgebase.PromptResult {
+// to a bridgebase.PromptResult. generation is the router binding generation
+// observed at turn start; the lazily learned session id is only written back
+// when that generation still matches, so a binding replaced by /session-del +
+// a new prompt cannot be clobbered.
+func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events <-chan claude.Event, modelSpec string, generation uint64) bridgebase.PromptResult {
 	var (
 		// lastMsgID/lastText track only the most recent assistant message's
 		// text. The result envelope carries the final answer in its
@@ -84,15 +87,12 @@ func (h *Handler) streamRun(ctx context.Context, chatID, promptID string, events
 		// Capture session id from system/init (before emitting so the binding
 		// is updated regardless of downstream state). Guard against a concurrent
 		// /session-del or /cd that may have Unbound this chat between turn
-		// start and now: SetSessionID on a removed binding is a no-op, but on a
-		// freshly recreated binding (a new prompt sneaking in) it would clobber
-		// that new prompt's empty sessionID — so only write when the chat is
-		// still bound.
+		// start and now. Use SetSessionIDIfGeneration so a binding that was
+		// deleted and recreated while this turn was in flight is not clobbered
+		// with the old turn's session id.
 		if sessionID == "" && ev.SessionID != "" {
 			sessionID = ev.SessionID
-			if _, ok := h.Router.Lookup(chatID); ok {
-				h.Router.SetSessionID(chatID, sessionID)
-			}
+			h.Router.SetSessionIDIfGeneration(chatID, sessionID, generation)
 			h.Logger.Debug("captured claude session id",
 				log.FieldChatID, chatID,
 				log.FieldSessionID, sessionID)

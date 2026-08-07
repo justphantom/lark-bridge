@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 调查日期：2026-08-02 | 当前版本：v1.10.0
+> 调查日期：2026-08-07 | 当前版本：v1.12.0
 
 ---
 
@@ -12,7 +12,7 @@
 **lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code CLI 或 miniagent（LLM 直调）完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
 
 - 仓库：`github.com/justphantom/lark-bridge`
-- 当前版本：**v1.10.0**（git tag）
+- 当前版本：**v1.12.0**（git tag）
 - 核心问题：飞书开放平台 ↔ 本地 CLI agent 之间没有原生通道；直接把 agent 暴露给飞书缺少鉴权、并发、流式渲染、会话路由等能力
 - 解决思路：采用 **1 前端 + N 后端** 的拆分架构（`README.md:3`、`CHANGELOG.md:131`）
 
@@ -31,8 +31,8 @@
 
 ### 1.3 规模
 
-- **306 个 Go 文件，62,370 行**，其中测试 **30,650 行（约 49.1%）**
-- `internal/` 下 **31 个子包**
+- **309 个 Go 文件，约 77,541 行**，其中生产代码 **约 46,367 行**，测试代码 **约 31,174 行（约 40.2%）**
+- `internal/` 下 **25 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
 ---
@@ -142,9 +142,9 @@ lark-bridge/
 
 ## 5. `internal/` 模块职责详述
 
-按规模（行数）降序，共 34 个包。
+按规模（行数）降序，共 25 个包。
 
-### 5.1 `feishufront/`（15546 行，54 文件）——前端核心
+### 5.1 `feishufront/`（约 15,000 行，54 文件）——前端核心
 
 前端的所有业务逻辑集中地，是体量最大的包。
 
@@ -264,8 +264,8 @@ claude-back 的业务逻辑，共享 `bridgebase` 脊梁。
 ### 5.11 `protocol/`（875 行）——双向协议
 
 **纯结构 + Validate，无业务逻辑**（`README.md:24`）。
-- `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ 4 类 payload（Prompt/Answer/Abort/Ping）。`PromptPayload.HasFrontendOverride`（:68）是安全护栏。
-- `protocol_control.go`：**`Control`**（:6，后端→前端，POST）+ 14 类 payload（v1.6.0 新增 `TypeFile`：后端→前端投递文件；`QuestionPayload.UpdateMessageID`：原地刷新既有 picker 卡）。
+- `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ 5 类 payload（Prompt/Answer/Abort/Ping/TurnStarted/TurnFinished）。`PromptPayload.HasFrontendOverride`（:68）是安全护栏。
+- `protocol_control.go`：**`Control`**（:6，后端→前端，POST）+ 14 类 payload（v1.6.0 新增 `TypeFile`：后端→前端投递文件；`QuestionPayload.UpdateMessageID`：原地刷新既有 picker 卡；v1.12.0 新增 `TypeTurnStarted`/`TypeTurnFinished` 用于运行中会话对账）。
 - `protocol_validate.go`：enum 校验（todo.status/priority、notice.level 等，`CHANGELOG.md:166`）。
 - `status.go`：`StatusSnapshot`（/v1/status 响应）。
 
@@ -456,12 +456,13 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `router_path` | 共用 | router 持久化文件路径 |
 | `claude{}` | claude-back | cli_path/permission_mode/default_directory/max_concurrent/stream_history/model_options/permission_options/effort_options/settings_dir/settings_cache_ttl |
-| `miniagent{}` | miniagent-back | api_key/base_url/model/system_prompt/max_tokens/workspace_root |
+| `miniagent{}` | miniagent-back | api_key/chat_url/models_url/provider/model/system_prompt/max_tokens/max_iterations/stream_history/workspace_root/stream/mode/thinking/key_file/config_path/config_dir |
 | `deploy_monitor{}` | deploy-monitor | project_root/deploy_target |
-| `log_level`/`log_output`/`log_format`/`log_debug_redact` | 共用 | 日志 |
-| `component_log_levels{}` | 共用 | 分组件级别（router/feishu/bridge/dedup/deploy_monitor） |
+| `status_monitor{}` | status-monitor | interval |
+| `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |
+| `component_log_levels{}` | 共用 | 分组件级别（router/feishu/bridge/dedup/deploy_monitor/miniagent/status_monitor） |
 | `state_dir` | 共用 | 持久化根目录 |
-| `timeouts{}` | 共用 | backend_health/prompt_timeout/usage_session_ttl/card_patch_delay |
+| `timeouts{}` | 共用 | backend_health/idle_timeout/usage_session_ttl/card_patch_delay |
 | `dedup{}` | feishu-front | stale_window/event_ttl/event_max_entries |
 
 ### 7.3 配置特点
@@ -575,12 +576,11 @@ claude-back 的非业务逻辑抽到 `bridgebase.Core`（router/rpc/cancel/answe
 
 - **module**：`github.com/justphantom/lark-bridge`（go.mod:1）
 - **Go 版本**：1.25.0（go.mod:3）
-- **二进制数**：6（cmd/ 下 6 子目录）
-- **internal 包数**：21
-- **Go 文件**：375 个，75,383 行（测试 36,871 行，~48.9%）
-- **代码行**：42,286（测试 20,947，~49.5%）
+- **二进制数**：5（cmd/ 下 5 子目录）
+- **internal 包数**：25
+- **Go 文件**：309 个，约 77,541 行（生产代码约 46,367 行，测试代码约 31,174 行，约 40.2%）
 - **外部依赖**：0
-- **版本**：v1.5.0
+- **版本**：v1.12.0
 - **License**：MIT（LICENSE）
 - **构建**：`make build` / `make test` / `make deploy`
 - **入口**：`cmd/<binary>/main.go:main()`

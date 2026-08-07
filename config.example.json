@@ -52,7 +52,7 @@
   "log_output":           "stderr",
   "log_format":           "text",
   "log_debug_redact":     true,
-  "stream_archive_redact": false,
+  "stream_archive_redact": true,
   "component_log_levels": {},
 
   "state_dir": "${STATE_DIR}",

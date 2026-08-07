@@ -11,6 +11,7 @@ package router
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/justphantom/lark-bridge/internal/atomicwrite"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -28,7 +29,7 @@ type Binding struct {
 	Directory      string `json:"directory,omitempty"`
 	Title          string `json:"title,omitempty"`
 	ModelSpec      string `json:"modelSpec,omitempty"`
-	Provider       string `json:"provider,omitempty"`        // miniagent (-provider; paired with ModelSpec → -model)
+	Provider       string `json:"provider,omitempty"`       // miniagent (-provider; paired with ModelSpec → -model)
 	Agent          string `json:"agent,omitempty"`          // opencode
 	PermissionMode string `json:"permissionMode,omitempty"` // claude
 	EffortLevel    string `json:"effortLevel,omitempty"`    // claude
@@ -37,6 +38,13 @@ type Binding struct {
 	Thinking       string `json:"thinking,omitempty"`       // miniagent
 	MaxIterations  int    `json:"maxIterations,omitempty"`  // miniagent (-max-iterations; 0 = unset)
 	ConfigFile     string `json:"configFile,omitempty"`     // miniagent (-config absolute path; "" → client default)
+
+	// Generation is an in-process incarnation token for this binding. It is
+	// assigned by Bind when a binding is created and is NOT persisted: it only
+	// protects cross-goroutine updates (e.g. the Claude stream loop back-filling
+	// a session id) from landing on a binding that has been deleted and replaced
+	// since the turn started.
+	Generation uint64 `json:"-"`
 }
 
 // Router is safe for concurrent use.
@@ -59,6 +67,11 @@ type Router struct {
 	saveStop  chan struct{}
 	saveDone  chan struct{}
 	closeOnce sync.Once
+
+	// nextGen assigns a unique incarnation number to each binding created by
+	// Bind. It is used by SetSessionIDIfGeneration to reject writes whose
+	// binding was replaced mid-turn.
+	nextGen atomic.Uint64
 }
 
 // New returns a router that persists bindings to persistPath (loaded on

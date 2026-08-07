@@ -23,7 +23,7 @@ type Control struct {
 	Notice       *NoticePayload       `json:"notice,omitempty"`
 	File         *FilePayload         `json:"file,omitempty"`
 	StatusReport *StatusReportPayload `json:"statusReport,omitempty"`
-	Pong         *PongPayload         `json:"pong,omitempty"`     // app-level heartbeat reply (C2)
+	Pong         *PongPayload         `json:"pong,omitempty"` // app-level heartbeat reply (C2)
 	TurnStarted  *TurnStartedPayload  `json:"turnStarted,omitempty"`
 	TurnFinished *TurnFinishedPayload `json:"turnFinished,omitempty"`
 }
@@ -44,7 +44,7 @@ const (
 	TypeNotice       = "notice"
 	TypeFile         = "file"
 	TypeStatusReport = "status_report"
-	TypePong         = "pong"         // app-level heartbeat reply (backend→frontend, C2)
+	TypePong         = "pong" // app-level heartbeat reply (backend→frontend, C2)
 	TypeTurnStarted  = "turn_started"
 	TypeTurnFinished = "turn_finished"
 )

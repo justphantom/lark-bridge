@@ -197,7 +197,7 @@ func requestHost(u *url.URL, fallback string) string {
 func writeUpgradeRequest(w io.Writer, req *http.Request, requestURI string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "GET %s HTTP/1.1\r\n", requestURI)
-	fmt.Fprintf(&b, "Host: %s\r\n", req.Host)
+	fmt.Fprintf(&b, "Host: %s\r\n", req.Host) //nolint:gosec // G705: req.Host comes from the parsed dial URL, not user input
 	for k, vs := range req.Header {
 		for _, v := range vs {
 			fmt.Fprintf(&b, "%s: %s\r\n", k, v)

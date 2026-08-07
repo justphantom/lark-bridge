@@ -59,10 +59,10 @@ func TestListModels_OK(t *testing.T) {
 		[]string{
 			modelEvent("p", "gpt-4o"),
 			modelEvent("p", "gpt-4o-mini"),
-			"",                                  // blank line
+			"", // blank line
 			"  " + modelEvent("p", "deepseek-chat") + "  ", // surrounding whitespace
-			"not-json-stderr-bleed",             // skipped (not JSON)
-			`{"type":"result","text":"x"}`,      // skipped (type != model)
+			"not-json-stderr-bleed",                        // skipped (not JSON)
+			`{"type":"result","text":"x"}`,                 // skipped (type != model)
 		}, "", 0)
 	c := New(Config{CLIPath: p, APIKey: "k", ConfigPath: "/etc/miniagent/miniagent.json"}, nil)
 	got, err := c.ListModels(context.Background(), "")

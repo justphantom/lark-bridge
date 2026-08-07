@@ -748,4 +748,3 @@ func filterNotices(ctrls []*protocol.Control) []*protocol.Control {
 	}
 	return out
 }
-

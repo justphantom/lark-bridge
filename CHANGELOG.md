@@ -4,14 +4,27 @@
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 ## [Unreleased]
 
+### Fixed
+
+- **交互卡锁顺序反转死锁**（`internal/feishufront`）。统一 interactive-card 生命周期中的锁顺序：先操作 `TurnManager`，再操作 `Dispatcher.cardMu`，消除 `sendInteractive` 与 `expireInteractive`/`finalizeLinkedInteractive`/`DispatchCardAction` 之间的锁顺序反转死锁风险。
+- **后端 token 比较改为恒定时间**（`internal/feishufront/ipcserver.go`）。`validateBackendToken` 使用 `crypto/subtle.ConstantTimeCompare`，降低 per-backend session token 被时序攻击逐字节猜出的风险。
+- **`Core.WaitPrompts` goroutine 泄漏**（`internal/bridgebase/core.go`）。`Wg` 由 `sync.WaitGroup` 改为可取消的 `cancelableWaitGroup`，`WaitPrompts` 超时返回后不再泄漏阻塞在 `Wait` 的 goroutine。
+- **miniclient pump 无保护发送**（`internal/miniclient/client.go`）。子进程 pump 在 ctx 取消后向 `out` 发送时加 `select`，避免消费者退出后阻塞并耗尽 `MaxConcurrent` 槽位。
+- **router 持久化静默失败与损坏 binding 丢失**（`internal/router/persistence.go`）。`save` 增加 3 次线性退避重试；`load` 遇到损坏 binding 时先将原始文件备份为 `.corrupt.<timestamp>`，再跳过损坏项，防止下次 save 永久丢失原始数据。
+- **SSE 握手定时器竞态**（`internal/backendrpc/client.go`）。`httpClient.Do` 返回后、停止握手定时器前，若定时器已触发导致 ctx 取消，主动关闭响应 body 并返回握手超时，避免把已取消的 body 交给 `readSSE` 误断健康流。
+- **Claude sessionID 写入竞态**（`internal/claudebridge/stream_loop.go`、`internal/router`）。`Binding` 新增进程内 `Generation`；`streamRun` 与 stale-session 恢复使用 `SetSessionIDIfGeneration`，防止旧 turn 的 session id 写入 `/session-del` 后新建的 binding。
+
+### Changed
+
+- **示例配置默认脱敏**（`config.example.json`）。`stream_archive_redact` 由 `false` 改为 `true`，与代码默认值一致，避免运维直接复制示例后明文归档 prompt/结果。
+- **文档保鲜**：`ARCHITECTURE.md`、`CODING_STANDARDS.md`、`README.md` 同步当前版本号、二进制数（5）、服务数（3）、Go 文件/行数、miniagent 配置字段、`TypeTurnStarted`/`TypeTurnFinished` 协议控制、`component_log_levels` 组件列表，并移除已删除的 `opencodebridge` 测试引用。
+
 ## [1.12.0] - 2026-08-03
 
-主线：**opencode / omp 后端整体移除**（13 个 commit）+ **claude 会话命令命名精简**（`/session-new/list/clean/use` → `/new` / `/session` / `/clean` / `/use`）+ **miniagent v3.3.0+1 / v3.4.0 跟进**（deploy `${VAR}` 展开修复、health gate 升级、`-key-file` flag 移除适配）+ **项目级 `.miniagent/` 记忆系统**。协议层零 breaking change，新增 / 重构均升 minor。
+主线：**opencode / omp 后端整体移除**（13 个 commit）+ **claude 会话命令命名精简**（`/session-new/list/clean/use` → `/new` / `/session` / `/clean` / `/use`）+ **miniagent v3.3.0+1 / v3.4.0 跟进**（deploy `${VAR}` 展开修复、health gate 升级、`-key-file` flag 移除适配）。协议层零 breaking change，新增 / 重构均升 minor。
 
 ### Added
 
-- **`.miniagent/` 项目级记忆系统**（`6aab413`）。新增 `.miniagent/persona.md` / `rules.md` / `scripts.json` / `README.md` 四文件，合并进 miniagent system prompt；`memory.jsonl` 由会话结束自动追加，`.gitignore` 排除含敏感信息的记忆文件。`scripts.json` 将本地 `make` 目标注册为 `script_<name>` 工具，CLI 可直接调用。
-- **`/memory` 命令**（760620b，v1.11.0 合入）。`internal/miniagent` 新增 `/memory` 读/写项目级 `.miniagent/memory.jsonl`（格式：`{type, topic, content}` NDJSON），支持 `/memory` 查看、`/memory add <type> <topic> <content>` 追加。
 - **miniagent health gate**（760620b，v1.11.0 合入）。`cmd/miniagent-back` 连接前端前调用 `client.IsReady`，CLI 缺失或版本过旧时快速失败。
 - **MiniAgent 指标**（760620b，v1.11.0 合入）。`internal/eventmetrics` 新增 `MiniAgentTurnCount`、`MiniAgentTurnDurationMs`、`MiniAgentTurnInputTokens`、`MiniAgentTurnOutputTokens`、`MiniAgentTurnIncomplete` 五个计数器。
 
@@ -35,6 +48,7 @@
 
 - **`opencode-back` 与 `omp-back` 整体移除**（`e22ac59` / `45bd5ea` / `7ffda4c`）。后端对接收敛到 claude + miniagent 两个 agent。移除范围：`cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、`internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）；`config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；`OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`；`Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；`config.example.json` 的 `opencode{}` / `omp{}` 块；`deploy.sh` 服务列表、产物检查、config 派生、CLI 警告及 `lib-common.sh` 映射；`upgrade-monitor.sh` / `upgrade-status.sh` 遗留清理扩展。
 - **`/session-new` 等 claude 会话命令旧名**（`b5b3017` / `7d1b37f` / `ae0e9de` / `4ecbd59`）。`/session-new` / `/session-use` / `/session-clean` / `/session-list` 旧名从命令注册表中移除，统一替换为 `/new` / `/use` / `/clean` / `/session`。
+- **`/memory` 命令与 `.miniagent/memory.jsonl`**（`0d90584` / `9b07db4`）。项目级记忆系统移除，`/memory` 命令及其相关处理逻辑、`memory.jsonl` 写入与 `.gitignore` 条目一并清理。
 
 ### Notes
 
@@ -42,7 +56,6 @@
 - **`/new` vs `/session-del`**：`/new` 保留工作目录仅重置会话上下文；`/session-del` 删除绑定（含目录）。claude 与 miniagent 行为一致。
 - **`key_file` 安全提示**：miniagent v3.4.0 后 `-key-file` flag 已移除，bridge 自身读取文件并注入 `$MINIAGENT_API_KEY` 到子进程 env。key 隔离依赖 OS 权限（dedicated user + 0600 config/key files）。
 - `config_path` 字段在 v3.1+ 已进入必填状态；本次追加绝对路径约束。
-- `.miniagent/memory.jsonl` 和 `.miniagent/cache/` 已加入 `.gitignore`。
 
 ## [1.10.0] - 2026-08-02
 

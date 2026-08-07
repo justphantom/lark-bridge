@@ -77,6 +77,31 @@ func (r *Router) SetAgent(chatID, agent string) {
 	r.mutate(chatID, func(b *Binding) { b.Agent = agent })
 }
 
+// SetSessionIDIfGeneration replaces the session id on the binding for chatID,
+// but only if the binding exists and its Generation matches the one observed by
+// the caller. This prevents a turn that started on one binding from clobbering
+// a binding that was deleted and recreated (/session-del followed by a new
+// prompt) while the turn was in flight. Returns whether the session id was
+// written.
+func (r *Router) SetSessionIDIfGeneration(chatID, sessionID string, generation uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	binding, ok := r.bindings[chatID]
+	if !ok || binding.Generation != generation {
+		return false
+	}
+	if binding.SessionID == sessionID {
+		return false
+	}
+	binding.SessionID = sessionID
+	r.bindings[chatID] = binding
+	r.saveAsync()
+	r.logger.Info("binding session id updated",
+		log.FieldChatID, chatID,
+		log.FieldSessionID, sessionID)
+	return true
+}
+
 // SetSessionID replaces the session id on the binding for chatID and persists
 // the change. The Claude backend learns its session id lazily from the first
 // run's system/init event; this method lets the stream loop back-fill it once

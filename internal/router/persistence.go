@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/atomicwrite"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -52,14 +53,28 @@ func (r *Router) load() error {
 		// A missing "bindings" key or an explicit "bindings":null unmarshals
 		// into a nil map. Treat both as "no bindings".
 		bindings := make(map[string]Binding)
+		backedUp := false
 		for chatID, b := range raw.Bindings {
 			var binding Binding
 			if err := json.Unmarshal(b, &binding); err != nil {
 				// A single corrupt binding is dropped, and the next save will
 				// persist that drop — permanently losing this chat's session.
-				// Log at Error with a backup hint so the operator can repair
-				// before the next save overwrites the file.
-				r.logger.Error("persist load skip binding; back up the file before the next save overwrites it",
+				// Back up the original file on the first corrupt binding so the
+				// operator can repair it before the next save overwrites it.
+				if !backedUp {
+					backedUp = true
+					backupPath := r.persistPath + ".corrupt." + time.Now().Format("20060102-150405.000000000")
+					if writeErr := os.WriteFile(backupPath, data, filePerm); writeErr != nil {
+						r.logger.Error("persist load backup failed",
+							log.FieldPath, r.persistPath,
+							log.FieldError, writeErr)
+					} else {
+						r.logger.Warn("persist load backed up corrupt file",
+							log.FieldPath, r.persistPath,
+							"backup_path", backupPath)
+					}
+				}
+				r.logger.Error("persist load skip binding",
 					log.FieldPath, r.persistPath,
 					log.FieldChatID, chatID,
 					log.FieldError, err)
@@ -106,13 +121,24 @@ func (r *Router) save() error {
 			return err
 		}
 
-		if err := atomicwrite.Write(r.persistPath, data, filePerm); err != nil {
-			r.logger.Error("router state save failed",
+		const saveMaxRetries = 3
+		var lastErr error
+		for attempt := range saveMaxRetries {
+			if attempt > 0 {
+				// Linear backoff: 100ms, 200ms.
+				time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+			}
+			lastErr = atomicwrite.Write(r.persistPath, data, filePerm)
+			if lastErr == nil {
+				return nil
+			}
+			r.logger.Warn("router state save failed; retrying",
 				log.FieldPath, r.persistPath,
-				log.FieldError, err)
-			return fmt.Errorf("router: save %s: %w", r.persistPath, err)
+				"attempt", attempt+1,
+				"max_attempts", saveMaxRetries,
+				log.FieldError, lastErr)
 		}
-		return nil
+		return fmt.Errorf("router: save %s: %w", r.persistPath, lastErr)
 	})
 }
 

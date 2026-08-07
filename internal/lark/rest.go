@@ -329,7 +329,7 @@ func (r *restClient) UploadFile(ctx context.Context, fileName, fileType string, 
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := uploadHTTP.Do(req)
+	resp, err := uploadHTTP.Do(req) //nolint:gosec // G704: baseURL is trusted config, not user input
 	if err != nil {
 		return "", fmt.Errorf("lark: upload file: %w", err)
 	}

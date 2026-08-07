@@ -65,9 +65,9 @@ func TestValidateTurnControls(t *testing.T) {
 // TestTurnControlRoundTrip pins the wire shape for turn lifecycle controls.
 func TestTurnControlRoundTrip(t *testing.T) {
 	start := &Control{
-		Type:    TypeTurnStarted,
+		Type:     TypeTurnStarted,
 		PromptID: "p1",
-		ChatID:  "c1",
+		ChatID:   "c1",
 		TurnStarted: &TurnStartedPayload{TurnInfo: TurnInfo{
 			PromptID:  "p1",
 			ChatID:    "c1",
@@ -81,8 +81,8 @@ func TestTurnControlRoundTrip(t *testing.T) {
 	}
 
 	finish := &Control{
-		Type:     TypeTurnFinished,
-		PromptID: "p1",
+		Type:         TypeTurnFinished,
+		PromptID:     "p1",
 		TurnFinished: &TurnFinishedPayload{PromptID: "p1"},
 	}
 	gotFinish := roundTrip(t, finish)

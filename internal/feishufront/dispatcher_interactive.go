@@ -42,17 +42,26 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		// Evict expired interactive bindings (and their cached card bytes)
 		// before adding the new one, so cards ignored by the user — or left
 		// dangling when the backend crashes mid-answer — do not leak.
-		for _, rid := range d.turns.SweepInteractive() {
-			d.cardMu.Lock()
+		//
+		// Lock ordering: TurnManager.mu is always acquired (or its work completed)
+		// before cardMu. SweepInteractive mutates TurnManager under its own lock;
+		// we then drop the expired cached bytes under cardMu.
+		expired := d.turns.SweepInteractive()
+		d.cardMu.Lock()
+		for _, rid := range expired {
 			delete(d.cards, rid)
-			d.cardMu.Unlock()
 		}
+		d.cardMu.Unlock()
+
 		// An in-place picker refresh PATCHes a card that a prior round still
 		// owns: drop that round's binding (and its stopped TTL timer / cached
 		// bytes) so the new requestID owns the card and nothing leaks.
 		if ctrl.Type == protocol.TypeQuestion && ctrl.Question != nil && ctrl.Question.UpdateMessageID != "" {
 			d.evictInteractiveByMessageID(messageID, requestID)
 		}
+
+		// Record the new binding under TurnManager, then cache the card bytes
+		// and schedule the TTL timer under cardMu.
 		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID)
 		d.cardMu.Lock()
 		d.cards[requestID] = card
@@ -138,20 +147,21 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 // round's requestID does not linger against the same card (its timer was
 // already stopped on submit, so without this the cache entry would leak until
 // a SweepInteractive pass that never reaps a stopped-timer entry).
+//
+// Lock ordering: TurnManager state is removed first, then the paired cardMu
+// state is cleaned up. This matches the rest of the interactive lifecycle and
+// avoids lock-order inversion with sendInteractive.
 func (d *Dispatcher) evictInteractiveByMessageID(messageID, keepRequestID string) {
-	for _, rid := range d.turns.RequestIDsByMessageID(messageID) {
-		if rid == keepRequestID {
-			continue
-		}
-		d.cardMu.Lock()
+	rids := d.turns.UnbindInteractiveByMessageID(messageID, keepRequestID)
+	d.cardMu.Lock()
+	for _, rid := range rids {
 		if t := d.interactiveTimers[rid]; t != nil {
 			t.Stop()
 			delete(d.interactiveTimers, rid)
 		}
 		delete(d.cards, rid)
-		d.cardMu.Unlock()
-		d.turns.UnbindInteractive(rid)
 	}
+	d.cardMu.Unlock()
 }
 
 // submitSummary renders the confirmation line prepended to a submitted card.
@@ -210,11 +220,18 @@ func choiceLabel(c string) string {
 // binding is already gone (InteractiveMessageID returns false) and this is a
 // no-op. cardMu serialises against a concurrent submit so the worst case is a
 // benign overwrite, not a data race.
+//
+// Lock ordering: remove the TurnManager binding first, then clean up the
+// paired cardMu state. This avoids lock-order inversion with sendInteractive.
 func (d *Dispatcher) expireInteractive(requestID, messageID string) {
+	d.turns.UnbindInteractive(requestID)
 	d.cardMu.Lock()
 	orig := d.cards[requestID]
 	delete(d.cards, requestID)
-	delete(d.interactiveTimers, requestID)
+	if t := d.interactiveTimers[requestID]; t != nil {
+		t.Stop()
+		delete(d.interactiveTimers, requestID)
+	}
 	d.cardMu.Unlock()
 	if orig == nil {
 		return
@@ -224,7 +241,6 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 		defer cancel()
 		_ = d.bot.UpdateCard(ctx, messageID, expired)
 	}
-	d.turns.UnbindInteractive(requestID)
 }
 
 // finalizeLinkedInteractive flips every still-pending interactive card tied to
@@ -233,22 +249,29 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 // gatekept completed. No-op when the turn had no interactive card or the user
 // already submitted (the binding is gone). Each card's TTL timer is cancelled
 // so it cannot later overwrite the finalised form with an expiry notice.
+//
+// Lock ordering: remove TurnManager bindings first, then clean up the paired
+// cardMu state. This avoids lock-order inversion with sendInteractive.
 func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID string) {
-	for _, b := range d.turns.InteractiveByPromptID(promptID) {
-		d.cardMu.Lock()
-		orig := d.cards[b.RequestID]
+	bindings := d.turns.UnbindInteractiveByPromptID(promptID)
+	// Capture the original card bytes while holding cardMu, then release the
+	// lock before doing synchronous Feishu PATCH calls.
+	origs := make(map[string][]byte, len(bindings))
+	d.cardMu.Lock()
+	for _, b := range bindings {
+		origs[b.RequestID] = d.cards[b.RequestID]
 		if t := d.interactiveTimers[b.RequestID]; t != nil {
 			t.Stop()
 			delete(d.interactiveTimers, b.RequestID)
 		}
 		delete(d.cards, b.RequestID)
-		d.cardMu.Unlock()
-		d.turns.UnbindInteractive(b.RequestID)
-		if orig == nil {
-			continue
-		}
-		if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
-			_ = d.bot.UpdateCard(ctx, b.MessageID, fin)
+	}
+	d.cardMu.Unlock()
+	for _, b := range bindings {
+		if orig := origs[b.RequestID]; orig != nil {
+			if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
+				_ = d.bot.UpdateCard(ctx, b.MessageID, fin)
+			}
 		}
 	}
 }
@@ -369,11 +392,15 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 					// during the render+UpdateCard window above, it already
 					// deleted the cache and unbound; re-writing here would
 					// leak an orphan entry with no binding (SweepInteractive
-					// cleans by binding, so it would never reap it). Nesting
-					// turns.RLock under cardMu is safe: no code path acquires
-					// cardMu while holding turns's write lock.
-					d.cardMu.Lock()
+					// cleans by binding, so it would never reap it). Query the
+					// binding before taking cardMu to preserve the TurnManager →
+					// cardMu lock ordering.
+					hasBinding := false
 					if _, ok := d.turns.InteractiveMessageID(requestID); ok {
+						hasBinding = true
+					}
+					d.cardMu.Lock()
+					if hasBinding {
 						d.cards[requestID] = sub
 					}
 					d.cardMu.Unlock()

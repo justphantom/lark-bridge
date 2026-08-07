@@ -245,6 +245,38 @@ func (m *TurnManager) UnbindInteractive(requestID string) {
 	delete(m.interactive, requestID)
 }
 
+// UnbindInteractiveByPromptID removes every pending interactive card binding
+// linked to promptID and returns the bindings that were removed. Callers use
+// the returned IDs to clean up paired card state (cached bytes, timers).
+func (m *TurnManager) UnbindInteractiveByPromptID(promptID string) []InteractiveBinding {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []InteractiveBinding
+	for rid, e := range m.interactive {
+		if e.promptID == promptID {
+			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID})
+			delete(m.interactive, rid)
+		}
+	}
+	return out
+}
+
+// UnbindInteractiveByMessageID removes every pending interactive card binding
+// pointing at messageID except keepRequestID and returns the removed requestIDs.
+// Used when a multi-round picker refreshes a card in place.
+func (m *TurnManager) UnbindInteractiveByMessageID(messageID, keepRequestID string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for rid, e := range m.interactive {
+		if e.messageID == messageID && rid != keepRequestID {
+			out = append(out, rid)
+			delete(m.interactive, rid)
+		}
+	}
+	return out
+}
+
 // SweepInteractive evicts interactive bindings older than cardkit.InteractiveTimeout and
 // returns the expired requestIDs so callers can drop paired state (the cached
 // card bytes in Dispatcher.cards). Called on each bind; between binds the set

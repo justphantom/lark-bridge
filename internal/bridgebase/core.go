@@ -126,8 +126,9 @@ type Core struct {
 
 	// Wg tracks in-flight runPrompt goroutines so Close can wait for them to
 	// finish killing their subprocess before the process exits, avoiding
-	// orphaned CLI children.
-	Wg sync.WaitGroup
+	// orphaned CLI children. It is a *cancelableWaitGroup so WaitPrompts can
+	// time out without leaking a goroutine blocked on Wait.
+	Wg *cancelableWaitGroup
 
 	// Answers routes an interactive card's answer back to the goroutine that
 	// emitted the Question control. Close drains all waiters so a shutdown
@@ -193,6 +194,7 @@ func NewCore(r *router.Router, rpc *backendrpc.Client, cfg CoreConfig, logger *l
 		Answers:             NewAnswerBroker(),
 		Acks:                NewAckRegistry(logger),
 		emitSem:             make(chan struct{}, emitConcurrency),
+		Wg:                  newCancelableWaitGroup(),
 	}
 	c.AppCtx, c.AppCancel = context.WithCancel(context.Background())
 	c.logDebugRedact.Store(cfg.DebugRedact)
@@ -330,10 +332,14 @@ func (c *Core) Close() {
 		if c.Acks != nil {
 			c.Acks.Close()
 		}
-		c.WaitPrompts()
+		if !c.WaitPrompts() {
+			c.Logger.Warn("prompt wait timed out; some runPrompt goroutines may outlive Core.Close",
+				log.FieldReason, "shutdown_grace_exceeded")
+		}
 		if c.Usage != nil {
 			c.Usage.Close()
 		}
+		c.Wg.Close()
 	})
 }
 
@@ -346,17 +352,12 @@ func (c *Core) SetUsage(s *usage.Store) {
 }
 
 // WaitPrompts waits for in-flight runPrompt goroutines with a bounded grace
-// period; a stuck goroutine cannot hang shutdown.
-func (c *Core) WaitPrompts() {
-	done := make(chan struct{})
-	go func() {
-		c.Wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(shutdownGrace):
-	}
+// period; a stuck goroutine cannot hang shutdown. Returns false if the grace
+// period expires before all prompts finish.
+func (c *Core) WaitPrompts() bool {
+	ctx, cancel := context.WithTimeout(c.AppCtx, shutdownGrace)
+	defer cancel()
+	return c.Wg.Wait(ctx)
 }
 
 // CancelAll cancels every registered per-chat prompt.
@@ -366,4 +367,83 @@ func (c *Core) CancelAll() {
 	for _, pc := range c.CancelByChat {
 		pc.Cancel()
 	}
+}
+
+// cancelableWaitGroup is like sync.WaitGroup but its Wait takes a context so
+// the caller can time out without leaking a goroutine blocked on Wait.
+//
+// Add/Done semantics mirror sync.WaitGroup: Add may be called while Wait is
+// already waiting, and Wait returns once the count drops to zero. A Wait that
+// times out is simply abandoned; when the count later reaches zero, any stale
+// waiter channels are closed harmlessly.
+type cancelableWaitGroup struct {
+	mu      sync.Mutex
+	count   int
+	waiters []chan struct{}
+	closed  bool
+}
+
+func newCancelableWaitGroup() *cancelableWaitGroup {
+	return &cancelableWaitGroup{}
+}
+
+// Add increments the count by delta. After Close, Add is a no-op so a prompt
+// racing shutdown does not revive the group.
+func (cw *cancelableWaitGroup) Add(delta int) {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	if cw.closed {
+		return
+	}
+	cw.count += delta
+	if cw.count < 0 {
+		panic("cancelableWaitGroup: negative count")
+	}
+}
+
+// Done decrements the count and signals all waiters when it reaches zero.
+func (cw *cancelableWaitGroup) Done() {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	cw.count--
+	if cw.count < 0 {
+		panic("cancelableWaitGroup: negative count")
+	}
+	if cw.count == 0 {
+		for _, ch := range cw.waiters {
+			close(ch)
+		}
+		cw.waiters = cw.waiters[:0]
+	}
+}
+
+// Wait blocks until the count reaches zero or ctx is cancelled. It returns true
+// if the count reached zero and false if the context was cancelled first.
+func (cw *cancelableWaitGroup) Wait(ctx context.Context) bool {
+	cw.mu.Lock()
+	if cw.count == 0 {
+		cw.mu.Unlock()
+		return true
+	}
+	ch := make(chan struct{})
+	cw.waiters = append(cw.waiters, ch)
+	cw.mu.Unlock()
+	select {
+	case <-ch:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Close prevents further Adds and releases any waiters. It is safe to call
+// more than once.
+func (cw *cancelableWaitGroup) Close() {
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	cw.closed = true
+	for _, ch := range cw.waiters {
+		close(ch)
+	}
+	cw.waiters = cw.waiters[:0]
 }

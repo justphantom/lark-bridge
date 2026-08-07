@@ -1,8 +1,8 @@
 # lark-bridge 项目代码规范文档
 
-> 基于仓库 `github.com/justphantom/lark-bridge` 实际代码（约 20,238 行非测试 Go 代码 + 93 个测试文件，不含 `internal/claude/` 内联 SDK）归纳而成。每条规范尽量给出真实文件:行号或代码片段作为依据。
+> 基于仓库 `github.com/justphantom/lark-bridge` 实际代码（约 46,367 行非测试 Go 代码 + 134 个测试文件）归纳而成。每条规范尽量给出真实文件:行号或代码片段作为依据。
 >
-> 调查日期：2026-07-27 | 当前 HEAD：`53ea21d`
+> 调查日期：2026-08-07 | 当前 HEAD：`9b79c34`
 
 ---
 
@@ -34,7 +34,7 @@
 |---|---|---|
 | Go 1.25+ | 编译/测试 | `go.mod:3`、`README.md:44` |
 | `make` | 入口 | `Makefile` |
-| `golangci-lint` v2 | lint（注：Makefile 未集成目标，需手动运行） | `.golangci.yml:10` |
+| `golangci-lint` v2 | lint，`Makefile` 已集成 `lint` 目标 | `.golangci.yml:10`、`Makefile` |
 | `gofmt -s` | 格式化 | `Makefile:73-74` |
 | `git` | 版本号注入（`git describe`） | `Makefile:31` |
 
@@ -264,11 +264,10 @@ return errors.As(err, &f)
 
 ### 4.5 panic 使用 —— 仅限测试
 - 生产代码 **0 处 `panic`**。
-- 测试中 **4 处**（全部是故意触发以验证 `recover`）：
+- 测试中 **3 处**（全部是故意触发以验证 `recover`）：
   ```
   internal/feishufront/ipcserver_test.go:408   panic("boom")
   internal/feishufront/dispatcher_test.go:718  panic("callback boom")
-  internal/opencodebridge/handler_prompt_test.go:91  panic("simulated agent panic")
   internal/claudebridge/handler_prompt_test.go:103   panic("simulated agent panic")
   ```
 - **goroutine 必须配 `recover`**：`bridgebase.GoSafe`（`gosafe.go:24-35`）统一封装——任何长生命周期 goroutine 用它启动，panic 自动 `recover` + 记 `log.FieldPanic/FieldStack`。main 控制泵同样手工 `defer recover`（`cmd/feishu-front/main.go:179-187`）。
@@ -525,14 +524,14 @@ func TestControlRoundTrip(t *testing.T) {
 
 | 目标 | 作用 |
 |---|---|
-| `build`（默认） | 编译 7 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
-| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 7 个 cmd） |
+| `build`（默认） | 编译 5 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
+| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 5 个 cmd） |
 | `vet` | `go vet ./...` |
 | `fmt` | `gofmt -s -w .`（simplify） |
 | `test` | `build-check` → `vet` → `go test -race ./...`（CGO 默认开，启用 race） |
 | `clean` | `rm -rf bin/` |
-| `pack` | 交叉编译 7 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
-| `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 4 个业务 systemd 服务 |
+| `pack` | 交叉编译 5 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
+| `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 3 个业务 systemd 服务 |
 | `upgrade-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
 
 ### 9.2 开发流程（推荐顺序）
@@ -541,11 +540,11 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 ```
 - 改动后先 `make fmt`（gofmt -s）。
 - `make test` 已含 `build-check + vet + race test`，作为 PR 前的完整门禁。
-- golangci-lint **不在 Makefile 里**，开发者需手动 `golangci-lint run`（配置 `.golangci.yml` 会被自动读取）。
+- `make lint` 运行 `golangci-lint run ./...`（配置 `.golangci.yml` 会被自动读取）。
 
 ### 9.3 部署流程
 ```
-make deploy                  # 构建 + 4 业务服务 systemd 装机
+make deploy                  # 构建 + 3 个业务服务 systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services claude   # 子集部署
 make upgrade-monitor         # ~2s 离线升级 deploy-monitor

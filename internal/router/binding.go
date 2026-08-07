@@ -12,11 +12,12 @@ func (r *Router) Bind(chatID, sessionID, directory, title, modelSpec, agent stri
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bindings[chatID] = Binding{
-		SessionID: sessionID,
-		Directory: directory,
-		Title:     title,
-		ModelSpec: modelSpec,
-		Agent:     agent,
+		SessionID:  sessionID,
+		Directory:  directory,
+		Title:      title,
+		ModelSpec:  modelSpec,
+		Agent:      agent,
+		Generation: r.nextGen.Add(1),
 	}
 	r.saveAsync()
 	r.logger.Info("binding stored",

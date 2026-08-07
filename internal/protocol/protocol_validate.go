@@ -263,7 +263,7 @@ var controlRules = map[string]controlRule{
 	TypeStatusReport: {payloadIsNil: func(c *Control) bool { return c.StatusReport == nil }, payloadName: "statusReport", extraCheck: validateStatusReport},
 	// TypePong: pure liveness reply (C2); no chatID (keyed by the URL-path
 	// BackendID), no semantic fields to check.
-	TypePong: {payloadIsNil: func(c *Control) bool { return c.Pong == nil }, payloadName: "pong"},
+	TypePong:         {payloadIsNil: func(c *Control) bool { return c.Pong == nil }, payloadName: "pong"},
 	TypeTurnStarted:  {payloadIsNil: func(c *Control) bool { return c.TurnStarted == nil }, payloadName: "turnStarted", extraCheck: validateTurnStarted},
 	TypeTurnFinished: {payloadIsNil: func(c *Control) bool { return c.TurnFinished == nil }, payloadName: "turnFinished", extraCheck: validateTurnFinished},
 }

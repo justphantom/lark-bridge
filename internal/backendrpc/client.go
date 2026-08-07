@@ -315,12 +315,12 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 	// otherwise hang Connect until systemd's TimeoutStartSec.
 	//
 	// CRITICAL: the request context also governs the response body's whole
-	// lifetime in net/http, so it MUST NOT carry an auto-firing deadline. A
-	// context.WithTimeout here would cancel itself at handshakeTimeout and
-	// tear down the SSE body every 10s, surfacing as an endless
-	// "sse recv: client closed" → reconnect storm. Use a plain WithCancel and
-	// STOP the timer the moment headers arrive; the context then lives until
-	// Close() calls handshakeCancel.
+	// lifetime in net/http, so an auto-firing deadline must never reach a live
+	// SSE stream. We use a plain WithCancel plus a one-shot handshake timer,
+	// STOP the timer the moment Do returns, and then explicitly check whether
+	// the context was already cancelled in the narrow window before Stop(). If
+	// it was, the body is discarded so a cancelled stream never reaches readSSE.
+	// The context then lives until Close() calls handshakeCancel.
 	handshakeCtx, handshakeCancel := context.WithCancel(context.Background())
 	c.sseCancel = handshakeCancel
 	handshakeTimer := time.AfterFunc(handshakeTimeout, handshakeCancel)
@@ -337,12 +337,20 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 	// Headers arrived (or Do errored): disarm the handshake timer so it can
 	// never cancel the body mid-stream. Stop() before the status check
 	// minimises the window in which the timer could fire between Do returning
-	// and Stop() being called; even if it already fired, the request context
-	// is only cancelled by Close() on a live stream.
+	// and Stop() being called.
 	handshakeTimer.Stop()
 	if err != nil {
 		handshakeCancel()
 		return nil, err
+	}
+	if handshakeCtx.Err() != nil {
+		// The timer fired in the narrow window between Do returning and
+		// Stop() above. The response body is tied to the cancelled context,
+		// so handing it to readSSE would abort the live stream. Discard it
+		// and treat this as a handshake timeout.
+		_ = resp.Body.Close()
+		handshakeCancel()
+		return nil, fmt.Errorf("sse handshake timed out")
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))

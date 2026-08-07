@@ -161,6 +161,7 @@ const readyTimeout = 10 * time.Second
 //     them as a matched pair — buildArgs emits both or neither;
 //   - 2099241 changed -list-models to NDJSON {"type":"model","provider","model"}
 //     — ListModels parses one ModelRef per line.
+//
 // A v4.0.1 *tagged* binary PASSES this gate but is NOT compatible: it still
 // emits the old plain-text -list-models lines, which now parse to zero models.
 // Bump this to the tag once miniagent releases 02f8f81+2099241. "dev" (untagged
@@ -541,7 +542,10 @@ readLoop:
 			if s := strings.TrimSpace(stderrBuf.String()); s != "" {
 				msg += "; stderr: " + s
 			}
-			out <- Event{Kind: KindError, Message: msg, IsTerminal: true}
+			select {
+			case out <- Event{Kind: KindError, Message: msg, IsTerminal: true}:
+			case <-ctx.Done():
+			}
 		}
 	}
 }

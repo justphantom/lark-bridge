@@ -244,7 +244,7 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID string, card []b
 	defer cancel()
 
 	var lastErr error
-	for attempt := 0; attempt < cardVerifyMaxAttempts; attempt++ {
+	for attempt := range cardVerifyMaxAttempts {
 		if attempt > 0 {
 			select {
 			case <-time.After(cardVerifyBackoff):

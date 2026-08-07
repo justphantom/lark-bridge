@@ -50,10 +50,16 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 
 完整字段与默认值见 `config.example.json` 与 `internal/config/config_defaults.go`。
 
+### miniagent 后端配置要点
+
+- **bare 模式**：配 `miniagent.chat_url` + `miniagent.models_url`（完整 URL），`api_key` 通过环境变量 `${MINIAGENT_API_KEY}` 注入。
+- **多 provider 模式**：配 `miniagent.config_path` 指向部署期生成的 `miniagent.json`，并可选 `provider` 切换 provider；此模式下 `chat_url`/`models_url` 由 config 文件提供，bridge 只透传 `-config <abspath>`。
+- **每 chat 覆盖**：`/mode`、`/thinking`、`/model` 会持久化到 router binding；`key_file` 让 bridge 从文件读取密钥并注入子进程 env，替代直接在 JSON 里写 `api_key`。
+
 ### 敏感数据落盘
 
-- **streamarchive**：`stream_history > 0` 时，每个 backend 把该轮 CLI stdout 原文落盘到 `{state_dir}/streams/{backend}/`（仅剔除 claude 的 thinking_tokens 行）。**含用户 prompt、agent 读到的文件内容、模型回复**。文件权限 0600，但若 `state_dir` 进了备份/日志转发/共享快照，这些内容随之离开主机。生产环境若不需要排障，设 `stream_history: 0` 关闭，或把 `streams/` 排除出备份。`log_debug_redact` 只影响日志，不影响 archive。
-- **debug 日志**：`log_debug_redact: false`（零值默认）时 prompt/result/error 文本原样进 debug 日志。生产建议显式设 `true`。
+- **streamarchive**：`stream_history > 0` 时，每个 backend 把该轮 CLI stdout 原文落盘到 `{state_dir}/streams/{backend}/`（仅剔除 claude 的 thinking_tokens 行）。**含用户 prompt、agent 读到的文件内容、模型回复**。文件权限 0600，但若 `state_dir` 进了备份/日志转发/共享快照，这些内容随之离开主机。生产环境若不需要排障，设 `stream_history: 0` 关闭，或把 `streams/` 排除出备份。`stream_archive_redact` 默认 `true`，会对 archive 中的敏感字段做行级脱敏；`log_debug_redact` 只影响日志，不影响 archive。
+- **debug 日志**：`log_debug_redact` 默认 `false`（零值）时 prompt/result/error 文本原样进 debug 日志。生产建议显式设 `true`。`stream_archive_redact` 与 `log_debug_redact` 独立，示例配置已把前者设为 `true`。
 
 ## 部署
 

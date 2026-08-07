@@ -293,12 +293,18 @@ const backendTokenHeader = "X-Backend-Token"
 // conn recorded no token (legacy backend, never opted in) or the request
 // carries the matching token. A non-empty recorded token with a mismatched
 // (or absent) request token is an impersonation attempt → false.
+//
+// The comparison uses crypto/subtle.ConstantTimeCompare to avoid leaking the
+// recorded token via timing. Note: ConstantTimeCompare returns early on
+// unequal lengths, which still leaks the token's length; the token is a
+// fixed-length 256-bit value, so this does not aid brute force.
 func validateBackendToken(conn *BackendConn, r *http.Request) bool {
 	want := conn.Token()
 	if want == "" {
 		return true // pre-token backend: rolling-upgrade compatibility
 	}
-	return r.Header.Get(backendTokenHeader) == want
+	got := r.Header.Get(backendTokenHeader)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // ipcReadHeaderTimeout bounds request-header read time so a slowloris-style
