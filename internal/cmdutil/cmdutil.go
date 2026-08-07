@@ -41,12 +41,18 @@ const MaxArgPromptBytes = 100 << 10 // 100 KiB
 // controls (e.g. an interactive question card that the user answers later)
 // and the dispatcher must skip the default TypeNotice reply. The dispatcher
 // still owns error handling: a non-nil error overrides Handled.
+//
+// Level and Title, when non-empty, override the values from the command's
+// Spec for this invocation. This lets one command produce both success and
+// warning/error replies without needing a separate spec per outcome.
 type Result struct {
 	Body    string
 	Field   string
 	Before  string
 	After   string
 	Handled bool
+	Level   string // overrides Spec.Level if non-empty
+	Title   string // overrides Spec.Title if non-empty
 }
 
 // Spec is one slash command's display metadata: the /help entry and the

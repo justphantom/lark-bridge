@@ -11,39 +11,53 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// PromptScaffold bundles the per-prompt context assembled by
-// RunPromptScaffold, an onActivity hook (called once per received stdout
+// promptScaffold bundles the per-prompt context assembled by
+// runPromptScaffold, an onActivity hook (called once per received stdout
 // event so the idle watchdog timer can be reset), a stop func that releases
 // the watchdog timer, and the CancelCause func so the caller can fire the
 // cancel with a cause (e.g. errIdleTimeout). The PromptTimeout timer is
-// wired internally; callers only need to `defer scaffold.Stop()` and
-// `defer scaffold.Cancel(nil)`.
-type PromptScaffold struct {
-	Ctx        context.Context
-	Cancel     context.CancelCauseFunc
-	OnActivity func()
-	Stop       func()
+// wired internally; callers only need to call RunPrompt.
+type promptScaffold struct {
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	onActivity func()
+	stop       func()
 }
 
-// RunPromptScaffold assembles the per-prompt prologue shared by every CLI
-// bridge's runPrompt: WithCancelCause parent, PromptTimeout timer, and the
-// optional idle watchdog.
-//
-// Backends keep their panic-recover and the LIFO defer chain (Wg.Done /
-// EndPrompt / mine.Cancel) in their own runPrompt — the scaffold only
+// RunPrompt assembles the per-prompt prologue shared by every CLI bridge's
+// runPrompt and runs fn under it. It wires WithCancelCause, the PromptTimeout
+// timer, and the optional idle watchdog, then guarantees they are released in
+// the right order regardless of how fn returns. Backends keep their panic
+// recover and per-prompt cleanup in their own runPrompt — this helper only
 // centralises the ctx+timer plumbing that was byte-identical across
-// claude/opencode/omp. The divergent middle logic (opts construction, stale
-// retry, streamRun dispatch, RecordUsage / EmitTerminal) stays local.
+// claude/opencode/omp.
 //
-// idleTimeout > 0 wires the idle watchdog: each OnActivity() call resets the
-// timer; when no event arrives for idleTimeout the timer fires
-// Cancel(idleCause). A backend with no idle watchdog passes idleTimeout=0
-// and idleCause=nil — OnActivity becomes a no-op and Stop is a no-op.
-func (c *Core) RunPromptScaffold(
+// The fn receives the prompt-scoped ctx and an onActivity callback. An
+// idleTimeout > 0 arms the idle watchdog: each onActivity() call resets the
+// timer; when no event arrives for idleTimeout the timer fires Cancel with
+// idleCause. A backend with no idle watchdog passes idleTimeout=0 and
+// idleCause=nil — onActivity becomes a no-op.
+func (c *Core) RunPrompt(
 	parent context.Context,
 	idleTimeout time.Duration,
 	idleCause error,
-) PromptScaffold {
+	fn func(ctx context.Context, onActivity func()) error,
+) error {
+	scaffold := c.runPromptScaffold(parent, idleTimeout, idleCause)
+	defer scaffold.stop()
+	defer scaffold.cancel(nil)
+	return fn(scaffold.ctx, scaffold.onActivity)
+}
+
+// runPromptScaffold assembles the per-prompt prologue shared by every CLI
+// bridge's runPrompt: WithCancelCause parent, PromptTimeout timer, and the
+// optional idle watchdog. It is intentionally unexported; callers should use
+// RunPrompt so the Stop/Cancel LIFO ordering cannot be mis-sequenced.
+func (c *Core) runPromptScaffold(
+	parent context.Context,
+	idleTimeout time.Duration,
+	idleCause error,
+) promptScaffold {
 	ctx, cancel := context.WithCancelCause(parent)
 
 	// Capture cancel into a stable local the timer closures read; if we
@@ -52,7 +66,7 @@ func (c *Core) RunPromptScaffold(
 	localCancel := cancel
 
 	// stopOnce collects every timer's Stop into a single idempotent call so
-	// the caller's defer scaffold.Stop() releases all timers regardless of
+	// the caller's defer scaffold.stop() releases all timers regardless of
 	// which fired.
 	var stopOnce sync.Once
 	var stops []func() bool
@@ -89,11 +103,11 @@ func (c *Core) RunPromptScaffold(
 		})
 	}
 
-	return PromptScaffold{
-		Ctx:        ctx,
-		Cancel:     cancel,
-		OnActivity: onActivity,
-		Stop:       stop,
+	return promptScaffold{
+		ctx:        ctx,
+		cancel:     cancel,
+		onActivity: onActivity,
+		stop:       stop,
 	}
 }
 

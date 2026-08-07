@@ -1063,6 +1063,22 @@ func waitForSends(t *testing.T, s *fakeSink, want int, timeout time.Duration) {
 	}
 }
 
+func waitForUpdates(t *testing.T, s *fakeSink, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, updates := s.counts()
+		if updates >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, got := s.counts()
+	if got != want {
+		t.Fatalf("want %d updates, got %d", want, got)
+	}
+}
+
 // TestOnBackendOffline_FlapDebounceSuppressed verifies the core anti-flap
 // behavior: an offline immediately followed by a reconnect (within the debounce
 // window) produces NO cards — neither offline nor recovery.
@@ -1151,6 +1167,9 @@ func TestFireOfflineNotice_ReclaimsStrandedTurns(t *testing.T) {
 	}
 
 	// Each stranded turn's progress card was PATCHed to a failure notice.
+	// The reclaim runs in the debounce timer goroutine, so wait for the
+	// PATCHes instead of racing the send-count observation.
+	waitForUpdates(t, sink, 2, time.Second)
 	sink.mu.Lock()
 	patched := map[string]bool{}
 	for _, u := range sink.updates {

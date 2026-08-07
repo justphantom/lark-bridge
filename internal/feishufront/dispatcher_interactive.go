@@ -289,6 +289,43 @@ func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID str
 // who rarely re-views them, so the rollback rarely bites. If it does,
 // apply the same delayed-PATCH pattern used by the picker.
 func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.CardAction) error {
+	kind := d.auditCardAction(action)
+
+	// Frontend-owned card (the /backend picker): consume the click directly —
+	// no requestID, no answer forwarding to a backend.
+	//
+	// The dedup check below is intentionally skipped here: backend-picker
+	// clicks carry no requestID, so a malicious or rapid double-click could
+	// bypass the actionIDs guard. UX-wise the picker buttons are disabled
+	// client-side the instant the first click lands, so a real user cannot
+	// fire two binding changes; only a constructed request bypassing the
+	// disabled state could. Acceptable: /backend use is idempotent for the
+	// same target (SetBackend is a store), and a malicious opener already
+	// has its own backend privileges. Revisit if picker ever triggers a
+	// non-idempotent side effect.
+	if kind == "backend" {
+		return d.handleBackendChoice(ctx, action)
+	}
+
+	requestID := requestIDFromValue(action.Value)
+	if requestID != "" && !d.actionIDs.Add(requestID) {
+		return nil
+	}
+	if requestID != "" {
+		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
+			d.flipInteractiveSubmitted(ctx, action, requestID, messageID)
+			// Deliberately NOT unbinding: keep requestID→messageID so the
+			// turn-completing result can finalize this card in place.
+		}
+	}
+
+	answer := d.buildAnswerPayload(action, requestID)
+	return d.forwardCardAnswer(ctx, action.ChatID, requestID, answer)
+}
+
+// auditCardAction logs the operator and the shape of the incoming card action.
+// It returns the action kind so the caller can branch on /backend vs real answers.
+func (d *Dispatcher) auditCardAction(action *feishu.CardAction) string {
 	// Audit the operator before routing. Card callbacks are not authenticated
 	// against the original turn's sender (group-chat collaboration model), so
 	// recording UserOpenID is the minimum trail for "who acted on whose card".
@@ -310,106 +347,84 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 			log.FieldMessageID, action.MessageID,
 			"value", strutil.Truncate(string(valueJSON), 300))
 	}
-	// Frontend-owned card (the /backend picker): consume the click directly —
-	// no requestID, no answer forwarding to a backend.
-	//
-	// The dedup check below is intentionally skipped here: backend-picker
-	// clicks carry no requestID, so a malicious or rapid double-click could
-	// bypass the actionIDs guard. UX-wise the picker buttons are disabled
-	// client-side the instant the first click lands, so a real user cannot
-	// fire two binding changes; only a constructed request bypassing the
-	// disabled state could. Acceptable: /backend use is idempotent for the
-	// same target (SetBackend is a store), and a malicious opener already
-	// has its own backend privileges. Revisit if picker ever triggers a
-	// non-idempotent side effect.
-	if kind == "backend" {
-		return d.handleBackendChoice(ctx, action)
+	return kind
+}
+
+// flipInteractiveSubmitted rewrites an interactive card to its submitted state,
+// schedules a delayed fallback PATCH past Feishu's click-handling window, and
+// caches the submitted bytes for later finalization. The TTL timer is stopped
+// but the binding is kept so finalizeLinkedInteractive can advance the same
+// card once the turn completes.
+func (d *Dispatcher) flipInteractiveSubmitted(ctx context.Context, action *feishu.CardAction, requestID, messageID string) {
+	// Stop the TTL timer under the lock so expireInteractive cannot race this
+	// flip. The cache and binding are KEPT (not deleted): the cached bytes are
+	// rewritten to the submitted form below so finalizeLinkedInteractive can
+	// later advance the SAME card to "finalized". Deleting here (the prior
+	// behaviour) stranded submitted cards on "处理中" amber forever.
+	d.cardMu.Lock()
+	orig := d.cards[requestID]
+	if t := d.interactiveTimers[requestID]; t != nil {
+		t.Stop()
+		delete(d.interactiveTimers, requestID)
 	}
-	requestID := requestIDFromValue(action.Value)
-	if requestID != "" && !d.actionIDs.Add(requestID) {
-		return nil
+	d.cardMu.Unlock()
+	if orig == nil {
+		return
 	}
-	if requestID != "" {
-		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
-			// Stop the TTL timer under the lock so expireInteractive cannot
-			// race this flip. The cache and binding are KEPT (not deleted):
-			// the cached bytes are rewritten to the submitted form below so
-			// finalizeLinkedInteractive can later advance the SAME card to
-			// "finalized" once the turn's result lands. Deleting here (the
-			// prior behaviour) stranded submitted cards on "处理中" amber
-			// forever — finalize is a no-op once the binding is gone.
-			d.cardMu.Lock()
-			orig := d.cards[requestID]
-			if t := d.interactiveTimers[requestID]; t != nil {
-				t.Stop()
-				delete(d.interactiveTimers, requestID)
-			}
-			d.cardMu.Unlock()
-			if orig != nil {
-				if sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action)); err == nil {
-					_ = d.bot.UpdateCard(ctx, messageID, sub)
-					// Delayed fallback PATCH: Feishu's card.action.trigger has a
-					// ~3-5s click-handling window that silently reverts an
-					// immediate PatchMessage, so the submitted card may visually
-					// stay clickable (buttons un-greyed) even though actionIDs
-					// already de-duped the click server-side. Re-send the same
-					// submitted bytes past the window to guarantee the grey-out
-					// + "已提交" land — the same delayed-PATCH pattern the picker
-					// (handleBackendChoice) and the question-refresh path already
-					// use. WithoutCancel: the sleep crosses the click-handler
-					// request's lifetime. Guarded: if the turn finalized during
-					// the sleep the binding is gone and the card already shows
-					// the terminal green frame — re-PATCHing the grey submitted
-					// bytes would regress it, so skip.
-					fbDelay := d.cardPatchDelay
-					if fbDelay <= 0 {
-						fbDelay = cardPatchDelayDefault
-					}
-					fbMsgID := messageID
-					fbBytes := sub
-					fbReqID := requestID
-					fbChatID := action.ChatID
-					goSafe(func() {
-						time.Sleep(fbDelay)
-						if _, ok := d.turns.InteractiveMessageID(fbReqID); !ok {
-							return
-						}
-						patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
-						defer cancel()
-						if err := d.bot.UpdateCardVerified(patchCtx, fbMsgID, fbBytes); err != nil {
-							if l := d.logger.Load(); l != nil {
-								l.Warn("delayed submit verified update failed",
-									log.FieldChatID, fbChatID,
-									log.FieldMessageID, fbMsgID,
-									log.FieldError, err.Error())
-							}
-						}
-					})
-					// Cache the SUBMITTED bytes (replacing the original) so a
-					// later finalize renders finalized-from-submitted and
-					// preserves the "✓ 已回答" echo (C5) — but ONLY if the
-					// binding still exists. If finalizeLinkedInteractive ran
-					// during the render+UpdateCard window above, it already
-					// deleted the cache and unbound; re-writing here would
-					// leak an orphan entry with no binding (SweepInteractive
-					// cleans by binding, so it would never reap it). Query the
-					// binding before taking cardMu to preserve the TurnManager →
-					// cardMu lock ordering.
-					hasBinding := false
-					if _, ok := d.turns.InteractiveMessageID(requestID); ok {
-						hasBinding = true
-					}
-					d.cardMu.Lock()
-					if hasBinding {
-						d.cards[requestID] = sub
-					}
-					d.cardMu.Unlock()
-				}
-			}
-			// Deliberately NOT unbinding: keep requestID→messageID so the
-			// turn-completing result can finalize this card in place.
+	sub, err := renderer.RenderInteractiveSubmitted(orig, submitSummary(action))
+	if err != nil {
+		return
+	}
+	_ = d.bot.UpdateCard(ctx, messageID, sub)
+	d.scheduleSubmitFallback(ctx, action.ChatID, requestID, messageID, sub)
+	d.cacheSubmittedCard(requestID, sub)
+}
+
+// scheduleSubmitFallback re-PATCHes the submitted card after Feishu's ~3-5s
+// click-handling window to guard against silent reverts. It is a no-op if the
+// binding has already been finalized (and the card flipped to the terminal
+// green frame) during the wait.
+func (d *Dispatcher) scheduleSubmitFallback(ctx context.Context, chatID, requestID, messageID string, card []byte) {
+	fbDelay := d.cardPatchDelay
+	if fbDelay <= 0 {
+		fbDelay = cardPatchDelayDefault
+	}
+	goSafe(func() {
+		time.Sleep(fbDelay)
+		if _, ok := d.turns.InteractiveMessageID(requestID); !ok {
+			return
 		}
+		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
+		defer cancel()
+		if err := d.bot.UpdateCardVerified(patchCtx, messageID, card); err != nil {
+			if l := d.logger.Load(); l != nil {
+				l.Warn("delayed submit verified update failed",
+					log.FieldChatID, chatID,
+					log.FieldMessageID, messageID,
+					log.FieldError, err.Error())
+			}
+		}
+	})
+}
+
+// cacheSubmittedCard stores the submitted card bytes so finalizeLinkedInteractive
+// can render finalized-from-submitted and preserve the "✓ 已回答" echo (C5).
+// It only writes when the binding still exists, otherwise the entry would be an
+// orphan never reaped by SweepInteractive.
+func (d *Dispatcher) cacheSubmittedCard(requestID string, card []byte) {
+	// Query the binding before taking cardMu to preserve the TurnManager →
+	// cardMu lock ordering.
+	_, hasBinding := d.turns.InteractiveMessageID(requestID)
+	d.cardMu.Lock()
+	if hasBinding {
+		d.cards[requestID] = card
 	}
+	d.cardMu.Unlock()
+}
+
+// buildAnswerPayload constructs the Answer event payload from the form values or
+// the explicit choice value.
+func (d *Dispatcher) buildAnswerPayload(action *feishu.CardAction, requestID string) *protocol.AnswerPayload {
 	answer := &protocol.AnswerPayload{ChatID: action.ChatID, RequestID: requestID, MessageID: action.MessageID}
 	if len(action.FormValue) > 0 {
 		answer.Choices, answer.Custom = parseQuestionFormValue(action.FormValue)
@@ -417,39 +432,45 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		answer.Choice = c
 		answer.Choices = []string{c}
 	}
+	return answer
+}
+
+// forwardCardAnswer resolves the chat's backend and forwards the answer payload
+// as a TypeAnswer event.
+func (d *Dispatcher) forwardCardAnswer(ctx context.Context, chatID, requestID string, answer *protocol.AnswerPayload) error {
 	d.logger.Load().Debug("card action: sending answer to backend",
-		"chat_id", action.ChatID,
+		"chat_id", chatID,
 		"request_id", requestID,
-		"message_id", action.MessageID,
+		"message_id", answer.MessageID,
 		"choice", answer.Choice,
 		"choices", answer.Choices,
 		"custom", answer.Custom)
-	ev := &protocol.Event{Type: protocol.TypeAnswer, PromptID: action.MessageID, Answer: answer}
+	ev := &protocol.Event{Type: protocol.TypeAnswer, PromptID: answer.MessageID, Answer: answer}
 	if d.router == nil {
 		d.logger.Load().Debug("card action: router is nil, skipping")
 		return nil
 	}
-	backendID, err := d.router.Resolve(action.ChatID)
+	backendID, err := d.router.Resolve(chatID)
 	if err != nil {
 		d.logger.Load().Debug("card action: failed to resolve backend",
-			"chat_id", action.ChatID,
+			"chat_id", chatID,
 			log.FieldError, err)
 		return err
 	}
 	d.logger.Load().Debug("card action: sending event to backend",
-		"chat_id", action.ChatID,
+		"chat_id", chatID,
 		"backend_id", backendID,
 		"request_id", requestID)
 	if err := d.registry.SendEvent(backendID, ev); err != nil {
 		d.logger.Load().Warn("card action: SendEvent failed",
-			"chat_id", action.ChatID,
+			"chat_id", chatID,
 			"backend_id", backendID,
 			"request_id", requestID,
 			log.FieldError, err)
 		return err
 	}
 	d.logger.Load().Debug("card action: event sent successfully",
-		"chat_id", action.ChatID,
+		"chat_id", chatID,
 		"backend_id", backendID,
 		"request_id", requestID)
 	return nil

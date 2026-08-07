@@ -54,6 +54,14 @@ func NewCommands[H any](specs []CommandSpec[H]) *Commands[H] {
 	return &Commands[H]{specs: specs, registry: registry}
 }
 
+// Lookup returns the spec for a command name, if any. It lets backends with
+// custom dispatch paths (e.g. miniagent's per-chat turn-slot reservation)
+// reuse the command registry without giving up their own emit logic.
+func (c *Commands[H]) Lookup(name string) (*CommandSpec[H], bool) {
+	spec, ok := c.registry[name]
+	return spec, ok
+}
+
 // RenderHelp is the source of /help's body.
 func (c *Commands[H]) RenderHelp() string {
 	specs := make([]cmdutil.Spec, 0, len(c.specs))
@@ -92,10 +100,15 @@ func (c *Commands[H]) Dispatch(h H, emit EmitFunc, logger *log.Logger, parentCtx
 				body = fmt.Sprintf("⚠️ %v", handlerErr)
 				level = "error"
 			}
+		} else if res.Level != "" {
+			level = res.Level
 		}
 		title = spec.Title
 		if title == "" {
 			title = spec.Name
+		}
+		if res.Title != "" {
+			title = res.Title
 		}
 	}
 	if title == "" {

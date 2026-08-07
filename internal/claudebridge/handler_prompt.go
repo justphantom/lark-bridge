@@ -26,50 +26,73 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 	defer h.EndPrompt(chatID, mine)
 	defer mine.Cancel()
 
-	// Re-read the binding here rather than trusting the snapshot the caller
-	// took in handlePromptEvent: a concurrent /cd, /session-del or /model
-	// command (run in a separate goroutine) could have mutated the router
-	// between ensureBinding and this point. Fall back to the passed snapshot
-	// only if the binding was removed entirely.
-	if fresh, ok := h.Router.Lookup(chatID); ok {
-		binding = fresh
-	}
+	binding = h.resolveRunBinding(chatID, binding)
 
 	h.Logger.Debug("runPrompt start",
 		log.FieldChatID, chatID,
 		log.FieldSessionID, binding.SessionID,
 		"prompt", bridgebase.TruncateForDebug(prompt, h.DebugRedact()))
 
-	// Wire the shared per-prompt prologue (WithCancelCause + PromptTimeout
-	// timer + optional idle watchdog). Claude has no idle watchdog (the CLI
-	// exits on its own per turn), so idleTimeout=0 makes OnActivity/Stop
-	// no-ops. See bridgebase.RunPromptScaffold for the rationale.
-	scaffold := h.RunPromptScaffold(parent, 0, nil)
-	defer scaffold.Stop()
-	defer scaffold.Cancel(nil)
-	ctx := scaffold.Ctx
+	// Claude has no idle watchdog (the CLI exits on its own per turn), so
+	// idleTimeout=0 makes onActivity a no-op. RunPrompt wires the shared
+	// per-prompt prologue (WithCancelCause + PromptTimeout timer) and
+	// guarantees the timer teardown order.
+	err := h.RunPrompt(parent, 0, nil, func(ctx context.Context, _ func()) error {
+		result := h.runClaudeWithStaleRetry(ctx, chatID, replyToID, binding, prompt)
 
-	modelSpec := binding.ModelSpec
-	opts := claude.RunOptions{
+		// RecordUsage before EmitTerminal: EmitTerminal reads the store to fill
+		// the cumulative TotalTokens on the result card, so this turn must be
+		// counted first. Add is an in-memory map update (the async save is
+		// non-blocking), so this does not delay the terminal emit.
+		h.RecordUsage(chatID, result)
+		if emitErr := h.EmitTerminal(ctx, chatID, replyToID, "Claude", 0, result); emitErr != nil {
+			bridgebase.HandleTerminalEmitError(h.Core, ctx, chatID, replyToID, emitErr)
+		}
+		return nil
+	})
+	if err != nil {
+		h.Logger.Debug("runPrompt finished with error", log.FieldChatID, chatID, log.FieldError, err)
+	}
+}
+
+// resolveRunBinding re-reads the binding here rather than trusting the
+// snapshot the caller took in handlePromptEvent: a concurrent /cd,
+// /session-del or /model command (run in a separate goroutine) could have
+// mutated the router between ensureBinding and this point. Fall back to the
+// passed snapshot only if the binding was removed entirely.
+func (h *Handler) resolveRunBinding(chatID string, snapshot router.Binding) router.Binding {
+	if fresh, ok := h.Router.Lookup(chatID); ok {
+		return fresh
+	}
+	return snapshot
+}
+
+// buildClaudeRunOptions constructs the claude.RunOptions from the current
+// binding and the user's prompt. Directory and settings file are expanded
+// here so the subprocess layer only sees concrete paths.
+func (h *Handler) buildClaudeRunOptions(binding router.Binding, prompt string) claude.RunOptions {
+	return claude.RunOptions{
 		Prompt:         prompt,
 		Directory:      binding.Directory,
 		SessionID:      binding.SessionID,
-		Model:          modelSpec,
+		Model:          binding.ModelSpec,
 		PermissionMode: binding.PermissionMode,
 		EffortLevel:    binding.EffortLevel,
 		SettingsFile:   strutil.ExpandEnvVars(binding.SettingsFile),
 	}
+}
+
+// runClaudeWithStaleRetry executes one Claude run and retries once without a
+// session id if the CLI reports the persisted session stale. The clear is
+// guarded by the binding generation so a /session-del + new prompt that
+// replaced the binding mid-turn is not clobbered.
+func (h *Handler) runClaudeWithStaleRetry(ctx context.Context, chatID, replyToID string, binding router.Binding, prompt string) bridgebase.PromptResult {
+	opts := h.buildClaudeRunOptions(binding, prompt)
+	modelSpec := binding.ModelSpec
 
 	result := h.runClaude(ctx, chatID, replyToID, opts, modelSpec, binding.Generation)
 
-	// Stale-session recovery: if --resume hit a session the CLI no longer
-	// knows, drop the binding's sessionID and retry once with a fresh session.
-	// The stale match itself is centralised in claude.IsStaleSession (set on
-	// the result by finalizeResult) so a CLI rewording fixes in one place.
-	// Guard the clear with the binding generation so a /session-del + new
-	// prompt that replaced the binding mid-turn is not clobbered.
-	if result.Err != nil && result.Stale && binding.SessionID != "" &&
-		ctx.Err() == nil {
+	if result.Err != nil && result.Stale && binding.SessionID != "" && ctx.Err() == nil {
 		h.Logger.Warn("stale claude session, retrying without --resume",
 			log.FieldChatID, chatID,
 			log.FieldSessionID, binding.SessionID)
@@ -77,15 +100,7 @@ func (h *Handler) runPrompt(parent context.Context, chatID string, binding route
 		opts.SessionID = ""
 		result = h.runClaude(ctx, chatID, replyToID, opts, modelSpec, binding.Generation)
 	}
-
-	// RecordUsage before EmitTerminal: EmitTerminal reads the store to fill
-	// the cumulative TotalTokens on the result card, so this turn must be
-	// counted first. Add is an in-memory map update (the async save is
-	// non-blocking), so this does not delay the terminal emit.
-	h.RecordUsage(chatID, result)
-	if err := h.EmitTerminal(ctx, chatID, replyToID, "Claude", 0, result); err != nil {
-		bridgebase.HandleTerminalEmitError(h.Core, ctx, chatID, replyToID, err)
-	}
+	return result
 }
 
 // runClaude starts one Claude subprocess, streams its events into Controls,

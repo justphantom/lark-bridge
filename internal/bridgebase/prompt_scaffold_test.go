@@ -19,52 +19,88 @@ func newScaffoldCore(t *testing.T) *Core {
 	return NewCore(r, nil, CoreConfig{}, log.Nop())
 }
 
-// TestRunPromptScaffold_NoIdleWatchdog verifies idleTimeout=0 yields a
-// no-op OnActivity / Stop.
-func TestRunPromptScaffold_NoIdleWatchdog(t *testing.T) {
+// TestRunPrompt_NoIdleWatchdog verifies idleTimeout=0 yields a no-op
+// onActivity callback and RunPrompt returns fn's result.
+func TestRunPrompt_NoIdleWatchdog(t *testing.T) {
 	c := newScaffoldCore(t)
-	s := c.RunPromptScaffold(context.Background(), 0, nil)
-	if s.OnActivity == nil {
-		t.Fatal("OnActivity should never be nil (callers may invoke unconditionally)")
+	called := false
+	err := c.RunPrompt(context.Background(), 0, nil, func(ctx context.Context, onActivity func()) error {
+		called = true
+		onActivity() // must not panic
+		if ctx.Err() != nil {
+			t.Error("ctx should not be cancelled when PromptTimeout is 0")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunPrompt returned unexpected error: %v", err)
 	}
-	s.OnActivity() // must not panic
-	s.Stop()
-	s.Cancel(nil)
+	if !called {
+		t.Fatal("RunPrompt did not invoke fn")
+	}
 }
 
-// TestRunPromptScaffold_IdleFiresCancelCause verifies an idle watchdog
-// timeout cancels the ctx with the supplied cause (which streamRun reads to
-// surface isIdleTimeout on the result).
-func TestRunPromptScaffold_IdleFiresCancelCause(t *testing.T) {
+// TestRunPrompt_IdleFiresCancelCause verifies an idle watchdog timeout
+// cancels the ctx with the supplied cause (which streamRun reads to surface
+// isIdleTimeout on the result).
+func TestRunPrompt_IdleFiresCancelCause(t *testing.T) {
 	c := newScaffoldCore(t)
 	cause := errors.New("test idle")
-	s := c.RunPromptScaffold(context.Background(), 20*time.Millisecond, cause)
-	defer s.Stop()
-
-	select {
-	case <-s.Ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("idle watchdog never fired")
-	}
-	if !errors.Is(context.Cause(s.Ctx), cause) {
-		t.Errorf("cause = %v, want %v", context.Cause(s.Ctx), cause)
+	err := c.RunPrompt(context.Background(), 20*time.Millisecond, cause, func(ctx context.Context, onActivity func()) error {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("idle watchdog never fired")
+		}
+		if !errors.Is(context.Cause(ctx), cause) {
+			t.Errorf("cause = %v, want %v", context.Cause(ctx), cause)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunPrompt returned unexpected error: %v", err)
 	}
 }
 
-// TestRunPromptScaffold_PromptTimeoutFires verifies the Core's PromptTimeout
+// TestRunPrompt_PromptTimeoutFires verifies the Core's PromptTimeout
 // (total wall-clock) cancels the ctx with DeadlineExceeded.
-func TestRunPromptScaffold_PromptTimeoutFires(t *testing.T) {
+func TestRunPrompt_PromptTimeoutFires(t *testing.T) {
 	r, _ := router.New("", log.Nop())
 	c := NewCore(r, nil, CoreConfig{PromptTimeout: 30 * time.Millisecond}, log.Nop())
-	s := c.RunPromptScaffold(context.Background(), 0, nil)
-	defer s.Stop()
-
-	select {
-	case <-s.Ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("prompt timeout never fired")
+	err := c.RunPrompt(context.Background(), 0, nil, func(ctx context.Context, onActivity func()) error {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("prompt timeout never fired")
+		}
+		if !IsPromptTimeout(ctx) {
+			t.Errorf("cause = %v, want DeadlineExceeded", context.Cause(ctx))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunPrompt returned unexpected error: %v", err)
 	}
-	if !IsPromptTimeout(s.Ctx) {
-		t.Errorf("cause = %v, want DeadlineExceeded", context.Cause(s.Ctx))
+}
+
+// TestRunPrompt_IdleResetByActivity verifies onActivity resets the idle
+// watchdog, allowing a long-running fn to outlive the idle interval as long
+// as it stays active.
+func TestRunPrompt_IdleResetByActivity(t *testing.T) {
+	c := newScaffoldCore(t)
+	cause := errors.New("test idle")
+	err := c.RunPrompt(context.Background(), 40*time.Millisecond, cause, func(ctx context.Context, onActivity func()) error {
+		for range 4 {
+			select {
+			case <-ctx.Done():
+				t.Fatal("ctx cancelled before activity reset expired")
+			case <-time.After(25 * time.Millisecond):
+			}
+			onActivity()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunPrompt returned unexpected error: %v", err)
 	}
 }
