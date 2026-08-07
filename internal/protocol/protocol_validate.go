@@ -28,6 +28,8 @@ var allowedControlTypes = map[string]struct{}{
 	TypeFile:         {},
 	TypeStatusReport: {},
 	TypePong:         {},
+	TypeTurnStarted:  {},
+	TypeTurnFinished: {},
 }
 
 // Validate checks Event consistency:
@@ -157,6 +159,27 @@ func validateStatusReport(c *Control) error {
 	return nil
 }
 
+// validateTurnStarted requires promptID and chatID so the frontend can place
+// the turn in the running set.
+func validateTurnStarted(c *Control) error {
+	if c.TurnStarted.PromptID == "" {
+		return fmt.Errorf("turnStarted.promptID is required")
+	}
+	if c.TurnStarted.ChatID == "" {
+		return fmt.Errorf("turnStarted.chatID is required")
+	}
+	return nil
+}
+
+// validateTurnFinished requires promptID so the frontend can remove the exact
+// turn from the running set.
+func validateTurnFinished(c *Control) error {
+	if c.TurnFinished.PromptID == "" {
+		return fmt.Errorf("turnFinished.promptID is required")
+	}
+	return nil
+}
+
 // validateProgress pins Progress.Gate.State to the renderer's known set so a
 // typo or a future schema drift cannot land an unknown banner tone. A nil Gate
 // (plain step / loading description) is always valid.
@@ -241,6 +264,8 @@ var controlRules = map[string]controlRule{
 	// TypePong: pure liveness reply (C2); no chatID (keyed by the URL-path
 	// BackendID), no semantic fields to check.
 	TypePong: {payloadIsNil: func(c *Control) bool { return c.Pong == nil }, payloadName: "pong"},
+	TypeTurnStarted:  {payloadIsNil: func(c *Control) bool { return c.TurnStarted == nil }, payloadName: "turnStarted", extraCheck: validateTurnStarted},
+	TypeTurnFinished: {payloadIsNil: func(c *Control) bool { return c.TurnFinished == nil }, payloadName: "turnFinished", extraCheck: validateTurnFinished},
 }
 
 // Validate checks Control consistency:

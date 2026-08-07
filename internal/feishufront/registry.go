@@ -55,6 +55,12 @@ type BackendConn struct {
 	// handlers, readers are /v1/status. nil until the first push.
 	metrics atomic.Pointer[protocol.MetricsReport]
 
+	// runningMu protects runningTurns. The map is keyed by promptID and holds
+	// the backend's view of in-flight turns, synchronized by TypeTurnStarted /
+	// TypeTurnFinished controls and periodic MetricsReport snapshots.
+	runningMu    sync.RWMutex
+	runningTurns map[string]protocol.TurnInfo
+
 	// missedPongs counts health pings sent without a TypePong reply (C2
 	// app-level heartbeat). lastSeen only proves the SSE pipe is writable —
 	// a backend whose consumer loop is wedged still ACKs TCP writes, so the
@@ -66,10 +72,11 @@ type BackendConn struct {
 
 func newBackendConn(id, typ, token string) *BackendConn {
 	c := &BackendConn{
-		id:      id,
-		typ:     typ,
-		token:   token,
-		eventCh: make(chan *protocol.Event, connEventChanBuf),
+		id:           id,
+		typ:          typ,
+		token:        token,
+		eventCh:      make(chan *protocol.Event, connEventChanBuf),
+		runningTurns: make(map[string]protocol.TurnInfo),
 	}
 	c.lastSeen.Store(time.Now().UnixNano())
 	return c
@@ -258,7 +265,105 @@ func (r *BackendRegistry) SetMetrics(id string, m *protocol.MetricsReport) error
 		return fmt.Errorf("backend %s not registered", id)
 	}
 	conn.metrics.Store(m)
+	// MetricsReport carries the authoritative running-sessions snapshot for
+	// this backend; replace the local view so lost TypeTurnStarted/Finished
+	// controls self-heal on the next tick. Backfill BackendID because older
+	// backends may leave it empty.
+	turns := make([]protocol.TurnInfo, len(m.Turns))
+	for i, t := range m.Turns {
+		t.BackendID = id
+		turns[i] = t
+	}
+	conn.replaceRunningTurns(turns)
 	return nil
+}
+
+// StartTurn records one in-flight turn for backend id. Idempotent for the same
+// promptID: a retried TypeTurnStarted does not duplicate the row.
+func (r *BackendRegistry) StartTurn(id string, t protocol.TurnInfo) error {
+	r.mu.RLock()
+	conn, ok := r.conns[id]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("backend %s not registered", id)
+	}
+	t.BackendID = id
+	conn.startTurn(t)
+	return nil
+}
+
+// FinishTurn removes one in-flight turn from backend id by promptID.
+func (r *BackendRegistry) FinishTurn(id, promptID string) error {
+	r.mu.RLock()
+	conn, ok := r.conns[id]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("backend %s not registered", id)
+	}
+	conn.finishTurn(promptID)
+	return nil
+}
+
+// RunningTurns returns every in-flight turn reported by online backends.
+// The result is a snapshot; callers must not mutate it.
+func (r *BackendRegistry) RunningTurns() []protocol.TurnInfo {
+	r.mu.RLock()
+	conns := make([]*BackendConn, 0, len(r.conns))
+	for _, c := range r.conns {
+		conns = append(conns, c)
+	}
+	r.mu.RUnlock()
+	var out []protocol.TurnInfo
+	for _, c := range conns {
+		out = append(out, c.runningTurnsSnapshot()...)
+	}
+	return out
+}
+
+// startTurn records a running turn under the write lock.
+func (c *BackendConn) startTurn(t protocol.TurnInfo) {
+	c.runningMu.Lock()
+	defer c.runningMu.Unlock()
+	if c.runningTurns == nil {
+		c.runningTurns = make(map[string]protocol.TurnInfo)
+	}
+	c.runningTurns[t.PromptID] = t
+}
+
+// finishTurn removes a running turn under the write lock.
+func (c *BackendConn) finishTurn(promptID string) {
+	c.runningMu.Lock()
+	defer c.runningMu.Unlock()
+	if c.runningTurns == nil {
+		return
+	}
+	delete(c.runningTurns, promptID)
+}
+
+// replaceRunningTurns atomically replaces the stored turn set with the
+// authoritative snapshot from a MetricsReport.
+func (c *BackendConn) replaceRunningTurns(turns []protocol.TurnInfo) {
+	c.runningMu.Lock()
+	defer c.runningMu.Unlock()
+	next := make(map[string]protocol.TurnInfo, len(turns))
+	for _, t := range turns {
+		next[t.PromptID] = t
+	}
+	c.runningTurns = next
+}
+
+// runningTurnsSnapshot returns a copy of the current turn set.
+func (c *BackendConn) runningTurnsSnapshot() []protocol.TurnInfo {
+	c.runningMu.RLock()
+	defer c.runningMu.RUnlock()
+	if len(c.runningTurns) == 0 {
+		return nil
+	}
+	out := make([]protocol.TurnInfo, 0, len(c.runningTurns))
+	for _, t := range c.runningTurns {
+		out = append(out, t)
+	}
+	return out
 }
 
 // Snapshot aggregates the registry's metrics into per-host rows deduped by a

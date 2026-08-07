@@ -55,11 +55,12 @@ type ServiceStat struct {
 // Host and process data travel together; the frontend splits them into the
 // conn's HostStats/ServiceStat views.
 type MetricsReport struct {
-	Hostname       string    `json:"hostname"`
-	IP             string    `json:"ip"`
-	MachineID      string    `json:"machineId,omitempty"` // 与 Host.MachineID 同值；置于顶层便于去重层直接取用
-	ReportedAt     int64     `json:"reportedAt"`
-	Host           HostStats `json:"host"`
-	Version        string    `json:"version"` // redundant with the handshake; lets the frontend cross-check/fall back
-	CgroupMemBytes uint64    `json:"cgroupMemBytes,omitempty"`
+	Hostname       string      `json:"hostname"`
+	IP             string      `json:"ip"`
+	MachineID      string      `json:"machineId,omitempty"` // 与 Host.MachineID 同值；置于顶层便于去重层直接取用
+	ReportedAt     int64       `json:"reportedAt"`
+	Host           HostStats   `json:"host"`
+	Version        string      `json:"version"` // redundant with the handshake; lets the frontend cross-check/fall back
+	CgroupMemBytes uint64      `json:"cgroupMemBytes,omitempty"`
+	Turns          []TurnInfo  `json:"turns,omitempty"` // running sessions snapshot for reconciliation
 }

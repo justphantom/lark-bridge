@@ -121,6 +121,59 @@ func TestControl_UnregisteredBackend(t *testing.T) {
 	}
 }
 
+// TestStatus_UsesBackendRunningTurns verifies that /v1/status aggregates the
+// running-session view reported by backends (via TypeTurnStarted / metrics)
+// instead of relying solely on the legacy in-flight counter.
+func TestStatus_UsesBackendRunningTurns(t *testing.T) {
+	reg := NewBackendRegistry()
+	reg.Register("b1", "miniagent")
+	if err := reg.StartTurn("b1", protocol.TurnInfo{PromptID: "p1", ChatID: "c1", ElapsedS: 12}); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	// Register a deploy-monitor turn: it must be excluded from the inflight
+	// count (mimicking the legacy deploy-monitor exclusion).
+	reg.Register("deploy", "deploy-monitor")
+	if err := reg.StartTurn("deploy", protocol.TurnInfo{PromptID: "p2", ChatID: "c2", ElapsedS: 3}); err != nil {
+		t.Fatalf("StartTurn deploy: %v", err)
+	}
+
+	srv := NewIPCServer(reg, "topsecret")
+	// Legacy counter claims 99 turns — the registry view must win.
+	srv.SetInFlightTurns(func() int { return 99 })
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer topsecret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	var got statusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.InFlight != 1 {
+		t.Errorf("InFlight = %d, want 1 (registry view overrides legacy counter)", got.InFlight)
+	}
+	if len(got.Turns) != 2 {
+		t.Fatalf("Turns = %d, want 2", len(got.Turns))
+	}
+	foundDeploy := false
+	for _, turn := range got.Turns {
+		if turn.BackendID == "deploy" {
+			foundDeploy = true
+		}
+		if turn.PromptID == "p1" && turn.ElapsedS != 12 {
+			t.Errorf("p1 ElapsedS = %d, want 12", turn.ElapsedS)
+		}
+	}
+	if !foundDeploy {
+		t.Error("deploy-monitor turn missing from Turns list")
+	}
+}
+
 // TestStatus_ReportsInFlight verifies the deploy-time status endpoint: an
 // unauthenticated request gets 401 (so deploy.sh without a secret knows auth
 // is wired), while an authenticated request returns the in-flight turn count

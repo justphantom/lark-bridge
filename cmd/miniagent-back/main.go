@@ -197,6 +197,8 @@ func run(cfgPath string) error {
 	// Host/process metrics push for the status-monitor overview card. The
 	// cgroup row is the parent service's memory; fork-on-prompt children are
 	// not sampled separately (idle → "—" only when the file is unreadable).
+	// The running-sessions callback lets the frontend reconcile its view of
+	// in-flight turns even if TypeTurnStarted/Finished controls are dropped.
 	bridgebase.GoSafe(logger, "metrics-loop", func() {
 		backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
 			Interval: time.Duration(cfg.StatusMonitor.Interval),
@@ -204,6 +206,9 @@ func run(cfgPath string) error {
 			UnitName: "lark-miniagent-back.service",
 			Version:  version,
 			Logger:   logger,
+			RunningSessions: func() []protocol.TurnInfo {
+				return runningSessionsToTurnInfo(h.RunningSessions())
+			},
 		})
 	})
 
@@ -227,6 +232,24 @@ func run(cfgPath string) error {
 			}
 			return nil
 		}, eventErr)
+}
+
+// runningSessionsToTurnInfo converts miniagent's internal running-session view
+// into the wire shape consumed by /v1/status and the status-monitor card.
+func runningSessionsToTurnInfo(sessions []miniagent.RunningSession) []protocol.TurnInfo {
+	if len(sessions) == 0 {
+		return nil
+	}
+	out := make([]protocol.TurnInfo, len(sessions))
+	now := time.Now()
+	for i, s := range sessions {
+		out[i] = protocol.TurnInfo{
+			PromptID: s.PromptID,
+			ChatID:   s.ChatID,
+			ElapsedS: int64(now.Sub(s.StartTime).Seconds()),
+		}
+	}
+	return out
 }
 
 func buildLogger(cfg *config.Config) (*log.Logger, error) {

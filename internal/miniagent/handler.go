@@ -231,7 +231,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// Busy-then-drop: a chat with an in-flight turn gets an immediate Notice
 	// instead of a second concurrent goroutine. The latter would race on the
 	// history jsonl, double-call the LLM, and emit out-of-order Results.
-	turnCtx, mine, ok := h.startTurn(ctx, chatID)
+	turnCtx, mine, ok := h.startTurn(ctx, chatID, promptID)
 	if !ok {
 		h.logger.Info("miniagent prompt dropped: chat busy", log.FieldChatID, chatID, log.FieldPromptID, promptID)
 		h.notifyWithPromptID(chatID, promptID, "warning", "处理中",

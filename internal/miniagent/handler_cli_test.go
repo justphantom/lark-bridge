@@ -640,7 +640,7 @@ func TestR4_SecondPromptWhileBusyIsDropped(t *testing.T) {
 	// miniagent subprocess is still writing its session jsonl.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	turnCtx, mine, ok := h.startTurn(ctx, "c")
+	turnCtx, mine, ok := h.startTurn(ctx, "c", "p1")
 	if !ok {
 		t.Fatal("precondition: first startTurn must win the slot")
 	}
@@ -658,7 +658,7 @@ func TestR4_SecondPromptWhileBusyIsDropped(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	got := sender.Controls()
+	got := filterNotices(sender.Controls())
 	if len(got) != 1 {
 		t.Fatalf("emits = %d, want exactly 1 (the busy notice, no second turn)", len(got))
 	}
@@ -697,7 +697,7 @@ func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
 	h, sender := newTestHandler()
 	defer h.Close()
 
-	turnCtx, mine, ok := h.startTurn(context.Background(), "c")
+	turnCtx, mine, ok := h.startTurn(context.Background(), "c", "p1")
 	if !ok {
 		t.Fatal("precondition: startTurn must win")
 	}
@@ -722,7 +722,7 @@ func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
 
 	// Every one of the N prompts must have been dropped as busy (warning
 	// notices), and the cancelBy map must still hold exactly our one turn.
-	notices := sender.Controls()
+	notices := filterNotices(sender.Controls())
 	if len(notices) != N {
 		t.Errorf("emits = %d, want %d busy notices", len(notices), N)
 	}
@@ -735,5 +735,17 @@ func TestR4_ConcurrentSecondPromptIsDropped(t *testing.T) {
 		t.Errorf("cancelBy size = %d after concurrent prompts, want 1", n)
 	}
 	h.endTurn("c", mine)
+}
+
+// filterNotices strips turn-lifecycle controls emitted by startTurn/endTurn so
+// busy-drop tests see only the notices they assert against.
+func filterNotices(ctrls []*protocol.Control) []*protocol.Control {
+	out := make([]*protocol.Control, 0, len(ctrls))
+	for _, c := range ctrls {
+		if c.Type == protocol.TypeNotice {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 

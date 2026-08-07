@@ -23,7 +23,9 @@ type Control struct {
 	Notice       *NoticePayload       `json:"notice,omitempty"`
 	File         *FilePayload         `json:"file,omitempty"`
 	StatusReport *StatusReportPayload `json:"statusReport,omitempty"`
-	Pong         *PongPayload         `json:"pong,omitempty"` // app-level heartbeat reply (C2)
+	Pong         *PongPayload         `json:"pong,omitempty"`     // app-level heartbeat reply (C2)
+	TurnStarted  *TurnStartedPayload  `json:"turnStarted,omitempty"`
+	TurnFinished *TurnFinishedPayload `json:"turnFinished,omitempty"`
 }
 
 // Control type values.
@@ -42,7 +44,9 @@ const (
 	TypeNotice       = "notice"
 	TypeFile         = "file"
 	TypeStatusReport = "status_report"
-	TypePong         = "pong" // app-level heartbeat reply (backend→frontend, C2)
+	TypePong         = "pong"         // app-level heartbeat reply (backend→frontend, C2)
+	TypeTurnStarted  = "turn_started"
+	TypeTurnFinished = "turn_finished"
 )
 
 // SessionInitPayload announces the session the backend bound for this prompt.
@@ -426,3 +430,17 @@ type StatusReportPayload struct {
 // impossible to misinterpret. The frontend does not render TypePong; it just
 // clears the per-backend pendingPong counter.
 type PongPayload struct{}
+
+// TurnStartedPayload announces that a backend has started processing a prompt.
+// The backend leaves BackendID empty; the frontend POST handler backfills it
+// from the URL path. ElapsedS is zero at start time.
+type TurnStartedPayload struct {
+	TurnInfo
+}
+
+// TurnFinishedPayload announces that a backend turn has ended (result, error,
+// notice, or abort). The frontend removes the matching turn from its running
+// set keyed by (backendID, promptID).
+type TurnFinishedPayload struct {
+	PromptID string `json:"promptID"`
+}

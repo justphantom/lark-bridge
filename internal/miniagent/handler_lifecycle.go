@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/log"
+	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // closeGrace bounds how long Close waits for in-flight turns to wind down
@@ -12,20 +14,21 @@ import (
 // that a stuck goroutine does not hang SIGTERM.
 const closeGrace = 5 * time.Second
 
-// RunningSession describes one in-flight turn for the /running card.
+// RunningSession describes one in-flight turn for the /running card and the
+// running-session lifecycle controls sent to the frontend.
 type RunningSession struct {
-	ChatID   string
-	Duration time.Duration
+	PromptID  string
+	ChatID    string
+	StartTime time.Time
 }
 
 // RunningSessions snapshots all in-flight turns.
 func (h *Handler) RunningSessions() []RunningSession {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
-	now := time.Now()
 	out := make([]RunningSession, 0, len(h.cancelBy))
-	for chatID, pc := range h.cancelBy {
-		out = append(out, RunningSession{ChatID: chatID, Duration: now.Sub(pc.StartTime)})
+	for _, pc := range h.cancelBy {
+		out = append(out, RunningSession{PromptID: pc.PromptID, ChatID: pc.ChatID, StartTime: pc.StartTime})
 	}
 	return out
 }
@@ -38,7 +41,7 @@ func (h *Handler) RunningSessions() []RunningSession {
 //
 // Uses bridgebase.PromptCancel (the shared shape every CLI backend's
 // cancel entry shares) — the local copy was byte-identical.
-func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+func (h *Handler) startTurn(ctx context.Context, chatID, promptID string) (turnCtx context.Context, mine *bridgebase.PromptCancel, ok bool) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
 	// After Close, reject new turns so the wg.Wait in Close is not held open
@@ -51,9 +54,13 @@ func (h *Handler) startTurn(ctx context.Context, chatID string) (turnCtx context
 		return nil, nil, false
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
-	mine = &bridgebase.PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID}
+	mine = &bridgebase.PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID, PromptID: promptID}
 	h.cancelBy[chatID] = mine
 	h.wg.Add(1)
+	// Announce the turn to the frontend so the running-session set stays
+	// consistent with the backend's cancelBy. Fire-and-forget: a failed emit
+	// does not abort the turn; the next metrics snapshot reconciles.
+	h.sendTurnStarted(chatID, promptID)
 	return turnCtx, mine, true
 }
 
@@ -67,6 +74,51 @@ func (h *Handler) endTurn(chatID string, mine *bridgebase.PromptCancel) {
 	}
 	h.cancelMu.Unlock()
 	h.wg.Done()
+	// Announce completion fire-and-forget. The promptID is read from mine
+	// (which the caller still holds) so the frontend can remove the exact row.
+	if mine != nil && mine.PromptID != "" {
+		h.sendTurnFinished(mine.PromptID)
+	}
+}
+
+// sendTurnStarted emits a TypeTurnStarted control. Best-effort: failures are
+// logged, never propagated, so a turn cannot fail because of a control emit.
+func (h *Handler) sendTurnStarted(chatID, promptID string) {
+	if h.rpc == nil || promptID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.rpc.SendControl(ctx, &protocol.Control{
+		Type:     protocol.TypeTurnStarted,
+		PromptID: promptID,
+		ChatID:   chatID,
+		TurnStarted: &protocol.TurnStartedPayload{
+			TurnInfo: protocol.TurnInfo{PromptID: promptID, ChatID: chatID},
+		},
+	}); err != nil {
+		h.logger.Warn("turn started emit failed",
+			log.FieldChatID, chatID, log.FieldPromptID, promptID, log.FieldError, err)
+	}
+}
+
+// sendTurnFinished emits a TypeTurnFinished control. Best-effort.
+func (h *Handler) sendTurnFinished(promptID string) {
+	if h.rpc == nil || promptID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.rpc.SendControl(ctx, &protocol.Control{
+		Type:     protocol.TypeTurnFinished,
+		PromptID: promptID,
+		TurnFinished: &protocol.TurnFinishedPayload{
+			PromptID: promptID,
+		},
+	}); err != nil {
+		h.logger.Warn("turn finished emit failed",
+			log.FieldPromptID, promptID, log.FieldError, err)
+	}
 }
 
 // Close cancels every in-flight turn and waits up to closeGrace for them to

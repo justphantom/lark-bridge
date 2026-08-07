@@ -121,19 +121,45 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	inflight := 0
-	if fn := s.inFlightTurns.Load(); fn != nil {
-		inflight = (*fn)()
-	}
-	turns := []turnStatus{}
-	if fn := s.inFlightDetail.Load(); fn != nil {
-		for _, t := range (*fn)() {
+	// Running sessions are now sourced from the backends themselves
+	// (TypeTurnStarted/Finished controls + MetricsReport snapshots) rather than
+	// inferred from frontend progress-card events. The legacy inFlightTurns /
+	// inFlightDetail hooks are kept as fallbacks for older builds/unittest.
+	var (
+		inflight int
+		turns    []turnStatus
+	)
+	running := s.registry.RunningTurns()
+	useRegistry := len(running) > 0 || len(s.registry.Registered()) == 0
+	// Use the registry view when it has data OR when no backend is registered
+	// (legacy/unittest path). When backends are registered but have not yet
+	// reported any turns, fall back to the in-memory TurnManager so deploy.sh
+	// still sees an honest count during rolling upgrades.
+	if useRegistry {
+		for _, t := range running {
+			// Preserve the deploy-monitor exclusion: a /deploy prompt itself
+			// calls /v1/status, and counting its own turn would deadlock deploy.
+			if s.registry.BackendType(t.BackendID) != "deploy-monitor" {
+				inflight++
+			}
 			turns = append(turns, turnStatus{
 				PromptID:  t.PromptID,
 				ChatID:    t.ChatID,
 				BackendID: t.BackendID,
-				ElapsedS:  int64(time.Since(t.StartedAt).Seconds()),
+				ElapsedS:  t.ElapsedS,
 			})
+		}
+	} else if fn := s.inFlightTurns.Load(); fn != nil {
+		inflight = (*fn)()
+		if fn := s.inFlightDetail.Load(); fn != nil {
+			for _, t := range (*fn)() {
+				turns = append(turns, turnStatus{
+					PromptID:  t.PromptID,
+					ChatID:    t.ChatID,
+					BackendID: t.BackendID,
+					ElapsedS:  int64(time.Since(t.StartedAt).Seconds()),
+				})
+			}
 		}
 	}
 	hosts, services := s.registry.Snapshot()

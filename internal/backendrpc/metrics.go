@@ -30,6 +30,11 @@ type MetricsOptions struct {
 	Version string
 	// Logger receives debug-level push failures; nil → no-op.
 	Logger *log.Logger
+	// RunningSessions, when non-nil, returns the backend's current in-flight
+	// turns. The snapshot is attached to every MetricsReport so the frontend
+	// can reconcile its running-session set even if TypeTurnStarted/Finished
+	// controls are lost.
+	RunningSessions func() []protocol.TurnInfo
 }
 
 // StartMetricsLoop probes the outbound IP once, pushes one MetricsReport
@@ -77,7 +82,7 @@ func collectMetrics(opts MetricsOptions, ip string) *protocol.MetricsReport {
 	if !ok {
 		cg = 0
 	}
-	return &protocol.MetricsReport{
+	report := &protocol.MetricsReport{
 		Hostname:       host.Hostname,
 		IP:             ip,
 		MachineID:      host.MachineID, // 置于顶层：去重层直接取用，与 Host.MachineID 同值
@@ -86,6 +91,10 @@ func collectMetrics(opts MetricsOptions, ip string) *protocol.MetricsReport {
 		Version:        opts.Version,
 		CgroupMemBytes: cg,
 	}
+	if opts.RunningSessions != nil {
+		report.Turns = opts.RunningSessions()
+	}
+	return report
 }
 
 // probeOutboundIP resolves the frontend's host:port and dials (UDP route

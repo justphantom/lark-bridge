@@ -76,6 +76,21 @@ func (d *Dispatcher) DispatchControl(ctx context.Context, rc RoutedControl) erro
 		// high-frequency progress frames, not whole-card replacements).
 		d.sendStatusReportAsync(ctx, rc)
 		return nil
+	case protocol.TypeTurnStarted:
+		if t := ctrl.TurnStarted; t != nil {
+			t.BackendID = rc.BackendID
+			if err := d.registry.StartTurn(rc.BackendID, t.TurnInfo); err != nil {
+				d.logger.Load().Warn("start turn tracking failed", "backend_id", rc.BackendID, log.FieldPromptID, t.PromptID, log.FieldError, err)
+			}
+		}
+		return nil
+	case protocol.TypeTurnFinished:
+		if t := ctrl.TurnFinished; t != nil {
+			if err := d.registry.FinishTurn(rc.BackendID, t.PromptID); err != nil {
+				d.logger.Load().Warn("finish turn tracking failed", "backend_id", rc.BackendID, log.FieldPromptID, t.PromptID, log.FieldError, err)
+			}
+		}
+		return nil
 	case protocol.TypeQuestion, protocol.TypePermission:
 		return d.sendInteractive(ctx, ctrl, backendType)
 	case protocol.TypeFile:

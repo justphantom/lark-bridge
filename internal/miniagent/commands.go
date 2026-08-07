@@ -56,7 +56,7 @@ func isSessionCommand(prompt string) bool {
 // and replies via a Notice. A busy chat gets the same "处理中" notice a
 // prompt would.
 func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, prompt string) error {
-	turnCtx, mine, ok := h.startTurn(ctx, chatID)
+	turnCtx, mine, ok := h.startTurn(ctx, chatID, promptID)
 	_ = turnCtx
 	if !ok {
 		h.notifyWithPromptID(chatID, promptID, "warning", "处理中", "上一条消息还在处理，请等它结束后再发。")

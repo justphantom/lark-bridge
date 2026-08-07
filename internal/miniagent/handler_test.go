@@ -153,6 +153,42 @@ func TestHandler_CloseWaitsForInFlight(t *testing.T) {
 	h.Close()
 }
 
+// TestStartEndTurn_EmitsLifecycleControls verifies that startTurn announces
+// TypeTurnStarted and endTurn announces TypeTurnFinished to the frontend,
+// so the running-session set stays consistent with the backend.
+func TestStartEndTurn_EmitsLifecycleControls(t *testing.T) {
+	h, sender := newTestHandler()
+	defer h.Close()
+
+	_, mine, ok := h.startTurn(context.Background(), "c", "p1")
+	if !ok {
+		t.Fatal("startTurn must win")
+	}
+	h.endTurn("c", mine)
+
+	var started, finished int
+	for _, c := range sender.Controls() {
+		switch c.Type {
+		case protocol.TypeTurnStarted:
+			started++
+			if c.PromptID != "p1" || c.ChatID != "c" {
+				t.Errorf("turn_started = {promptID:%q chatID:%q}, want p1,c", c.PromptID, c.ChatID)
+			}
+		case protocol.TypeTurnFinished:
+			finished++
+			if c.PromptID != "p1" {
+				t.Errorf("turn_finished promptID = %q, want p1", c.PromptID)
+			}
+		}
+	}
+	if started != 1 {
+		t.Errorf("TypeTurnStarted count = %d, want 1", started)
+	}
+	if finished != 1 {
+		t.Errorf("TypeTurnFinished count = %d, want 1", finished)
+	}
+}
+
 // TestStartPrompt_ConcurrentSerialization is the bridge-side concurrency
 // contract: 32 goroutines racing to startTurn on the same chat must yield
 // exactly one winner at a time (others rejected or queued via endTurn).
@@ -167,7 +203,7 @@ func TestStartPrompt_ConcurrentSerialization(t *testing.T) {
 	for range N {
 		go func() {
 			defer wg.Done()
-			_, mine, ok := h.startTurn(context.Background(), "race")
+			_, mine, ok := h.startTurn(context.Background(), "race", "p")
 			if ok {
 				atomic.AddInt64(&winners, 1)
 				h.endTurn("race", mine)

@@ -32,6 +32,7 @@ type PromptCancel struct {
 	Cancel    context.CancelFunc
 	StartTime time.Time
 	ChatID    string
+	PromptID  string // turn identity; used for running-session reports
 }
 
 // CoreConfig carries the scalar runtime config every bridge's Handler reads,

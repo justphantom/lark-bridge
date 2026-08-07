@@ -37,9 +37,59 @@ func TestValidateTodoControl(t *testing.T) {
 	}
 }
 
-// TestValidateEnums (C11): gate kind, task type, and the C2 pong control
-// are pinned to their known enum sets; unknown values fail loudly instead
-// of being silently mis-rendered.
+// TestValidateTurnControls pins TypeTurnStarted / TypeTurnFinished requirements.
+func TestValidateTurnControls(t *testing.T) {
+	if err := (&Control{Type: TypeTurnStarted}).Validate(); err == nil {
+		t.Fatal("TypeTurnStarted without payload should fail validation")
+	}
+	if err := (&Control{Type: TypeTurnStarted, TurnStarted: &TurnStartedPayload{}}).Validate(); err == nil {
+		t.Fatal("TypeTurnStarted without promptID/chatID should fail validation")
+	}
+	okStart := &Control{Type: TypeTurnStarted, TurnStarted: &TurnStartedPayload{TurnInfo: TurnInfo{PromptID: "p1", ChatID: "c1"}}}
+	if err := okStart.Validate(); err != nil {
+		t.Fatalf("valid TypeTurnStarted should pass, got %v", err)
+	}
+
+	if err := (&Control{Type: TypeTurnFinished}).Validate(); err == nil {
+		t.Fatal("TypeTurnFinished without payload should fail validation")
+	}
+	if err := (&Control{Type: TypeTurnFinished, TurnFinished: &TurnFinishedPayload{}}).Validate(); err == nil {
+		t.Fatal("TypeTurnFinished without promptID should fail validation")
+	}
+	okFinish := &Control{Type: TypeTurnFinished, TurnFinished: &TurnFinishedPayload{PromptID: "p1"}}
+	if err := okFinish.Validate(); err != nil {
+		t.Fatalf("valid TypeTurnFinished should pass, got %v", err)
+	}
+}
+
+// TestTurnControlRoundTrip pins the wire shape for turn lifecycle controls.
+func TestTurnControlRoundTrip(t *testing.T) {
+	start := &Control{
+		Type:    TypeTurnStarted,
+		PromptID: "p1",
+		ChatID:  "c1",
+		TurnStarted: &TurnStartedPayload{TurnInfo: TurnInfo{
+			PromptID:  "p1",
+			ChatID:    "c1",
+			BackendID: "b1",
+			ElapsedS:  0,
+		}},
+	}
+	gotStart := roundTrip(t, start)
+	if gotStart.Type != TypeTurnStarted || gotStart.TurnStarted == nil || gotStart.TurnStarted.PromptID != "p1" {
+		t.Fatalf("turn_started round trip: %+v", gotStart)
+	}
+
+	finish := &Control{
+		Type:     TypeTurnFinished,
+		PromptID: "p1",
+		TurnFinished: &TurnFinishedPayload{PromptID: "p1"},
+	}
+	gotFinish := roundTrip(t, finish)
+	if gotFinish.Type != TypeTurnFinished || gotFinish.TurnFinished == nil || gotFinish.TurnFinished.PromptID != "p1" {
+		t.Fatalf("turn_finished round trip: %+v", gotFinish)
+	}
+}
 func TestValidateEnums(t *testing.T) {
 	okGate := &Control{Type: TypeProgress, Progress: &ProgressPayload{
 		Gate: &GateInfo{State: "waiting", Kind: "permission"},
