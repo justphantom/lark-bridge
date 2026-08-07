@@ -34,7 +34,6 @@ var sessionCmds = map[string]func(h *Handler, ctx context.Context, chatID, arg s
 	"/send":     (*Handler).cmdSend,
 	"/pull":     (*Handler).cmdPull,
 	"/push":     (*Handler).cmdPush,
-	"/memory":   (*Handler).cmdMemory,
 	"/help":     (*Handler).cmdHelp,
 }
 
