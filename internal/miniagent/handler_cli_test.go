@@ -39,7 +39,7 @@ func TestEmitCLIEvent_NormalResult(t *testing.T) {
 		Steps:        3,
 		IsTerminal:   true,
 	}
-	h.emitCLIEvent("chat-1", "prompt-1", ev, time.Now())
+	h.emitCLIEvent("chat-1", "prompt-1", ev, time.Now(), newTodoAccum())
 
 	got := sender.Controls()
 	if len(got) != 1 || got[0].Result == nil {
@@ -73,7 +73,7 @@ func TestEmitCLIEvent_EmptyResultText(t *testing.T) {
 		Steps:      1,
 		IsTerminal: true,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	got := sender.Controls()
 	if len(got) != 1 || got[0].Result == nil {
 		t.Fatalf("want one Result, got %+v", got)
@@ -95,7 +95,7 @@ func TestEmitCLIEvent_MaxIterations(t *testing.T) {
 		Finish:     miniclient.FinishMaxIterations,
 		IsTerminal: true,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	got := sender.Controls()
 	if len(got) != 1 || got[0].Result == nil {
 		t.Fatalf("want one Result, got %+v", got)
@@ -120,7 +120,7 @@ func TestEmitCLIEvent_NormalFinish(t *testing.T) {
 		Finish:     miniclient.FinishStop,
 		IsTerminal: true,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	r := sender.Controls()[0].Result
 	if r.Incomplete {
 		t.Error("Incomplete = true, want false for stop")
@@ -154,7 +154,7 @@ func TestEmitCLIEvent_ToolUse(t *testing.T) {
 				Name:  tc.tool,
 				Input: tc.input,
 			}
-			h.emitCLIEvent("c", "p", ev, time.Now())
+			h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 			got := sender.Controls()
 			if len(got) != 1 || got[0].ToolUse == nil {
 				t.Fatalf("want one ToolUse, got %+v", got)
@@ -177,7 +177,7 @@ func TestEmitCLIEvent_Error(t *testing.T) {
 		Message:    "boom",
 		IsTerminal: true,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	got := sender.Controls()
 	if len(got) != 1 || got[0].Error == nil {
 		t.Fatalf("want one Error, got %+v", got)
@@ -198,7 +198,7 @@ func TestEmitCLIEvent_ToolResult_NonShell(t *testing.T) {
 		Output:  "file contents",
 		IsError: false,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	got := sender.Controls()
 	if len(got) != 1 || got[0].ToolResult == nil {
 		t.Fatalf("want one ToolResult, got %+v", got)
@@ -240,7 +240,7 @@ func TestEmitCLIEvent_ToolResult_ShellExitCode(t *testing.T) {
 				Output:   c.input,
 				ExitCode: &code,
 			}
-			h.emitCLIEvent("c", "p", ev, time.Now())
+			h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 			got := sender.Controls()
 			if len(got) != 1 || got[0].ToolResult == nil {
 				t.Fatalf("want one ToolResult, got %+v", got)
@@ -266,7 +266,7 @@ func TestEmitCLIEvent_ToolResult_Truncated(t *testing.T) {
 		Output:    "match line",
 		Truncated: true,
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
 	tr := sender.Controls()[0].ToolResult
 	if !strings.Contains(tr.Output, "match line") || !strings.Contains(tr.Output, "已截断") {
 		t.Errorf("Output = %q, want body + truncated suffix", tr.Output)
@@ -282,7 +282,7 @@ func TestEmitCLIEvent_ReasoningDelta(t *testing.T) {
 		Kind: miniclient.KindReasoningDelta,
 		Step: 1,
 		Text: "thinking chunk",
-	}, time.Now())
+	}, time.Now(), newTodoAccum())
 	got := sender.Controls()
 	if len(got) != 1 || got[0].Thinking == nil {
 		t.Fatalf("want one Thinking, got %+v", got)
@@ -304,7 +304,7 @@ func TestEmitCLIEvent_TextDelta_Dropped(t *testing.T) {
 	h.emitCLIEvent("c", "p", miniclient.Event{
 		Kind: miniclient.KindTextDelta,
 		Text: "chunk",
-	}, time.Now())
+	}, time.Now(), newTodoAccum())
 	if len(sender.Controls()) != 0 {
 		t.Errorf("text_delta should emit no control, got %+v", sender.Controls())
 	}
@@ -765,6 +765,133 @@ func filterNotices(ctrls []*protocol.Control) []*protocol.Control {
 		if c.Type == protocol.TypeNotice {
 			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// TestEmitCLIEvent_TodoCreateEmitsTypeTodo verifies that a todo_create
+// tool_result is folded into the card's todo zone (TypeTodo) instead of
+// rendering a noisy tool row. The miniagent output is a single-item JSON
+// ({"id":1,"subject":"...","status":"pending"}); the bridge maps it to the
+// protocol's TodoItem (subject→content) and emits a snapshot.
+func TestEmitCLIEvent_TodoCreateEmitsTypeTodo(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:   miniclient.KindToolResult,
+		Name:   "todo_create",
+		Output: `{"id":1,"subject":"写测试","description":"覆盖CRUD","status":"pending"}`,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
+	got := sender.Controls()
+	if len(got) != 1 || got[0].Type != protocol.TypeTodo {
+		t.Fatalf("want one TypeTodo, got %+v", controlTypeNames(got))
+	}
+	if len(got[0].Todo.Todos) != 1 {
+		t.Fatalf("want 1 todo item, got %d", len(got[0].Todo.Todos))
+	}
+	item := got[0].Todo.Todos[0]
+	if item.Content != "写测试" || item.Status != "pending" {
+		t.Errorf("todo item = %+v, want content=写测试 status=pending", item)
+	}
+}
+
+// TestEmitCLIEvent_TodoCreateToolUseSuppressed verifies that the tool_use
+// event for a todo tool does NOT emit a TypeToolUse (no noisy tool row).
+func TestEmitCLIEvent_TodoCreateToolUseSuppressed(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:  miniclient.KindToolUse,
+		Name:  "todo_create",
+		Input: `{"subject":"写测试"}`,
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
+	if got := sender.Controls(); len(got) != 0 {
+		t.Errorf("todo_create tool_use should emit nothing, got %+v", controlTypeNames(got))
+	}
+}
+
+// TestEmitCLIEvent_TodoUpdateAccumulates verifies that successive todo
+// create+update calls accumulate into one growing snapshot: after creating
+// two items and updating the first to completed, the TypeTodo snapshot has
+// 2 items with the correct statuses.
+func TestEmitCLIEvent_TodoUpdateAccumulates(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	todos := newTodoAccum()
+
+	// Step 1: create item 1
+	h.emitCLIEvent("c", "p", miniclient.Event{
+		Kind:   miniclient.KindToolResult,
+		Name:   "todo_create",
+		Output: `{"id":1,"subject":"写测试","status":"pending"}`,
+	}, time.Now(), todos)
+
+	// Step 2: create item 2
+	h.emitCLIEvent("c", "p", miniclient.Event{
+		Kind:   miniclient.KindToolResult,
+		Name:   "todo_create",
+		Output: `{"id":2,"subject":"跑测试","status":"pending"}`,
+	}, time.Now(), todos)
+
+	// Step 3: update item 1 to completed
+	h.emitCLIEvent("c", "p", miniclient.Event{
+		Kind:   miniclient.KindToolResult,
+		Name:   "todo_update",
+		Output: `{"id":1,"subject":"写测试","status":"completed"}`,
+	}, time.Now(), todos)
+
+	got := sender.Controls()
+	// 3 TypeTodo emissions (one per call), last one is the authoritative snapshot.
+	var last *protocol.Control
+	for _, c := range got {
+		if c.Type == protocol.TypeTodo {
+			last = c
+		}
+	}
+	if last == nil {
+		t.Fatalf("no TypeTodo control received; got %+v", controlTypeNames(got))
+	}
+	if len(last.Todo.Todos) != 2 {
+		t.Fatalf("want 2 items in final snapshot, got %d", len(last.Todo.Todos))
+	}
+	if last.Todo.Todos[0].Content != "写测试" || last.Todo.Todos[0].Status != "completed" {
+		t.Errorf("item 0 = %+v, want completed", last.Todo.Todos[0])
+	}
+	if last.Todo.Todos[1].Content != "跑测试" || last.Todo.Todos[1].Status != "pending" {
+		t.Errorf("item 1 = %+v, want pending", last.Todo.Todos[1])
+	}
+}
+
+// TestEmitCLIEvent_TodoListReconciles verifies that todo_list's plain-text
+// output is parsed into a TypeTodo snapshot (reconciliation path).
+func TestEmitCLIEvent_TodoListReconciles(t *testing.T) {
+	h, sender := newCLIHandler(t)
+	ev := miniclient.Event{
+		Kind:   miniclient.KindToolResult,
+		Name:   "todo_list",
+		Output: "#1 [pending] 任务A\n    详情\n#2 [completed] 任务B",
+	}
+	h.emitCLIEvent("c", "p", ev, time.Now(), newTodoAccum())
+	got := sender.Controls()
+	if len(got) != 1 || got[0].Type != protocol.TypeTodo {
+		t.Fatalf("want one TypeTodo, got %+v", controlTypeNames(got))
+	}
+	if len(got[0].Todo.Todos) != 2 {
+		t.Fatalf("want 2 items, got %d", len(got[0].Todo.Todos))
+	}
+	if got[0].Todo.Todos[0].Content != "任务A" || got[0].Todo.Todos[0].Status != "pending" {
+		t.Errorf("item 0 = %+v", got[0].Todo.Todos[0])
+	}
+	if got[0].Todo.Todos[1].Content != "任务B" || got[0].Todo.Todos[1].Status != "completed" {
+		t.Errorf("item 1 = %+v", got[0].Todo.Todos[1])
+	}
+}
+
+// controlTypeNames extracts the Type field of each control for readable
+// assertion-failure messages.
+func controlTypeNames(cs []*protocol.Control) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Type
 	}
 	return out
 }

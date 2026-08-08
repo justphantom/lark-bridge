@@ -78,11 +78,19 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 	}
 
 	var emittedTerminal bool
+	// Per-turn todo accumulator: miniagent's todo tools (create/update) emit
+	// single-item JSON results, not the full-list snapshot claude's TodoWrite
+	// carries. The accumulator threads create/update calls into a growing list
+	// so each change emits a TypeTodo snapshot to the card's todo zone. Lives
+	// on the stack of this one runViaCLI call, so it dies with the turn — no
+	// cleanup needed and no cross-turn leakage.
+	todos := newTodoAccum()
+
 	for ev := range events {
 		if ev.IsTerminal {
 			emittedTerminal = true
 		}
-		h.emitCLIEvent(chatID, promptID, ev, start)
+		h.emitCLIEvent(chatID, promptID, ev, start, todos)
 	}
 	// If the CLI was killed by abort/close before emitting a terminal event,
 	// the miniclient pump synthesizes a KindError — but the user should see
@@ -101,9 +109,17 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 
 // emitCLIEvent translates one miniclient.Event into a protocol.Control and
 // emits it to the frontend.
-func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, start time.Time) {
+func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, start time.Time, todos *todoAccum) {
 	switch ev.Kind {
 	case miniclient.KindToolUse:
+		// Suppress todo tools' tool_use: they render in the card's todo zone
+		// (via TypeTodo from emitToolResult), not as tool rows. Without this
+		// the card would show noisy ⏳ Todo_create / Todo_update rows alongside
+		// the todo zone. todo_list is read-only (no state change) and carries
+		// no useful summary, so suppress it too.
+		if isTodoTool(ev.Name) {
+			return
+		}
 		h.sendCtrl(&protocol.Control{
 			Type:     protocol.TypeToolUse,
 			PromptID: promptID,
@@ -115,6 +131,16 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: bridgebase.SummarizeToolInput(ev.Name, ev.Input)},
 		})
 	case miniclient.KindToolResult:
+		// todo_create / todo_update results carry a single-item JSON the LLM
+		// reads; fold it into the per-turn accumulator and emit a TypeTodo
+		// snapshot instead of a TypeToolResult, so the card's todo zone stays
+		// in sync. todo_list output is plain text (a read-only summary); it is
+		// also folded into the accumulator as a reconciliation pass and emits
+		// a TypeTodo snapshot when parsing yields a usable list.
+		if isTodoTool(ev.Name) {
+			h.emitTodoResult(chatID, promptID, ev, todos)
+			return
+		}
 		h.emitToolResult(chatID, promptID, ev)
 	case miniclient.KindReasoningDelta:
 		// Streaming reasoning increment → live "思考中" zone. Append mode
