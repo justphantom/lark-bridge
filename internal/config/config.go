@@ -167,6 +167,11 @@ type StatusMonitor struct {
 // generated at deploy time by deploy.sh. The bridge therefore passes
 // -config <ConfigPath> and only the per-turn flags below; endpoint/shell-timeout
 // /context-window must be edited in miniagent-cli.json, not here.
+//
+// miniagent v4.2.0 removed -system/-max-tokens, so the system prompt and the
+// max output-token cap are no longer bridge-config fields: they now live in
+// miniagent-cli.json (defaults.system_prompt / run.max_tokens), set on the
+// miniagent side. The struct below carries only the surviving per-turn flags.
 type MiniAgent struct {
 	// APIKey authenticates to the OpenAI-compatible endpoint. Use ${VAR} to
 	// pull from the environment; reaches the subprocess as $MINIAGENT_API_KEY
@@ -183,10 +188,6 @@ type MiniAgent struct {
 	// pair inert (buildArgs omits both and miniagent.json's defaults apply).
 	// Optional: ${MINIAGENT_DEFAULT_PROVIDER}.
 	Provider string `json:"provider,omitempty"`
-	// SystemPrompt is prepended to every turn (-system). Empty → default persona.
-	SystemPrompt string `json:"system_prompt,omitempty"`
-	// MaxTokens caps one completion's output tokens (-max-tokens). <=0 → 4096.
-	MaxTokens int `json:"max_tokens,omitempty"`
 	// StreamHistory caps per-run raw NDJSON captures under
 	// {stateDir}/streams/miniagent/. 0 → 50; negative → disable.
 	StreamHistory int `json:"stream_history,omitempty"`

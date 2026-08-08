@@ -159,11 +159,9 @@ func TestParseEvent_UnknownType(t *testing.T) {
 
 func TestBuildArgs_Full(t *testing.T) {
 	c := New(Config{
-		CLIPath:      "/bin/miniagent",
-		APIKey:       "sk-test",
-		SystemPrompt: "be brief",
-		MaxTokens:    2048,
-		ConfigPath:   "/etc/miniagent/miniagent.json",
+		CLIPath:    "/bin/miniagent",
+		APIKey:     "sk-test",
+		ConfigPath: "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Prompt:   "hi",
@@ -175,9 +173,11 @@ func TestBuildArgs_Full(t *testing.T) {
 	// the CLI has no such flag, the key is passed via $MINIAGENT_API_KEY env.
 	// -config is always emitted (v3.1+ config-only mode). -provider/-model are
 	// emitted as a pair (miniagent post-v4.0.1 requires them together).
+	// -system/-max-tokens were removed in v4.2.0 (moved to miniagent-cli.json);
+	// they are asserted absent in the removed-flag guard below.
 	want := map[string]bool{
 		"-provider": false, "-model": false, "-config": false,
-		"-system": false, "-max-tokens": false, "-workdir": false,
+		"-workdir": false,
 	}
 	for _, a := range args {
 		if _, ok := want[a]; ok {
@@ -190,8 +190,9 @@ func TestBuildArgs_Full(t *testing.T) {
 		}
 	}
 	// v3 removed -base-url/-confine; v3.1 removed -chat-url/-models-url/
-	// -context-window/-shell-timeout: assert they stay out (regression guard).
-	for _, b := range []string{"-base-url", "-confine", "-chat-url", "-models-url", "-context-window", "-shell-timeout"} {
+	// -context-window/-shell-timeout; v4.2.0 removed -system/-max-tokens (moved
+	// to miniagent-cli.json): assert they stay out (regression guard).
+	for _, b := range []string{"-base-url", "-confine", "-chat-url", "-models-url", "-context-window", "-shell-timeout", "-system", "-max-tokens"} {
 		if contains(args, b) {
 			t.Errorf("removed flag present in args: %v", args)
 		}
@@ -251,21 +252,21 @@ func TestBuildArgs_ModelWithoutProviderOmitted(t *testing.T) {
 // buildArgs output — any would make Go's flag package os.Exit(2) at startup.
 // v3.0.0 additionally removed -base-url/-confine; v3.1 removed -chat-url/
 // -models-url/-context-window/-shell-timeout (config-only mode), so all are banned.
+// v4.2.0 removed -system/-max-tokens (moved to miniagent-cli.json), so both banned.
 // (-stream was also deleted in fe85c16 but RE-ADDED in v2.0.0, so it is no
 // longer banned; see TestBuildArgs_Stream.)
 func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 	c := New(Config{
-		CLIPath:      "/bin/ma",
-		APIKey:       "k",
-		SystemPrompt: "s",
-		MaxTokens:    100,
-		ConfigPath:   "/etc/miniagent/miniagent.json",
+		CLIPath:    "/bin/ma",
+		APIKey:     "k",
+		ConfigPath: "/etc/miniagent/miniagent.json",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
 	banned := []string{
 		"-verbose", "-permission", "-blocked-patterns", "-chat-id", "-state-dir",
 		"-base-url", "-confine",
 		"-chat-url", "-models-url", "-context-window", "-shell-timeout",
+		"-system", "-max-tokens",
 	}
 	for _, b := range banned {
 		if contains(args, b) {
@@ -578,24 +579,24 @@ func TestCompareVersion(t *testing.T) {
 // TestSatisfiesVersion pins the version-gate logic the startup health check
 // (IsReady) uses against minSupportedVersion. "dev" (untagged local build)
 // always passes so local development is not blocked. A pre-release of the
-// minimum (3.5.0-rc1) is treated as the release version and passes.
+// minimum (4.2.0-rc1) is treated as the release version and passes.
 func TestSatisfiesVersion(t *testing.T) {
 	cases := []struct {
 		v    string
 		want bool
 	}{
 		{"dev", true},   // untagged local build — always pass
-		{"4.0.1", true}, // exact floor
-		{"4.0.2", true}, // above floor
-		{"4.1.0", true},
+		{"4.2.0", true}, // exact floor
+		{"4.2.1", true}, // above floor
+		{"4.3.0", true},
 		{"5.0.0", true},
-		{"4.0.1-rc1", true}, // pre-release strips to 4.0.1
-		{"4.0.0", false},    // v4.0.0 emits session id on stderr, not stdout — rejected
-		{"4.0", false},      // == 4.0.0
-		{"3.5.0", false},    // the previous floor — now rejected
+		{"4.2.0-rc1", true}, // pre-release strips to 4.2.0
+		{"4.1.0", false},    // < 4.2.0 lacks the run.max_tokens config model — rejected
+		{"4.0.1", false},    // the previous floor — now rejected
+		{"4.0.0", false},
+		{"4.1.9", false},
+		{"3.5.0", false},
 		{"3.10.0", false},
-		{"3.5", false},
-		{"3.0.0", false},
 	}
 	for _, c := range cases {
 		if got := satisfiesVersion(c.v, minSupportedVersion); got != c.want {

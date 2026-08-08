@@ -495,6 +495,12 @@ stage_configs() {
     miniagent_chat_url="$(env_get MINIAGENT_CHAT_URL)"
     miniagent_models_url="$(env_get MINIAGENT_MODELS_URL)"
     miniagent_default_model="$(env_get MINIAGENT_DEFAULT_MODEL)"
+    # miniagent v4.2.0 removed -system/-max-tokens: the system prompt and the
+    # max output-token cap are no longer bridge-config fields and are NOT
+    # injected here. They belong in this miniagent-cli.json as
+    # defaults.system_prompt / run.max_tokens (miniagent-side schema, 4.2.0+).
+    # The template below stays minimal; set a persona/token cap by editing
+    # miniagent-cli.json on the miniagent side.
     cat > "$STAGE/miniagent-cli.json" <<EOF
 {
   "providers": [{"name": "default", "chat_url": "${miniagent_chat_url}", "models_url": "${miniagent_models_url}"}],

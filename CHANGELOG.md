@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **跟进 miniagent v4.2.0：移除 `-system`/`-max-tokens` 交付**（`internal/miniclient/client.go`、`internal/config`、`cmd/miniagent-back`、`config.example.json`）。上游 4.2.0 删除 `-system`/`-max-tokens` 两 flag（stdlib `flag` 遇未知 flag `exit(2)`，默认配置即触发），桥停止发射二者并从 `MiniAgent` config 删除 `system_prompt`/`max_tokens` 字段。system prompt 与 max output-token cap 改由 miniagent-cli.json 的 `defaults.system_prompt` / `run.max_tokens`（miniagent 侧，4.2.0+）配置；`minSupportedVersion` 4.0.1 → 4.2.0。**迁移**：因 `DisallowUnknownFields`，手改且仍保留 `miniagent.system_prompt`/`max_tokens` 键的 config.json 须删此两键（标准部署从 `config.example.json` 重生成，不受影响）；原示例 persona 移除后回落 miniagent 内置默认。
 - **示例配置默认脱敏**（`config.example.json`）。`stream_archive_redact` 由 `false` 改为 `true`，与代码默认值一致，避免运维直接复制示例后明文归档 prompt/结果。
 - **文档保鲜**：`ARCHITECTURE.md`、`CODING_STANDARDS.md`、`README.md` 同步当前版本号、二进制数（5）、服务数（3）、Go 文件/行数、miniagent 配置字段、`TypeTurnStarted`/`TypeTurnFinished` 协议控制、`component_log_levels` 组件列表，并移除已删除的 `opencodebridge` 测试引用。
 

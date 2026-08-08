@@ -456,7 +456,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `router_path` | 共用 | router 持久化文件路径 |
 | `claude{}` | claude-back | cli_path/permission_mode/default_directory/max_concurrent/stream_history/model_options/permission_options/effort_options/settings_dir/settings_cache_ttl |
-| `miniagent{}` | miniagent-back | api_key/chat_url/models_url/provider/model/system_prompt/max_tokens/max_iterations/stream_history/workspace_root/stream/mode/thinking/key_file/config_path/config_dir |
+| `miniagent{}` | miniagent-back | api_key/chat_url/models_url/provider/model/max_iterations/stream_history/workspace_root/stream/mode/thinking/key_file/config_path/config_dir |
 | `deploy_monitor{}` | deploy-monitor | project_root/deploy_target |
 | `status_monitor{}` | status-monitor | interval |
 | `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |

@@ -72,12 +72,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.StatusMonitor.Interval == 0 {
 		cfg.StatusMonitor.Interval = Duration(60 * time.Second)
 	}
-	if cfg.MiniAgent.SystemPrompt == "" {
-		cfg.MiniAgent.SystemPrompt = "你是一个简洁的工程助手，回答通常不超过 500 字。重点先行；不确定先查别猜；副作用操作前说明；遇错说原因和修复，别盲目重试。"
-	}
-	if cfg.MiniAgent.MaxTokens <= 0 {
-		cfg.MiniAgent.MaxTokens = 4096
-	}
 	// StreamHistory: see Claude note — negative disables archiving.
 	if cfg.MiniAgent.StreamHistory == 0 {
 		cfg.MiniAgent.StreamHistory = 50

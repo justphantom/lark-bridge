@@ -141,8 +141,6 @@ func run(cfgPath string) error {
 	client := miniclient.New(miniclient.Config{
 		CLIPath:       cliPath,
 		APIKey:        cfg.MiniAgent.APIKey,
-		SystemPrompt:  cfg.MiniAgent.SystemPrompt,
-		MaxTokens:     cfg.MiniAgent.MaxTokens,
 		Stream:        cfg.MiniAgent.Stream,
 		MaxIterations: cfg.MiniAgent.MaxIterations,
 		Mode:          cfg.MiniAgent.Mode,

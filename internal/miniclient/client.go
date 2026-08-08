@@ -44,8 +44,6 @@ const defaultMaxConcurrent = 4
 type Config struct {
 	CLIPath       string
 	APIKey        string
-	SystemPrompt  string
-	MaxTokens     int
 	MaxConcurrent int
 	Stream        bool
 	MaxIterations int
@@ -60,8 +58,6 @@ type Config struct {
 type Client struct {
 	cliPath       string
 	apiKey        string
-	system        string
-	maxTokens     int
 	stream        bool
 	maxIterations int
 	mode          string
@@ -84,8 +80,6 @@ func New(cfg Config, logger *log.Logger) *Client {
 	return &Client{
 		cliPath:       cfg.CLIPath,
 		apiKey:        cfg.APIKey,
-		system:        cfg.SystemPrompt,
-		maxTokens:     cfg.MaxTokens,
 		stream:        cfg.Stream,
 		maxIterations: cfg.MaxIterations,
 		mode:          cfg.Mode,
@@ -154,23 +148,21 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Kept at "4.0.1" because the post-v4.0.1 breaking changes the bridge
-// now depends on live on miniagent's main HEAD UNRELEASED (no tag yet), so there
-// is no higher semver to point at:
-//   - 02f8f81 split -model (bare id) from a new -provider flag and requires
-//     them as a matched pair — buildArgs emits both or neither;
-//   - 2099241 changed -list-models to NDJSON {"type":"model","provider","model"}
-//     — ListModels parses one ModelRef per line.
+// requires. Bumped to "4.2.0" because the bridge now relies on features that
+// only a 4.2.0+ tag provides:
+//   - 4.2.0 removed -system/-max-tokens: buildArgs no longer emits them, so the
+//     system prompt and the max output-token cap must come from miniagent-cli.json
+//     (defaults.system_prompt / run.max_tokens); the three-layer max_tokens model
+//     (run/provider/model) is itself 4.2.0-new.
+//   - the 4.0.1+ tag carries 02f8f81 (-model/-provider split, emitted as a pair)
+//     and 2099241 (-list-models NDJSON).
 //
-// A v4.0.1 *tagged* binary PASSES this gate but is NOT compatible: it still
-// emits the old plain-text -list-models lines, which now parse to zero models.
-// Bump this to the tag once miniagent releases 02f8f81+2099241. "dev" (untagged
-// local build) always passes.
+// "dev" (untagged local build) always passes so developers are not blocked.
 //
 // Prior bumps: v4.0.1 moved -save-session session id from a stderr text line to
 // a stdout NDJSON type=session event; v4.0.0 split -session (resume) from
 // -save-session (create); v3.5.0 removed -key-file (key via $MINIAGENT_API_KEY).
-const minSupportedVersion = "4.0.1"
+const minSupportedVersion = "4.2.0"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
 // string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only
@@ -394,12 +386,6 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 		configPath = c.configPath
 	}
 	a = append(a, "-config", configPath)
-	if c.system != "" {
-		a = append(a, "-system", c.system)
-	}
-	if c.maxTokens > 0 {
-		a = append(a, "-max-tokens", strconv.Itoa(c.maxTokens))
-	}
 	if opts.Workdir != "" {
 		a = append(a, "-workdir", opts.Workdir)
 	}
