@@ -136,7 +136,17 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 		updateID = p.UpdateMessageID
 	}
 	if updateID != "" {
-		err := d.bot.UpdateCard(ctx, updateID, card)
+		// Terminal frame: unconditionally drop any interactive binding
+		// (cached bytes, TTL timer) still pointing at the picker card. A
+		// submitted picker arms a delayed fallback PATCH (schedule
+		// SubmitFallback) that re-sends the grey "已提交" bytes; the
+		// fallback's guard skips only once the binding is gone. Without
+		// this the fallback overwrites the green outcome — the bounce-back.
+		d.evictInteractiveByMessageID(updateID, "")
+		// Verified: the outcome PATCH can land inside Feishu's click
+		// window (the user just clicked the picker) and get silently
+		// reverted; read-back verification re-PATCHes if so.
+		err = d.bot.UpdateCardVerified(ctx, updateID, card)
 		if err == nil {
 			return
 		}

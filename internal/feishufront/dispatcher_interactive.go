@@ -57,6 +57,13 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		// owns: drop that round's binding (and its stopped TTL timer / cached
 		// bytes) so the new requestID owns the card and nothing leaks.
 		if ctrl.Type == protocol.TypeQuestion && ctrl.Question != nil && ctrl.Question.UpdateMessageID != "" {
+			// A stale same-card round still pending a delayed refresh PATCH
+			// (see sendInteractiveCard) means the click's submit-flip was
+			// skipped (skipSubmitFlip). Flush that submitted state now: it
+			// outraces the stale refresh and gives immediate feedback; the
+			// new round's refresh PATCH (same delayed timing) then replaces
+			// it, so the card lands on the latest options.
+			d.flushPendingSubmission(ctx, messageID)
 			d.evictInteractiveByMessageID(messageID, requestID)
 		}
 
@@ -312,10 +319,45 @@ func (d *Dispatcher) DispatchCardAction(ctx context.Context, action *feishu.Card
 		return nil
 	}
 	if requestID != "" {
-		if messageID, ok := d.turns.InteractiveMessageID(requestID); ok {
-			d.flipInteractiveSubmitted(ctx, action, requestID, messageID)
-			// Deliberately NOT unbinding: keep requestID→messageID so the
-			// turn-completing result can finalize this card in place.
+		// Resolve the card: normally via the clicked requestID's binding, but
+		// a STALE multi-round click (the /send browser already re-bound the
+		// card to a newer requestID when it registered the refresh, while the
+		// delayed PATCH was still sleeping) carries the pre-refresh requestID
+		// whose binding is gone. Fall back to the action's messageID so that
+		// click still reaches the skip-flip path below instead of falling
+		// through to the plain flip (which would flicker).
+		messageID, ok := d.turns.InteractiveMessageID(requestID)
+		if !ok && action.MessageID != "" {
+			if rids := d.turns.RequestIDsByMessageID(action.MessageID); len(rids) > 0 {
+				messageID, ok = action.MessageID, true
+			}
+		}
+		if ok {
+			// Multi-round picker round (the /send directory browser): skip
+			// both the immediate submitted flip and the delayed fallback.
+			// The next round's picker PATCH is already scheduled behind the
+			// click-handling window (UpdateMessageID path), so an immediate
+			// PATCH here would only flash "已回答" and get reverted; the
+			// fallback would re-PATCH those same grey bytes and race the
+			// refresh — the "card refreshes several times after the first
+			// pick" flicker. Unbind now instead: the new round's
+			// sendInteractive evict is then a harmless no-op, and the turn
+			// already closed at round 1's TakeOverProgress so no later
+			// finalizeLinkedInteractive needs this binding.
+			if skip, skipErr := d.skipSubmitFlip(requestID, messageID); skipErr == nil && skip {
+				d.turns.UnbindInteractive(requestID)
+				d.cardMu.Lock()
+				if t := d.interactiveTimers[requestID]; t != nil {
+					t.Stop()
+					delete(d.interactiveTimers, requestID)
+				}
+				delete(d.cards, requestID)
+				d.cardMu.Unlock()
+			} else if clickedMid, clicked := d.turns.InteractiveMessageID(requestID); clicked {
+				d.flipInteractiveSubmitted(ctx, action, requestID, clickedMid)
+				// Deliberately NOT unbinding: keep requestID→messageID so the
+				// turn-completing result can finalize this card in place.
+			}
 		}
 	}
 
@@ -350,7 +392,11 @@ func (d *Dispatcher) auditCardAction(action *feishu.CardAction) string {
 	return kind
 }
 
-// flipInteractiveSubmitted rewrites an interactive card to its submitted state,
+// skipSubmitFlip reports whether requestID belongs to a multi-round picker
+// (/send directory browser) that has an in-place refresh already pending:
+// another interactive round is bound on the same card (sendInteractive binds
+// it before the delayed PATCH ships), or the backend already registered the
+// follow-up question…[参数已省略]
 // schedules a delayed fallback PATCH past Feishu's click-handling window, and
 // caches the submitted bytes for later finalization. The TTL timer is stopped
 // but the binding is kept so finalizeLinkedInteractive can advance the same
@@ -420,6 +466,86 @@ func (d *Dispatcher) cacheSubmittedCard(requestID string, card []byte) {
 		d.cards[requestID] = card
 	}
 	d.cardMu.Unlock()
+}
+
+// skipSubmitFlip reports whether requestID belongs to a multi-round picker
+// (/send directory browser) that has an in-place refresh already pending: a
+// NEWER requestID is registered for the same card but its PATCH bytes are
+// still sleeping out the click window (sendInteractiveCard defers them).
+// Flipping to the submitted state now would be silently reverted by that
+// window (visible as the card bouncing back to the old option list), then the
+// refresh PATCH would land, a third state in the same second — the rapid
+// flicker reported on /send.
+//
+// Skipping instead keeps the card on the old options until the delayed
+// refresh replaces them in one step. The click is not lost: DispatchCardAction
+// already forwarded the answer; this only suppresses the cosmetic echo. The
+// submitted bytes are stashed in pendingSubmits: a slow click where the
+// refresh already landed flushes them immediately (the next refresh PATCH
+// then re-takes the card), and sendInteractive flushes any still-pending
+// entry when a newer round registers so the card cannot be stranded on old
+// options if the control emit failed.
+func (d *Dispatcher) skipSubmitFlip(requestID, messageID string) (bool, error) {
+	// TurnManager first, then cardMu — the established lock order.
+	rids := d.turns.RequestIDsByMessageID(messageID)
+	newer := false
+	for _, rid := range rids {
+		if rid != requestID {
+			newer = true
+			break
+		}
+	}
+	if !newer {
+		return false, nil
+	}
+	// Render the stashed submitted card from whatever original bytes are
+	// still cached: a SLOW click (stale req-r1, refresh PATCH still sleeping)
+	// finds req-r2's bytes after the refresh's evict already dropped req-r1's;
+	// a FAST click (before any refresh registers) would not reach this branch
+	// at all, and a click on the CURRENT round (req-r2 owns the card) uses
+	// req-r2's own bytes. First cached binding wins.
+	d.cardMu.Lock()
+	var orig []byte
+	for _, rid := range rids {
+		if b := d.cards[rid]; len(b) > 0 {
+			orig = b
+			break
+		}
+	}
+	if len(orig) == 0 {
+		d.cardMu.Unlock()
+		return false, nil
+	}
+	submitted, err := renderer.RenderInteractiveSubmitted(orig, "✓ 已提交，正在处理…")
+	if err != nil {
+		d.cardMu.Unlock()
+		return false, nil
+	}
+	d.pendingSubmits[messageID] = submitted
+	d.cardMu.Unlock()
+	return true, nil
+}
+
+// flushPendingSubmission PATCHes messageID with the recorded submitted bytes
+// (or a fallback echo) and evicts the interactive binding, so a card whose
+// submit-flip was skipped for a stale refresh eventually leaves the old
+// option list even when the follow-up question never arrives (emit failure,
+// backend restart, lost control). No-op when no record exists (the refresh
+// landed, or the flip was never skipped).
+func (d *Dispatcher) flushPendingSubmission(ctx context.Context, messageID string) {
+	d.cardMu.Lock()
+	card, ok := d.pendingSubmits[messageID]
+	if ok {
+		delete(d.pendingSubmits, messageID)
+	}
+	d.cardMu.Unlock()
+	if !ok || len(card) == 0 {
+		return
+	}
+	_ = d.bot.UpdateCard(ctx, messageID, card)
+	// The PATCH makes this card terminal (no buttons) — safe to release now:
+	// no click can arrive on a non-interactive card.
+	d.evictInteractiveByMessageID(messageID, "")
 }
 
 // buildAnswerPayload constructs the Answer event payload from the form values or

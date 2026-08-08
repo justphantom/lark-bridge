@@ -115,6 +115,14 @@ type Dispatcher struct {
 	// a returning user sees why the backend stopped waiting. Cancelled when the
 	// user submits (DispatchCardAction). Guarded by cardMu alongside cards.
 	interactiveTimers map[string]*time.Timer
+	// pendingSubmits caches the submitted ("✓ 已回答") card bytes of a
+	// multi-round picker click whose immediate flip was skipped (skipSubmitFlip)
+	// because a delayed in-place refresh PATCH is still pending. sendInteractive
+	// flushes the entry when the next round's question control arrives for the
+	// same card, so the user still sees a submitted echo before the refresh
+	// lands; skipSubmitFlip's background timer garbage-collects any entry the
+	// next round never claims. Keyed by card messageID; guarded by cardMu.
+	pendingSubmits map[string][]byte
 	// pickerCards / pickerTimers mirror the interactive-card TTL machinery but
 	// for frontend-owned /backend picker cards (which carry no requestID). A
 	// picker left unclicked for cardkit.InteractiveTimeout is flipped to a grey
@@ -250,6 +258,7 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		terminals:             newDedupSet(terminalDedupTTL, 0),
 		cards:                 make(map[string][]byte),
 		interactiveTimers:     make(map[string]*time.Timer),
+		pendingSubmits:        make(map[string][]byte),
 		pickerCards:           make(map[string][]byte),
 		pickerTimers:          make(map[string]*time.Timer),
 		flap:                  make(map[string]*flapState),

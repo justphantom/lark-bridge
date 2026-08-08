@@ -1161,3 +1161,69 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 	}
 	t.Fatal("delayed UpdateCard on om_picker never fired within 2s")
 }
+
+// TestDispatchCardAction_MultiRoundSkipsSubmitFlip pins the anti-flicker fix:
+// when a click arrives AFTER a newer round's binding was registered for the
+// same card but BEFORE the delayed refresh PATCH landed, the submitted-state
+// flip must be SKIPPED (it would be reverted by Feishu's click window →
+// bounce-back, then the refresh lands → a third state = flicker). The click
+// must still be forwarded to the backend, and the submitted bytes are stashed
+// for the flush in sendInteractive.
+func TestDispatchCardAction_MultiRoundSkipsSubmitFlip(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	d.SetCardPatchDelay(1 * time.Hour) // refresh PATCH never lands during the test
+
+	// Round 1 card (pre-click requestID still owns the cached bytes).
+	q1 := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID: "req-r1",
+			Questions: []protocol.QuestionItem{{Label: "选择文件", Options: []string{"📁 sub/", "📄 a.txt"}}},
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
+		t.Fatalf("round1: %v", err)
+	}
+	mid, _ := d.turns.InteractiveMessageID("req-r1")
+
+	// Round 2 refresh registers its binding synchronously but its PATCH sleeps.
+	q2 := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID:       "req-r2",
+			Questions:       []protocol.QuestionItem{{Label: "选择文件", Options: []string{"📄 b.txt"}}},
+			UpdateMessageID: mid,
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
+		t.Fatalf("round2: %v", err)
+	}
+	sink.mu.Lock()
+	updatesBefore := len(sink.updates)
+	sink.mu.Unlock()
+
+	// The user clicks the OLD card (form value carries round-1's requestID).
+	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: "oc_c", MessageID: mid,
+		Value:     map[string]any{"requestID": "req-r1", "kind": "question"},
+		FormValue: map[string]any{"q_0": "📁 sub/"},
+	}); err != nil {
+		t.Fatalf("click: %v", err)
+	}
+
+	// Anti-flicker: NO immediate submitted PATCH went out.
+	sink.mu.Lock()
+	updatesAfter := len(sink.updates)
+	sink.mu.Unlock()
+	if updatesAfter != updatesBefore {
+		t.Errorf("skipped flip should emit no PATCH, got %d new updates", updatesAfter-updatesBefore)
+	}
+	// The submitted bytes are stashed for the flush path.
+	d.cardMu.Lock()
+	_, stashed := d.pendingSubmits[mid]
+	d.cardMu.Unlock()
+	if !stashed {
+		t.Error("submitted bytes should be stashed in pendingSubmits for the flush")
+	}
+}

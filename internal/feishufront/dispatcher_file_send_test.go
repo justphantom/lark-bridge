@@ -129,3 +129,39 @@ func TestHandleFileControl_NoSender_ErrorNotice(t *testing.T) {
 		t.Errorf("sends=%d, want 1 error notice (no FileSender wired)", sends)
 	}
 }
+
+// TestReflectFileOutcome_EvictsInteractiveBinding pins the bounce-back fix:
+// the picker card that just submitted a file pick still has an interactive
+// binding armed with a delayed submit-fallback PATCH. reflectFileOutcome must
+// evict that binding when it patches the terminal frame, otherwise the
+// fallback (5s later) overwrites the green "已发送" card with the grey
+// "已提交，正在处理…" bytes — the reported bounce-back.
+func TestReflectFileOutcome_EvictsInteractiveBinding(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, nil, NewTurnManager(), nil)
+
+	d.turns.BindInteractive("q-pick", "om_picker", "prompt_x")
+	d.cardMu.Lock()
+	d.cards["q-pick"] = []byte(`{"header":{"template":"grey"},"config":{}}`)
+	d.cardMu.Unlock()
+
+	ctrl := &protocol.Control{
+		ChatID: "oc_chat",
+		File:   &protocol.FilePayload{FileName: "a.txt", UpdateMessageID: "om_picker"},
+	}
+	d.reflectFileOutcome(context.Background(), ctrl, "", "success", "已发送", "已发送：a.txt")
+
+	if _, ok := d.turns.InteractiveMessageID("q-pick"); ok {
+		t.Error("interactive binding should be evicted so the submit fallback cannot overwrite the outcome card")
+	}
+	d.cardMu.Lock()
+	_, cached := d.cards["q-pick"]
+	d.cardMu.Unlock()
+	if cached {
+		t.Error("cached picker card bytes should be evicted with the binding")
+	}
+	sends, updates := sink.counts()
+	if sends != 0 || updates != 1 {
+		t.Errorf("sends=%d updates=%d, want 0 sends and 1 outcome patch", sends, updates)
+	}
+}

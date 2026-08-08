@@ -290,6 +290,11 @@ func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 				c.EmitNoticeLogged(chatID, "error", "发送失败", jerr.Error())
 				return
 			}
+			// Lock the picker card into a "selected" state BEFORE the upload:
+			// ends the interactive binding immediately (no delayed submit-
+			// fallback PATCH can race the outcome card) and gives the user a
+			// stable card while the file uploads.
+			c.AskSelectedCard(chatID, messageID, "已选择 "+name)
 			emitSendFile(c, chatID, absRoot, target, messageID)
 			return
 		default:
@@ -297,6 +302,37 @@ func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
 			return
 		}
 	}
+}
+
+// AskSelectedCard PATCHes a multi-round picker card into its final locked
+// "user picked X" state — same single-option question-card trick
+// AskCardUpdate uses for intermediate refresh rounds, except the single
+// option is the chosen file and the requestID is fresh. Because the frontend
+// ends any prior interactive binding on this card when it registers the
+// refresh (sendInteractive evicts same-card bindings), the delayed submit
+// fallback from the click that JUST selected this file finds no binding and
+// never fires; the card stays on the locked bytes until the file-outcome
+// frame (green "已发送") replaces them. Best-effort: a failure leaves the
+// prior round's card, which the outcome still patches.
+func (c *Core) AskSelectedCard(chatID, updateMessageID, label string) {
+	if updateMessageID == "" {
+		return
+	}
+	requestID, err := newRequestID()
+	if err != nil {
+		return
+	}
+	// A "selected" terminal card stays in place until the file outcome
+	// (green "已发送") replaces it. Fire-and-forget like AskCardUpdate.
+	c.EmitAsync("", &protocol.Control{
+		Type:   protocol.TypeQuestion,
+		ChatID: chatID,
+		Question: &protocol.QuestionPayload{
+			RequestID:       requestID,
+			Questions:       []protocol.QuestionItem{{Label: label, Options: []string{label}}},
+			UpdateMessageID: updateMessageID,
+		},
+	})
 }
 
 // sendParentDir moves up one level without escaping absRoot. Cleaned Rel

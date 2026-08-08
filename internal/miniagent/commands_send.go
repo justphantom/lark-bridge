@@ -107,6 +107,10 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 				h.notifyWithCardUpdate(chatID, messageID, "error", "发送失败", jerr.Error())
 				return
 			}
+			// Same selected-state lock as the bridgebase flow: terminates the
+			// interactive binding before the upload so no fallback can race the
+			// outcome card.
+			h.emitSelectedCard(chatID, messageID, "已选择 "+name)
 			h.emitSendFile(chatID, absRoot, target, messageID)
 			return
 		default:
@@ -114,6 +118,33 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 			return
 		}
 	}
+}
+
+// emitSelectedCard PATCHes the picker card into its final locked "user picked
+// X" state — miniagent's counterpart of bridgebase.Core.AskSelectedCard: a
+// single-option question card (already selected) with a fresh, never
+// registered requestID. The frontend ends any prior interactive binding on
+// this card when it registers the refresh, so the delayed submit-fallback
+// PATCH from the just-clicked round never fires and cannot race the outcome
+// card. Best-effort: a failure leaves the prior round's card, which the
+// outcome still patches.
+func (h *Handler) emitSelectedCard(chatID, updateMessageID, label string) {
+	if updateMessageID == "" {
+		return
+	}
+	requestID, err := newRequestID()
+	if err != nil {
+		return
+	}
+	h.sendCtrl(&protocol.Control{
+		Type:   protocol.TypeQuestion,
+		ChatID: chatID,
+		Question: &protocol.QuestionPayload{
+			RequestID:       requestID,
+			Questions:       []protocol.QuestionItem{{Label: label, Options: []string{label}}},
+			UpdateMessageID: updateMessageID,
+		},
+	})
 }
 
 // emitSendFile reads one file into a TypeFile payload (shared helper) and
