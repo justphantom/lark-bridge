@@ -131,21 +131,41 @@ func TestEmitCLIEvent_NormalFinish(t *testing.T) {
 }
 
 // TestEmitCLIEvent_ToolUse verifies a tool_use event maps to a ToolUse
-// payload with name/input propagated.
+// payload with name/input propagated and input summarised (raw JSON envelope
+// stripped to the meaningful field), mirroring claudebridge's behaviour so
+// the card shows "shell: ls -la" / "read_file: x" instead of {...}.
 func TestEmitCLIEvent_ToolUse(t *testing.T) {
-	h, sender := newCLIHandler(t)
-	ev := miniclient.Event{
-		Kind:  miniclient.KindToolUse,
-		Name:  "read_file",
-		Input: `{"path":"x"}`,
+	cases := []struct {
+		name  string
+		tool  string
+		input string
+		want  string
+	}{
+		{"shell command", "shell", `{"command":"ls -la"}`, "ls -la"},
+		{"read file path", "read_file", `{"path":"x"}`, "x"},
+		{"grep pattern", "grep", `{"pattern":"foo"}`, "foo"},
+		{"empty input", "shell", "", ""},
 	}
-	h.emitCLIEvent("c", "p", ev, time.Now())
-	got := sender.Controls()
-	if len(got) != 1 || got[0].ToolUse == nil {
-		t.Fatalf("want one ToolUse, got %+v", got)
-	}
-	if got[0].ToolUse.Name != "read_file" {
-		t.Errorf("Name = %q, want read_file", got[0].ToolUse.Name)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, sender := newCLIHandler(t)
+			ev := miniclient.Event{
+				Kind:  miniclient.KindToolUse,
+				Name:  tc.tool,
+				Input: tc.input,
+			}
+			h.emitCLIEvent("c", "p", ev, time.Now())
+			got := sender.Controls()
+			if len(got) != 1 || got[0].ToolUse == nil {
+				t.Fatalf("want one ToolUse, got %+v", got)
+			}
+			if got[0].ToolUse.Name != tc.tool {
+				t.Errorf("Name = %q, want %q", got[0].ToolUse.Name, tc.tool)
+			}
+			if got[0].ToolUse.Input != tc.want {
+				t.Errorf("Input = %q, want %q (raw envelope should be summarised)", got[0].ToolUse.Input, tc.want)
+			}
+		})
 	}
 }
 

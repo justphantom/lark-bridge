@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
@@ -107,7 +108,11 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			Type:     protocol.TypeToolUse,
 			PromptID: promptID,
 			ChatID:   chatID,
-			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: ev.Input},
+			// SummarizeToolInput extracts the meaningful field (command, file_path, …)
+			// so the card shows "shell: ls -la" instead of the raw JSON envelope.
+			// Mirrors claudebridge's stream_loop.go; without this the miniagent
+			// backend leaks {"command":"ls -la"} verbatim onto the card.
+			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: bridgebase.SummarizeToolInput(ev.Name, ev.Input)},
 		})
 	case miniclient.KindToolResult:
 		h.emitToolResult(chatID, promptID, ev)
