@@ -235,7 +235,7 @@ func (d *Dispatcher) invalidateTurnCard(turn Turn) {
 	}
 	delivered := false
 	if turn.MessageID != "" {
-		if uerr := d.bot.UpdateCard(ctx, turn.MessageID, card); uerr == nil {
+		if uerr := d.bot.UpdateCard(ctx, turn.MessageID, turn.CardID, card); uerr == nil {
 			d.markFinalized(turn.MessageID)
 			delivered = true
 		}
@@ -297,25 +297,28 @@ func (d *Dispatcher) handleBackendCommand(ctx context.Context, msg *feishu.Incom
 	if err != nil {
 		return err
 	}
-	messageID, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
+	ref, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
 	if err != nil {
 		return err
 	}
+	messageID := ref.MessageID
 	// Arm a TTL so a picker nobody clicks does not stay clickable forever.
 	// Mirrors the interactive-card expiry: after cardkit.InteractiveTimeout
 	// the card flips to a grey "已失效" state. Cancelled on the first click
 	// (handleBackendChoice). Keyed by messageID — each /backend sends a
 	// fresh card with its own id.
-	d.armPickerExpiry(messageID, card)
+	d.armPickerExpiry(messageID, ref.CardID, card)
 	return nil
 }
 
 // armPickerExpiry caches the picker card bytes and schedules the TTL flip.
-// Guarded by cardMu alongside the interactive-card timer maps.
-func (d *Dispatcher) armPickerExpiry(messageID string, card []byte) {
+// Guarded by cardMu alongside the interactive-card timer maps. cardID is the
+// CardKit entity id ("" under legacy) the expiry/outcome update path needs.
+func (d *Dispatcher) armPickerExpiry(messageID, cardID string, card []byte) {
 	d.cardMu.Lock()
 	defer d.cardMu.Unlock()
 	d.pickerCards[messageID] = card
+	d.pickerCardIDs[messageID] = cardID
 	msgID := messageID
 	d.pickerTimers[messageID] = time.AfterFunc(cardkit.InteractiveTimeout, func() {
 		goSafe(func() { d.expirePicker(msgID) })
@@ -336,7 +339,16 @@ func (d *Dispatcher) cancelPickerExpiry(messageID string) ([]byte, bool) {
 	}
 	card, hadCard := d.pickerCards[messageID]
 	delete(d.pickerCards, messageID)
+	delete(d.pickerCardIDs, messageID)
 	return card, hadCard
+}
+
+// pickerCardID returns the CardKit entity id cached for a picker card, or ""
+// under the legacy engine / after the binding was dropped.
+func (d *Dispatcher) pickerCardID(messageID string) string {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	return d.pickerCardIDs[messageID]
 }
 
 // expirePicker runs in the TTL timer's goroutine. It flips the picker card to
@@ -345,7 +357,9 @@ func (d *Dispatcher) cancelPickerExpiry(messageID string) ([]byte, bool) {
 func (d *Dispatcher) expirePicker(messageID string) {
 	d.cardMu.Lock()
 	orig := d.pickerCards[messageID]
+	cardID := d.pickerCardIDs[messageID]
 	delete(d.pickerCards, messageID)
+	delete(d.pickerCardIDs, messageID)
 	delete(d.pickerTimers, messageID)
 	d.cardMu.Unlock()
 	if orig == nil {
@@ -354,7 +368,7 @@ func (d *Dispatcher) expirePicker(messageID string) {
 	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
 		defer cancel()
-		_ = d.bot.UpdateCard(ctx, messageID, expired)
+		_ = d.bot.UpdateCard(ctx, messageID, cardID, expired)
 	}
 }
 
@@ -419,6 +433,7 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 		delay = cardPatchDelayDefault
 	}
 	msgID := action.MessageID
+	cardID := d.pickerCardID(msgID)
 	goSafe(func() {
 		time.Sleep(delay)
 		// WithoutCancel: this PATCH must outlive the click-handler request
@@ -429,7 +444,7 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 		// itself so the goroutine never hangs.
 		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 		defer cancel()
-		if err := d.bot.UpdateCardVerified(patchCtx, msgID, card); err != nil {
+		if err := d.bot.UpdateCardVerified(patchCtx, msgID, cardID, card); err != nil {
 			d.logger.Load().Warn("delayed picker UpdateCard failed",
 				log.FieldMessageID, msgID,
 				log.FieldError, err.Error())

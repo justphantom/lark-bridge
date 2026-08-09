@@ -143,6 +143,20 @@ func (c *Client) PatchMessage(ctx context.Context, messageID, content string) er
 	return c.rest.PatchMessage(ctx, messageID, content)
 }
 
+// CreateCardEntity creates a CardKit card entity from a schema-2.0 card JSON
+// and returns its card_id (14-day TTL). Independent of the WS connection.
+func (c *Client) CreateCardEntity(ctx context.Context, cardJSON string) (string, error) {
+	return c.rest.CreateCardEntity(ctx, cardJSON)
+}
+
+// UpdateCardEntity replaces a CardKit card entity in place. sequence must
+// strictly increase per card (the platform rejects out-of-order writes with
+// 300317); uuid is the caller's idempotency token for transport retries.
+// Independent of the WS connection.
+func (c *Client) UpdateCardEntity(ctx context.Context, cardID, cardJSON string, sequence int64, uuid string) error {
+	return c.rest.UpdateCardEntity(ctx, cardID, cardJSON, sequence, uuid)
+}
+
 // GetMessage fetches one message's body content (the stored card JSON for an
 // interactive card). Used by Bot.UpdateCardVerified to read back whether a
 // PATCH persisted. Independent of the WS connection state; uses the REST

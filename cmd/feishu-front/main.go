@@ -23,6 +23,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/feishufront/cardkit"
 	"github.com/justphantom/lark-bridge/internal/fileconvert"
 	"github.com/justphantom/lark-bridge/internal/hostmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -111,6 +112,15 @@ func run(cfgPath, addr string) error {
 		return fmt.Errorf("feishu bot: %w", err)
 	}
 	bot.SetDebugRedact(cfg.LogDebugRedact)
+	// Card engine: "cardkit" switches cards to CardKit 卡片实体 (schema 2.0 +
+	// card-entity create/update APIs). cardkit.SetSchemaV2 flips the rendering
+	// layer; bot.SetCardEngine flips the send/update path. Anything else keeps
+	// the legacy schema 1.0 + im PATCH path so a partial rollout works.
+	if strings.EqualFold(strings.TrimSpace(cfg.FeishuCardEngine), "cardkit") {
+		cardkit.SetSchemaV2(true)
+		bot.SetCardEngine(true)
+		logger.Info("card engine: cardkit (schema 2.0 + card-entity APIs)")
+	}
 
 	// Layer-1 router: persists routing.json under state_dir.
 	routingPath := filepath.Join(cfg.StateDir, "routing.json")

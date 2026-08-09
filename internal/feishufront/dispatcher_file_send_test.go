@@ -140,7 +140,7 @@ func TestReflectFileOutcome_EvictsInteractiveBinding(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, nil, NewTurnManager(), nil)
 
-	d.turns.BindInteractive("q-pick", "om_picker", "prompt_x")
+	d.turns.BindInteractive("q-pick", "om_picker", "", "prompt_x")
 	d.cardMu.Lock()
 	d.cards["q-pick"] = []byte(`{"header":{"template":"grey"},"config":{}}`)
 	d.cardMu.Unlock()

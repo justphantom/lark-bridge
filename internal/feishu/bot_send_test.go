@@ -22,14 +22,14 @@ func TestSendCardEmptyBody(t *testing.T) {
 // TestUpdateCardEmptyBody/EmptyMessageID/NilClient cover the pre-send guards.
 func TestUpdateCardEmptyBody(t *testing.T) {
 	b := &Bot{logger: log.Nop(), client: &fakeClient{}}
-	if err := b.UpdateCard(context.Background(), "om_msg", nil); err == nil {
+	if err := b.UpdateCard(context.Background(), "om_msg", "", nil); err == nil {
 		t.Fatal("expected error for empty card body")
 	}
 }
 
 func TestUpdateCardEmptyMessageID(t *testing.T) {
 	b := &Bot{logger: log.Nop(), client: &fakeClient{}}
-	if err := b.UpdateCard(context.Background(), "", []byte("{}")); err == nil {
+	if err := b.UpdateCard(context.Background(), "", "", []byte("{}")); err == nil {
 		t.Fatal("expected error for empty messageID")
 	}
 }
@@ -37,7 +37,7 @@ func TestUpdateCardEmptyMessageID(t *testing.T) {
 func TestUpdateCardNilClient(t *testing.T) {
 	// client nil guard returns a descriptive error before any API call.
 	b := &Bot{logger: log.Nop()}
-	err := b.UpdateCard(context.Background(), "om_msg", []byte("{}"))
+	err := b.UpdateCard(context.Background(), "om_msg", "", []byte("{}"))
 	if err == nil || err.Error() != "feishu: client not initialized" {
 		t.Fatalf("expected client-not-initialized error, got %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSendCard_ErrorDoesNotRefreshWatchdog(t *testing.T) {
 func TestUpdateCard_SuccessAndPatch(t *testing.T) {
 	fc := &fakeClient{}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCard(context.Background(), "om_msg", []byte("{}")); err != nil {
+	if err := b.UpdateCard(context.Background(), "om_msg", "", []byte("{}")); err != nil {
 		t.Fatalf("UpdateCard: %v", err)
 	}
 	if got := fc.patchCalls.Load(); got != 1 {
@@ -154,7 +154,7 @@ func TestUpdateCard_ContentRejectedFallsBack(t *testing.T) {
 		patchErrOnNth: 1, // first patch rejected; second (fallback) succeeds
 	}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCard(context.Background(), "om_msg", []byte("{}")); err != nil {
+	if err := b.UpdateCard(context.Background(), "om_msg", "", []byte("{}")); err != nil {
 		t.Fatalf("UpdateCard should swallow content-rejected via fallback: %v", err)
 	}
 	// Two patches: the original (rejected) + the fallback.

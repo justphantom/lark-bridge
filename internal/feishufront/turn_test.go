@@ -12,9 +12,9 @@ import (
 // can be released. (M3)
 func TestTurnsByBackend(t *testing.T) {
 	m := NewTurnManager()
-	m.Start("p-a1", "c-1", "m-a1", "back-A")
-	m.Start("p-a2", "c-2", "m-a2", "back-A")
-	m.Start("p-b1", "c-3", "m-b1", "back-B")
+	m.Start("p-a1", "c-1", "m-a1", "", "back-A")
+	m.Start("p-a2", "c-2", "m-a2", "", "back-A")
+	m.Start("p-b1", "c-3", "m-b1", "", "back-B")
 
 	got := m.TurnsByBackend("back-A")
 	if len(got) != 2 {
@@ -43,9 +43,9 @@ func TestInFlight(t *testing.T) {
 	if got := m.InFlight(); got != 0 {
 		t.Fatalf("empty InFlight = %d, want 0", got)
 	}
-	m.Start("p-a1", "c-1", "m-a1", "back-A")
-	m.Start("p-a2", "c-2", "m-a2", "back-A")
-	m.Start("p-b1", "c-3", "m-b1", "back-B")
+	m.Start("p-a1", "c-1", "m-a1", "", "back-A")
+	m.Start("p-a2", "c-2", "m-a2", "", "back-A")
+	m.Start("p-b1", "c-3", "m-b1", "", "back-B")
 	if got := m.InFlight(); got != 3 {
 		t.Fatalf("after 3 starts InFlight = %d, want 3", got)
 	}
@@ -72,9 +72,9 @@ func TestInFlight_ExcludesDeployMonitor(t *testing.T) {
 	m := NewTurnManager()
 	m.SetTypeResolver(func(id string) string { return types[id] })
 
-	m.Start("p-c1", "c-1", "m-c1", "back-claude")
-	m.Start("p-d1", "c-2", "m-d1", "back-deploy")
-	m.Start("p-o1", "c-3", "m-o1", "back-opencode")
+	m.Start("p-c1", "c-1", "m-c1", "", "back-claude")
+	m.Start("p-d1", "c-2", "m-d1", "", "back-deploy")
+	m.Start("p-o1", "c-3", "m-o1", "", "back-opencode")
 	if got := m.InFlight(); got != 2 {
 		t.Fatalf("InFlight = %d, want 2 (exclude deploy-monitor)", got)
 	}
@@ -91,8 +91,8 @@ func TestInFlight_ExcludesDeployMonitor(t *testing.T) {
 // their requestIDs so paired card state can be dropped. (M4)
 func TestSweepInteractive_TTL(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("fresh", "m-fresh", "")
-	m.BindInteractive("stale", "m-stale", "")
+	m.BindInteractive("fresh", "m-fresh", "", "")
+	m.BindInteractive("stale", "m-stale", "", "")
 
 	// Age the "stale" entry past the TTL by rewriting its boundAt directly
 	// (same-package test can reach the unexported field).
@@ -117,8 +117,8 @@ func TestSweepInteractive_TTL(t *testing.T) {
 // SweepInteractive is a no-op when every binding is within the TTL.
 func TestSweepInteractive_AllFresh(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "")
-	m.BindInteractive("r2", "m2", "")
+	m.BindInteractive("r1", "m1", "", "")
+	m.BindInteractive("r2", "m2", "", "")
 	if expired := m.SweepInteractive(); len(expired) != 0 {
 		t.Fatalf("want no expirations, got %v", expired)
 	}
@@ -128,7 +128,7 @@ func TestSweepInteractive_AllFresh(t *testing.T) {
 // the requestID does not leak.
 func TestUnbindInteractive(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "")
+	m.BindInteractive("r1", "m1", "", "")
 	if _, ok := m.InteractiveMessageID("r1"); !ok {
 		t.Fatal("binding missing after BindInteractive")
 	}
@@ -144,10 +144,10 @@ func TestUnbindInteractive(t *testing.T) {
 // match, and bindings for other prompts are excluded.
 func TestInteractiveByPromptID(t *testing.T) {
 	m := NewTurnManager()
-	m.BindInteractive("r1", "m1", "p-a")
-	m.BindInteractive("r2", "m2", "p-a")
-	m.BindInteractive("r3", "m3", "p-b")
-	m.BindInteractive("r4", "m4", "") // standalone, no link
+	m.BindInteractive("r1", "m1", "", "p-a")
+	m.BindInteractive("r2", "m2", "", "p-a")
+	m.BindInteractive("r3", "m3", "", "p-b")
+	m.BindInteractive("r4", "m4", "", "") // standalone, no link
 
 	got := m.InteractiveByPromptID("p-a")
 	if len(got) != 2 {
@@ -174,9 +174,9 @@ func TestInteractiveByPromptID(t *testing.T) {
 // that releases a turn without a terminal control, so it must be precise.
 func TestReclaimBackend(t *testing.T) {
 	m := NewTurnManager()
-	m.Start("p-A1", "oc_a", "om_A1", "back-A")
-	m.Start("p-A2", "oc_a", "om_A2", "back-A")
-	m.Start("p-B1", "oc_b", "om_B1", "back-B")
+	m.Start("p-A1", "oc_a", "om_A1", "", "back-A")
+	m.Start("p-A2", "oc_a", "om_A2", "", "back-A")
+	m.Start("p-B1", "oc_b", "om_B1", "", "back-B")
 
 	reclaimed := m.ReclaimBackend("back-A")
 	if len(reclaimed) != 2 {

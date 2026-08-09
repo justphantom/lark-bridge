@@ -29,7 +29,7 @@ func TestUpdateCardVerified_HappyPath(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{getMessageContent: `{"elements":[],"header":{"template":"green"},"schema":"1.0"}`}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCardVerified(context.Background(), "om_x", []byte(greenCard)); err != nil {
+	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard)); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 	if pc, gc := fc.patchCalls.Load(), fc.getCalls.Load(); pc != 1 || gc != 1 {
@@ -44,7 +44,7 @@ func TestUpdateCardVerified_RevertRetries(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{getMessageContent: `{"header":{"template":"blue"}}`}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCardVerified(context.Background(), "om_x", []byte(greenCard)); !errors.Is(err, ErrCardVerifyMismatch) {
+	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard)); !errors.Is(err, ErrCardVerifyMismatch) {
 		t.Fatalf("want ErrCardVerifyMismatch, got %v", err)
 	}
 	if got := fc.patchCalls.Load(); got != int32(cardVerifyMaxAttempts) {
@@ -61,7 +61,7 @@ func TestUpdateCardVerified_CardGoneShortCircuits(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{patchErr: &lark.APIError{Code: 230011, Msg: "withdrawn"}}
 	b := &Bot{logger: log.Nop(), client: fc}
-	err := b.UpdateCardVerified(context.Background(), "om_x", []byte(greenCard))
+	err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard))
 	if err == nil || !IsCardGone(err) {
 		t.Fatalf("want card-gone error, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestUpdateCardVerified_HeaderlessSkipsReadback(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCardVerified(context.Background(), "om_x", []byte(`{"schema":"1.0","elements":[]}`)); err != nil {
+	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(`{"schema":"1.0","elements":[]}`)); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 	if pc, gc := fc.patchCalls.Load(), fc.getCalls.Load(); pc != 1 || gc != 0 {
@@ -91,7 +91,7 @@ func TestUpdateCardVerified_GetErrorRetries(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{getMessageErr: errors.New("scope denied")}
 	b := &Bot{logger: log.Nop(), client: fc}
-	err := b.UpdateCardVerified(context.Background(), "om_x", []byte(greenCard))
+	err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard))
 	if err == nil || err.Error() != "scope denied" {
 		t.Fatalf("want scope-denied error, got %v", err)
 	}

@@ -186,7 +186,7 @@ func (d *Dispatcher) updateProgress(ctx context.Context, ctrl *protocol.Control,
 	if err != nil {
 		return err
 	}
-	return d.updateCard(ctx, turn.MessageID, card)
+	return d.updateCard(ctx, turn.MessageID, turn.CardID, card)
 }
 
 // toRendererTodos converts protocol.TodoItem → renderer.TodoItem at the package
@@ -229,10 +229,11 @@ func toRendererSubagent(s *protocol.SubagentSummary) renderer.SubagentInfo {
 // succeeded or not. It tries to update the existing progress card in place
 // first (so a terminal reply replaces the "starting" placeholder), falling
 // back to a fresh card. finalizeInteractive also closes a linked interactive
-// card on success (the result path); the notice path passes false.
-func (d *Dispatcher) sendTerminalCard(ctx context.Context, promptID, chatID, messageID string, card []byte, finalizeInteractive bool) error {
+// card on success (the result path); the notice path passes false. cardID is
+// the CardKit entity behind messageID ("" under legacy).
+func (d *Dispatcher) sendTerminalCard(ctx context.Context, promptID, chatID, messageID, cardID string, card []byte, finalizeInteractive bool) error {
 	if messageID != "" {
-		if uerr := d.bot.UpdateCard(ctx, messageID, card); uerr == nil {
+		if uerr := d.bot.UpdateCard(ctx, messageID, cardID, card); uerr == nil {
 			if finalizeInteractive {
 				d.finalizeLinkedInteractive(ctx, promptID)
 			}
@@ -377,7 +378,7 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 		if err != nil {
 			return err
 		}
-		err = d.bot.UpdateCard(ctx, n.UpdateMessageID, card)
+		err = d.bot.UpdateCard(ctx, n.UpdateMessageID, d.interactiveCardID(n.UpdateMessageID), card)
 		if err != nil && feishu.IsCardGone(err) {
 			// The referenced card was withdrawn: deliver the notice as a
 			// fresh card rather than dropping it on the floor (a deploy
@@ -408,9 +409,10 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 
 	d.cleanupProgress(ctrl.PromptID, "")
 	turn, ok, chatID, footer := d.resolveFooter(ctrl, backendType)
-	messageID := ""
+	messageID, cardID := "", ""
 	if ok {
 		messageID = turn.MessageID
+		cardID = turn.CardID
 	}
 	level, title, msg := "info", "提示", ""
 	field, before, after := "", "", ""
@@ -444,7 +446,7 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 	}
 	// Mark finalized so a straggler progress frame cannot overwrite this notice.
 	d.markFinalized(messageID)
-	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, card, false)
+	return d.sendTerminalCard(ctx, ctrl.PromptID, chatID, messageID, cardID, card, false)
 }
 
 // sendStatusReport broadcasts the standing overview card to every chat bound
@@ -529,10 +531,11 @@ func (d *Dispatcher) patchOrCreateStatusCard(ctx context.Context, chatID, key st
 	mapKey := chatID + "\x00" + key
 	d.statusMu.Lock()
 	msgID := d.statusCards[mapKey]
+	cardID := d.statusCardIDs[mapKey]
 	d.statusMu.Unlock()
 
 	if msgID != "" {
-		err := d.bot.UpdateCard(ctx, msgID, card)
+		err := d.bot.UpdateCard(ctx, msgID, cardID, card)
 		if err == nil {
 			return
 		}
@@ -562,8 +565,11 @@ func (d *Dispatcher) patchOrCreateStatusCard(ctx context.Context, chatID, key st
 	if len(d.statusCards) >= maxStatusCards {
 		clear(d.statusCards)
 	}
-	d.statusCards[mapKey] = newID
+	d.statusCards[mapKey] = newID.MessageID
 	d.statusMu.Unlock()
+	d.cardMu.Lock()
+	d.statusCardIDs[mapKey] = newID.CardID
+	d.cardMu.Unlock()
 }
 
 func (d *Dispatcher) notice(ctx context.Context, chatID, level, title, message string) error {
@@ -573,6 +579,12 @@ func (d *Dispatcher) notice(ctx context.Context, chatID, level, title, message s
 	}
 	_, err = d.bot.SendCard(ctx, chatID, card, "")
 	return err
+}
+
+// interactiveCardID resolves the CardKit entity id behind an interactive card
+// messageID ("" under the legacy engine). Wraps the TurnManager lookup.
+func (d *Dispatcher) interactiveCardID(messageID string) string {
+	return d.turns.InteractiveCardIDByMessageID(messageID)
 }
 
 // cleanupProgress removes the progress state for a finished prompt and clears

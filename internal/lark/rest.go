@@ -97,6 +97,54 @@ type getMessageData struct {
 	} `json:"items"`
 }
 
+// cardEntityData is the data payload of POST /open-apis/cardkit/v1/cards.
+type cardEntityData struct {
+	CardID string `json:"card_id"`
+}
+
+// CreateCardEntity creates a CardKit card entity from a schema 2.0 card JSON
+// body and returns its card_id. The entity is addressable by card_id for 14
+// days (full-card PUT updates); sending it to a chat is a separate step
+// (Send with SendInput.CardID). Requires the cardkit:card:write scope.
+func (r *restClient) CreateCardEntity(ctx context.Context, card string) (string, error) {
+	if card == "" {
+		return "", fmt.Errorf("lark: empty card body")
+	}
+	body := map[string]string{"type": "card_json", "data": card}
+	var data cardEntityData
+	if err := r.doJSON(ctx, http.MethodPost, "/open-apis/cardkit/v1/cards", "", body, &data); err != nil {
+		return "", err
+	}
+	if data.CardID == "" {
+		return "", fmt.Errorf("lark: create card entity returned no card_id")
+	}
+	return data.CardID, nil
+}
+
+// UpdateCardEntity fully replaces a CardKit card entity's content (PUT
+// /open-apis/cardkit/v1/cards/:card_id). sequence must be strictly increasing
+// per card (the platform rejects out-of-order writes with 300317, which is
+// the guarantee that a stale update can never overwrite a newer one); uuid
+// is the idempotency key for safe caller retries. Per PoC (2026-08-09) the
+// im-PATCH click-handling window does NOT exist on this path: an update
+// landing inside the window succeeds directly, so no retry/delay logic is
+// needed — failures are surfaced as ordinary errors.
+func (r *restClient) UpdateCardEntity(ctx context.Context, cardID, card string, sequence int64, uuid string) error {
+	if cardID == "" {
+		return fmt.Errorf("lark: empty card_id")
+	}
+	if card == "" {
+		return fmt.Errorf("lark: empty card body")
+	}
+	path := "/open-apis/cardkit/v1/cards/" + url.PathEscape(cardID)
+	body := map[string]any{
+		"card":     map[string]string{"type": "card_json", "data": card},
+		"sequence": sequence,
+		"uuid":     uuid,
+	}
+	return r.doJSON(ctx, http.MethodPut, path, "", body, nil)
+}
+
 // GetMessage fetches one message's body content. For an interactive card this
 // is the stored card JSON; UpdateCardVerified parses it to confirm a PATCH
 // persisted (Feishu's click-handling window can silently revert a PATCH).
@@ -119,9 +167,11 @@ func (r *restClient) GetMessage(ctx context.Context, messageID string) ([]byte, 
 }
 
 // encodeSendContent picks msg_type and builds the inner-JSON content string
-// for a SendInput. Text → {"text":"..."}; Card → the card string verbatim;
-// FileKey → {"file_key":"..."} for a msg_type=file message. Exactly one of the
-// three may be set.
+// for a SendInput. Text → {"text":"..."}; Card → the card string verbatim
+// (msg_type=interactive); CardID → {"type":"card","data":{"card_id":...}}
+// (msg_type=interactive referencing a CardKit entity); FileKey →
+// {"file_key":"..."} for a msg_type=file message. Exactly one of the four may
+// be set.
 func encodeSendContent(in *SendInput) (string, string, error) {
 	set := 0
 	if in.Text != "" {
@@ -130,11 +180,14 @@ func encodeSendContent(in *SendInput) (string, string, error) {
 	if in.Card != "" {
 		set++
 	}
+	if in.CardID != "" {
+		set++
+	}
 	if in.FileKey != "" {
 		set++
 	}
 	if set != 1 {
-		return "", "", fmt.Errorf("lark: SendInput must set exactly one of Text/Card/FileKey")
+		return "", "", fmt.Errorf("lark: SendInput must set exactly one of Text/Card/CardID/FileKey")
 	}
 	switch {
 	case in.Text != "":
@@ -145,6 +198,17 @@ func encodeSendContent(in *SendInput) (string, string, error) {
 		return "text", string(b), nil
 	case in.Card != "":
 		return "interactive", in.Card, nil
+	case in.CardID != "":
+		// CardKit 实体卡发送载荷（PoC 2026-08-09 实测通过）：
+		// msg_type=interactive + content={"type":"card","data":{"card_id":...}}。
+		b, err := json.Marshal(map[string]any{
+			"type": "card",
+			"data": map[string]string{"card_id": in.CardID},
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("lark: encode card reference: %w", err)
+		}
+		return "interactive", string(b), nil
 	default:
 		b, err := json.Marshal(map[string]string{"file_key": in.FileKey})
 		if err != nil {

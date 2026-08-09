@@ -12,6 +12,7 @@ type Turn struct {
 	PromptID  string
 	ChatID    string
 	MessageID string // progress card message_id
+	CardID    string // CardKit entity id behind the progress card (cardkit engine); "" under legacy
 	BackendID string
 	Model     string
 	SessionID string
@@ -23,6 +24,7 @@ type Turn struct {
 // whose backend interaction triggered it, so the result card can finalise it.
 type interactiveEntry struct {
 	messageID string
+	cardID    string // CardKit entity id (cardkit engine); "" under legacy
 	boundAt   time.Time
 	promptID  string
 }
@@ -32,6 +34,7 @@ type interactiveEntry struct {
 type InteractiveBinding struct {
 	RequestID string
 	MessageID string
+	CardID    string // CardKit entity id (cardkit engine); "" under legacy
 }
 
 // TurnManager tracks promptID → Turn (progress card) plus requestID →
@@ -62,14 +65,17 @@ func (m *TurnManager) SetTypeResolver(fn func(backendID string) string) {
 	m.typeResolver = fn
 }
 
-// Start records the progress card for one prompt.
-func (m *TurnManager) Start(promptID, chatID, messageID, backendID string) {
+// Start records the progress card for one prompt. cardID is the CardKit
+// entity the progress card was sent as ("" under the legacy engine); the
+// update path hands it back to UpdateCard.
+func (m *TurnManager) Start(promptID, chatID, messageID, cardID, backendID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.turns[promptID] = &Turn{
 		PromptID:  promptID,
 		ChatID:    chatID,
 		MessageID: messageID,
+		CardID:    cardID,
 		BackendID: backendID,
 		StartedAt: time.Now(),
 	}
@@ -191,10 +197,19 @@ func (m *TurnManager) InFlightTurns() []Turn {
 // so the result card can flip it to a finalised state instead of leaving it
 // grey forever. Callers pair this with SweepInteractive to evict expired
 // bindings (and any paired card state) so the set cannot grow without bound.
-func (m *TurnManager) BindInteractive(requestID, messageID, promptID string) {
+func (m *TurnManager) BindInteractive(requestID, messageID, cardID, promptID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.interactive[requestID] = interactiveEntry{messageID: messageID, boundAt: time.Now(), promptID: promptID}
+	m.interactive[requestID] = interactiveEntry{messageID: messageID, cardID: cardID, boundAt: time.Now(), promptID: promptID}
+}
+
+// InteractiveCardRef returns the interactive card's messageID and CardKit
+// entity id for requestID.
+func (m *TurnManager) InteractiveCardRef(requestID string) (string, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	e, ok := m.interactive[requestID]
+	return e.messageID, e.cardID, ok
 }
 
 // InteractiveMessageID returns the interactive card messageID for requestID.
@@ -214,10 +229,24 @@ func (m *TurnManager) InteractiveByPromptID(promptID string) []InteractiveBindin
 	var out []InteractiveBinding
 	for rid, e := range m.interactive {
 		if e.promptID == promptID {
-			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID})
+			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID, CardID: e.cardID})
 		}
 	}
 	return out
+}
+
+// InteractiveCardIDByMessageID returns the CardKit entity id of the first
+// interactive binding pointing at messageID, or "" under the legacy engine.
+// Used by the /send multi-round refresh, which knows only the messageID.
+func (m *TurnManager) InteractiveCardIDByMessageID(messageID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, e := range m.interactive {
+		if e.messageID == messageID {
+			return e.cardID
+		}
+	}
+	return ""
 }
 
 // RequestIDsByMessageID returns the requestIDs of every interactive binding
@@ -254,7 +283,7 @@ func (m *TurnManager) UnbindInteractiveByPromptID(promptID string) []Interactive
 	var out []InteractiveBinding
 	for rid, e := range m.interactive {
 		if e.promptID == promptID {
-			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID})
+			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID, CardID: e.cardID})
 			delete(m.interactive, rid)
 		}
 	}

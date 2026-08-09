@@ -41,18 +41,18 @@ type updatedCard struct {
 	card      []byte
 }
 
-func (f *fakeSink) SendCard(_ context.Context, chatID string, card []byte, replyToID string) (string, error) {
+func (f *fakeSink) SendCard(_ context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cardErr != nil {
-		return "", f.cardErr
+		return feishu.CardRef{}, f.cardErr
 	}
 	f.nextID++
 	f.sends = append(f.sends, sentCard{chatID: chatID, card: card, replyToID: replyToID})
-	return "om_" + itoa(f.nextID), nil
+	return feishu.CardRef{MessageID: "om_" + itoa(f.nextID)}, nil
 }
 
-func (f *fakeSink) UpdateCard(_ context.Context, messageID string, card []byte) error {
+func (f *fakeSink) UpdateCard(_ context.Context, messageID, _ string, card []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, updatedCard{messageID: messageID, card: card})
@@ -63,8 +63,8 @@ func (f *fakeSink) UpdateCard(_ context.Context, messageID string, card []byte) 
 // dispatcher-level fakes have no real Feishu to bounce a PATCH off, so they
 // treat the verified path as a plain update for assertion purposes. The Bot's
 // own verify loop is exercised in internal/feishu.
-func (f *fakeSink) UpdateCardVerified(ctx context.Context, messageID string, card []byte) error {
-	return f.UpdateCard(ctx, messageID, card)
+func (f *fakeSink) UpdateCardVerified(ctx context.Context, messageID, cardID string, card []byte) error {
+	return f.UpdateCard(ctx, messageID, cardID, card)
 }
 
 // SendText records a plain-text fallback send so tests can assert the
@@ -145,7 +145,7 @@ func TestCardActionIdempotent(t *testing.T) {
 	if err := router.Set(chatID, backendID); err != nil {
 		t.Fatal(err)
 	}
-	disp.turns.Start("msg-1", chatID, "", backendID)
+	disp.turns.Start("msg-1", chatID, "", "", backendID)
 	disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID,
 		Question: &protocol.QuestionPayload{RequestID: "req-3", PromptID: "msg-1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
@@ -342,7 +342,7 @@ func TestInteractiveTimeout(t *testing.T) {
 
 	// Resolve the real messageID, then fire the expiry callback.
 	mid, _ := disp.turns.InteractiveMessageID("req-t")
-	disp.expireInteractive("req-t", mid)
+	disp.expireInteractive("req-t", mid, "")
 
 	// The expired card should be the last UpdateCard, carrying the notice.
 	sink.mu.Lock()
@@ -437,7 +437,7 @@ func TestInteractiveSendsNewCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress"
-	disp.turns.Start("msg-7", chatID, progressMID, backendID)
+	disp.turns.Start("msg-7", chatID, progressMID, "", backendID)
 
 	permCtrl := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-7",
@@ -556,7 +556,7 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-10"
-	disp.turns.Start("msg-10", chatID, progressMID, backendID)
+	disp.turns.Start("msg-10", chatID, progressMID, "", backendID)
 
 	qCtrl := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-10",
@@ -659,7 +659,7 @@ func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress"
-	disp.turns.Start("msg-9", chatID, progressMID, backendID)
+	disp.turns.Start("msg-9", chatID, progressMID, "", backendID)
 
 	seenMIDs := make(map[string]bool)
 	for i := range 3 {
@@ -748,7 +748,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fin"
-	disp.turns.Start("msg-fin", chatID, progressMID, backendID)
+	disp.turns.Start("msg-fin", chatID, progressMID, "", backendID)
 
 	// Mid-turn permission gate: standalone card (no TakeOverProgress).
 	permCtrl := &protocol.Control{
@@ -837,7 +837,7 @@ func TestSubmit_DelayedFallbackPatchResends(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fb2"
-	disp.turns.Start("msg-fb2", chatID, progressMID, backendID)
+	disp.turns.Start("msg-fb2", chatID, progressMID, "", backendID)
 
 	permCtrl := &protocol.Control{
 		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb2",
@@ -904,7 +904,7 @@ func TestSubmit_DelayedFallbackSkippedAfterFinalize(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fb3"
-	disp.turns.Start("msg-fb3", chatID, progressMID, backendID)
+	disp.turns.Start("msg-fb3", chatID, progressMID, "", backendID)
 
 	permCtrl := &protocol.Control{
 		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb3",
@@ -1052,7 +1052,7 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fb"
-	disp.turns.Start("msg-fb", chatID, progressMID, backendID)
+	disp.turns.Start("msg-fb", chatID, progressMID, "", backendID)
 
 	// Simulate Feishu rejecting the result card (e.g. reply had too many tables).
 	sink.mu.Lock()
@@ -1101,7 +1101,7 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 
 	// Simulate round 1: a prior picker already owns om_picker under req-r1
 	// (the progress card morphed into the picker on the first AskAndWait).
-	d.turns.BindInteractive("req-r1", "om_picker", "")
+	d.turns.BindInteractive("req-r1", "om_picker", "", "")
 	d.cardMu.Lock()
 	d.cards["req-r1"] = []byte("round1")
 	d.cardMu.Unlock()

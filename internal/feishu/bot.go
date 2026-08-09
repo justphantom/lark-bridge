@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 type feishuClient interface {
 	Send(ctx context.Context, in *lark.SendInput) (*lark.SendResult, error)
 	PatchMessage(ctx context.Context, messageID, content string) error
+	// CreateCardEntity/UpdateCardEntity are the CardKit 卡片实体 endpoints
+	// (cardkit-migration §3.2/§3.3). Legacy-engine bots never call them.
+	CreateCardEntity(ctx context.Context, cardJSON string) (string, error)
+	UpdateCardEntity(ctx context.Context, cardID, cardJSON string, sequence int64, uuid string) error
 	GetMessage(ctx context.Context, messageID string) ([]byte, error)
 	DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error)
 	UploadFile(ctx context.Context, fileName, fileType string, r io.Reader) (string, error)
@@ -101,6 +106,20 @@ type Bot struct {
 	onCardAction atomic.Pointer[CardActionHandler]
 	logger       *log.Logger
 
+	// cardkit switches the card engine from legacy (schema 1.0 + im PATCH)
+	// to CardKit card entities (schema 2.0 + card_id PUT, no click-handling
+	// window). Set once by SetCardEngine at startup before Start.
+	cardkit bool
+	// cards holds the monotonically-increasing update sequence of each CardKit
+	// card entity this process has sent, keyed by cardID (not messageID: the
+	// entity id is the update handle callers pass to UpdateCard).
+	// In-memory only: a restart loses every sequence and the counter starts
+	// over from zero, which is safe because the platform orders by strictly
+	// increasing sequence within a card (cardkit-migration-assessment.md §3.3)
+	// and a post-restart update is the first write this process knows about.
+	cardsMu sync.RWMutex
+	cards   map[string]*cardState
+
 	logDebugRedact atomic.Bool // redact sensitive text from debug logs (opt-in); atomic, read concurrently with SetDebugRedact
 
 	// lastHealthy is the unix-nano time of the most recent signal that the WS
@@ -145,6 +164,7 @@ func NewBotWithLogger(appID, appSecret string, logger *log.Logger, opts ...BotOp
 		appSecret: appSecret,
 		botOpts:   opts,
 		logger:    logger,
+		cards:     make(map[string]*cardState),
 	}
 	if cfg.clientFactory != nil {
 		b.client = cfg.clientFactory

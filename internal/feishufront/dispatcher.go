@@ -44,19 +44,26 @@ const defaultStaleWindow = 300 * time.Second
 const maxPromptBytes = 64 << 10 // 64 KiB
 
 // CardSink is the subset of the Feishu bot the dispatcher needs: send a new
-// card (returns message_id), update an existing card, or send plain text.
-// SendText is the fallback path for when SendCard rejects a result card's
+// card (returns its CardRef identity), update an existing card, or send plain
+// text. SendText is the fallback path for when SendCard rejects a result card's
 // content (e.g. a reply with too many markdown tables hits Feishu's element
 // limit): the reply text is delivered as plain text instead of being lost.
 type CardSink interface {
-	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (string, error)
-	UpdateCard(ctx context.Context, messageID string, card []byte) error
+	// SendCard ships a card and returns its CardRef. In legacy mode CardID is
+	// empty and later updates address the card by MessageID; in cardkit mode
+	// CardID carries the entity id the caller must hand back to UpdateCard.
+	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error)
+	// UpdateCard patches the card. cardID != "" targets the CardKit entity
+	// (PUT with per-card sequence); cardID == "" keeps the legacy im PATCH by
+	// messageID. Callers in cardkit mode always carry CardID from the CardRef;
+	// legacy-mode callers pass "".
+	UpdateCard(ctx context.Context, messageID, cardID string, card []byte) error
 	// UpdateCardVerified PATCHes the card then read-back confirms the header
 	// template persisted, re-PATCHing if Feishu silently reverted it. Used only
 	// by the three terminal/submitted delayed-PATCH sites where the click-
 	// handling window can roll a PATCH back; streaming progress keeps plain
 	// UpdateCard (no click window there).
-	UpdateCardVerified(ctx context.Context, messageID string, card []byte) error
+	UpdateCardVerified(ctx context.Context, messageID, cardID string, card []byte) error
 	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }
 
@@ -129,6 +136,11 @@ type Dispatcher struct {
 	// "已失效" state; cancelled on the first button click. Guarded by cardMu.
 	pickerCards  map[string][]byte
 	pickerTimers map[string]*time.Timer
+	// pickerCardIDs tracks the CardKit entity id (cardID) behind each /backend
+	// picker messageID, so the delayed outcome PATCH can target the entity in
+	// cardkit mode. Same lifecycle/lock as pickerCards. Legacy mode leaves it
+	// empty (the update falls back to the im PATCH by messageID).
+	pickerCardIDs map[string]string
 
 	// flapMu guards flap, the per-backend debounce state for online/offline
 	// notices. A flapping backend (rapid disconnect/reconnect) would otherwise
@@ -158,8 +170,11 @@ type Dispatcher struct {
 	// backend) pair. The status-monitor backend pushes a TypeStatusReport each
 	// tick; the dispatcher PATCHes the existing card, or SendCards a new one
 	// when none is cached or the prior one was withdrawn (feishu.IsCardGone).
-	statusMu    sync.Mutex
-	statusCards map[string]string
+	// statusCardIDs mirrors statusCards with the CardKit entity id (cardID) the
+	// same card was sent under; empty in legacy mode. UpdateCard consumes both.
+	statusMu      sync.Mutex
+	statusCards   map[string]string
+	statusCardIDs map[string]string
 
 	// logger is stored atomically: SetLogger runs on the main goroutine while
 	// notifyBackendChat reads it from the IPCServer.fireCallback goroutine.
@@ -261,8 +276,10 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		pendingSubmits:        make(map[string][]byte),
 		pickerCards:           make(map[string][]byte),
 		pickerTimers:          make(map[string]*time.Timer),
+		pickerCardIDs:         make(map[string]string),
 		flap:                  make(map[string]*flapState),
 		statusCards:           make(map[string]string),
+		statusCardIDs:         make(map[string]string),
 		offlineNoticeDebounce: offlineNoticeDebounce,
 		cardPatchDelay:        cardPatchDelayDefault,
 	}
@@ -362,7 +379,7 @@ func (d *Dispatcher) StartDedupPrune(ctx context.Context) {
 // progress updates go through it; terminal updates (result/notice) go direct.
 // A messageID marked finalized (its terminal card already sent) rejects the
 // update so a straggler progress frame can never overwrite the final card.
-func (d *Dispatcher) updateCard(ctx context.Context, messageID string, card []byte) error {
+func (d *Dispatcher) updateCard(ctx context.Context, messageID, cardID string, card []byte) error {
 	d.progressMu.Lock()
 	if _, done := d.finalized[messageID]; done {
 		d.progressMu.Unlock()
@@ -370,10 +387,10 @@ func (d *Dispatcher) updateCard(ctx context.Context, messageID string, card []by
 	}
 	d.progressMu.Unlock()
 	if d.debouncer != nil {
-		d.debouncer.enqueue(messageID, card)
+		d.debouncer.enqueue(messageID, cardID, card)
 		return nil
 	}
-	return d.bot.UpdateCard(ctx, messageID, card)
+	return d.bot.UpdateCard(ctx, messageID, cardID, card)
 }
 
 func (d *Dispatcher) DispatchIncoming(ctx context.Context, msg *feishu.IncomingMessage) error {
@@ -501,13 +518,14 @@ func (d *Dispatcher) dispatchPrompt(ctx context.Context, msg *feishu.IncomingMes
 		d.eventIDs.Delete(msg.EventID)
 		return err
 	}
-	messageID, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
+	ref, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
 	if err != nil {
 		d.eventIDs.Delete(msg.EventID)
 		return err
 	}
+	messageID := ref.MessageID
 	promptID := msg.MessageID
-	d.turns.Start(promptID, msg.ChatID, messageID, backendID)
+	d.turns.Start(promptID, msg.ChatID, messageID, ref.CardID, backendID)
 	ev := &protocol.Event{
 		Type:     protocol.TypePrompt,
 		PromptID: promptID,

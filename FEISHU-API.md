@@ -17,6 +17,8 @@
 | 2 | 消息发送（新建） | POST | `/open-apis/im/v1/messages?receive_id_type=chat_id` | `internal/lark/rest.go:66` |
 | 3 | 消息发送（回复） | POST | `/open-apis/im/v1/messages/{message_id}/reply` | `internal/lark/rest.go:57` |
 | 4 | 消息更新 | PATCH | `/open-apis/im/v1/messages/{message_id}` | `internal/lark/rest.go:83` |
+| 4a | 卡片实体创建（CardKit） | POST | `/open-apis/cardkit/v1/cards` | `internal/lark/rest.go` `CreateCardEntity` |
+| 4b | 卡片实体更新（CardKit） | PUT | `/open-apis/cardkit/v1/cards/{card_id}` | `internal/lark/rest.go` `UpdateCardEntity` |
 | 5 | WebSocket 引导 | POST | `/callback/ws/endpoint` | `internal/lark/ws/wsclient.go:206` |
 | 6 | WebSocket 拨号 | GET（Upgrade） | 服务器签名返回的 wss URL | `internal/lark/websocket/dial.go:42` |
 | 7 | 收事件 `im.message.receive_v1` | WS Binary 帧 | — | `internal/lark/ws/dispatcher.go:168` |
@@ -139,6 +141,15 @@
   - `IsCardGone(err)` → **不重试**，原样上抛 `feishu: update card (message gone): <w>`，让上游重发新卡（`:146-152`）。
   - 其他错误 → 退避重试，最多 `cardRetry=3` 次，初始 `cardRetryBase=300ms` 倍增（`:153-162`）。
   - ctx 取消 → 立即返回（`:158-159`）。
+
+### 3.2 CardKit 卡片实体（可选引擎）
+
+`feishu_card_engine: "cardkit"` 切到 CardKit 卡片实体通道（schema 2.0）：
+
+- **创建实体**：`POST /open-apis/cardkit/v1/cards`，body 为整卡 JSON，返回 `card_id`。
+- **引用发送**：`SendInput.CardID` → 消息 content 编码为 `{"type":"card","data":{"card_id":...}}`。
+- **更新实体**：`PUT /open-apis/cardkit/v1/cards/{card_id}`，携带**严格递增**的 `sequence` 与幂等 `uuid`；实体 14 天可编辑。
+- 更新路由由 `cardID` 显式驱动（方案 B）：`UpdateCard(ctx, messageID, cardID, card)`——`cardID != ""` 走 PUT 实体，`cardID == ""` 走 legacy im PATCH。`IsCardGone` 额外识别 200740（实体不存在）/200750（14 天过期）。
 
 ---
 

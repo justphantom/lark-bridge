@@ -290,7 +290,7 @@ func TestExpirePicker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderBackendPicker: %v", err)
 	}
-	d.armPickerExpiry("om_card", picker)
+	d.armPickerExpiry("om_card", "", picker)
 
 	d.expirePicker("om_card")
 

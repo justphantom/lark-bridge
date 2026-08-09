@@ -37,7 +37,7 @@ func TestDispatchTerminal_SendsACK(t *testing.T) {
 			d := NewDispatcher(sink, reg, NewTurnManager(), nil)
 			conn := reg.Register("omp-1", "omp") // SendEvent needs a live conn
 			defer conn.Close()
-			d.turns.Start(tc.ctrl.PromptID, "c1", "om_progress", "omp-1")
+			d.turns.Start(tc.ctrl.PromptID, "c1", "om_progress", "", "omp-1")
 
 			if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "omp-1", Control: tc.ctrl}); err != nil {
 				t.Fatalf("DispatchControl: %v", err)
@@ -78,7 +78,7 @@ func TestDispatchTerminal_DuplicateStillACKs(t *testing.T) {
 	conn := reg.Register("claude-1", "claude")
 	defer conn.Close()
 	const promptID = "p-dup-ack"
-	d.turns.Start(promptID, "c1", "om_progress", "claude-1")
+	d.turns.Start(promptID, "c1", "om_progress", "", "claude-1")
 
 	mk := func() *protocol.Control {
 		return &protocol.Control{Type: protocol.TypeResult, PromptID: promptID, ChatID: "c1", Result: &protocol.ResultPayload{Text: "done"}}

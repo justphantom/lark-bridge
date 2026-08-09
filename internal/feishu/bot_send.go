@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/lark"
@@ -52,19 +53,104 @@ const feishuCodeCardElementOverLimit = 11310
 // errors.Is this and fall back to SendText so the reply is not lost.
 var ErrCardContentRejected = errors.New("feishu: card content rejected by server")
 
-func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (string, error) {
-	if len(card) == 0 {
-		return "", errors.New("feishu: empty card body")
+// CardRef is the returned identity of a sent card. MessageID locates the
+// message (callbacks, replies, the legacy PATCH update path); CardID is the
+// CardKit entity id the caller must hand back to UpdateCard for updates —
+// empty when the bot runs in legacy (schema 1.0 im PATCH) mode, in which
+// case updates address the card by MessageID instead.
+type CardRef struct {
+	MessageID string
+	CardID    string
+}
+
+// cardState tracks the CardKit update sequence of one sent card entity.
+// The CardKit PUT endpoint rejects a non-increasing sequence (code 300317),
+// so the counter must be strictly monotonic per card. Guards its own fields.
+type cardState struct {
+	mu  sync.Mutex
+	seq int64
+}
+
+// SetCardEngine switches the card send/update pipeline. With cardkit=true
+// every new SendCard creates a CardKit card entity (schema 2.0) and ships it
+// by reference; the returned CardRef.CardID is then the update handle the
+// caller passes to UpdateCard. Cards sent in legacy mode have no CardID and
+// keep the im PATCH path, so a mid-migration mix of old and new cards works.
+// Called once at startup from config; not goroutine-safe by design.
+func (b *Bot) SetCardEngine(cardkit bool) {
+	b.cardkit = cardkit
+}
+
+// cardStateFor returns the per-entity sequence handle for cardID, creating
+// it on first use. Keyed by cardID (not messageID): the entity id is the
+// update handle in cardkit mode (cardkit-migration §3.3, plan B).
+func (b *Bot) cardStateFor(cardID string) *cardState {
+	b.cardsMu.Lock()
+	defer b.cardsMu.Unlock()
+	st := b.cards[cardID]
+	if st == nil {
+		st = &cardState{}
+		b.cards[cardID] = st
 	}
+	return st
+}
+
+// SendCard sends a card and returns both its messageID and (in cardkit mode)
+// its CardKit entity id as a CardRef. In cardkit mode the send is two-phase:
+// create the entity (POST cardkit/v1/cards) then ship it by reference
+// (content={"type":"card","data":{"card_id":...}}). A failure after a
+// successful create leaks the entity id; it expires after 14 days and is
+// logged, per the migration assessment §3.2. Legacy mode returns only
+// MessageID (CardID "") and the update path stays im PATCH.
+func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (CardRef, error) {
+	if len(card) == 0 {
+		return CardRef{}, errors.New("feishu: empty card body")
+	}
+	cardID := ""
+	if b.cardkit {
+		var err error
+		cardID, err = b.client.CreateCardEntity(ctx, string(card))
+		if err != nil {
+			if isCardContentRejected(err) {
+				b.logger.Info("card entity content rejected by server",
+					log.FieldChatID, chatID,
+					"card_size_bytes", len(card))
+				return CardRef{}, fmt.Errorf("%w: %w", ErrCardContentRejected, err)
+			}
+			return CardRef{}, fmt.Errorf("feishu: create card entity: %w", err)
+		}
+	}
+	ref, err := b.sendCardPayload(ctx, chatID, card, cardID, replyToID)
+	if err != nil {
+		if cardID != "" {
+			// Entity created but the message send failed: the entity leaks
+			// until its 14-day TTL. Acceptable per the migration assessment;
+			// logged so leaks are observable.
+			b.logger.Warn("card entity orphaned after send failure",
+				log.FieldChatID, chatID, "card_id", cardID, log.FieldError, err.Error())
+		}
+		return CardRef{}, err
+	}
+	return ref, nil
+}
+
+// sendCardPayload ships the card through im/v1/messages: legacy mode passes
+// the raw card JSON (msg_type=interactive); cardkit mode passes the entity
+// reference envelope. Shared by both engines so the rejection/watchdog
+// handling lives in exactly one place.
+func (b *Bot) sendCardPayload(ctx context.Context, chatID string, card []byte, cardID, replyToID string) (CardRef, error) {
 	b.logger.Debug("send card",
 		log.FieldChatID, chatID,
 		"reply_to", replyToID,
+		"card_id", cardID,
 		"card", strutil.DebugRedact(string(card), b.logDebugRedact.Load()))
-	res, err := b.client.Send(ctx, &lark.SendInput{
-		ChatID:         chatID,
-		Card:           string(card),
-		ReplyMessageID: replyToID,
-	})
+	in := &lark.SendInput{ChatID: chatID, ReplyMessageID: replyToID}
+	if cardID != "" {
+		in.CardID = cardID
+	} else {
+		in.Card = string(card)
+	}
+	res, err := b.client.Send(ctx, in)
 	if err != nil {
 		if isCardContentRejected(err) {
 			// Surface a detectable error so a caller with the original text
@@ -74,15 +160,15 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 			b.logger.Info("card content rejected by server",
 				log.FieldChatID, chatID,
 				"card_size_bytes", len(card))
-			return "", fmt.Errorf("%w: %w", ErrCardContentRejected, err)
+			return CardRef{}, fmt.Errorf("%w: %w", ErrCardContentRejected, err)
 		}
-		return "", fmt.Errorf("feishu: send card: %w", err)
+		return CardRef{}, fmt.Errorf("feishu: send card: %w", err)
 	}
 	b.markHealthy() // outbound success refreshes the watchdog: without this, a long conversation with no inbound WS traffic trips fatal_after=5m
 	if res == nil {
-		return "", errors.New("feishu: send card returned no result")
+		return CardRef{}, errors.New("feishu: send card returned no result")
 	}
-	return res.MessageID, nil
+	return CardRef{MessageID: res.MessageID, CardID: cardID}, nil
 }
 
 // SendText sends a plain-text (msgType=text) message. Used as the fallback
@@ -133,61 +219,91 @@ func (b *Bot) SendFile(ctx context.Context, chatID, fileName string, r io.Reader
 	return nil
 }
 
-// UpdateCard updates an existing card message with new content.
-// This is useful for dynamic status updates, progress displays, and feedback scenarios.
-func (b *Bot) UpdateCard(ctx context.Context, messageID string, card []byte) error {
-	if len(card) == 0 {
-		return errors.New("feishu: empty card body")
-	}
-	if messageID == "" {
-		return errors.New("feishu: message_id required")
-	}
+// UpdateCard replaces a card body. The update handle comes from the
+// CardRef SendCard returned: cardID != "" targets the CardKit entity via
+// PUT with a strictly-increasing per-card sequence (cardkit engine);
+// cardID == "" is the legacy path and addresses the card by messageID via
+// im PATCH. The content-rejected fallback behaves the same on both paths:
+// swap the body to the minimal fallback card and retry once, so a malformed
+// reply surfaces as a card rather than a dispatcher error.
+func (b *Bot) UpdateCard(ctx context.Context, messageID, cardID string, card []byte) error {
 	if b.client == nil {
 		return errors.New("feishu: client not initialized")
 	}
-
-	b.logger.Debug("update feishu card",
-		log.FieldMessageID, messageID,
-		"card_type", "interactive",
-		"card_size_bytes", len(card),
-		"card_preview", strutil.DebugRedact(strutil.Truncate(string(card), 300), b.logDebugRedact.Load()))
-
-	// Send update request with bounded retry on transient (network) errors.
-	// Content-too-large is detected on the error and short-circuits to the
-	// fallback; business codes after a successful HTTP round-trip are not
-	// retried (retrying a content/permission rejection cannot help).
-	backoff := cardRetryBase
-	for attempt := 0; ; attempt++ {
-		err := b.client.PatchMessage(ctx, messageID, string(card))
-		if err == nil {
-			break
-		}
-		if isCardContentRejected(err) {
-			b.logger.Info("card content rejected, falling back to minimal card",
-				log.FieldMessageID, messageID,
-				"card_size_bytes", len(card))
-			return b.updateFallbackCard(ctx, messageID)
-		}
-		if IsCardGone(err) {
-			// Card was withdrawn/deleted client-side: PATCH can never succeed,
-			// so don't burn the retry budget. Surface the raw error (carrying
-			// code:230011 via %w) so the caller (status-monitor broadcast) can
-			// detect it with IsCardGone and re-send a fresh card.
-			return fmt.Errorf("feishu: update card (message gone): %w", err)
-		}
-		if attempt >= cardRetry {
-			return fmt.Errorf("feishu: update card request failed after %d retries: %w", attempt, err)
-		}
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return fmt.Errorf("feishu: update card request failed: %w", err)
-		}
-		backoff *= 2
+	if len(card) == 0 {
+		return errors.New("feishu: empty card body")
 	}
+	if cardID != "" {
+		return b.updateCardEntity(ctx, cardID, card)
+	}
+	if messageID == "" {
+		return errors.New("feishu: empty messageID")
+	}
+	return b.updateCardLegacy(ctx, messageID, card)
+}
 
-	b.markHealthy() // outbound success refreshes the watchdog
-	b.logger.Info("card update completed", log.FieldMessageID, messageID)
+// updateCardLegacy is the pre-CardKit update path: im PATCH on messageID,
+// with the content-rejected fallback retry. Serves the legacy engine and
+// cardkit-engine cards that predate the process (no registered entity).
+func (b *Bot) updateCardLegacy(ctx context.Context, messageID string, card []byte) error {
+	err := b.client.PatchMessage(ctx, messageID, string(card))
+	if err == nil {
+		b.markHealthy()
+		return nil
+	}
+	if !isCardContentRejected(err) {
+		return fmt.Errorf("feishu: update card: %w", err)
+	}
+	if uerr := b.updateFallbackCard(ctx, messageID); uerr != nil {
+		return fmt.Errorf("feishu: update card fallback after rejection (%v): %w", err, uerr)
+	}
+	return nil
+}
+
+// updateCardEntity is the CardKit update path: full-replacement PUT on the
+// card entity with the next strictly-increasing sequence for this card and a
+// fresh idempotency uuid. The sequence is allocated under the per-card
+// cardState mutex so concurrent updaters cannot interleave equal values (the
+// platform rejects non-increasing sequences with 300317, which is exactly
+// what orders racing progress frames). An entity that vanished server-side
+// (200740/200750 — deleted or past the 14-day TTL) surfaces as the
+// IsCardGone sentinel so callers fall back to a fresh card, matching the
+// withdrawn-card path.
+func (b *Bot) updateCardEntity(ctx context.Context, cardID string, card []byte) error {
+	st := b.cardStateFor(cardID)
+	st.mu.Lock()
+	st.seq++
+	seq := st.seq
+	st.mu.Unlock()
+	uuid := strings.Join([]string{"upd", cardID, strconv.FormatInt(seq, 10)}, "-")
+	err := b.client.UpdateCardEntity(ctx, cardID, string(card), seq, uuid)
+	if err == nil {
+		b.markHealthy()
+		return nil
+	}
+	if IsCardGone(err) {
+		// The entity is gone for good: drop the sequence state so a later
+		// update does not keep paying a doomed PUT, and hand the caller the
+		// same sentinel the legacy path yields for a withdrawn card.
+		b.cardsMu.Lock()
+		delete(b.cards, cardID)
+		b.cardsMu.Unlock()
+		return fmt.Errorf("feishu: update card: %w", err)
+	}
+	if !isCardContentRejected(err) {
+		return fmt.Errorf("feishu: update card: %w", err)
+	}
+	// Content rejected (oversized body, too many tables): overwrite the
+	// entity with the minimal fallback card instead of losing the frame.
+	st.mu.Lock()
+	st.seq++
+	fseq := st.seq
+	st.mu.Unlock()
+	fuuid := strings.Join([]string{"upd", cardID, strconv.FormatInt(fseq, 10)}, "-")
+	if ferr := b.client.UpdateCardEntity(ctx, cardID, string(fallbackCardJSON()), fseq, fuuid); ferr != nil {
+		return fmt.Errorf("feishu: update card fallback after rejection (%v): %w", err, ferr)
+	}
+	b.markHealthy()
 	return nil
 }
 
@@ -217,11 +333,12 @@ var (
 // colour. Surfaced (not silent) so logs can tell "bounced" from "stuck".
 var ErrCardVerifyMismatch = errors.New("feishu: card update did not persist after verification")
 
-// UpdateCardVerified PATCHes the card, then read-back verifies the header
-// template colour persisted, re-PATCHing up to cardVerifyMaxAttempts times if
-// Feishu silently reverted it. Guards the three delayed-PATCH sites (picker
+// UpdateCardVerified updates the card (im PATCH by messageID, or CardKit PUT
+// by cardID when cardID != ""), then read-back verifies the header template
+// colour persisted, re-issuing up to cardVerifyMaxAttempts times if Feishu
+// silently reverted it. Guards the three delayed-update sites (picker
 // outcome, /send refresh, submitted fallback) where the card.action.trigger
-// click-handling window can roll a PATCH back even after cardPatchDelay.
+// click-handling window can roll an update back even after cardPatchDelay.
 //
 // Verification uses a header.template colour fingerprint, NOT a full content
 // compare: Feishu normalizes the stored content JSON (reorders keys, injects
@@ -235,7 +352,7 @@ var ErrCardVerifyMismatch = errors.New("feishu: card update did not persist afte
 // no re-PATCH can succeed; a GET failure (missing im:message:read scope,
 // timeout) retries once then surfaces the last error rather than looping
 // blindly. The whole loop runs under a self-managed cardVerifyTimeout.
-func (b *Bot) UpdateCardVerified(ctx context.Context, messageID string, card []byte) error {
+func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, card []byte) error {
 	if len(card) == 0 {
 		return errors.New("feishu: empty card body")
 	}
@@ -255,7 +372,7 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID string, card []b
 				return lastErr
 			}
 		}
-		if err := b.UpdateCard(vctx, messageID, card); err != nil {
+		if err := b.UpdateCard(vctx, messageID, cardID, card); err != nil {
 			lastErr = err
 			if IsCardGone(err) {
 				return err // withdrawn: re-PATCH can never succeed
@@ -337,19 +454,26 @@ func isCardContentRejected(err error) bool {
 }
 
 // IsCardGone reports whether err represents a card that can no longer be
-// PATCHed: code:230011 ("The message was withdrawn." — the client deleted/
-// withdrew it) or code:99992354 (message_id invalid/non-existent, defensive).
-// Verified against the live Feishu API (2026-07-27): PATCHing a withdrawn
-// message returns exactly code:230011. The status-monitor broadcast path
-// treats either as "drop the cached messageID and SendCard a new one".
-// Exported because the dispatcher (package feishufront) inspects the error
-// returned by CardSink.UpdateCard across the package boundary.
+// updated. Legacy im PATCH codes: 230011 ("The message was withdrawn.") and
+// 99992354 (message_id invalid/non-existent, defensive). CardKit codes
+// (feishu-cardkit-migration-assessment.md §3.3): 200740 (实体不存在) and
+// 200750 (卡片实体超过 14 天有效期) — both mean the entity is permanently
+// gone, mapped to the same "drop the cached id and SendCard a fresh one"
+// downgrade path. Verified against the live Feishu API (2026-07-27): PATCHing
+// a withdrawn message returns exactly code:230011. Exported because the
+// dispatcher (package feishufront) inspects the error returned by
+// CardSink.UpdateCard across the package boundary.
 func IsCardGone(err error) bool {
 	if err == nil {
 		return false
 	}
 	s := err.Error()
-	return strings.Contains(s, "code:230011") || strings.Contains(s, "code:99992354")
+	for _, code := range []string{"code:230011", "code:99992354", "code:200740", "code:200750"} {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // fallbackText is the plain-text body sent when a card is rejected for being

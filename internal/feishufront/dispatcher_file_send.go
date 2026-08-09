@@ -146,7 +146,7 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 		// Verified: the outcome PATCH can land inside Feishu's click
 		// window (the user just clicked the picker) and get silently
 		// reverted; read-back verification re-PATCHes if so.
-		err = d.bot.UpdateCardVerified(ctx, updateID, card)
+		err = d.bot.UpdateCardVerified(ctx, updateID, d.interactiveCardID(updateID), card)
 		if err == nil {
 			return
 		}

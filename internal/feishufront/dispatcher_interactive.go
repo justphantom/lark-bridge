@@ -34,7 +34,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 	} else {
 		requestID = ctrl.Question.RequestID
 	}
-	messageID, err := d.sendInteractiveCard(ctx, ctrl, chatID, card)
+	messageID, cardID, err := d.sendInteractiveCard(ctx, ctrl, chatID, card)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 
 		// Record the new binding under TurnManager, then cache the card bytes
 		// and schedule the TTL timer under cardMu.
-		d.turns.BindInteractive(requestID, messageID, ctrl.PromptID)
+		d.turns.BindInteractive(requestID, messageID, cardID, ctrl.PromptID)
 		d.cardMu.Lock()
 		d.cards[requestID] = card
 		// Schedule the expiry notice; if the user never responds within the
@@ -77,8 +77,9 @@ func (d *Dispatcher) sendInteractive(ctx context.Context, ctrl *protocol.Control
 		// forever. Stopped on submit (DispatchCardAction).
 		reqID := requestID
 		msgID := messageID
+		cid := cardID
 		d.interactiveTimers[requestID] = time.AfterFunc(cardkit.InteractiveTimeout, func() {
-			goSafe(func() { d.expireInteractive(reqID, msgID) })
+			goSafe(func() { d.expireInteractive(reqID, msgID, cid) })
 		})
 		d.cardMu.Unlock()
 	}
@@ -102,7 +103,7 @@ func interactiveTakeOver(ctrl *protocol.Control) bool {
 	return ctrl.Question != nil && ctrl.Question.TakeOverProgress
 }
 
-func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Control, chatID string, card []byte) (string, error) {
+func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Control, chatID string, card []byte) (string, string, error) {
 	// Multi-round picker refresh (the /send directory browser): PATCH the
 	// existing picker card in place with the new option set instead of morphing
 	// the progress card or shipping a standalone one. The click that triggered
@@ -114,6 +115,15 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 	// resolves correctly; only the Feishu-side bytes lag by cardPatchDelay.
 	if ctrl.Type == protocol.TypeQuestion && ctrl.Question != nil && ctrl.Question.UpdateMessageID != "" {
 		msgID := ctrl.Question.UpdateMessageID
+		// An in-place refresh reuses an existing card; resolve its CardKit
+		// entity via the interactive binding (the cardkit engine) so the
+		// delayed verified PATCH can target it.
+		var cardID string
+		if rid := ctrl.Question.RequestID; rid != "" {
+			if _, cid, ok := d.turns.InteractiveCardRef(rid); ok {
+				cardID = cid
+			}
+		}
 		delay := d.cardPatchDelay
 		if delay <= 0 {
 			delay = cardPatchDelayDefault
@@ -122,14 +132,14 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 			time.Sleep(delay)
 			patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 			defer cancel()
-			if err := d.bot.UpdateCardVerified(patchCtx, msgID, card); err != nil {
+			if err := d.bot.UpdateCardVerified(patchCtx, msgID, cardID, card); err != nil {
 				if l := d.logger.Load(); l != nil {
 					l.Warn("delayed picker refresh UpdateCard failed",
 						log.FieldMessageID, msgID, log.FieldError, err.Error())
 				}
 			}
 		})
-		return msgID, nil
+		return msgID, cardID, nil
 	}
 	if interactiveTakeOver(ctrl) && ctrl.PromptID != "" {
 		if turn, ok := d.turns.Get(ctrl.PromptID); ok {
@@ -140,12 +150,13 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 			}
 			d.turns.Finish(ctrl.PromptID)
 			d.cleanupProgress(ctrl.PromptID, "")
-			if err := d.bot.UpdateCard(ctx, turn.MessageID, card); err == nil {
-				return turn.MessageID, nil
+			if err := d.bot.UpdateCard(ctx, turn.MessageID, turn.CardID, card); err == nil {
+				return turn.MessageID, turn.CardID, nil
 			}
 		}
 	}
-	return d.bot.SendCard(ctx, chatID, card, "")
+	ref, err := d.bot.SendCard(ctx, chatID, card, "")
+	return ref.MessageID, ref.CardID, err
 }
 
 // evictInteractiveByMessageID drops every interactive-card binding, cached
@@ -230,7 +241,7 @@ func choiceLabel(c string) string {
 //
 // Lock ordering: remove the TurnManager binding first, then clean up the
 // paired cardMu state. This avoids lock-order inversion with sendInteractive.
-func (d *Dispatcher) expireInteractive(requestID, messageID string) {
+func (d *Dispatcher) expireInteractive(requestID, messageID, cardID string) {
 	d.turns.UnbindInteractive(requestID)
 	d.cardMu.Lock()
 	orig := d.cards[requestID]
@@ -246,7 +257,7 @@ func (d *Dispatcher) expireInteractive(requestID, messageID string) {
 	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
 		defer cancel()
-		_ = d.bot.UpdateCard(ctx, messageID, expired)
+		_ = d.bot.UpdateCard(ctx, messageID, cardID, expired)
 	}
 }
 
@@ -277,7 +288,7 @@ func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID str
 	for _, b := range bindings {
 		if orig := origs[b.RequestID]; orig != nil {
 			if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
-				_ = d.bot.UpdateCard(ctx, b.MessageID, fin)
+				_ = d.bot.UpdateCard(ctx, b.MessageID, b.CardID, fin)
 			}
 		}
 	}
@@ -421,7 +432,8 @@ func (d *Dispatcher) flipInteractiveSubmitted(ctx context.Context, action *feish
 	if err != nil {
 		return
 	}
-	_ = d.bot.UpdateCard(ctx, messageID, sub)
+	cardID := d.interactiveCardID(messageID)
+	_ = d.bot.UpdateCard(ctx, messageID, cardID, sub)
 	d.scheduleSubmitFallback(ctx, action.ChatID, requestID, messageID, sub)
 	d.cacheSubmittedCard(requestID, sub)
 }
@@ -437,12 +449,13 @@ func (d *Dispatcher) scheduleSubmitFallback(ctx context.Context, chatID, request
 	}
 	goSafe(func() {
 		time.Sleep(fbDelay)
-		if _, ok := d.turns.InteractiveMessageID(requestID); !ok {
+		_, cardID, ok := d.turns.InteractiveCardRef(requestID)
+		if !ok {
 			return
 		}
 		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 		defer cancel()
-		if err := d.bot.UpdateCardVerified(patchCtx, messageID, card); err != nil {
+		if err := d.bot.UpdateCardVerified(patchCtx, messageID, cardID, card); err != nil {
 			if l := d.logger.Load(); l != nil {
 				l.Warn("delayed submit verified update failed",
 					log.FieldChatID, chatID,
@@ -542,7 +555,7 @@ func (d *Dispatcher) flushPendingSubmission(ctx context.Context, messageID strin
 	if !ok || len(card) == 0 {
 		return
 	}
-	_ = d.bot.UpdateCard(ctx, messageID, card)
+	_ = d.bot.UpdateCard(ctx, messageID, d.interactiveCardID(messageID), card)
 	// The PATCH makes this card terminal (no buttons) — safe to release now:
 	// no click can arrive on a non-interactive card.
 	d.evictInteractiveByMessageID(messageID, "")

@@ -3,6 +3,7 @@
   "feishu_app_secret": "${FEISHU_APP_SECRET}",
   "feishu_domain":     "feishu",
   "feishu_log_level":  "info",
+  "feishu_card_engine": "",
 
   "ipc_secret":   "${IPC_SECRET}",
   "ipc_addr":     "${IPC_ADDR}",

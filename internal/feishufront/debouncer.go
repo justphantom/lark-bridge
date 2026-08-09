@@ -18,6 +18,7 @@ const finalFlushTimeout = 2 * time.Second
 type cardDebouncer struct {
 	mu            sync.Mutex
 	pending       map[string][]byte // messageID → latest card bytes
+	cardIDs       map[string]string // messageID → CardKit entity id (cardkit engine)
 	bot           CardSink
 	flushInterval time.Duration
 	ctx           context.Context
@@ -26,6 +27,7 @@ type cardDebouncer struct {
 func newCardDebouncer(ctx context.Context, bot CardSink, interval time.Duration) *cardDebouncer {
 	d := &cardDebouncer{
 		pending:       make(map[string][]byte),
+		cardIDs:       make(map[string]string),
 		bot:           bot,
 		flushInterval: interval,
 		ctx:           ctx,
@@ -37,9 +39,11 @@ func newCardDebouncer(ctx context.Context, bot CardSink, interval time.Duration)
 }
 
 // enqueue stores the latest card for messageID. The flush goroutine sends it.
-func (d *cardDebouncer) enqueue(messageID string, card []byte) {
+// cardID is the CardKit entity id ("" under the legacy engine) UpdateCard needs.
+func (d *cardDebouncer) enqueue(messageID, cardID string, card []byte) {
 	d.mu.Lock()
 	d.pending[messageID] = card
+	d.cardIDs[messageID] = cardID
 	d.mu.Unlock()
 }
 
@@ -59,9 +63,11 @@ func (d *cardDebouncer) flushCtx(ctx context.Context) {
 	d.mu.Lock()
 	batch := d.pending
 	d.pending = make(map[string][]byte, len(batch))
+	cardIDs := d.cardIDs
+	d.cardIDs = make(map[string]string, len(cardIDs))
 	d.mu.Unlock()
 	for messageID, card := range batch {
-		if err := d.bot.UpdateCard(ctx, messageID, card); err != nil {
+		if err := d.bot.UpdateCard(ctx, messageID, cardIDs[messageID], card); err != nil {
 			// Best-effort: a failed update is NOT re-enqueued (the batch was
 			// already swapped out above), so this frame is lost. The next flush
 			// only retries if a newer update for the same card arrives in the

@@ -151,7 +151,7 @@ func TestDispatcherThinking_NoTurnIsNoOp(t *testing.T) {
 func TestDispatcherThinking_WithTurnRoutesToProgress(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
-	d.turns.Start("msg-t", "oc_t", "om-think", "b")
+	d.turns.Start("msg-t", "oc_t", "om-think", "", "b")
 
 	if err := d.DispatchControl(context.TODO(), RoutedControl{BackendID: "b", Control: &protocol.Control{
 		Type:     protocol.TypeThinking,
@@ -517,7 +517,7 @@ func TestDispatchControl_TypeTodoRoutesToUpdateProgress(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 	const promptID = "om_todo"
-	d.turns.Start(promptID, "oc_chat", "om_card", "claude-1")
+	d.turns.Start(promptID, "oc_chat", "om_card", "", "claude-1")
 
 	err := d.DispatchControl(context.Background(), RoutedControl{
 		BackendID: "claude-1",
@@ -546,7 +546,7 @@ func TestSendNoticeReplacesProgressCard(t *testing.T) {
 	// Simulate DispatchIncoming having already sent the "starting" progress
 	// card and recorded the turn.
 	const promptID = "om_prompt"
-	d.turns.Start(promptID, "oc_chat", "om_progress", "claude-1")
+	d.turns.Start(promptID, "oc_chat", "om_progress", "", "claude-1")
 
 	err := d.DispatchControl(context.Background(), RoutedControl{
 		BackendID: "claude-1",
@@ -652,7 +652,7 @@ func TestSendNoticeUpdateMessageID(t *testing.T) {
 func TestSendNoticeUpdateMessageID_FinalizesLiveTurn(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
-	d.turns.Start("om_cmd", "oc_chat", "om_progress", "claude-1")
+	d.turns.Start("om_cmd", "oc_chat", "om_progress", "", "claude-1")
 
 	err := d.DispatchControl(context.Background(), RoutedControl{
 		BackendID: "claude-1",
@@ -717,7 +717,7 @@ func TestDispatcherDedupTerminal(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 	const promptID = "p_dedup"
-	d.turns.Start(promptID, "c1", "om_progress", "claude-1")
+	d.turns.Start(promptID, "c1", "om_progress", "", "claude-1")
 
 	mk := func() *protocol.Control {
 		return &protocol.Control{
@@ -758,12 +758,12 @@ func (stubRouter) Touch(string)                   {}
 // returns the ctx error — proving the notice path propagates a deadline.
 type blockingSink struct{}
 
-func (blockingSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) (string, error) {
+func (blockingSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) (feishu.CardRef, error) {
 	<-ctx.Done()
-	return "", ctx.Err()
+	return feishu.CardRef{}, ctx.Err()
 }
-func (blockingSink) UpdateCard(context.Context, string, []byte) error         { return nil }
-func (blockingSink) UpdateCardVerified(context.Context, string, []byte) error { return nil }
+func (blockingSink) UpdateCard(context.Context, string, string, []byte) error         { return nil }
+func (blockingSink) UpdateCardVerified(context.Context, string, string, []byte) error { return nil }
 func (blockingSink) SendText(ctx context.Context, _ string, _ string, _ string) (string, error) {
 	<-ctx.Done()
 	return "", ctx.Err()
@@ -840,7 +840,7 @@ func TestSendResult_LateProgressDoesNotClobber(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 	const promptID = "om_p"
-	d.turns.Start(promptID, "oc_chat", "om_card", "claude-1")
+	d.turns.Start(promptID, "oc_chat", "om_card", "", "claude-1")
 
 	// Terminal result → marks om_card finalized.
 	result := &protocol.Control{
@@ -859,7 +859,7 @@ func TestSendResult_LateProgressDoesNotClobber(t *testing.T) {
 	// returns !ok and the update is skipped at that layer too — but the
 	// finalized guard is the defense when a turn still exists. Restart a turn
 	// to exercise the finalized path directly.
-	d.turns.Start(promptID, "oc_chat", "om_card", "claude-1")
+	d.turns.Start(promptID, "oc_chat", "om_card", "", "claude-1")
 	d.markFinalized("om_card")
 	late := &protocol.Control{
 		Type:     protocol.TypeText,
@@ -884,7 +884,7 @@ func TestSendResult_IncludesSummary(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 	const promptID = "om_prompt"
-	d.turns.Start(promptID, "oc_chat", "om_progress", "claude-1")
+	d.turns.Start(promptID, "oc_chat", "om_progress", "", "claude-1")
 
 	ctx := context.Background()
 	backendID := "claude-1"
@@ -925,16 +925,16 @@ type ctxSensitiveSink struct {
 	updates int
 }
 
-func (c *ctxSensitiveSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) (string, error) {
+func (c *ctxSensitiveSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) (feishu.CardRef, error) {
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return feishu.CardRef{}, ctx.Err()
 	}
 	c.mu.Lock()
 	c.updates++
 	c.mu.Unlock()
-	return "om_x", nil
+	return feishu.CardRef{MessageID: "om_x"}, nil
 }
-func (c *ctxSensitiveSink) UpdateCard(ctx context.Context, _ string, _ []byte) error {
+func (c *ctxSensitiveSink) UpdateCard(ctx context.Context, _ string, _ string, _ []byte) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -943,8 +943,8 @@ func (c *ctxSensitiveSink) UpdateCard(ctx context.Context, _ string, _ []byte) e
 	c.mu.Unlock()
 	return nil
 }
-func (c *ctxSensitiveSink) UpdateCardVerified(ctx context.Context, messageID string, card []byte) error {
-	return c.UpdateCard(ctx, messageID, card)
+func (c *ctxSensitiveSink) UpdateCardVerified(ctx context.Context, messageID, cardID string, card []byte) error {
+	return c.UpdateCard(ctx, messageID, cardID, card)
 }
 func (c *ctxSensitiveSink) SendText(ctx context.Context, _ string, _ string, _ string) (string, error) {
 	if ctx.Err() != nil {
@@ -968,7 +968,7 @@ func TestDebouncer_FinalFlushUsesLiveContext(t *testing.T) {
 	d := newCardDebouncer(ctx, sink, 50*time.Millisecond)
 	defer cancel()
 
-	d.enqueue("om_card", []byte("final"))
+	d.enqueue("om_card", "", []byte("final"))
 	// Simulate shutdown: the lifecycle ctx is cancelled before the ticker fires.
 	cancel()
 
@@ -989,7 +989,7 @@ func TestDebouncer_NormalFlushDropsOnCancelledCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := newCardDebouncer(ctx, sink, 50*time.Millisecond)
 
-	d.enqueue("om_card", []byte("pending"))
+	d.enqueue("om_card", "", []byte("pending"))
 	cancel()
 	d.flush() // reuses the now-cancelled d.ctx
 
@@ -1006,7 +1006,7 @@ func TestOnBackendOffline_KeepsInFlightTurn(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
-	d.turns.Start("p-1", "oc_a", "om_card", "back-A")
+	d.turns.Start("p-1", "oc_a", "om_card", "", "back-A")
 	d.progressMu.Lock()
 	d.progress["p-1"] = nil // a live turn owns a progress slot (value presence is what matters)
 	d.progressMu.Unlock()
@@ -1030,8 +1030,8 @@ func TestOnBackendOffline_PreservesAllTurns(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
-	d.turns.Start("p-A", "oc_a", "om_A", "back-A")
-	d.turns.Start("p-B", "oc_b", "om_B", "back-B")
+	d.turns.Start("p-A", "oc_a", "om_A", "", "back-A")
+	d.turns.Start("p-B", "oc_b", "om_B", "", "back-B")
 
 	d.OnBackendOffline("back-A", "claude")
 
@@ -1143,9 +1143,9 @@ func TestFireOfflineNotice_ReclaimsStrandedTurns(t *testing.T) {
 	d.offlineNoticeDebounce = 20 * time.Millisecond
 
 	// Two in-flight turns on the dying backend, one on a healthy backend.
-	d.turns.Start("p-A1", "oc_a", "om_A1", "back-1")
-	d.turns.Start("p-A2", "oc_a", "om_A2", "back-1")
-	d.turns.Start("p-B1", "oc_a", "om_B1", "back-2")
+	d.turns.Start("p-A1", "oc_a", "om_A1", "", "back-1")
+	d.turns.Start("p-A2", "oc_a", "om_A2", "", "back-1")
+	d.turns.Start("p-B1", "oc_a", "om_B1", "", "back-2")
 	d.progressMu.Lock()
 	d.progress["p-A1"] = nil
 	d.progress["p-A2"] = nil
@@ -1206,7 +1206,7 @@ func TestFireOfflineNotice_BlipKeepsTurns(t *testing.T) {
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 	d.offlineNoticeDebounce = 20 * time.Millisecond
 
-	d.turns.Start("p-1", "oc_a", "om_1", "back-1")
+	d.turns.Start("p-1", "oc_a", "om_1", "", "back-1")
 	d.OnBackendOffline("back-1", "claude")
 	d.OnBackendOnline("back-1", "claude") // cancelled before the window fires
 
@@ -1229,7 +1229,7 @@ func TestInvalidateTurnCard_WithdrawnProgressCardFallsBackToSend(t *testing.T) {
 	sink := &fakeSink{updateErr: errors.New("card withdrawn")}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), stubRouter{chats: []string{"oc_a"}})
 
-	d.turns.Start("p-1", "oc_a", "om_1", "back-1")
+	d.turns.Start("p-1", "oc_a", "om_1", "", "back-1")
 	turn, _ := d.turns.Get("p-1")
 	d.invalidateTurnCard(turn)
 

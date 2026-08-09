@@ -12,13 +12,17 @@ type Mention struct {
 }
 
 // SendInput is the subset of fields feishu.Bot.Send* uses. Exactly one of
-// Text, Card, or FileKey must be set; ReplyMessageID (when non-empty) routes
-// the send through the reply endpoint instead of the create endpoint.
-// FileKey (msg_type=file) is set by Bot.SendFile after an UploadFile round-trip.
+// Text, Card, CardID, or FileKey must be set; ReplyMessageID (when non-empty)
+// routes the send through the reply endpoint instead of the create endpoint.
+// FileKey (msg_type=file) is set by Bot.SendFile after an UploadFile
+// round-trip. CardID sends a CardKit entity card by reference
+// (content={"type":"card","data":{"card_id":...}}) instead of an inline card
+// JSON; the entity must already exist (CreateCardEntity).
 type SendInput struct {
 	ChatID         string
 	Text           string
 	Card           string
+	CardID         string
 	FileKey        string
 	ReplyMessageID string
 }

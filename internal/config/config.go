@@ -35,6 +35,10 @@ type Config struct {
 	FeishuAppSecret string `json:"feishu_app_secret"`
 	FeishuDomain    string `json:"feishu_domain,omitempty"`
 	FeishuLogLevel  string `json:"feishu_log_level,omitempty"`
+	// FeishuCardEngine selects the card engine: "cardkit" sends cards as
+	// CardKit 卡片实体 (schema 2.0, PUT by card_id, 14-day editable window);
+	// anything else (incl. empty) keeps the legacy schema 1.0 + im PATCH path.
+	FeishuCardEngine string `json:"feishu_card_engine,omitempty"`
 
 	// —— 进程间通信：前端校验、后端携带，二者共享 ——
 	BackendID   string `json:"backend_id,omitempty"`   // 在前端 registry 的唯一标识

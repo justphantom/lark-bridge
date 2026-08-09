@@ -61,6 +61,12 @@ func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
 	}
 	return nil
 }
+func (f *fakeClient) CreateCardEntity(context.Context, string) (string, error) {
+	return "", nil
+}
+func (f *fakeClient) UpdateCardEntity(context.Context, string, string, int64, string) error {
+	return nil
+}
 func (f *fakeClient) GetMessage(_ context.Context, _ string) ([]byte, error) {
 	f.getCalls.Add(1)
 	if f.getMessageErr != nil {
