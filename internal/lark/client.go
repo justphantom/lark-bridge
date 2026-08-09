@@ -138,6 +138,13 @@ func (c *Client) Send(ctx context.Context, in *SendInput) (*SendResult, error) {
 	return c.rest.SendMessage(ctx, in)
 }
 
+// PatchMessage updates an existing message body (im PATCH). Used to refresh
+// inline cards — those sent as raw card JSON rather than a CardKit entity.
+// Independent of the WS connection state.
+func (c *Client) PatchMessage(ctx context.Context, messageID, content string) error {
+	return c.rest.PatchMessage(ctx, messageID, content)
+}
+
 // CreateCardEntity creates a CardKit card entity from a schema-2.0 card JSON
 // and returns its card_id (14-day TTL). Independent of the WS connection.
 func (c *Client) CreateCardEntity(ctx context.Context, cardJSON string) (string, error) {

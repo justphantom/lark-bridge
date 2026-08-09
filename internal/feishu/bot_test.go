@@ -34,6 +34,8 @@ type fakeClient struct {
 	updateLast     string
 	createErr      error
 	createCalls    atomic.Int32
+	patchErr       error
+	patchCalls     atomic.Int32
 	startErr         error
 	started          atomic.Int32
 	stopped          atomic.Int32
@@ -61,6 +63,10 @@ func (f *fakeClient) UpdateCardEntity(_ context.Context, _, content string, _ in
 		return f.updateErr
 	}
 	return nil
+}
+func (f *fakeClient) PatchMessage(_ context.Context, _, _ string) error {
+	f.patchCalls.Add(1)
+	return f.patchErr
 }
 func (f *fakeClient) DownloadResource(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
 	f.downloadCalled.Add(1)

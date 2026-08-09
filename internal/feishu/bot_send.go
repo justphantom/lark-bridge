@@ -108,6 +108,22 @@ func (b *Bot) SendCard(ctx context.Context, chatID string, card []byte, replyToI
 	return ref, nil
 }
 
+// SendCardInline sends a card as inline JSON (not a CardKit entity reference)
+// so the card's button callbacks (card.action.trigger) fire on click. The
+// trade-off: inline cards can only be updated via im PATCH (not CardKit PUT),
+// which is the legacy path — but interactive cards (permission/question/
+// backend-picker) are short-lived and updated at most once after a click, so
+// the PATCH path is sufficient.
+//
+// Returns a CardRef with CardID="" so callers know to update via PATCH (im
+// PATCH keyed by MessageID), not CardKit PUT.
+func (b *Bot) SendCardInline(ctx context.Context, chatID string, card []byte, replyToID string) (CardRef, error) {
+	if len(card) == 0 {
+		return CardRef{}, errors.New("feishu: empty card body")
+	}
+	return b.sendCardPayload(ctx, chatID, card, "", replyToID)
+}
+
 // sendCardPayload ships the card through im/v1/messages: the entity reference
 // envelope (content={"type":"card","data":{"card_id":...}}). Shared by
 // SendCard so the rejection/watchdog handling lives in exactly one place.
@@ -207,7 +223,12 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID, cardID string, card []b
 		return errors.New("feishu: empty card body")
 	}
 	if cardID == "" {
-		return errors.New("feishu: empty card_id")
+		// No entity id → this is an inline card (SendCardInline). Update via
+		// im PATCH (the only path for non-entity cards). messageID is required.
+		if messageID == "" {
+			return errors.New("feishu: UpdateCard needs card_id or message_id")
+		}
+		return b.client.PatchMessage(ctx, messageID, string(card))
 	}
 	return b.updateCardEntity(ctx, cardID, card)
 }

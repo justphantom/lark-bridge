@@ -763,6 +763,10 @@ func (blockingSink) SendCard(ctx context.Context, _ string, _ []byte, _ string) 
 	<-ctx.Done()
 	return feishu.CardRef{}, ctx.Err()
 }
+func (blockingSink) SendCardInline(ctx context.Context, _ string, _ []byte, _ string) (feishu.CardRef, error) {
+	<-ctx.Done()
+	return feishu.CardRef{}, ctx.Err()
+}
 func (blockingSink) UpdateCard(context.Context, string, string, []byte) error         { return nil }
 func (blockingSink) UpdateCardVerified(context.Context, string, string, []byte) error { return nil }
 func (blockingSink) SendText(ctx context.Context, _ string, _ string, _ string) (string, error) {
@@ -934,6 +938,9 @@ func (c *ctxSensitiveSink) SendCard(ctx context.Context, _ string, _ []byte, _ s
 	c.updates++
 	c.mu.Unlock()
 	return feishu.CardRef{MessageID: "om_x"}, nil
+}
+func (c *ctxSensitiveSink) SendCardInline(ctx context.Context, _ string, _ []byte, _ string) (feishu.CardRef, error) {
+	return c.SendCard(ctx, "", nil, "")
 }
 func (c *ctxSensitiveSink) UpdateCard(ctx context.Context, _ string, _ string, _ []byte) error {
 	if ctx.Err() != nil {

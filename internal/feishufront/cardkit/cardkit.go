@@ -87,13 +87,24 @@ type Action map[string]any
 // split across rows (one column_set per row, up to maxActionColumns columns)
 // so a crowded permission card never overflows the per-column_set limit.
 func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action) ([]byte, error) {
+	return CardWithColumns(header, footer, elements, actions, 0)
+}
+
+// CardWithColumns is like Card but limits each button row to maxCols columns.
+// maxCols <= 0 defaults to the package maxActionColumns (5). Use maxCols=1 or
+// 2 for picker cards whose button labels are long (e.g. "deploy-monitor-1
+// （deploy-monitor）" would be truncated at 5-per-row).
+func CardWithColumns(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action, maxCols int) ([]byte, error) {
 	if elements == nil {
 		elements = []Element{}
+	}
+	if maxCols <= 0 {
+		maxCols = 5
 	}
 	all := make([]Element, 0, len(elements)+2)
 	all = append(all, elements...)
 	if len(actions) > 0 {
-		all = append(all, actionColumnSets(actions)...)
+		all = append(all, actionColumnSets(actions, maxCols)...)
 	}
 	all = append(all, Footer(footer))
 	if len(all) > MaxCardElements {
@@ -113,13 +124,15 @@ func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Ac
 // evenly; more than maxActionColumns actions wrap into additional rows (one
 // column_set per row). Returns one Element per row so the caller appends them
 // all into body.elements.
-func actionColumnSets(actions []Action) []Element {
-	const maxActionColumns = 5
+func actionColumnSets(actions []Action, maxCols int) []Element {
+	if maxCols <= 0 {
+		maxCols = 5
+	}
 	var rows []Element
 	for len(actions) > 0 {
 		n := len(actions)
-		if n > maxActionColumns {
-			n = maxActionColumns
+		if n > maxCols {
+			n = maxCols
 		}
 		row := actions[:n]
 		actions = actions[n:]

@@ -135,7 +135,10 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 			}
 		}
 	}
-	ref, err := d.bot.SendCard(ctx, chatID, card, "")
+	// Send as INLINE JSON: interactive cards (permission/question) carry
+	// buttons whose click must trigger card.action.trigger. CardKit entity
+	// references do not fire button callbacks.
+	ref, err := d.bot.SendCardInline(ctx, chatID, card, "")
 	return ref.MessageID, ref.CardID, err
 }
 

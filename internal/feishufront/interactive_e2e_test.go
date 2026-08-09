@@ -52,6 +52,16 @@ func (f *fakeSink) SendCard(_ context.Context, chatID string, card []byte, reply
 	return feishu.CardRef{MessageID: "om_" + itoa(f.nextID)}, nil
 }
 
+func (f *fakeSink) SendCardInline(_ context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error) {
+	// Inline cards (interactive cards with callbacks) land here. CardID is
+	// empty so the dispatcher knows to use im PATCH for updates.
+	ref, err := f.SendCard(context.Background(), chatID, card, replyToID)
+	if err != nil {
+		return ref, err
+	}
+	return feishu.CardRef{MessageID: ref.MessageID}, nil // CardID stays empty
+}
+
 func (f *fakeSink) UpdateCard(_ context.Context, messageID, _ string, card []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

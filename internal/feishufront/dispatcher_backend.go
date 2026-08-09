@@ -298,7 +298,10 @@ func (d *Dispatcher) handleBackendCommand(ctx context.Context, msg *feishu.Incom
 	if err != nil {
 		return err
 	}
-	ref, err := d.bot.SendCard(ctx, msg.ChatID, card, msg.MessageID)
+	// Send as INLINE JSON, not a CardKit entity: interactive cards need the
+	// button callback (card.action.trigger), which only fires for inline JSON
+	// cards. CardKit entity-reference cards do NOT trigger button callbacks.
+	ref, err := d.bot.SendCardInline(ctx, msg.ChatID, card, msg.MessageID)
 	if err != nil {
 		return err
 	}
@@ -394,7 +397,7 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 			map[string]any{"backendID": id}, false, id == current))
 	}
 	body := "点击按钮切换当前群的后端（仅在线可选）。"
-	return cardkit.Card(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions)
+	return cardkit.CardWithColumns(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions, 1)
 }
 
 // handleBackendChoice is the frontend-side consumer of a backend-picker click:
@@ -447,7 +450,7 @@ func (d *Dispatcher) renderBackendOutcome(chatID, selectedID, selectedType, leve
 		actions = append(actions, cardkit.ButtonAction(label, "backend",
 			map[string]any{"backendID": id}, id == current, true))
 	}
-	return cardkit.Card(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions)
+	return cardkit.CardWithColumns(header, footer, []cardkit.Element{cardkit.MarkdownElement(body)}, actions, 1)
 }
 
 // backendOutcomeTemplate maps an outcome level to a header template colour.

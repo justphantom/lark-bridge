@@ -21,6 +21,11 @@ type feishuClient interface {
 	// (cardkit-migration §3.2/§3.3).
 	CreateCardEntity(ctx context.Context, cardJSON string) (string, error)
 	UpdateCardEntity(ctx context.Context, cardID, cardJSON string, sequence int64, uuid string) error
+	// PatchMessage updates an inline card by message_id (im PATCH). Used for
+	// interactive cards (picker/permission/question) that are sent as inline
+	// JSON so their button callbacks fire — CardKit entity cards do not
+	// trigger card.action.trigger on click.
+	PatchMessage(ctx context.Context, messageID, content string) error
 	DownloadResource(ctx context.Context, messageID, fileKey, fileType string) (io.ReadCloser, error)
 	UploadFile(ctx context.Context, fileName, fileType string, r io.Reader) (string, error)
 	SetHandler(h lark.Handler)

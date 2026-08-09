@@ -97,11 +97,41 @@ func TestCardWithActions(t *testing.T) {
 	}
 }
 
-// TestFormSubmitButtonHasBehaviors pins the CardKit (schema 2.0) form
-// requirement: a submit button must declare an explicit behaviors entry so
-// Feishu routes the form values back as action.form_value. Without it the
-// server rejects the card.
-func TestFormSubmitButtonHasBehaviors(t *testing.T) {
+// TestCardWithColumns verifies the maxCols parameter controls how many buttons
+// sit per row. maxCols=1 stacks each button in its own column_set (a vertical
+// list), which the /backend picker uses so long labels are never truncated.
+func TestCardWithColumns(t *testing.T) {
+	acts := []Action{
+		ButtonAction("agnes-1（agnes）", "backend", nil, false, false),
+		ButtonAction("claude-1（claude）", "backend", nil, false, false),
+		ButtonAction("miniagent-1（miniagent）", "backend", nil, false, false),
+	}
+	b, err := CardWithColumns(HeaderInfo{Title: "t"}, FooterInfo{}, []Element{MarkdownElement("m")}, acts, 1)
+	card := jsonOf(t, b, err)
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
+	// markdown + 3 column_sets (one per button, since maxCols=1) + footer = 5.
+	columnSets := 0
+	for _, el := range elements {
+		if elem, ok := el.(map[string]any); ok {
+			if elem["tag"] == "column_set" {
+				columnSets++
+				cols, _ := elem["columns"].([]any)
+				if len(cols) != 1 {
+					t.Errorf("maxCols=1 column_set has %d columns, want 1", len(cols))
+				}
+			}
+		}
+	}
+	if columnSets != 3 {
+		t.Errorf("column_sets = %d, want 3 (one per button at maxCols=1)", columnSets)
+	}
+}
+// TestFormSubmitButtonActionType pins that the submit button declares
+// action_type="form_submit" so Feishu routes the form values back as
+// action.form_value. NOTE: behaviors:[{type:callback}] is deliberately NOT
+// emitted — see ButtonAction doc for the suppression finding.
+func TestFormSubmitButtonActionType(t *testing.T) {
 	submit := SubmitButtonAction("提交", map[string]any{"requestID": "r"}, true)
 	form := FormElement("f", []Element{Element(submit)})
 	b, err := Card(HeaderInfo{Title: "t"}, FooterInfo{}, []Element{form}, nil)
@@ -111,8 +141,8 @@ func TestFormSubmitButtonHasBehaviors(t *testing.T) {
 		t.Fatal("v2 card must use body.elements")
 	}
 	raw := string(b)
-	if !strings.Contains(raw, "behaviors") {
-		t.Fatalf("v2 submit button must contain behaviors: %s", raw)
+	if strings.Contains(raw, "behaviors") {
+		t.Fatalf("submit button must NOT contain behaviors (suppresses callback): %s", raw)
 	}
 	elems := body["elements"].([]any)
 	f := elems[0].(map[string]any)

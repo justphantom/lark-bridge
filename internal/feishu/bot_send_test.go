@@ -166,6 +166,46 @@ func TestUpdateCard_ContentRejectedFallsBack(t *testing.T) {
 	}
 }
 
+// TestSendCardInline skips CardKit entity creation and ships the card as raw
+// JSON. The returned CardRef has an empty CardID so the caller knows to use
+// im PATCH (not entity PUT) for updates.
+func TestSendCardInline(t *testing.T) {
+	fc := &fakeClient{sendResult: &lark.SendResult{MessageID: "om_sent"}}
+	b := &Bot{logger: log.Nop(), client: fc}
+	ref, err := b.SendCardInline(context.Background(), "oc_chat", []byte(`{"schema":"2.0"}`), "")
+	if err != nil {
+		t.Fatalf("SendCardInline: %v", err)
+	}
+	if ref.MessageID != "om_sent" {
+		t.Errorf("MessageID = %q, want om_sent", ref.MessageID)
+	}
+	if ref.CardID != "" {
+		t.Errorf("CardID = %q, want empty (inline)", ref.CardID)
+	}
+	if fc.createCalls.Load() != 0 {
+		t.Errorf("CreateCardEntity called %d times, want 0", fc.createCalls.Load())
+	}
+	if fc.createCalls.Load() != 0 {
+		t.Errorf("CreateCardEntity called %d times, want 0 (inline)", fc.createCalls.Load())
+	}
+}
+
+// TestUpdateCard_InlineFallback verifies UpdateCard with an empty cardID
+// (an inline card) routes to PatchMessage instead of UpdateCardEntity.
+func TestUpdateCard_InlineFallback(t *testing.T) {
+	fc := &fakeClient{}
+	b := &Bot{logger: log.Nop(), client: fc}
+	if err := b.UpdateCard(context.Background(), "om_msg", "", []byte(`{"schema":"2.0"}`)); err != nil {
+		t.Fatalf("UpdateCard inline: %v", err)
+	}
+	if fc.patchCalls.Load() != 1 {
+		t.Errorf("patch calls = %d, want 1", fc.patchCalls.Load())
+	}
+	if fc.updateCalls.Load() != 0 {
+		t.Errorf("update calls = %d, want 0 (should not touch entity)", fc.updateCalls.Load())
+	}
+}
+
 // TestFallbackCardJSON_Valid verifies the constructed card is valid JSON and
 // carries fallbackText. Guards the json.Marshal path: if fallbackText ever
 // grows a quote or backslash, string concatenation would have broken the

@@ -49,13 +49,21 @@ const maxPromptBytes = 64 << 10 // 64 KiB
 // content (e.g. a reply with too many markdown tables hits Feishu's element
 // limit): the reply text is delivered as plain text instead of being lost.
 type CardSink interface {
-	// SendCard ships a card and returns its CardRef. In legacy mode CardID is
-	// empty and later updates address the card by MessageID; in cardkit mode
-	// CardID carries the entity id the caller must hand back to UpdateCard.
+	// SendCard ships a card as a CardKit entity reference and returns its
+	// CardRef (CardID carries the entity id for later UpdateCard). Use for
+	// notification/progress cards that need PUT updates but NOT button
+	// callbacks.
 	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error)
+	// SendCardInline ships a card as raw inline JSON (NOT a CardKit entity).
+	// CardKit entity-reference cards do NOT trigger card.action.trigger
+	// callbacks — only inline cards do. Use for interactive cards (picker,
+	// permission, question) whose button clicks must reach DispatchCardAction.
+	// The returned CardRef has CardID=""; a later UpdateCard patches via im
+	// PATCH instead of a CardKit PUT.
+	SendCardInline(ctx context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error)
 	// UpdateCard updates the card body. cardID != "" targets the CardKit
-	// entity (PUT with per-card sequence); cardID == "" is unused after the
-	// CardKit migration but retained on the interface.
+	// entity (PUT with per-card sequence); cardID == "" patches the inline
+	// card via im PATCH (the update path for cards sent by SendCardInline).
 	UpdateCard(ctx context.Context, messageID, cardID string, card []byte) error
 	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }

@@ -16,13 +16,6 @@ func HrElement() Element {
 	return Element{"tag": "hr"}
 }
 
-// callbackBehaviors declares a click that ships the action back to the
-// backend. Card JSON 2.0 requires this explicit behaviors declaration for
-// interactive callbacks.
-func callbackBehaviors() []map[string]any {
-	return []map[string]any{{"type": "callback", "callback": map[string]any{}}}
-}
-
 // ButtonAction builds a button action. actionType is stored in value.kind
 // so the dispatcher can route the click (permission/question/submit/cancel).
 // primary controls the button style; disabled greys it out (R4). behaviors is
@@ -33,12 +26,16 @@ func ButtonAction(label, actionType string, value map[string]any, primary bool, 
 	}
 	value["kind"] = actionType
 	btn := map[string]any{
-		"tag":       "button",
-		"text":      map[string]any{"tag": "plain_text", "content": label},
-		"type":      "default",
-		"value":     value,
-		"disabled":  disabled,
-		"behaviors": callbackBehaviors(),
+		"tag":      "button",
+		"text":     map[string]any{"tag": "plain_text", "content": label},
+		"type":     "default",
+		"value":    value,
+		"disabled": disabled,
+		// NOTE: deliberately NOT emitting behaviors:[{type:"callback"}].
+		// Feishu schema-2.0 inline cards that declare callback behaviors do
+		// NOT fire card.action.trigger — the button's value field alone does
+		// (same as schema 1.0). Declaring behaviors suppresses the callback
+		// entirely. Confirmed empirically 2026-08-10.
 	}
 	if primary {
 		btn["type"] = "primary"
@@ -61,8 +58,9 @@ func FormElement(name string, elements []Element) Element {
 // SubmitButtonAction builds a button that triggers form submission. On click
 // Feishu returns value as action.value (for requestID routing) and the form's
 // component values as action.form_value. primary controls the button style.
-// form_submit already implies a callback round-trip; behaviors is the v2
-// callback declaration.
+// action_type=form_submit drives the callback; behaviors is NOT declared
+// (same empiric finding as ButtonAction: declaring callback behaviors on an
+// inline schema-2.0 card suppresses the callback entirely).
 func SubmitButtonAction(label string, value map[string]any, primary bool) Action {
 	if value == nil {
 		value = map[string]any{}
@@ -74,7 +72,6 @@ func SubmitButtonAction(label string, value map[string]any, primary bool) Action
 		"name":        "submit",
 		"action_type": "form_submit",
 		"value":       value,
-		"behaviors":   callbackBehaviors(),
 	}
 	if primary {
 		btn["type"] = "primary"

@@ -99,6 +99,19 @@ func (r *restClient) CreateCardEntity(ctx context.Context, card string) (string,
 	return data.CardID, nil
 }
 
+// PatchMessage updates an existing message body via im PATCH — the update
+// path for inline cards (those sent as raw card JSON, not via a CardKit
+// entity reference). CardKit entity cards use UpdateCardEntity (PUT) instead.
+// content is the raw card JSON string.
+func (r *restClient) PatchMessage(ctx context.Context, messageID, content string) error {
+	if messageID == "" {
+		return fmt.Errorf("lark: empty message_id")
+	}
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	body := map[string]string{"content": content}
+	return r.doJSON(ctx, http.MethodPatch, path, "", body, nil)
+}
+
 // UpdateCardEntity fully replaces a CardKit card entity's content (PUT
 // /open-apis/cardkit/v1/cards/:card_id). sequence must be strictly increasing
 // per card (the platform rejects out-of-order writes with 300317, which is
