@@ -63,7 +63,7 @@
 
 ```
 lark-bridge/
-├── cmd/                      # 5 个二进制入口
+├── cmd/                      # 6 个二进制入口
 │   ├── feishu-front/         # 前端：飞书 WS Bot + IPC server + 调度器
 │   ├── claude-back/          # Claude CLI 后端
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
@@ -114,17 +114,17 @@ lark-bridge/
 
 | 目录 | 职责 | 备注 |
 |---|---|---|
-| `cmd/` | 5 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
+| `cmd/` | 6 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
 | `internal/` | 全部业务代码 | 不对外暴露 |
-| `deploy/` | `deploy.sh`（业务 3 服务：feishu/claude/miniagent）、`deploy-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
+| `deploy/` | `deploy.sh`（业务 3 服务：feishu/claude/miniagent）、`deploy-monitor.sh`/`deploy-status.sh`/`deploy-agnes.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
-| `bin/` | `make build` 产物（5 个二进制） | gitignore |
+| `bin/` | `make build` 产物（6 个二进制） | gitignore |
 
 ---
 
 ## 4. `cmd/` 入口点
 
-5 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+6 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
@@ -134,7 +134,7 @@ lark-bridge/
 | **deploy-monitor** | `cmd/deploy-monitor/main.go:33` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` (:72) + `backendrpc.Run` (:96) + 优雅 drain (:110) |
 | **status-monitor** | `cmd/status-monitor/main.go:29` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` (:66) + `backendrpc.Run` (:82)（独立部署） |
 
-> **注意**：`cmd/` 下共 5 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `deploy-monitor.sh` / `deploy-status.sh` 管理，不纳入 `deploy.sh` 的 3 个业务服务（feishu / claude / miniagent）。
+> **注意**：`cmd/` 下共 6 个二进制。其中 `deploy-monitor`、`status-monitor` 与 `agnes-back` 因分别触发部署 / 需独立刷新 / 为独立媒体生成后端，分别由 `deploy-monitor.sh` / `deploy-status.sh` / `deploy-agnes.sh` 管理，不纳入 `deploy.sh` 的 3 个业务服务（feishu / claude / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:32`），`git describe --tags --always --dirty`。
 
@@ -478,7 +478,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ### 8.1 运行形态：**1 个长驻前端 + N 个长驻后端 + 1 个独立部署监控**
 
-不是 CLI 工具，而是 **3 个业务长驻 systemd 服务**（`deploy/README.md:151`）+ 2 个独立监控。
+不是 CLI 工具，而是 **3 个业务长驻 systemd 服务**（`deploy/README.md:151`）+ 3 个独立后端（deploy-monitor / status-monitor / agnes-back）。
 
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)

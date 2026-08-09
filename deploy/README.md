@@ -271,7 +271,44 @@ make deploy-status
 卡片 PATCH 失败（被用户删除/撤回，飞书返回 `code:230011`）时自动重发，不叠加。
 升级时短暂离线（systemd restart），期间停推一帧，下个 tick 自动恢复。
 
-## 6.7. 总览卡主机/进程监控（多机部署）
+## 6.7. agnes-back 部署（独立）
+
+agnes-back 是 Agnes AI 图片/视频生成后端，把 Agnes 的 `agnes-2.5-flash`（文本）/
+`agnes-image-2.1-flash`（图片）/`agnes-video-v2.0`（视频）三个模型封装成 4 条飞书
+斜杠指令。HTTP 直调、无副作用、不需提权，**不由 deploy.sh 管理**，与 deploy-monitor
+/ status-monitor 同模式独立部署：
+
+```bash
+# 首次安装（生成 config + unit + enable + start）
+make deploy-agnes ARGS=--init
+
+# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
+make deploy-agnes
+```
+
+部署后在飞书群里 `/backend` 选择 `agnes` 后端绑定，即可使用以下指令：
+
+| 指令 | 作用 | 输出 |
+|------|------|------|
+| `/image-prompt <描述>` | 用文本模型把粗描述扩写成完整图片提示词 | 文本提示词 |
+| `/image <提示词>` | 调图片模型生成图片（默认 2K / 16:9） | 图片内联到群 |
+| `/video-prompt <描述>` | 用文本模型扩写成完整视频提示词 | 文本提示词 |
+| `/video <提示词>` | 调视频模型异步生成视频（默认 1152×768 @ 5s） | 视频 URL |
+
+所需环境变量（`.env`）：
+
+| 变量 | 说明 |
+|------|------|
+| `AGNES_API_KEY` | Agnes API 的 Bearer key（**必填**） |
+| `AGNES_BASE_URL` | API origin，默认 `https://api.agnes-ai.cn` |
+| `AGNES_CHAT_MODEL` | 文本模型，默认 `agnes-2.5-flash` |
+| `AGNES_IMAGE_MODEL` | 图片模型，默认 `agnes-image-2.1-flash` |
+| `AGNES_VIDEO_MODEL` | 视频模型，默认 `agnes-video-v2.0` |
+
+除 `AGNES_API_KEY` 外其余均可省略（走默认）。升级时短暂离线（systemd restart），
+期间 `/image` `/video` 指令不可达。
+
+## 6.8. 总览卡主机/进程监控（多机部署）
 
 总览卡新增两个 section：**主机**（load / 内存 / state_dir 所在磁盘）与**进程**
 （每个 backend 的版本号 + systemd cgroup 内存）。数据流：

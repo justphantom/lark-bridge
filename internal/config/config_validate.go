@@ -67,6 +67,7 @@ func validate(cfg *Config) error {
 		"deploy_monitor": cfg.ComponentLogLevels.DeployMonitor,
 		"miniagent":      cfg.ComponentLogLevels.MiniAgent,
 		"status_monitor": cfg.ComponentLogLevels.StatusMonitor,
+		"agnes":          cfg.ComponentLogLevels.Agnes,
 	} {
 		if level == "" || level == "debug" || level == "info" || level == "warn" || level == "error" {
 			continue

@@ -702,6 +702,50 @@ func TestLoadFileConvert_XlsxPromptTemplateSyntaxChecked(t *testing.T) {
 
 // TestLoadMiniAgentStreamDefaults pins the StreamHistory retention cap default
 // for miniagent (must survive a config that leaves it unset).
+// TestLoadAgnesDefaults pins the AgnesBack applyDefaults: omitted base_url/
+// model/size/ratio fields fill with the documented defaults, while an empty
+// api_key stays empty so a missing key surfaces as a startup error.
+func TestLoadAgnesDefaults(t *testing.T) {
+	path := writeConfig(t, `{"agnes":{}}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AgnesBack.BaseURL != "https://api.agnes-ai.cn" {
+		t.Errorf("default agnes base_url = %q, want https://api.agnes-ai.cn", cfg.AgnesBack.BaseURL)
+	}
+	for _, c := range []struct{ name, got, want string }{
+		{"chat_model", cfg.AgnesBack.ChatModel, "agnes-2.5-flash"},
+		{"image_model", cfg.AgnesBack.ImageModel, "agnes-image-2.1-flash"},
+		{"video_model", cfg.AgnesBack.VideoModel, "agnes-video-v2.0"},
+		{"image_size", cfg.AgnesBack.ImageSize, "2K"},
+		{"image_ratio", cfg.AgnesBack.ImageRatio, "16:9"},
+	} {
+		if c.got != c.want {
+			t.Errorf("default agnes %s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+	if cfg.AgnesBack.APIKey != "" {
+		t.Errorf("agnes api_key should default empty, got %q", cfg.AgnesBack.APIKey)
+	}
+}
+
+// TestLoadAgnesOverrides verifies that explicit AgnesBack values are NOT
+// overwritten by applyDefaults.
+func TestLoadAgnesOverrides(t *testing.T) {
+	path := writeConfig(t, `{"agnes":{"base_url":"https://custom.example.com","image_size":"1K","image_ratio":"1:1"}}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AgnesBack.BaseURL != "https://custom.example.com" {
+		t.Errorf("agnes base_url = %q, want custom", cfg.AgnesBack.BaseURL)
+	}
+	if cfg.AgnesBack.ImageSize != "1K" || cfg.AgnesBack.ImageRatio != "1:1" {
+		t.Errorf("agnes overrides lost: size=%q ratio=%q", cfg.AgnesBack.ImageSize, cfg.AgnesBack.ImageRatio)
+	}
+}
+
 func TestLoadMiniAgentStreamDefaults(t *testing.T) {
 	path := writeConfig(t, `{"miniagent":{}}`)
 	cfg, err := Load(path)
@@ -772,6 +816,13 @@ func TestLoadConfigExample(t *testing.T) {
 	t.Setenv("MINIAGENT_DEFAULT_MODEL", "test-model")
 	t.Setenv("WORKSPACE_ROOT", t.TempDir())
 	t.Setenv("PROJECT_ROOT", repoRoot)
+
+	// agnes-back example section references the same env-var pattern.
+	t.Setenv("AGNES_API_KEY", "sk-test")
+	t.Setenv("AGNES_BASE_URL", "https://api.agnes-ai.cn")
+	t.Setenv("AGNES_CHAT_MODEL", "agnes-2.5-flash")
+	t.Setenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
+	t.Setenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
 
 	path := filepath.Join(repoRoot, "config.example.json")
 	if _, err := Load(path); err != nil {

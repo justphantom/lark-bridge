@@ -122,6 +122,15 @@ out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
 check "deploy.sh sourceable: preflight fn" "$(head -1 <<<"$out")" "function"
 check "deploy.sh sourceable: main fn"      "$(tail -1 <<<"$out")" "function"
 
+# -- source guard: sourcing deploy-agnes.sh must define functions without deploying --
+agnes_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
+    source deploy/deploy-agnes.sh
+    type -t init_agnes
+    type -t main
+' 2>/dev/null)"
+check "deploy-agnes.sh sourceable: init fn" "$(head -1 <<<"$agnes_out")" "function"
+check "deploy-agnes.sh sourceable: main fn" "$(tail -1 <<<"$agnes_out")" "function"
+
 # -- select_services: --services csv parsing (drives /deploy-some's ARGS) -----
 # Validates the comma-split deploy.sh applies to ARGS=--services=feishu,claude
 # arriving from /deploy-some. SERVICES_ARG must be set AFTER `source` because

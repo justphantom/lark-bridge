@@ -138,6 +138,28 @@ func applyDefaults(cfg *Config, cfgPath string) {
 			cfg.FileConvert.XlsxFormulaMode = "value"
 		}
 	}
+	// AgnesBack defaults: only fill BaseURL/model names/ratio when unset. APIKey
+	// is required and left empty so an absent key surfaces as a startup error
+	// (binary-specific required, enforced in cmd/agnes-back/main.go) instead of
+	// silently sending anonymous requests that fail with a 401 on the first turn.
+	if cfg.AgnesBack.BaseURL == "" {
+		cfg.AgnesBack.BaseURL = "https://api.agnes-ai.cn"
+	}
+	if cfg.AgnesBack.ChatModel == "" {
+		cfg.AgnesBack.ChatModel = "agnes-2.5-flash"
+	}
+	if cfg.AgnesBack.ImageModel == "" {
+		cfg.AgnesBack.ImageModel = "agnes-image-2.1-flash"
+	}
+	if cfg.AgnesBack.VideoModel == "" {
+		cfg.AgnesBack.VideoModel = "agnes-video-v2.0"
+	}
+	if cfg.AgnesBack.ImageSize == "" {
+		cfg.AgnesBack.ImageSize = "2K"
+	}
+	if cfg.AgnesBack.ImageRatio == "" {
+		cfg.AgnesBack.ImageRatio = "16:9"
+	}
 }
 
 // ResolveConfigPath resolves the miniagent config path for the bridge.

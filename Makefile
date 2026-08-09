@@ -1,7 +1,7 @@
 # lark-bridge build and test entry points.
 #
 # Targets:
-#   build       compile the five binaries into bin/ (version-stamped)
+#   build       compile the six binaries into bin/ (version-stamped)
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
@@ -10,7 +10,7 @@
 #   prerelease  test + lint — the pre-tag gate, run before `git tag v1.x.0`
 #   deploy-smoke bash helper unit tests (deploy/tests/smoke.sh)
 #   deploy      build, then install as systemd services via deploy/deploy.sh
-#   pack        build all five binaries and bundle into a distributable tarball
+#   pack        build all six binaries and bundle into a distributable tarball
 #               (bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz); cross-compile via
 #               GOOS=/GOARCH= on the command line
 #   clean       rm -rf bin/
@@ -23,7 +23,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-monitor deploy-status pack
+.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-monitor deploy-status deploy-agnes pack
 
 # Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
@@ -58,9 +58,11 @@ build-miniagent-back:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
 
-build-deploy-monitor:
+build-agnes-back:
 	mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
+	go build -ldflags "$(LDFLAGS)" -o bin/lark-agnes-back ./cmd/agnes-back
+
+build-deploy-monitor:
 
 build-status-monitor:
 	mkdir -p bin
@@ -70,8 +72,8 @@ build-status-monitor:
 # the two monitors are deployed independently by deploy-monitor.sh / deploy-status.sh.
 build-services: build-feishu-front build-claude-back build-miniagent-back
 
-# build compiles all five binaries (version-stamped).
-build: build-feishu-front build-claude-back build-miniagent-back build-deploy-monitor build-status-monitor
+# build compiles all six binaries (version-stamped).
+build: build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor
 
 # pack 交叉编译七个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
@@ -79,7 +81,7 @@ build: build-feishu-front build-claude-back build-miniagent-back build-deploy-mo
 pack:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT; \
 	mkdir -p bin; \
-	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor; do \
+	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor lark-agnes-back:cmd/agnes-back; do \
 		out=$${name%%:*}; src=./$${name##*:}; \
 		echo "build  $$out ($(GOOS)/$(GOARCH))"; \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $$tmp/$$out $$src; \
@@ -144,3 +146,9 @@ deploy-monitor:
 # is. Use --init for first-time install (creates config + unit).
 deploy-status:
 	./deploy/deploy-status.sh $(ARGS)
+
+# deploy-agnes builds and restarts ONLY lark-agnes-back (the Agnes AI image/
+# video generation backend), decoupled from deploy.sh. Use --init for
+# first-time install (creates config + unit).
+deploy-agnes:
+	./deploy/deploy-agnes.sh $(ARGS)
