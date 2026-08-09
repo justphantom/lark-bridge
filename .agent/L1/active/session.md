@@ -1,7 +1,7 @@
 ---
 layer: L1
 type: session
-updated: 2026-08-09T19:45:00+08:00
+updated: 2026-08-09T20:31:00+08:00
 ---
 
 # 当前会话
@@ -10,9 +10,7 @@ updated: 2026-08-09T19:45:00+08:00
 无
 
 ## 最近聚焦
-- 统一 mode/perm 指令：claudebridge `/perm`→`/mode`；miniagent `/mode` 空参补 picker、`/thinking`→`/effort` 且空参补 picker；函数名一并重命名。
-- 部署脚本简化：Makefile 拆出单二进制 build target（build-feishu-front 等）+ build-services 组合 target；三个脚本调用精确 target（deploy.sh→build-services, deploy-monitor.sh→build-deploy-monitor, deploy-status.sh→build-status-monitor）。
-- 脚本重命名：upgrade-monitor.sh→deploy-monitor.sh, upgrade-status.sh→deploy-status.sh；Makefile target 与所有文档引用同步更新。
+- 评审 `.agent/` 全部文件：验证代码符号、提交哈希、内部交叉链接均有效；修复编号断裂、归档任务补勾进度、标记已实现缺口、清理 4 处失效 docs 引用。
 
 ## 未决问题
 无
