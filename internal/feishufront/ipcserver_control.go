@@ -19,12 +19,13 @@ const maxControlBody = 48 << 20
 // backendID to be registered, backfills BackendID from the URL path, and
 // enqueues it for the frontend main loop.
 func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }() // request fully read; close error not actionable
+	defer func() { _ = r.Body.Close() }()
+	id := r.PathValue("backendID")
 	if !s.authOK(r) {
+		s.logger.Load().Warn("handleControl auth failed", "backend_id", id)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	id := r.PathValue("backendID")
 	if id == "" {
 		http.Error(w, "missing backendID", http.StatusBadRequest)
 		return
@@ -54,6 +55,10 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.logger.Load().Info("handleControl decoded",
+		"backend_id", id,
+		"ctrl_type", ctrl.Type,
+		"prompt_id", ctrl.PromptID)
 	if err := ctrl.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

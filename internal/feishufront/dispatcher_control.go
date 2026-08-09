@@ -379,10 +379,17 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 			return err
 		}
 		err = d.bot.UpdateCard(ctx, n.UpdateMessageID, d.interactiveCardID(n.UpdateMessageID), card)
+		if err != nil {
+			d.logger.Load().Warn("sendNoticeControl UpdateCard failed",
+				"update_message_id", n.UpdateMessageID,
+				"error", err)
+		}
 		if err != nil && feishu.IsCardGone(err) {
 			// The referenced card was withdrawn: deliver the notice as a
 			// fresh card rather than dropping it on the floor (a deploy
 			// result must never vanish silently).
+			d.logger.Load().Info("sendNoticeControl card gone, sending new card",
+				"chat_id", ctrl.ChatID, "update_message_id", n.UpdateMessageID)
 			_, err = d.bot.SendCard(ctx, ctrl.ChatID, card, "")
 		}
 		if err == nil {

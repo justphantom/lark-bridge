@@ -515,6 +515,11 @@ func (d *Dispatcher) dispatchPrompt(ctx context.Context, msg *feishu.IncomingMes
 			CardMessageID: messageID,
 		},
 	}
+	d.logger.Load().Info("dispatch prompt",
+		"backend_id", backendID,
+		"prompt_id", promptID,
+		"card_message_id", messageID,
+		"text", prompt)
 	if err := d.registry.SendEvent(backendID, ev); err != nil {
 		d.turns.Finish(promptID)
 		return d.notice(ctx, msg.ChatID, "warning", "发送失败", "无法转发到后端: "+err.Error())

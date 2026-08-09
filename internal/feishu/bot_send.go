@@ -228,7 +228,14 @@ func (b *Bot) UpdateCard(ctx context.Context, messageID, cardID string, card []b
 		if messageID == "" {
 			return errors.New("feishu: UpdateCard needs card_id or message_id")
 		}
-		return b.client.PatchMessage(ctx, messageID, string(card))
+		err := b.client.PatchMessage(ctx, messageID, string(card))
+		if err != nil {
+			b.logger.Warn("UpdateCard PatchMessage failed",
+				"message_id", messageID,
+				"card_size", len(card),
+				"error", err)
+		}
+		return err
 	}
 	return b.updateCardEntity(ctx, cardID, card)
 }
@@ -293,6 +300,18 @@ func isCardContentRejected(err error) bool {
 	return strings.Contains(s, "code:"+strconv.Itoa(feishuCodeContentTooLarge)) ||
 		strings.Contains(s, "code:"+strconv.Itoa(feishuCodeCardElementOverLimit)) ||
 		strings.Contains(s, "over limit")
+}
+
+// truncateString truncates s to at most n runes, appending "…" if truncated.
+func truncateString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }
 
 // IsCardGone reports whether err represents a card that can no longer be

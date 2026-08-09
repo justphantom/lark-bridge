@@ -98,6 +98,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	h.logger.Info("agnes: handle event",
 		"chat_id", chatID,
 		"prompt_id", promptID,
+		"card_msg_id", cardMsgID,
 		"prompt", truncateString(prompt, 100))
 	cmd, arg := splitCommand(prompt)
 	switch cmd {
@@ -295,7 +296,14 @@ func (h *Handler) notify(ctx context.Context, chatID, promptID, cardMsgID, level
 	if chatID == "" {
 		return fmt.Errorf("notify: chatID is empty")
 	}
-	return h.rpc.SendControl(ctx, &protocol.Control{
+	h.logger.Info("agnes: sending notice",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"card_msg_id", cardMsgID,
+		"level", level,
+		"title", title,
+		"message", truncateString(message, 100))
+	err := h.rpc.SendControl(ctx, &protocol.Control{
 		Type:     protocol.TypeNotice,
 		PromptID: promptID,
 		ChatID:   chatID,
@@ -306,18 +314,40 @@ func (h *Handler) notify(ctx context.Context, chatID, promptID, cardMsgID, level
 			UpdateMessageID: cardMsgID,
 		},
 	})
+	if err != nil {
+		h.logger.Error("agnes: notice send failed",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"error", err)
+	} else {
+		h.logger.Info("agnes: notice sent",
+			"chat_id", chatID,
+			"prompt_id", promptID)
+	}
+	return err
 }
 
 func (h *Handler) notifyProgress(ctx context.Context, chatID, promptID, description string) error {
 	if chatID == "" {
 		return fmt.Errorf("notifyProgress: chatID is empty")
 	}
-	return h.rpc.SendControl(ctx, &protocol.Control{
+	h.logger.Debug("agnes: sending progress",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"description", truncateString(description, 50))
+	err := h.rpc.SendControl(ctx, &protocol.Control{
 		Type:     protocol.TypeProgress,
 		PromptID: promptID,
 		ChatID:   chatID,
 		Progress: &protocol.ProgressPayload{Description: description},
 	})
+	if err != nil {
+		h.logger.Warn("agnes: progress send failed",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"error", err)
+	}
+	return err
 }
 
 // splitCommand splits a prompt into "/cmd" + "rest", trimming the @-mention
