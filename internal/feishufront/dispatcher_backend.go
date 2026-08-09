@@ -204,6 +204,13 @@ func (d *Dispatcher) sendOnlineNotices(backendID, backendType string) {
 // a fresh standalone notice in its chat.
 func (d *Dispatcher) reclaimStrandedTurns(backendID string) {
 	reclaimed := d.turns.ReclaimBackend(backendID)
+	// Mirror the reap into the registry's runningTurns so the two in-flight
+	// views cannot disagree: TurnManager stops tracking the turns, but without
+	// this the registry would keep reporting them (RunningTurns / metrics
+	// consumers) until the backend reconnects and pushes a fresh snapshot.
+	if d.registry != nil {
+		d.registry.ReclaimTurns(backendID)
+	}
 	for _, turn := range reclaimed {
 		d.invalidateTurnCard(turn)
 	}

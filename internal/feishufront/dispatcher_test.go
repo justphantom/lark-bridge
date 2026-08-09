@@ -1146,6 +1146,16 @@ func TestFireOfflineNotice_ReclaimsStrandedTurns(t *testing.T) {
 	d.turns.Start("p-A1", "oc_a", "om_A1", "", "back-1")
 	d.turns.Start("p-A2", "oc_a", "om_A2", "", "back-1")
 	d.turns.Start("p-B1", "oc_a", "om_B1", "", "back-2")
+	// Mirror the dying backend's turns into the registry's runningTurns view,
+	// so the reclaim's registry cleanup is actually exercised (StartTurn needs
+	// a registered conn).
+	d.registry.Register("back-1", "claude")
+	if err := d.registry.StartTurn("back-1", protocol.TurnInfo{PromptID: "p-A1", ChatID: "oc_a"}); err != nil {
+		t.Fatalf("registry StartTurn p-A1: %v", err)
+	}
+	if err := d.registry.StartTurn("back-1", protocol.TurnInfo{PromptID: "p-A2", ChatID: "oc_a"}); err != nil {
+		t.Fatalf("registry StartTurn p-A2: %v", err)
+	}
 	d.progressMu.Lock()
 	d.progress["p-A1"] = nil
 	d.progress["p-A2"] = nil
@@ -1194,6 +1204,15 @@ func TestFireOfflineNotice_ReclaimsStrandedTurns(t *testing.T) {
 	// InFlight now reflects only the healthy backend's turn.
 	if got := d.turns.InFlight(); got != 1 {
 		t.Fatalf("InFlight after reclaim: want 1, got %d", got)
+	}
+
+	// The registry's runningTurns view is mirrored too: the reclaimed backend
+	// must stop reporting its turns (it never emits TypeTurnFinished, so
+	// without the mirror they would linger until reconnect).
+	for _, rt := range d.registry.RunningTurns() {
+		if rt.BackendID == "back-1" {
+			t.Fatalf("registry must not report reclaimed back-1 turn %+v", rt)
+		}
 	}
 }
 

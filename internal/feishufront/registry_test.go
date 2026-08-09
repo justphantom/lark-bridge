@@ -79,3 +79,34 @@ func TestBackendRegistry_StartTurnUnknownBackend(t *testing.T) {
 		t.Fatal("StartTurn for unknown backend should fail")
 	}
 }
+
+// TestBackendRegistry_ReclaimTurns drops every running turn of one backend
+// while leaving other backends' turns intact — the mirror of
+// TurnManager.ReclaimBackend so the two in-flight views cannot disagree after
+// a stranded-turn reap (a dying backend never emits TypeTurnFinished, so its
+// rows would otherwise persist until it reconnects and pushes a snapshot).
+func TestBackendRegistry_ReclaimTurns(t *testing.T) {
+	r := NewBackendRegistry()
+	r.Register("dying", "claude")
+	r.Register("healthy", "miniagent")
+
+	_ = r.StartTurn("dying", protocol.TurnInfo{PromptID: "p1", ChatID: "c1"})
+	_ = r.StartTurn("dying", protocol.TurnInfo{PromptID: "p2", ChatID: "c1"})
+	_ = r.StartTurn("healthy", protocol.TurnInfo{PromptID: "p3", ChatID: "c2"})
+
+	if dropped := r.ReclaimTurns("dying"); dropped != 2 {
+		t.Fatalf("ReclaimTurns dropped = %d, want 2", dropped)
+	}
+	turns := r.RunningTurns()
+	if len(turns) != 1 || turns[0].PromptID != "p3" {
+		t.Fatalf("after reclaim, RunningTurns = %+v, want only healthy p3", turns)
+	}
+	// Idempotent: a second reclaim of the same backend drops nothing.
+	if dropped := r.ReclaimTurns("dying"); dropped != 0 {
+		t.Fatalf("second ReclaimTurns dropped = %d, want 0", dropped)
+	}
+	// Unknown backend is a safe no-op.
+	if dropped := r.ReclaimTurns("ghost"); dropped != 0 {
+		t.Fatalf("ReclaimTurns unknown backend dropped = %d, want 0", dropped)
+	}
+}

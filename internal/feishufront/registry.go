@@ -340,6 +340,26 @@ func (c *BackendConn) finishTurn(promptID string) {
 	delete(c.runningTurns, promptID)
 }
 
+// ReclaimTurns drops every in-flight turn recorded for backend id and returns
+// how many were dropped. Called when a backend is reclaimed after going
+// offline for the whole notice-debounce window: its stranded turns can never
+// finish, and leaving them in runningTurns would keep them visible (e.g. via
+// RunningTurns) after TurnManager already reaped its own view. Unknown id is a
+// no-op (0).
+func (r *BackendRegistry) ReclaimTurns(id string) int {
+	r.mu.RLock()
+	conn, ok := r.conns[id]
+	r.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	conn.runningMu.Lock()
+	defer conn.runningMu.Unlock()
+	n := len(conn.runningTurns)
+	conn.runningTurns = nil
+	return n
+}
+
 // replaceRunningTurns atomically replaces the stored turn set with the
 // authoritative snapshot from a MetricsReport.
 func (c *BackendConn) replaceRunningTurns(turns []protocol.TurnInfo) {
