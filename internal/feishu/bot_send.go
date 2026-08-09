@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -388,12 +389,15 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 			continue // cannot confirm — retry (loop cap bounds thrash)
 		}
 		gotT := extractHeaderTemplate(got)
+		var probe map[string]any
+		_ = json.Unmarshal(got, &probe)
 		b.logger.Warn("card verify read-back",
 			log.FieldMessageID, messageID,
 			"attempt", attempt,
 			"want", want,
 			"got", gotT,
-			"readback_len", len(got))
+			"readback_len", len(got),
+			"keys", jsonKeys(probe))
 		if gotT == want {
 			return nil // colour persisted
 		}
@@ -409,6 +413,17 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 // reports a phantom mismatch just because the envelope differs. Returns "" for
 // a headerless card or an unparseable blob — callers treat "" as "no
 // fingerprint to check, trust the PATCH".
+// jsonKeys returns the sorted top-level keys of a parsed JSON object — a
+// structure probe that never exposes content values (low-18). Diagnostic only.
+func jsonKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func extractHeaderTemplate(b []byte) string {
 	if len(b) == 0 {
 		return ""
