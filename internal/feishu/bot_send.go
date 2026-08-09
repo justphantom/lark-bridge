@@ -391,6 +391,13 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 		if elementsFingerprint(got) == want {
 			return nil // content persisted
 		}
+		// TEMP DIAGNOSTIC: log both fingerprints to see how Feishu rewrites the
+		// stored elements relative to what we PATCHed.
+		b.logger.Warn("card verify elements mismatch",
+			log.FieldMessageID, messageID,
+			"attempt", attempt,
+			"want_fp", strutil.Truncate(want, 400),
+			"got_fp", strutil.Truncate(elementsFingerprint(got), 400))
 		lastErr = ErrCardVerifyMismatch // reverted — loop re-PATCHes
 	}
 	return lastErr
