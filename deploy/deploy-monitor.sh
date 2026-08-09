@@ -151,9 +151,34 @@ migrate_config() {
         if sudo grep -q "\"$block\":" "$cfg"; then
             fail "清理 $block 失败：$cfg 缩进可能不符 2 空格约定，请手工编辑后重跑"
         fi
-        sudo chmod 600 "$cfg"
-        sudo chown "$RUN_USER":"$RUN_USER" "$cfg"
     done
+
+    # 块内叶子字段：timeouts/card_patch_delay、根级 feishu_card_engine 等。
+    # 整块迁移只删 removed_blocks（完整 JSON 对象），但这些 key 是存活块
+    # （timeouts）内的单个叶子，不能用块删除的 sed 范围匹配。
+    # 用 python regex 删行 + 修复悬空尾逗号 + json.dump 美化，一步到位；
+    # 避免 sed 删行后 json.load 因悬空逗号失败（先有鸡还是先有蛋）。
+    local removed_keys=("card_patch_delay" "feishu_card_engine")
+    local need_migrate=0
+    for key in "${removed_keys[@]}"; do
+        sudo grep -q "\"$key\"" "$cfg" && need_migrate=1
+    done
+    if [[ "$need_migrate" -eq 1 ]]; then
+        info "迁移：清理已移除的叶子字段"
+        sudo python3 -c '
+import re, json, sys
+p = sys.argv[1]
+raw = open(p).read()
+for key in sys.argv[2:]:
+    raw = re.sub(r"^[ \t]*\"" + key + r"\".*$\n?", "", raw, flags=re.MULTILINE)
+raw = re.sub(r",(\s*[}\]])", r"\1", raw)
+data = json.loads(raw)
+json.dump(data, open(p, "w"), indent=2, ensure_ascii=False)
+        ' "$cfg" "${removed_keys[@]}" || fail "config JSON 迁移失败：请手工编辑 $cfg"
+    fi
+
+    sudo chmod 600 "$cfg"
+    sudo chown "$RUN_USER":"$RUN_USER" "$cfg"
 }
 
 # ── unit 迁移：给已部署 unit 注入 cgroup 内存回收 ──
