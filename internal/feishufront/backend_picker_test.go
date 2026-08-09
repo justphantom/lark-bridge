@@ -120,8 +120,6 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 	rt := &pickerRouter{current: "claude-1"}
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
-	// Shrink the click-handling delay so the test does not wait 5s.
-	d.cardPatchDelay = 10 * time.Millisecond
 	// Pre-arm a picker TTL so the test can assert the click cancels it.
 	d.pickerCards["om_card"] = []byte("{}")
 	d.pickerTimers["om_card"] = time.AfterFunc(time.Hour, func() {})
@@ -142,17 +140,14 @@ func TestDispatchCardAction_BackendPicker_Switches(t *testing.T) {
 		t.Fatalf("backend received unexpected event %q", ev.Type)
 	default:
 	}
-	// Success path delays the PATCH past Feishu's click-handling window.
-	// Shrink the delay so the test does not wait 5s.
-	d.cardPatchDelay = 10 * time.Millisecond
-	// Wait for the goroutine to land the green outcome card.
+	// The success path PATCHes the green outcome card in place.
 	waitFor(t, func() bool {
 		_, updates := sink.counts()
 		return updates == 1
 	})
 	sends, updates := sink.counts()
 	if sends != 0 || updates != 1 {
-		t.Errorf("want 0 sends + 1 delayed update, got %d sends + %d updates", sends, updates)
+		t.Errorf("want 0 sends + 1 update, got %d sends + %d updates", sends, updates)
 	}
 	// Click cancels the TTL flip so a late expiry cannot overwrite the result.
 	d.cardMu.Lock()
@@ -232,7 +227,6 @@ func TestDispatchCardAction_BackendPicker_OfflineRejected(t *testing.T) {
 	rt := &pickerRouter{current: "claude-1"}
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, reg, NewTurnManager(), rt)
-	d.cardPatchDelay = 10 * time.Millisecond
 
 	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
 		ChatID:    "oc_x",

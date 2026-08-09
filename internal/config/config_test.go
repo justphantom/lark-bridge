@@ -408,7 +408,6 @@ func TestLoad_TimeoutsDefaults(t *testing.T) {
 	want := Timeouts{
 		BackendHealth:   Duration(90 * time.Second),
 		UsageSessionTTL: Duration(7 * 24 * time.Hour),
-		CardPatchDelay:  Duration(5 * time.Second),
 	}
 	if cfg.Timeouts != want {
 		t.Fatalf("defaults = %+v, want %+v", cfg.Timeouts, want)

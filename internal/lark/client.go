@@ -74,7 +74,7 @@ type Client struct {
 }
 
 // NewClient constructs a Client. The WebSocket layer is created but not
-// connected; Start performs the bootstrap + dial. Send/PatchMessage may be
+// connected; Start performs the bootstrap + dial. Send may be
 // called before Start (REST is independent of WS).
 func NewClient(appID, appSecret string, opts ...Option) (*Client, error) {
 	if appID == "" || appSecret == "" {
@@ -138,11 +138,6 @@ func (c *Client) Send(ctx context.Context, in *SendInput) (*SendResult, error) {
 	return c.rest.SendMessage(ctx, in)
 }
 
-// PatchMessage updates an existing message body (used to refresh a card).
-func (c *Client) PatchMessage(ctx context.Context, messageID, content string) error {
-	return c.rest.PatchMessage(ctx, messageID, content)
-}
-
 // CreateCardEntity creates a CardKit card entity from a schema-2.0 card JSON
 // and returns its card_id (14-day TTL). Independent of the WS connection.
 func (c *Client) CreateCardEntity(ctx context.Context, cardJSON string) (string, error) {
@@ -155,14 +150,6 @@ func (c *Client) CreateCardEntity(ctx context.Context, cardJSON string) (string,
 // Independent of the WS connection.
 func (c *Client) UpdateCardEntity(ctx context.Context, cardID, cardJSON string, sequence int64, uuid string) error {
 	return c.rest.UpdateCardEntity(ctx, cardID, cardJSON, sequence, uuid)
-}
-
-// GetMessage fetches one message's body content (the stored card JSON for an
-// interactive card). Used by Bot.UpdateCardVerified to read back whether a
-// PATCH persisted. Independent of the WS connection state; uses the REST
-// client under the hood.
-func (c *Client) GetMessage(ctx context.Context, messageID string) ([]byte, error) {
-	return c.rest.GetMessage(ctx, messageID)
 }
 
 // DownloadResource fetches a binary resource (file/image) attached to a

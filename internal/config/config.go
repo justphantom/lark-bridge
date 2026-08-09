@@ -35,10 +35,6 @@ type Config struct {
 	FeishuAppSecret string `json:"feishu_app_secret"`
 	FeishuDomain    string `json:"feishu_domain,omitempty"`
 	FeishuLogLevel  string `json:"feishu_log_level,omitempty"`
-	// FeishuCardEngine selects the card engine: "cardkit" sends cards as
-	// CardKit 卡片实体 (schema 2.0, PUT by card_id, 14-day editable window);
-	// anything else (incl. empty) keeps the legacy schema 1.0 + im PATCH path.
-	FeishuCardEngine string `json:"feishu_card_engine,omitempty"`
 
 	// —— 进程间通信：前端校验、后端携带，二者共享 ——
 	BackendID   string `json:"backend_id,omitempty"`   // 在前端 registry 的唯一标识
@@ -298,12 +294,6 @@ type Timeouts struct {
 	// JSON cannot grow without bound over a long-running process.
 	// 0/absent → 7d. Consumed by every backend that wires a usage store.
 	UsageSessionTTL Duration `json:"usage_session_ttl,omitempty"`
-	// CardPatchDelay is how long the feishu-front dispatcher waits after a
-	// card click before PATCHing the new card state. Feishu reverts an
-	// immediate PATCH within its click-handling window (~3-5s); waiting
-	// past it lets the PATCH persist. 0/absent → 5s. Only consumed by
-	// feishu-front; backends ignore.
-	CardPatchDelay Duration `json:"card_patch_delay,omitempty"`
 }
 
 // DedupConfig configures the frontend's application-layer replay guard.

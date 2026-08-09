@@ -87,8 +87,8 @@ func ShortID(id string) string {
 // identity line per host/service plus indented metric lines, so nothing
 // wraps mid-token on mobile), then per-backend turn groups. A version drift
 // (one backend behind the dominant version) marks the group and flips the
-// header template from blue to orange. schema 1.0 via Card, same as every
-// other card.
+// header template from blue to orange. Built via Card (schema 2.0), same as
+// every other card.
 func StatusReport(in StatusReportInput) ([]byte, error) {
 	_, drifted := versionDrift(in.Services)
 	template := "blue"

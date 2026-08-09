@@ -136,33 +136,18 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 		updateID = p.UpdateMessageID
 	}
 	if updateID != "" {
-		// Terminal frame: unconditionally drop any interactive binding
-		// (cached bytes, TTL timer) still pointing at the picker card. A
-		// submitted picker arms a delayed fallback PATCH (schedule
-		// SubmitFallback) that re-sends the grey "已提交" bytes; the
-		// fallback's guard skips only once the binding is gone. Without
-		// this the fallback overwrites the green outcome — the bounce-back.
+		// Terminal frame: drop any interactive binding (cached bytes, TTL
+		// timer) still pointing at the picker card before reflecting the
+		// outcome, then UpdateCard directly. CardKit PUTs land immediately
+		// (no click-handling window reversion), so read-back verification is
+		// unnecessary.
 		d.evictInteractiveByMessageID(updateID, "")
-		// Verified: the outcome PATCH can land inside Feishu's click
-		// window (the user just clicked the picker) and get silently
-		// reverted; read-back verification re-PATCHes if so.
-		err = d.bot.UpdateCardVerified(ctx, updateID, d.interactiveCardID(updateID), card)
-		if err == nil {
-			// Outcome landed: mark terminal so a delayed emitSelectedCard
-			// ("已选择 X") PATCH still sleeping out the click window is dropped
-			// instead of reverting this frame — the bounce-back fix.
-			d.markCardTerminal(updateID)
+		if err := d.bot.UpdateCard(ctx, updateID, d.interactiveCardID(updateID), card); err == nil {
+			return
+		} else if feishu.IsCardGone(err) && level == "success" {
+			// Card withdrawn on success: drop silently (the file already arrived).
 			return
 		}
-		// Card withdrawn on success: drop silently (the file already arrived).
-		if feishu.IsCardGone(err) && level == "success" {
-			return
-		}
-		// Otherwise — withdrawn card on failure, or any transient patch error
-		// — mark the old card terminal so a delayed picker refresh still
-		// sleeping out the click window cannot revive it after we fall through
-		// to a fresh card.
-		d.markCardTerminal(updateID)
 		// fall through to a fresh card so the outcome is never lost.
 	}
 	if _, err := d.bot.SendCard(ctx, ctrl.ChatID, card, ""); err != nil {

@@ -142,14 +142,14 @@
   - 其他错误 → 退避重试，最多 `cardRetry=3` 次，初始 `cardRetryBase=300ms` 倍增（`:153-162`）。
   - ctx 取消 → 立即返回（`:158-159`）。
 
-### 3.2 CardKit 卡片实体（可选引擎）
+### 3.2 CardKit 卡片实体（默认引擎）
 
-`feishu_card_engine: "cardkit"` 切到 CardKit 卡片实体通道（schema 2.0）：
+卡片全部走 CardKit 卡片实体通道（schema 2.0）：
 
 - **创建实体**：`POST /open-apis/cardkit/v1/cards`，body 为整卡 JSON，返回 `card_id`。
 - **引用发送**：`SendInput.CardID` → 消息 content 编码为 `{"type":"card","data":{"card_id":...}}`。
 - **更新实体**：`PUT /open-apis/cardkit/v1/cards/{card_id}`，携带**严格递增**的 `sequence` 与幂等 `uuid`；实体 14 天可编辑。
-- 更新路由由 `cardID` 显式驱动（方案 B）：`UpdateCard(ctx, messageID, cardID, card)`——`cardID != ""` 走 PUT 实体，`cardID == ""` 走 legacy im PATCH。`IsCardGone` 额外识别 200740（实体不存在）/200750（14 天过期）。
+- 更新一律走 `UpdateCard(ctx, messageID, cardID, card)`——PUT 实体（`cardID` 不可为空）。`IsCardGone` 识别 200740（实体不存在）/200750（14 天过期）。
 
 ---
 

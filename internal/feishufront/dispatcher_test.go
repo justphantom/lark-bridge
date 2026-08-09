@@ -681,10 +681,11 @@ func TestSendNoticeUpdateMessageID_FinalizesLiveTurn(t *testing.T) {
 }
 
 // TestSendNoticeUpdateMessageID_CardGoneFallsBack verifies that when the
-// referenced card was withdrawn (user deleted it), the notice is delivered as
-// a fresh card instead of vanishing — a deploy result must never be lost.
+// referenced card entity is gone (expired past its 14-day TTL), the notice is
+// delivered as a fresh card instead of vanishing — a deploy result must never
+// be lost.
 func TestSendNoticeUpdateMessageID_CardGoneFallsBack(t *testing.T) {
-	sink := &fakeSink{updateErr: errors.New("feishu: code:230011, msg: The message was withdrawn.")}
+	sink := &fakeSink{updateErr: errors.New("feishu: code:200750, msg: card entity expired")}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 
 	err := d.DispatchControl(context.Background(), RoutedControl{

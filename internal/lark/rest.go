@@ -75,28 +75,6 @@ func (r *restClient) SendMessage(ctx context.Context, in *SendInput) (*SendResul
 	return &SendResult{MessageID: data.MessageID}, nil
 }
 
-// PatchMessage updates an existing message body (used to refresh a card).
-// content is the raw card JSON string.
-func (r *restClient) PatchMessage(ctx context.Context, messageID, content string) error {
-	if messageID == "" {
-		return fmt.Errorf("lark: empty message_id")
-	}
-	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
-	body := map[string]string{"content": content}
-	return r.doJSON(ctx, http.MethodPatch, path, "", body, nil)
-}
-
-// getMessageData is the data payload of GET /open-apis/im/v1/messages/{id}: a
-// single-element items array carrying the message body. For an interactive
-// card, body.content holds the stored card JSON string.
-type getMessageData struct {
-	Items []struct {
-		Body struct {
-			Content string `json:"content"`
-		} `json:"body"`
-	} `json:"items"`
-}
-
 // cardEntityData is the data payload of POST /open-apis/cardkit/v1/cards.
 type cardEntityData struct {
 	CardID string `json:"card_id"`
@@ -143,27 +121,6 @@ func (r *restClient) UpdateCardEntity(ctx context.Context, cardID, card string, 
 		"uuid":     uuid,
 	}
 	return r.doJSON(ctx, http.MethodPut, path, "", body, nil)
-}
-
-// GetMessage fetches one message's body content. For an interactive card this
-// is the stored card JSON; UpdateCardVerified parses it to confirm a PATCH
-// persisted (Feishu's click-handling window can silently revert a PATCH).
-// Requires the app token to hold the im:message:read scope — without it the
-// call fails with code 99991661 and verification degrades to a best-effort
-// single PATCH.
-func (r *restClient) GetMessage(ctx context.Context, messageID string) ([]byte, error) {
-	if messageID == "" {
-		return nil, fmt.Errorf("lark: empty message_id")
-	}
-	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
-	var data getMessageData
-	if err := r.doJSON(ctx, http.MethodGet, path, "", nil, &data); err != nil {
-		return nil, err
-	}
-	if len(data.Items) == 0 {
-		return nil, fmt.Errorf("lark: get message returned no items")
-	}
-	return []byte(data.Items[0].Body.Content), nil
 }
 
 // encodeSendContent picks msg_type and builds the inner-JSON content string

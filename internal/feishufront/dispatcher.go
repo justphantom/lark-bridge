@@ -53,17 +53,10 @@ type CardSink interface {
 	// empty and later updates address the card by MessageID; in cardkit mode
 	// CardID carries the entity id the caller must hand back to UpdateCard.
 	SendCard(ctx context.Context, chatID string, card []byte, replyToID string) (feishu.CardRef, error)
-	// UpdateCard patches the card. cardID != "" targets the CardKit entity
-	// (PUT with per-card sequence); cardID == "" keeps the legacy im PATCH by
-	// messageID. Callers in cardkit mode always carry CardID from the CardRef;
-	// legacy-mode callers pass "".
+	// UpdateCard updates the card body. cardID != "" targets the CardKit
+	// entity (PUT with per-card sequence); cardID == "" is unused after the
+	// CardKit migration but retained on the interface.
 	UpdateCard(ctx context.Context, messageID, cardID string, card []byte) error
-	// UpdateCardVerified PATCHes the card then read-back confirms the header
-	// template persisted, re-PATCHing if Feishu silently reverted it. Used only
-	// by the three terminal/submitted delayed-PATCH sites where the click-
-	// handling window can roll a PATCH back; streaming progress keeps plain
-	// UpdateCard (no click window there).
-	UpdateCardVerified(ctx context.Context, messageID, cardID string, card []byte) error
 	SendText(ctx context.Context, chatID, text, replyToID string) (string, error)
 }
 
@@ -122,14 +115,6 @@ type Dispatcher struct {
 	// a returning user sees why the backend stopped waiting. Cancelled when the
 	// user submits (DispatchCardAction). Guarded by cardMu alongside cards.
 	interactiveTimers map[string]*time.Timer
-	// pendingSubmits caches the submitted ("✓ 已回答") card bytes of a
-	// multi-round picker click whose immediate flip was skipped (skipSubmitFlip)
-	// because a delayed in-place refresh PATCH is still pending. sendInteractive
-	// flushes the entry when the next round's question control arrives for the
-	// same card, so the user still sees a submitted echo before the refresh
-	// lands; skipSubmitFlip's background timer garbage-collects any entry the
-	// next round never claims. Keyed by card messageID; guarded by cardMu.
-	pendingSubmits map[string][]byte
 	// pickerCards / pickerTimers mirror the interactive-card TTL machinery but
 	// for frontend-owned /backend picker cards (which carry no requestID). A
 	// picker left unclicked for cardkit.InteractiveTimeout is flipped to a grey
@@ -137,22 +122,9 @@ type Dispatcher struct {
 	pickerCards  map[string][]byte
 	pickerTimers map[string]*time.Timer
 	// pickerCardIDs tracks the CardKit entity id (cardID) behind each /backend
-	// picker messageID, so the delayed outcome PATCH can target the entity in
-	// cardkit mode. Same lifecycle/lock as pickerCards. Legacy mode leaves it
-	// empty (the update falls back to the im PATCH by messageID).
+	// picker messageID, so the outcome PUT can target the entity. Same
+	// lifecycle/lock as pickerCards.
 	pickerCardIDs map[string]string
-	// terminalCards records picker messageIDs that already received their
-	// terminal outcome PATCH (reflectFileOutcome's "已发送"/"发送失败"), with the
-	// completion time. The /send flow emits an "已选择 X" question control
-	// (UpdateMessageID) immediately before the TypeFile outcome; that control's
-	// PATCH is delayed by cardPatchDelay while the outcome PATCH is immediate,
-	// so without a guard the delayed "已选择" PATCH lands AFTER the green
-	// outcome and overwrites it — the bounce-back. The delayed refresh goroutine
-	// in sendInteractiveCard checks this set and abandons its PATCH when the
-	// card is already terminal. Entries expire after terminalCardTTL so a
-	// long-lived dispatcher does not accumulate stale messageIDs. Guarded by
-	// cardMu.
-	terminalCards map[string]time.Time
 
 	// flapMu guards flap, the per-backend debounce state for online/offline
 	// notices. A flapping backend (rapid disconnect/reconnect) would otherwise
@@ -166,12 +138,6 @@ type Dispatcher struct {
 	// notice is sent. Defaults to the package const; overridable for tests.
 	offlineNoticeDebounce time.Duration
 
-	// cardPatchDelay is how long handleBackendChoice waits after a click
-	// before PATCHing the picker card (Feishu's click-handling window
-	// reverts an immediate PATCH). Defaults to cardPatchDelayDefault;
-	// overridable via SetCardPatchDelay from config.
-	cardPatchDelay time.Duration
-
 	// maxThinkingRunes caps the progress card's "思考中" zone. 0 lets the
 	// renderer use its built-in default. Wired from
 	// config.Renderer.MaxThinkingRunes via SetMaxThinkingRunes.
@@ -183,7 +149,7 @@ type Dispatcher struct {
 	// tick; the dispatcher PATCHes the existing card, or SendCards a new one
 	// when none is cached or the prior one was withdrawn (feishu.IsCardGone).
 	// statusCardIDs mirrors statusCards with the CardKit entity id (cardID) the
-	// same card was sent under; empty in legacy mode. UpdateCard consumes both.
+	// same card was sent under. UpdateCard consumes both.
 	statusMu      sync.Mutex
 	statusCards   map[string]string
 	statusCardIDs map[string]string
@@ -285,16 +251,13 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		terminals:             newDedupSet(terminalDedupTTL, 0),
 		cards:                 make(map[string][]byte),
 		interactiveTimers:     make(map[string]*time.Timer),
-		pendingSubmits:        make(map[string][]byte),
 		pickerCards:           make(map[string][]byte),
 		pickerTimers:          make(map[string]*time.Timer),
 		pickerCardIDs:         make(map[string]string),
-		terminalCards:         make(map[string]time.Time),
 		flap:                  make(map[string]*flapState),
 		statusCards:           make(map[string]string),
 		statusCardIDs:         make(map[string]string),
 		offlineNoticeDebounce: offlineNoticeDebounce,
-		cardPatchDelay:        cardPatchDelayDefault,
 	}
 	d.logger.Store(log.Nop())
 	return d
@@ -308,64 +271,9 @@ func (d *Dispatcher) SetLogger(l *log.Logger) {
 	}
 }
 
-// SetCardPatchDelay overrides the post-click PATCH delay used by
-// handleBackendChoice. Called by main.go from config
-// (timeouts.card_patch_delay); non-positive values keep the default.
-func (d *Dispatcher) SetCardPatchDelay(delay time.Duration) {
-	if delay > 0 {
-		d.cardPatchDelay = delay
-	}
-}
 
-// terminalCardTTL bounds how long a msgID stays in terminalCards. It must
-// outlive the longest cardPatchDelay a stale UpdateMessageID PATCH can sleep
-// (default 5s) plus margin; InteractiveTimeout is reused so the entry lives at
-// least as long as the card it guards could still receive a refresh PATCH.
-const terminalCardTTL = cardkit.InteractiveTimeout
-
-// markCardTerminal records that messageID's card has reached its terminal
-// frame (e.g. the green "已发送" outcome), so any delayed in-place picker
-// PATCH still sleeping out the click window must NOT overwrite it. This is the
-// fix for the bounce-back: emitSelectedCard's "已选择 X" PATCH is delayed past
-// Feishu's click window, but emitSendFile's outcome PATCH lands immediately —
-// without this guard the delayed selected-card PATCH lands LAST and reverts the
-// green outcome to the grey "已选择" card.
-func (d *Dispatcher) markCardTerminal(messageID string) {
-	if messageID == "" {
-		return
-	}
-	d.cardMu.Lock()
-	// Opportunistically sweep expired entries so a long-running process does
-	// not accumulate msgIDs from every /send forever.
-	cutoff := time.Now().Add(-terminalCardTTL)
-	for mid, at := range d.terminalCards {
-		if at.Before(cutoff) {
-			delete(d.terminalCards, mid)
-		}
-	}
-	d.terminalCards[messageID] = time.Now()
-	d.cardMu.Unlock()
-}
-
-// isCardTerminal reports whether messageID's card reached its terminal frame
-// within terminalCardTTL — i.e. a pending delayed picker PATCH targeting it is
-// stale and must be dropped.
-func (d *Dispatcher) isCardTerminal(messageID string) bool {
-	if messageID == "" {
-		return false
-	}
-	d.cardMu.Lock()
-	at, ok := d.terminalCards[messageID]
-	if ok && time.Since(at) > terminalCardTTL {
-		delete(d.terminalCards, messageID)
-		ok = false
-	}
-	d.cardMu.Unlock()
-	return ok
-}
-
-// SetMaxThinkingRunes overrides the progress card's reasoning-zone cap.
-// Called by main.go from config (renderer.max_thinking_runes); non-positive
+// SetMaxThinkingRunes overrides the progress card's reasoning-zone cap. Called
+// by main.go from config (renderer.max_thinking_runes); non-positive
 // values keep the renderer's built-in default.
 func (d *Dispatcher) SetMaxThinkingRunes(n int) {
 	if n > 0 {

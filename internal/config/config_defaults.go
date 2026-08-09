@@ -109,9 +109,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.Timeouts.UsageSessionTTL == 0 {
 		cfg.Timeouts.UsageSessionTTL = Duration(7 * 24 * time.Hour)
 	}
-	if cfg.Timeouts.CardPatchDelay == 0 {
-		cfg.Timeouts.CardPatchDelay = Duration(5 * time.Second)
-	}
 	// StreamArchiveRedact defaults to true (P1): NDJSON archives contain
 	// prompts, file contents, and tool output that may include secrets. The
 	// field is *bool, so nil (omitted) → default ON and explicit false → OFF.

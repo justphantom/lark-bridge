@@ -12,8 +12,10 @@ func TestIsCardGone(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"withdrawn", errors.New("code:230011 msg:The message was withdrawn."), true},
-		{"invalid id", errors.New("code:99992354 msg:not a valid open_message_id"), true},
+		{"withdrawn", errors.New("code:230011 msg:The message was withdrawn."), false},
+		{"invalid id", errors.New("code:99992354 msg:not a valid open_message_id"), false},
+		{"entity not found", errors.New("code:200740 msg:entity not found"), true},
+		{"card entity expired (14-day TTL)", errors.New("code:200750 msg:card entity expired"), true},
 		{"content too large (not gone)", errors.New("code:230025 msg:content reaches limit"), false},
 		{"network error", errors.New("dial tcp: i/o timeout"), false},
 	}

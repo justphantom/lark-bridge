@@ -462,7 +462,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |
 | `component_log_levels{}` | 共用 | 分组件级别（router/feishu/bridge/dedup/deploy_monitor/miniagent/status_monitor） |
 | `state_dir` | 共用 | 持久化根目录 |
-| `timeouts{}` | 共用 | backend_health/idle_timeout/usage_session_ttl/card_patch_delay |
+| `timeouts{}` | 共用 | backend_health/idle_timeout/usage_session_ttl |
 | `dedup{}` | feishu-front | stale_window/event_ttl/event_max_entries |
 
 ### 7.3 配置特点

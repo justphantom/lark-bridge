@@ -131,15 +131,15 @@ func TestSendCard_ErrorDoesNotRefreshWatchdog(t *testing.T) {
 }
 
 // TestUpdateCard_SuccessAndPatch verifies UpdateCard delegates to
-// PatchMessage exactly once on success and marks the bot healthy.
+// UpdateCardEntity exactly once on success and marks the bot healthy.
 func TestUpdateCard_SuccessAndPatch(t *testing.T) {
 	fc := &fakeClient{}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCard(context.Background(), "om_msg", "", []byte("{}")); err != nil {
+	if err := b.UpdateCard(context.Background(), "om_msg", "card_1", []byte("{}")); err != nil {
 		t.Fatalf("UpdateCard: %v", err)
 	}
-	if got := fc.patchCalls.Load(); got != 1 {
-		t.Errorf("patch calls = %d, want 1", got)
+	if got := fc.updateCalls.Load(); got != 1 {
+		t.Errorf("update calls = %d, want 1", got)
 	}
 	if b.LastHealthy().IsZero() {
 		t.Error("expected markHealthy after successful UpdateCard")
@@ -147,54 +147,50 @@ func TestUpdateCard_SuccessAndPatch(t *testing.T) {
 }
 
 // TestUpdateCard_ContentRejectedFallsBack verifies a 230025 rejection during
-// patch triggers the minimal fallback card and returns success.
+// UpdateCardEntity triggers the minimal fallback card and returns success.
 func TestUpdateCard_ContentRejectedFallsBack(t *testing.T) {
 	fc := &fakeClient{
-		patchErr:      &lark.APIError{Code: 230025, Msg: "too large"},
-		patchErrOnNth: 1, // first patch rejected; second (fallback) succeeds
+		updateErr:      &lark.APIError{Code: 230025, Msg: "too large"},
+		updateErrOnNth: 1, // first update rejected; second (fallback) succeeds
 	}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCard(context.Background(), "om_msg", "", []byte("{}")); err != nil {
+	if err := b.UpdateCard(context.Background(), "om_msg", "card_1", []byte("{}")); err != nil {
 		t.Fatalf("UpdateCard should swallow content-rejected via fallback: %v", err)
 	}
-	// Two patches: the original (rejected) + the fallback.
-	if got := fc.patchCalls.Load(); got != 2 {
-		t.Errorf("patch calls = %d, want 2 (original + fallback)", got)
+	// Two updates: the original (rejected) + the fallback.
+	if got := fc.updateCalls.Load(); got != 2 {
+		t.Errorf("update calls = %d, want 2 (original + fallback)", got)
 	}
-	if !strings.Contains(fc.patchLast, fallbackText) {
-		t.Errorf("fallback patch body missing fallback text: %q", fc.patchLast)
+	if !strings.Contains(fc.updateLast, fallbackText) {
+		t.Errorf("fallback update body missing fallback text: %q", fc.updateLast)
 	}
 }
 
 // TestFallbackCardJSON_Valid verifies the constructed card is valid JSON and
 // carries fallbackText. Guards the json.Marshal path: if fallbackText ever
 // grows a quote or backslash, string concatenation would have broken the
-// Patch silently.
+// Update silently.
 func TestFallbackCardJSON_Valid(t *testing.T) {
 	b := fallbackCardJSON()
 	var got struct {
 		Schema string `json:"schema"`
-		Config struct {
-			UpdateMulti bool `json:"update_multi"`
-		} `json:"config"`
-		Elements []struct {
-			Tag     string `json:"tag"`
-			Content string `json:"content"`
-		} `json:"elements"`
+		Body   struct {
+			Elements []struct {
+				Tag     string `json:"tag"`
+				Content string `json:"content"`
+			} `json:"elements"`
+		} `json:"body"`
 	}
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("fallbackCardJSON produced invalid JSON: %v\n%s", err, b)
 	}
-	if got.Schema != "1.0" {
-		t.Errorf("schema = %q, want 1.0", got.Schema)
+	if got.Schema != "2.0" {
+		t.Errorf("schema = %q, want 2.0", got.Schema)
 	}
-	if !got.Config.UpdateMulti {
-		t.Errorf("update_multi = false, want true")
+	if len(got.Body.Elements) != 1 {
+		t.Fatalf("body.elements len = %d, want 1", len(got.Body.Elements))
 	}
-	if len(got.Elements) != 1 {
-		t.Fatalf("elements len = %d, want 1", len(got.Elements))
-	}
-	el := got.Elements[0]
+	el := got.Body.Elements[0]
 	if el.Tag != "markdown" {
 		t.Errorf("element tag = %q, want markdown", el.Tag)
 	}

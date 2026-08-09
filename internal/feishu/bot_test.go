@@ -24,13 +24,16 @@ func withClientFactory(c feishuClient) BotOption {
 type fakeClient struct {
 	sendResult *lark.SendResult
 	sendErr    error
-	patchErr   error
-	// patchErrOnNth, when non-nil, returns the error only on the Nth call
-	// (1-indexed); other calls use patchErr. Lets the fallback-card test
-	// simulate "first patch rejected, second succeeds".
-	patchErrOnNth    int32
-	patchCalls       atomic.Int32
-	patchLast        string
+	// updateErr / updateErrOnNth drive UpdateCardEntity: updateErrOnNth, when
+	// non-zero, returns the error only on the Nth call (1-indexed); other calls
+	// use updateErr. Lets the fallback-card test simulate "first PUT rejected,
+	// second succeeds".
+	updateErr      error
+	updateErrOnNth int32
+	updateCalls    atomic.Int32
+	updateLast     string
+	createErr      error
+	createCalls    atomic.Int32
 	startErr         error
 	started          atomic.Int32
 	stopped          atomic.Int32
@@ -39,40 +42,25 @@ type fakeClient struct {
 	downloadBody   string
 	downloadErr    error
 	downloadCalled atomic.Int32
-	// getMessageContent is the stored card content returned by GetMessage on
-	// read-back; getMessageErr short-circuits with an error. getCalls counts
-	// read-backs so the verify-loop test can assert retry behaviour.
-	getMessageContent string
-	getMessageErr     error
-	getCalls          atomic.Int32
 }
 
 func (f *fakeClient) Send(context.Context, *lark.SendInput) (*lark.SendResult, error) {
 	return f.sendResult, f.sendErr
 }
-func (f *fakeClient) PatchMessage(_ context.Context, _, content string) error {
-	n := f.patchCalls.Add(1)
-	f.patchLast = content
-	if f.patchErrOnNth != 0 && n == f.patchErrOnNth {
-		return f.patchErr
+func (f *fakeClient) CreateCardEntity(_ context.Context, _ string) (string, error) {
+	f.createCalls.Add(1)
+	return "card_entity_test", f.createErr
+}
+func (f *fakeClient) UpdateCardEntity(_ context.Context, _, content string, _ int64, _ string) error {
+	n := f.updateCalls.Add(1)
+	f.updateLast = content
+	if f.updateErrOnNth != 0 && n == f.updateErrOnNth {
+		return f.updateErr
 	}
-	if f.patchErrOnNth == 0 {
-		return f.patchErr
+	if f.updateErrOnNth == 0 {
+		return f.updateErr
 	}
 	return nil
-}
-func (f *fakeClient) CreateCardEntity(context.Context, string) (string, error) {
-	return "", nil
-}
-func (f *fakeClient) UpdateCardEntity(context.Context, string, string, int64, string) error {
-	return nil
-}
-func (f *fakeClient) GetMessage(_ context.Context, _ string) ([]byte, error) {
-	f.getCalls.Add(1)
-	if f.getMessageErr != nil {
-		return nil, f.getMessageErr
-	}
-	return []byte(f.getMessageContent), nil
 }
 func (f *fakeClient) DownloadResource(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
 	f.downloadCalled.Add(1)

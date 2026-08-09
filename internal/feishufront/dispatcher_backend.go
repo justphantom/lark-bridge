@@ -16,12 +16,6 @@ import (
 // A stalled API call cannot wedge the notify goroutine indefinitely.
 const noticeSendTimeout = 10 * time.Second
 
-// cardPatchDelayDefault is how long handleBackendChoice waits after a click
-// before PATCHing the picker card. Feishu reverts an immediate PATCH within
-// its click-handling window (~3-5s); waiting past it lets the PATCH persist.
-// Overridable via config (timeouts.card_patch_delay) and SetCardPatchDelay.
-const cardPatchDelayDefault = 5 * time.Second
-
 // offlineNoticeDebounce delays an offline notice so a flapping backend (rapid
 // disconnect/reconnect) cannot spam every bound chat with offline→online card
 // pairs. An offline event arms a timer; a reconnect before it fires cancels
@@ -372,22 +366,10 @@ func (d *Dispatcher) expirePicker(messageID string) {
 	if orig == nil {
 		return
 	}
-	// An outcome frame may have landed first (e.g. a delayed terminal
-	// PATCH raced this TTL); do not overwrite a terminal card.
-	if d.isCardTerminal(messageID) {
-		d.logger.Load().Debug("picker expiry dropped: card already terminal",
-			log.FieldMessageID, messageID)
-		return
-	}
 	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
 		defer cancel()
-		if err := d.bot.UpdateCard(ctx, messageID, cardID, expired); err == nil {
-			// Expired is a terminal frame: mark it so any delayed writer
-			// (e.g. the delayed outcome PATCH above) still sleeping out the
-			// click window cannot revive the expired card.
-			d.markCardTerminal(messageID)
-		}
+		_ = d.bot.UpdateCard(ctx, messageID, cardID, expired)
 	}
 }
 
@@ -418,13 +400,8 @@ func (d *Dispatcher) renderBackendPicker(chatID string) ([]byte, error) {
 // handleBackendChoice is the frontend-side consumer of a backend-picker click:
 // it binds the chat to the chosen backend and patches the picker card to its
 // terminal state (green success / red failure) in place, so the whole switch
-// produces only one message.
-//
-// The PATCH is delayed via a background goroutine because Feishu's card.
-// action.trigger has a ~3-5s "click-handling window" during which any
-// PatchMessage is silently reverted. Sleeping past the window lets the
-// PATCH persist. The handler itself returns immediately so the WS ACK is
-// not delayed (a delayed ACK triggers Feishu's 3-second timeout).
+// produces only one message. CardKit PUT has no click-handling window, so the
+// update lands immediately.
 func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.CardAction) error {
 	// The user clicked; the picker can no longer expire. Cancel before any
 	// return path so a late TTL flip cannot overwrite the outcome card.
@@ -444,43 +421,9 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 	if err != nil {
 		return err
 	}
-	// Delayed PATCH: the click-handling window reverts an immediate PATCH,
-	// so sleep past it before persisting the card. Background goroutine so
-	// the ACK is not delayed.
-	delay := d.cardPatchDelay
-	if delay <= 0 {
-		delay = cardPatchDelayDefault
-	}
 	msgID := action.MessageID
 	cardID := d.pickerCardID(msgID)
-	goSafe(func() {
-		time.Sleep(delay)
-		// WithoutCancel: this PATCH must outlive the click-handler request
-		// (the 3-5s sleep crosses the handler's return). A request-scoped
-		// ctx would already be canceled by the time UpdateCard runs, so we
-		// detach the cancel signal while still inheriting request values
-		// (tracing, ...) for observability. WithTimeout bounds the PATCH
-		// itself so the goroutine never hangs.
-		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
-		defer cancel()
-		// A TTL expiry or another terminal writer may have landed first while
-		// we slept out the click window; do not overwrite a terminal frame.
-		if d.isCardTerminal(msgID) {
-			d.logger.Load().Debug("delayed backend outcome dropped: card already terminal",
-				log.FieldMessageID, msgID)
-			return
-		}
-		if err := d.bot.UpdateCardVerified(patchCtx, msgID, cardID, card); err != nil {
-			d.logger.Load().Warn("delayed picker UpdateCard failed",
-				log.FieldMessageID, msgID,
-				log.FieldError, err.Error())
-			return
-		}
-		// The outcome card is the picker's terminal frame: mark it so any
-		// other delayed writer targeting this card self-abandons.
-		d.markCardTerminal(msgID)
-	})
-	return nil
+	return d.bot.UpdateCard(ctx, msgID, cardID, card)
 }
 
 // renderBackendOutcome builds the terminal-state backend picker card in one

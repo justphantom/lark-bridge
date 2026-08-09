@@ -239,33 +239,6 @@ func TestRestClient_SendMessage_Reply(t *testing.T) {
 	}
 }
 
-// TestRestClient_PatchMessage verifies PATCH hits the right path with the
-// content body.
-func TestRestClient_PatchMessage(t *testing.T) {
-	var seenPath, seenMethod, seenContent string
-	rc := newTestRestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		seenPath = r.URL.Path
-		seenMethod = r.Method
-		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		seenContent = body["content"]
-		_ = json.NewEncoder(w).Encode(imResponse{Code: 0, Msg: "ok"})
-	})
-
-	if err := rc.PatchMessage(context.Background(), "om_target", `{"schema":"2.0"}`); err != nil {
-		t.Fatalf("PatchMessage: %v", err)
-	}
-	if seenPath != "/open-apis/im/v1/messages/om_target" {
-		t.Errorf("path = %q", seenPath)
-	}
-	if seenMethod != http.MethodPatch {
-		t.Errorf("method = %q", seenMethod)
-	}
-	if seenContent != `{"schema":"2.0"}` {
-		t.Errorf("content = %q", seenContent)
-	}
-}
-
 // TestRestClient_BusinessErrorIsAPIError verifies a non-zero code is returned
 // as *APIError carrying the code, matching the existing substring-based
 // classification (e.g. "code:230025" → content-too-large).
@@ -273,7 +246,7 @@ func TestRestClient_BusinessErrorIsAPIError(t *testing.T) {
 	rc := newTestRestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(imResponse{Code: 230025, Msg: "content too large"})
 	})
-	err := rc.PatchMessage(context.Background(), "om_x", "{}")
+	_, err := rc.CreateCardEntity(context.Background(), `{"schema":"2.0"}`)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -295,7 +268,7 @@ func TestRestClient_HTTP5xxWraps(t *testing.T) {
 	rc := newTestRestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gateway down", http.StatusBadGateway)
 	})
-	err := rc.PatchMessage(context.Background(), "om_x", "{}")
+	_, err := rc.CreateCardEntity(context.Background(), "{}")
 	if err == nil {
 		t.Fatal("expected error")
 	}

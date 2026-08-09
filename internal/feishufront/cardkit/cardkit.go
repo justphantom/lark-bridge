@@ -3,15 +3,13 @@
 // constructors; no renderer may json.Marshal a top-level card object
 // directly (R7).
 //
-// Card schema is 1.0 by default (not 2.0): root holds schema + config + header +
-// elements. elements[] carries content, an action container wrapping any
-// buttons ({"tag":"action","actions":[]}), and the footer line as the last
-// element. v1 was kept because the legacy im PATCH path had unreliable v2-card
-// persistence (see Card doc). The CardKit 实体 migration adds schema 2.0 behind
-// a process-wide switch (SetSchemaV2): v2 moves elements under body.elements,
-// rejects the v1 "action" container (buttons ride a column_set instead), and
-// is served by the CardKit card-entity APIs, where the v1 click-window revert
-// problem does not exist (PoC: docs/feishu-cardkit-migration-assessment.md).
+// Cards use CardKit schema 2.0: root holds schema + config + header +
+// body.elements. elements[] carries content, a column_set wrapping any
+// buttons (one button per column — v2 rejects the v1 "action" container),
+// and the footer line as the last element. Cards are served by the CardKit
+// card-entity APIs (create then ship by reference; update by PUT with
+// card_id + monotonic sequence), where the v1 click-window revert problem
+// does not exist (PoC: docs/feishu-cardkit-migration-assessment.md).
 // All cards share the same header/footer structure (R1–R3) so there is no
 // visual drift across event types or backends.
 package cardkit
@@ -21,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -85,70 +82,18 @@ type Element map[string]any
 // Action is one button/select action inside an actions element.
 type Action map[string]any
 
-// schema 1.0：button 必须包在
-// {"tag":"action","actions":[...]} 容器里，root 顶层用 elements（不是
-// body.elements）。退回 v1 的原因：飞书 PATCH 接口对 schemaV2 卡的持久化
-// 在某些客户端组合下不稳定——picker 点击后翻绿一瞬间又恢复旧卡（实测）。
-// schemaV2 卡不能改成 schemaV1（飞书 230099/200830），所以 SendCard 也必须
-// 用 v1 保持一致。代价：失去 v2 新特性（streaming_mode 等我们没用上）；
-// 收益：所有客户端版本一致渲染 + PATCH 链路可靠。footer 作为最后一个 element。
-//
-// schema 2.0（SetSchemaV2 之后）：root 顶层用 body.elements（不再用 elements），
-// button 不能再用 action 容器（v2 拒绝 tag:"action"），改挂 column_set 里
-// 每列一个按钮。CardKit 卡片实体 API 只接 v2，且不存在 v1 的点击窗口回退
-// 问题（PoC: docs/feishu-cardkit-migration-assessment.md），所以 cardkit
-// 引擎走 v2。布局按 schema 分派，同一份 elements/actions 输入。
+// Card builds a CardKit schema-2.0 card body. buttons ride a column_set (one
+// button per column) because v2 rejects the v1 action container. buttons are
+// split across rows (one column_set per row, up to maxActionColumns columns)
+// so a crowded permission card never overflows the per-column_set limit.
 func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action) ([]byte, error) {
 	if elements == nil {
 		elements = []Element{}
 	}
-	if schemaV2.Load() {
-		return cardV2(header, footer, elements, actions)
-	}
-	return cardV1(header, footer, elements, actions)
-}
-
-// schemaV2 is the process-wide card-JSON schema switch. false (default) keeps
-// every Card/Notice/StatusReport emitting schema 1.0 + top-level elements for
-// the legacy im PATCH path; SetSchemaV2(true) flips them to schema 2.0 +
-// body.elements + column_set buttons for the CardKit card-entity APIs. Set
-// once at startup from config before the first card render — flipping it at
-// runtime would let a progress card send as v2 then update as v1 (rejected:
-// schemaV2 卡不能改回 v1, 飞书 230099/200830).
-var schemaV2 atomic.Bool
-
-// SetSchemaV2 flips the process-wide card schema. See schemaV2.
-func SetSchemaV2(on bool) { schemaV2.Store(on) }
-
-// cardV1 is the legacy layout: schema 1.0, root elements, action container.
-func cardV1(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action) ([]byte, error) {
 	all := make([]Element, 0, len(elements)+2)
 	all = append(all, elements...)
 	if len(actions) > 0 {
-		all = append(all, Element{"tag": "action", "actions": actions})
-	}
-	all = append(all, Footer(footer))
-	if len(all) > MaxCardElements {
-		return nil, fmt.Errorf("cardkit: card has %d elements, exceeds Feishu hard limit %d", len(all), MaxCardElements)
-	}
-	card := map[string]any{
-		"schema":   "1.0",
-		"config":   map[string]any{"update_multi": true},
-		"header":   Header(header),
-		"elements": all,
-	}
-	return json.Marshal(card)
-}
-
-// cardV2 is the CardKit layout: schema 2.0, body.elements, buttons ride a
-// column_set (one button per column) because v2 rejects the v1 action
-// container. buttonColumnCount caps columns at Feishu's per-column_set limit
-// so a crowded permission card never overflows the component.
-func cardV2(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action) ([]byte, error) {
-	all := make([]Element, 0, len(elements)+2)
-	all = append(all, elements...)
-	if len(actions) > 0 {
-		all = append(all, actionColumnSet(actions))
+		all = append(all, actionColumnSets(actions)...)
 	}
 	all = append(all, Footer(footer))
 	if len(all) > MaxCardElements {
@@ -163,30 +108,37 @@ func cardV2(header HeaderInfo, footer FooterInfo, elements []Element, actions []
 	return json.Marshal(card)
 }
 
-// actionColumnSet lays buttons out horizontally in a column_set for schema
-// 2.0. Each button sits in its own column (weight 1, vertical_align top) so
-// they size evenly; more than maxActionColumns actions wrap into additional
-// rows (one column_set per row) appended via the caller's elements slice.
-func actionColumnSet(actions []Action) Element {
+// actionColumnSets lays buttons out horizontally in column_set rows. Each
+// button sits in its own column (weight 1, vertical_align top) so they size
+// evenly; more than maxActionColumns actions wrap into additional rows (one
+// column_set per row). Returns one Element per row so the caller appends them
+// all into body.elements.
+func actionColumnSets(actions []Action) []Element {
 	const maxActionColumns = 5
-	row := actions
-	if len(row) > maxActionColumns {
-		row = row[:maxActionColumns]
-	}
-	columns := make([]any, 0, len(row))
-	for _, a := range row {
-		columns = append(columns, map[string]any{
-			"tag":            "column",
-			"width":          "weighted",
-			"weight":         1,
-			"vertical_align": "top",
-			"elements":       []any{a},
+	var rows []Element
+	for len(actions) > 0 {
+		n := len(actions)
+		if n > maxActionColumns {
+			n = maxActionColumns
+		}
+		row := actions[:n]
+		actions = actions[n:]
+		columns := make([]any, 0, len(row))
+		for _, a := range row {
+			columns = append(columns, map[string]any{
+				"tag":            "column",
+				"width":          "weighted",
+				"weight":         1,
+				"vertical_align": "top",
+				"elements":       []any{a},
+			})
+		}
+		rows = append(rows, Element{
+			"tag":     "column_set",
+			"columns": columns,
 		})
 	}
-	return Element{
-		"tag":     "column_set",
-		"columns": columns,
-	}
+	return rows
 }
 
 // Header builds the top-level header object (R2): title is

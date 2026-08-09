@@ -818,226 +818,6 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	}
 }
 
-// TestSubmit_DelayedFallbackPatchResends pins the double-PATCH hardening (R3):
-// the submit path PATCHes the submitted card immediately AND re-sends the same
-// bytes past Feishu's click-handling window, so an immediate PATCH silently
-// reverted by the platform still lands the grey-out + "已提交". Asserts both
-// PATCHes target the same card and the delayed frame keeps buttons disabled.
-func TestSubmit_DelayedFallbackPatchResends(t *testing.T) {
-	const backendID = "opencode-fb2"
-	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
-	defer cleanup()
-	go func() { _, _ = client.RecvEvent() }() // drain the forwarded answer
-
-	// Shrink the click-handling window so the test does not wait 5s.
-	disp.cardPatchDelay = 10 * time.Millisecond
-
-	chatID := "oc_chat_fb2"
-	if err := router.Set(chatID, backendID); err != nil {
-		t.Fatal(err)
-	}
-	const progressMID = "om-progress-fb2"
-	disp.turns.Start("msg-fb2", chatID, progressMID, "", backendID)
-
-	permCtrl := &protocol.Control{
-		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb2",
-		Permission: &protocol.PermissionPayload{
-			RequestID: "req-fb2", PromptID: "msg-fb2",
-			Message: "执行 make test？",
-			Options: []protocol.PermissionOption{
-				{Label: "允许", Value: "allow"},
-				{Label: "拒绝", Value: "deny"},
-			},
-		},
-	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("permission emit: %v", err)
-	}
-	mid, _ := disp.turns.InteractiveMessageID("req-fb2")
-	if mid == "" {
-		t.Fatal("interactive card not bound after emit")
-	}
-
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
-		ChatID: chatID, MessageID: mid,
-		Value: map[string]any{"requestID": "req-fb2", "kind": "permission", "choice": "allow"},
-	}); err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-
-	// Wait well past the click-handling window so the delayed fallback fires.
-	waitFor(t, func() bool {
-		sink.mu.Lock()
-		defer sink.mu.Unlock()
-		return countUpdatesFor(sink.updates, mid) >= 2
-	})
-
-	sink.mu.Lock()
-	last := lastUpdateFor(sink.updates, mid)
-	sink.mu.Unlock()
-	if last == nil {
-		t.Fatal("no update recorded for the submitted card")
-	}
-	if !strings.Contains(string(last), "你选择了") {
-		t.Errorf("delayed PATCH should carry the submitted echo; got %s", last)
-	}
-	if !strings.Contains(string(last), `"disabled":true`) {
-		t.Errorf("delayed PATCH should leave buttons disabled; got %s", last)
-	}
-}
-
-// TestSubmit_DelayedFallbackSkippedAfterFinalize verifies the delayed-PATCH
-// guard: when the turn finalises before the fallback fires, the binding is
-// gone and the delayed PATCH is skipped so it cannot regress the terminal
-// green frame back to the grey submitted card.
-func TestSubmit_DelayedFallbackSkippedAfterFinalize(t *testing.T) {
-	const backendID = "opencode-fb3"
-	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
-	defer cleanup()
-	go func() { _, _ = client.RecvEvent() }()
-
-	// Finalise lands synchronously well before this window elapses.
-	disp.cardPatchDelay = 40 * time.Millisecond
-
-	chatID := "oc_chat_fb3"
-	if err := router.Set(chatID, backendID); err != nil {
-		t.Fatal(err)
-	}
-	const progressMID = "om-progress-fb3"
-	disp.turns.Start("msg-fb3", chatID, progressMID, "", backendID)
-
-	permCtrl := &protocol.Control{
-		Type: protocol.TypePermission, ChatID: chatID, PromptID: "msg-fb3",
-		Permission: &protocol.PermissionPayload{
-			RequestID: "req-fb3", PromptID: "msg-fb3",
-			Message: "执行 make test？",
-			Options: []protocol.PermissionOption{
-				{Label: "允许", Value: "allow"},
-				{Label: "拒绝", Value: "deny"},
-			},
-		},
-	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("permission emit: %v", err)
-	}
-	mid, _ := disp.turns.InteractiveMessageID("req-fb3")
-	if mid == "" {
-		t.Fatal("interactive card not bound after emit")
-	}
-
-	// Submit schedules the delayed fallback at +40ms.
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
-		ChatID: chatID, MessageID: mid,
-		Value: map[string]any{"requestID": "req-fb3", "kind": "permission", "choice": "allow"},
-	}); err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-
-	// Finalise NOW (synchronous) — before the 40ms window elapses.
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
-		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-fb3",
-		Result: &protocol.ResultPayload{Text: "done"},
-	}}); err != nil {
-		t.Fatalf("result emit: %v", err)
-	}
-
-	// Wait past the window so the delayed goroutine runs (and must skip).
-	time.Sleep(120 * time.Millisecond)
-
-	sink.mu.Lock()
-	last := lastUpdateFor(sink.updates, mid)
-	sink.mu.Unlock()
-	if last == nil || !strings.Contains(string(last), "已完成") {
-		t.Errorf("finalized card must remain terminal; delayed PATCH regressed it: %s", last)
-	}
-}
-
-// TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate verifies the delayed-PATCH
-// guard also holds when the terminal frame is a TypeNotice patching the card in
-// place (UpdateMessageID) rather than a turn Result — the path /clean's
-// EmitCardUpdate takes. Before the fix, sendNoticeControl did not release the
-// interactive binding, so the fallback re-sent the grey submitted bytes and
-// overwrote the green result card, stranding it on "你选择了" forever.
-func TestSubmit_DelayedFallbackSkippedAfterNoticeUpdate(t *testing.T) {
-	const backendID = "omp-notice"
-	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
-	defer cleanup()
-	go func() { _, _ = client.RecvEvent() }() // drain the forwarded answer
-
-	// The notice patch lands synchronously well before this window elapses.
-	disp.cardPatchDelay = 40 * time.Millisecond
-
-	chatID := "oc_chat_notice"
-	if err := router.Set(chatID, backendID); err != nil {
-		t.Fatal(err)
-	}
-
-	// A /clean permission card ships STANDALONE: the slash command
-	// returned Handled before opening a progress turn, so TakeOverProgress
-	// is unset and PromptID is empty. confirm/cancel map to the generic
-	// "确认"/"取消" echo via choiceLabel.
-	permCtrl := &protocol.Control{
-		Type: protocol.TypePermission, ChatID: chatID,
-		Permission: &protocol.PermissionPayload{
-			RequestID: "req-notice",
-			Message:   "即将删除当前目录下 2 个会话（当前绑定的会话已保留）。确认继续？",
-			Options: []protocol.PermissionOption{
-				{Label: "确认删除", Value: "confirm"},
-				{Label: "取消", Value: "cancel"},
-			},
-		},
-	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
-		t.Fatalf("permission emit: %v", err)
-	}
-	mid, _ := disp.turns.InteractiveMessageID("req-notice")
-	if mid == "" {
-		t.Fatal("interactive card not bound after emit")
-	}
-
-	// User clicks 确认删除 → submitted flip (✓ 你选择了「确认」 + 处理中) AND
-	// arms the delayed fallback PATCH at +40ms.
-	if err := disp.DispatchCardAction(context.Background(), &feishu.CardAction{
-		ChatID: chatID, MessageID: mid,
-		Value: map[string]any{"requestID": "req-notice", "kind": "permission", "choice": "confirm"},
-	}); err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-
-	// Backend resolves the answer, deletes, and patches the SAME card with a
-	// success notice — the /clean result path. This must release the
-	// interactive binding so the armed fallback PATCH skips.
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
-		Type:   protocol.TypeNotice,
-		ChatID: chatID,
-		Notice: &protocol.NoticePayload{
-			Level:           "success",
-			Title:           "清理完成",
-			Message:         "已删除 2 个会话。",
-			UpdateMessageID: mid,
-		},
-	}}); err != nil {
-		t.Fatalf("notice emit: %v", err)
-	}
-
-	// Wait past the window so the delayed goroutine runs (and must skip).
-	time.Sleep(120 * time.Millisecond)
-
-	sink.mu.Lock()
-	last := lastUpdateFor(sink.updates, mid)
-	sink.mu.Unlock()
-	if last == nil || !strings.Contains(string(last), "清理完成") {
-		t.Errorf("terminal notice must remain; delayed PATCH regressed it: %s", last)
-	}
-	if last != nil && strings.Contains(string(last), "你选择了") {
-		t.Errorf("delayed PATCH overwrote the terminal notice with submitted bytes: %s", last)
-	}
-	// Binding released after the terminal notice patch.
-	if _, ok := disp.turns.InteractiveMessageID("req-notice"); ok {
-		t.Error("binding should be released after the terminal notice patch")
-	}
-}
-
 // TestSendResult_CardRejectedFallsBackToText pins the production fix for the
 // silent "card not sent" bug: when Feishu rejects the result CARD's content
 // (ErrCode 11310 — too many tables, surfaced as feishu.ErrCardContentRejected),
@@ -1098,7 +878,6 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 func TestSendBrowserButtons_NoForm(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetCardPatchDelay(1 * time.Nanosecond)
 
 	// Round 1: directory browser question with several dir/file options.
 	q1 := &protocol.Control{
@@ -1172,12 +951,11 @@ func TestSendBrowserButtons_NoForm(t *testing.T) {
 // picker refresh path (the /send directory browser): a TypeQuestion carrying
 // UpdateMessageID PATCHes that existing card in place (no fresh SendCard),
 // re-binds the new requestID to the card, and evicts the prior round's binding
-// so the new round owns the card with no leak. The PATCH itself is delayed
-// past Feishu's click window (here cardPatchDelay≈0), so the test polls for it.
+// so the new round owns the card with no leak. Under CardKit 2.0 the PATCH is
+// synchronous (no click-window delay).
 func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetCardPatchDelay(1 * time.Nanosecond)
 
 	// Simulate round 1: a prior picker already owns om_picker under req-r1
 	// (the progress card morphed into the picker on the first AskAndWait).
@@ -1222,39 +1000,32 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 		t.Error("old round-1 card bytes should be evicted from the cache")
 	}
 
-	// The Feishu PATCH is fired by a delayed goroutine; poll for it.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		sink.mu.Lock()
-		hit := false
-		for _, u := range sink.updates {
-			if u.messageID == "om_picker" {
-				hit = true
-				break
-			}
+	// CardKit 2.0: the PATCH lands synchronously (no delayed goroutine).
+	sink.mu.Lock()
+	hit := false
+	for _, u := range sink.updates {
+		if u.messageID == "om_picker" {
+			hit = true
+			break
 		}
-		sink.mu.Unlock()
-		if hit {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("delayed UpdateCard on om_picker never fired within 2s")
+	sink.mu.Unlock()
+	if !hit {
+		t.Error("synchronous UpdateCard on om_picker did not land")
+	}
 }
 
-// TestDispatchCardAction_MultiRoundSkipsSubmitFlip pins the anti-flicker fix:
-// when a click arrives AFTER a newer round's binding was registered for the
-// same card but BEFORE the delayed refresh PATCH landed, the submitted-state
-// flip must be SKIPPED (it would be reverted by Feishu's click window →
-// bounce-back, then the refresh lands → a third state = flicker). The click
-// must still be forwarded to the backend, and the submitted bytes are stashed
-// for the flush in sendInteractive.
-func TestDispatchCardAction_MultiRoundSkipsSubmitFlip(t *testing.T) {
+// TestDispatchCardAction_MultiRoundClickFlipsLatestBinding covers the
+// multi-round picker after the CardKit-2.0 migration: a stale click (round-1
+// requestID on a card now bound to round-2) forwards the answer but cannot
+// regress the card, because the click-handling window no longer reverts PUTs.
+// There is no delayed refresh and no stashed-submit path; the click is simply
+// not a binding owner for the submitted flip (no matching messageID).
+func TestDispatchCardAction_MultiRoundClickFlipsLatestBinding(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
-	d.SetCardPatchDelay(1 * time.Hour) // refresh PATCH never lands during the test
 
-	// Round 1 card (pre-click requestID still owns the cached bytes).
+	// Round 1 card.
 	q1 := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: "oc_c",
 		Question: &protocol.QuestionPayload{
@@ -1267,7 +1038,7 @@ func TestDispatchCardAction_MultiRoundSkipsSubmitFlip(t *testing.T) {
 	}
 	mid, _ := d.turns.InteractiveMessageID("req-r1")
 
-	// Round 2 refresh registers its binding synchronously but its PATCH sleeps.
+	// Round 2 refresh re-binds the same card to req-r2 (synchronous PATCH).
 	q2 := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: "oc_c",
 		Question: &protocol.QuestionPayload{
@@ -1279,9 +1050,6 @@ func TestDispatchCardAction_MultiRoundSkipsSubmitFlip(t *testing.T) {
 	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
 		t.Fatalf("round2: %v", err)
 	}
-	sink.mu.Lock()
-	updatesBefore := len(sink.updates)
-	sink.mu.Unlock()
 
 	// The user clicks the OLD card (form value carries round-1's requestID).
 	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
@@ -1292,18 +1060,13 @@ func TestDispatchCardAction_MultiRoundSkipsSubmitFlip(t *testing.T) {
 		t.Fatalf("click: %v", err)
 	}
 
-	// Anti-flicker: NO immediate submitted PATCH went out.
+	// The stale requestID owns no messageID (round-2 evicted it), so no
+	// submitted-state flip is emitted for it. The answer is still forwarded.
 	sink.mu.Lock()
-	updatesAfter := len(sink.updates)
-	sink.mu.Unlock()
-	if updatesAfter != updatesBefore {
-		t.Errorf("skipped flip should emit no PATCH, got %d new updates", updatesAfter-updatesBefore)
-	}
-	// The submitted bytes are stashed for the flush path.
-	d.cardMu.Lock()
-	_, stashed := d.pendingSubmits[mid]
-	d.cardMu.Unlock()
-	if !stashed {
-		t.Error("submitted bytes should be stashed in pendingSubmits for the flush")
+	defer sink.mu.Unlock()
+	for _, u := range sink.updates {
+		if u.messageID == mid && strings.Contains(string(u.card), "已回答") {
+			t.Errorf("stale round-1 click must not flip the (round-2) card to submitted")
+		}
 	}
 }

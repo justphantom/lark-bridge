@@ -14,15 +14,41 @@ import (
 // RenderQuestion / RenderQuestionButtons in interactive.go) focused on first
 // paint, and centralise the cross-cutting card-mutation helpers
 // (prependMarkdown / rewriteFooterStatus / disableButtons) the flips share.
+//
+// Schema 2.0 layout: interactive content (inputs, buttons, the footer div)
+// lives under card["body"]["elements"], while top-of-card confirm/notice
+// lines (the ✓ echoes written by prependMarkdown) live under card["elements"].
+
+// bodyElements returns the body.elements slice for schema 2.0 cards, or the
+// top-level elements slice as a fallback.
+func bodyElements(card map[string]any) []any {
+	if body, _ := card["body"].(map[string]any); body != nil {
+		if elems, _ := body["elements"].([]any); elems != nil {
+			return elems
+		}
+	}
+	elems, _ := card["elements"].([]any)
+	return elems
+}
+
+// setBodyElements writes elems back to card["body"]["elements"] (schema 2.0) or
+// card["elements"] (fallback).
+func setBodyElements(card map[string]any, elems []any) {
+	if body, _ := card["body"].(map[string]any); body != nil {
+		body["elements"] = elems
+		return
+	}
+	card["elements"] = elems
+}
 
 // RenderInteractiveSubmitted takes an already-rendered interactive card and
 // flips every button to disabled, the primary one labelled "已提交" and the
 // rest "处理中" (R4). summary is the user's choice (e.g. "✓ 你选择了「允许」")
-// prepended to the body so the card confirms what was picked instead of going
+// prepended to the card so the card confirms what was picked instead of going
 // silently grey. The footer status word is flipped from "待确认" to "处理中"
 // so the card reads as advancing past the pending state. Buttons may sit
-// inside an action container (permission/picker) or nested inside a form
-// container (question), so the walk recurses into every "elements" list.
+// inside a column_set (permission/picker) or nested inside a form container
+// (question), so the walk recurses into every "elements" list.
 func RenderInteractiveSubmitted(originalCard []byte, summary string) ([]byte, error) {
 	var card map[string]any
 	if err := json.Unmarshal(originalCard, &card); err != nil {
@@ -63,13 +89,12 @@ func RenderInteractiveFinalized(originalCard []byte) ([]byte, error) {
 	return json.Marshal(card)
 }
 
-// firstMarkdownStartsWith reports whether the first (top-most) markdown
-// element in the card starts with prefix. Only the first markdown is
-// consulted so a stray "✓" deeper in the card cannot mask a missing top
-// confirmation. Returns false when no markdown element exists.
+// firstMarkdownStartsWith reports whether the first markdown element in
+// body.elements starts with prefix. Only the first markdown is consulted so a
+// stray "✓" deeper in the card cannot mask a missing confirmation. Returns
+// false when no markdown element exists.
 func firstMarkdownStartsWith(card map[string]any, prefix string) bool {
-	elements, _ := card["elements"].([]any)
-	for _, el := range elements {
+	for _, el := range bodyElements(card) {
 		em, ok := el.(map[string]any)
 		if !ok {
 			continue
@@ -96,24 +121,25 @@ func finalizeInteractiveCard(originalCard []byte, notice, footerStatus string) (
 	return json.Marshal(card)
 }
 
-// prependMarkdown inserts a markdown element at the top of the card elements
-// so a status line (choice echo / expiry notice) reads above the original content.
+// prependMarkdown inserts a markdown element at the top of body.elements so
+// a status line (choice echo / expiry notice) reads above the original
+// content.
 func prependMarkdown(card map[string]any, text string) {
-	elements, _ := card["elements"].([]any)
+	elements := bodyElements(card)
 	ahead := []any{map[string]any{"tag": "markdown", "content": text}}
-	card["elements"] = append(ahead, elements...)
+	setBodyElements(card, append(ahead, elements...))
 }
 
 // rewriteFooterStatus replaces the leading status word in the card's footer
-// line. The footer is the last element (a div whose text content is
-// "<status> · backendType · …"). Only a footer still showing a NON-TERMINAL
-// status (待确认 = pending, 处理中 = submitted/processing) is rewritten, so a
-// footer already advanced to a terminal status (已完成/已失效/…) cannot be
-// regressed by a later flip. Both non-terminals must be covered now that a
-// submitted card's footer reads "处理中 · …" and finalize advances it to
-// "已完成".
+// line. The footer is the last element of body.elements (a div whose text
+// content is "<status> · backendType · …"). Only a footer still showing a
+// NON-TERMINAL status (待确认 = pending, 处理中 = submitted/processing) is
+// rewritten, so a footer already advanced to a terminal status
+// (已完成/已失效/…) cannot be regressed by a later flip. Both non-terminals
+// must be covered now that a submitted card's footer reads "处理中 · …" and
+// finalize advances it to "已完成".
 func rewriteFooterStatus(card map[string]any, newStatus string) {
-	elements, _ := card["elements"].([]any)
+	elements := bodyElements(card)
 	if len(elements) == 0 {
 		return
 	}
@@ -135,15 +161,24 @@ func rewriteFooterStatus(card map[string]any, newStatus string) {
 }
 
 // disableButtons recursively walks node["elements"] AND node["actions"],
-// disabling every button it finds. Schema 1.0 cards place buttons in two
-// layouts: loose inside a form container's "elements" (dropdown+submit
-// question cards), or grouped under an action container's "actions"
-// (permission / picker / immediate-click question cards). Walking only
-// "elements" left the action-container cards' option buttons clickable after
-// submit — defeating the "翻灰禁用" guarantee — so both keys are traversed.
-// The card root itself carries elements (schema 1.0 layout).
-func disableButtons(node map[string]any) {
-	for _, key := range []string{"elements", "actions"} {
+// disabling every button it finds. Buttons sit either loose inside a form
+// container's "elements" (dropdown+submit question cards), grouped inside a
+// column_set > column (permission / picker / immediate-click question cards),
+// or under an action container's "actions" (legacy). The walk starts at the
+// card body (schema 2.0) and recurses into every container that holds its own
+// elements/actions, so every button is reached regardless of nesting.
+func disableButtons(card map[string]any) {
+	if body, _ := card["body"].(map[string]any); body != nil {
+		walkDisable(body)
+	}
+	// Also walk the top-level elements (confirm/notice lines carry no
+	// buttons, but stay defensive).
+	walkDisable(card)
+}
+
+// walkDisable recurses into node's elements/actions, disabling buttons.
+func walkDisable(node map[string]any) {
+	for _, key := range []string{"elements", "actions", "columns"} {
 		children, _ := node[key].([]any)
 		for _, el := range children {
 			elem, ok := el.(map[string]any)
@@ -161,9 +196,9 @@ func disableButtons(node map[string]any) {
 				}
 				continue
 			}
-			// Recurse into containers (form/column/action/...) that hold
-			// their own elements or actions.
-			disableButtons(elem)
+			// Recurse into containers (form/column/column_set/action/body/...)
+			// that hold their own elements or actions.
+			walkDisable(elem)
 		}
 	}
 }

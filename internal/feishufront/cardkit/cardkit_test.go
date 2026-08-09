@@ -41,16 +41,16 @@ func TestCard(t *testing.T) {
 	if _, ok := card["actions"]; ok {
 		t.Error("actions must not be a root-level key")
 	}
-	if _, ok := card["body"]; ok {
-		t.Error("body must not be present in schema 1.0")
+	if _, ok := card["body"]; !ok {
+		t.Error("body must be present in schema 2.0")
 	}
-	// config.update_multi 必须显式为 true：飞书 PATCH 接口的硬性要求，
-	// 缺失会让卡片更新被静默回滚（实测 bug：picker 点击翻绿又恢复旧卡）。
+	// config.update_multi 必须显式为 true：飞书 cardkit PUT 接口的硬性要求。
 	cfg := card["config"].(map[string]any)
 	if cfg["update_multi"] != true {
 		t.Errorf("config.update_multi = %v, want true", cfg["update_multi"])
 	}
-	elements := card["elements"].([]any)
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
 	// 1 content element + 1 footer element = 2.
 	if len(elements) != 2 {
 		t.Fatalf("elements len = %d, want 2 (content + footer)", len(elements))
@@ -66,52 +66,55 @@ func TestCardWithActions(t *testing.T) {
 	}
 	b, err := Card(hdr, ftr, []Element{MarkdownElement("m")}, acts)
 	card := jsonOf(t, b, err)
-	elements := card["elements"].([]any)
-	// markdown + 1 action container + footer = 3 (buttons are inside action container).
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
+	// schema 2.0：markdown + 1 column_set (button row) + footer = 3.
 	if len(elements) != 3 {
-		t.Fatalf("elements len = %d, want 3 (markdown + action + footer)", len(elements))
+		t.Fatalf("elements len = %d, want 3 (markdown + column_set + footer)", len(elements))
 	}
-	// schema 1.0：buttons must be wrapped in {"tag":"action","actions":[...]}.
+	// schema 2.0：buttons ride a column_set > column > button layout.
 	var buttons []map[string]any
 	for _, el := range elements {
 		elem, ok := el.(map[string]any)
 		if !ok {
 			continue
 		}
-		if tag, _ := elem["tag"].(string); tag == "action" {
-			acts, _ := elem["actions"].([]any)
-			for _, a := range acts {
-				if btn, ok := a.(map[string]any); ok {
-					buttons = append(buttons, btn)
+		if tag, _ := elem["tag"].(string); tag == "column_set" {
+			cols, _ := elem["columns"].([]any)
+			for _, c := range cols {
+				col, _ := c.(map[string]any)
+				ce, _ := col["elements"].([]any)
+				for _, e := range ce {
+					if btn, ok := e.(map[string]any); ok {
+						buttons = append(buttons, btn)
+					}
 				}
 			}
 		}
 	}
 	if len(buttons) != 2 {
-		t.Errorf("buttons len = %d, want 2 (inside action container)", len(buttons))
+		t.Errorf("buttons len = %d, want 2 (inside column_set)", len(buttons))
 	}
 }
 
-// TestV1FormSubmitButtonHasNoBehaviors pins the /send picker regression
-// (docs/send-picker-behaviors-regression.md): schema 1.0 strictly validates
-// button fields, so a `behaviors` key on a form's submit button makes the
-// server stop recognising it as the form's submit control → 230099 "no submit
-// button in the form container". v1 buttons must omit behaviors entirely.
-func TestV1FormSubmitButtonHasNoBehaviors(t *testing.T) {
-	schemaV2.Store(false)
+// TestFormSubmitButtonHasBehaviors pins the CardKit (schema 2.0) form
+// requirement: a submit button must declare an explicit behaviors entry so
+// Feishu routes the form values back as action.form_value. Without it the
+// server rejects the card.
+func TestFormSubmitButtonHasBehaviors(t *testing.T) {
 	submit := SubmitButtonAction("提交", map[string]any{"requestID": "r"}, true)
 	form := FormElement("f", []Element{Element(submit)})
 	b, err := Card(HeaderInfo{Title: "t"}, FooterInfo{}, []Element{form}, nil)
 	card := jsonOf(t, b, err)
-	if _, has := card["elements"]; !has {
-		t.Fatal("v1 card must use top-level elements")
+	body := card["body"].(map[string]any)
+	if _, has := body["elements"]; !has {
+		t.Fatal("v2 card must use body.elements")
 	}
 	raw := string(b)
-	if strings.Contains(raw, "behaviors") {
-		t.Fatalf("v1 card must not contain behaviors: %s", raw)
+	if !strings.Contains(raw, "behaviors") {
+		t.Fatalf("v2 submit button must contain behaviors: %s", raw)
 	}
-	// structural: the form still ends with a form_submit button.
-	elems := card["elements"].([]any)
+	elems := body["elements"].([]any)
 	f := elems[0].(map[string]any)
 	fe := f["elements"].([]any)
 	last := fe[len(fe)-1].(map[string]any)
@@ -252,7 +255,8 @@ func TestNoticeWithChangeTruncatesCombined(t *testing.T) {
 		t.Fatalf("Notice: %v", err)
 	}
 	card := jsonOf(t, b, nil)
-	elements := card["elements"].([]any)
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
 	content := elements[0].(map[string]any)["content"].(string)
 	if len([]rune(content)) > MaxBodyRunes+1 {
 		t.Errorf("content runes = %d, want ≤ %d", len([]rune(content)), MaxBodyRunes+1)

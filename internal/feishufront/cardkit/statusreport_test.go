@@ -25,10 +25,14 @@ func TestStatusReport_RenderAndGroups(t *testing.T) {
 	if err := json.Unmarshal(card, &m); err != nil {
 		t.Fatalf("invalid card json: %v", err)
 	}
-	if m["schema"] != "1.0" {
-		t.Errorf("schema = %v, want 1.0", m["schema"])
+	if m["schema"] != "2.0" {
+		t.Errorf("schema = %v, want 2.0", m["schema"])
 	}
-	elems, _ := m["elements"].([]any)
+	body, _ := m["body"].(map[string]any)
+	if body == nil {
+		t.Fatal("schema 2.0 card must carry body")
+	}
+	elems, _ := body["elements"].([]any)
 	if len(elems) < 2 {
 		t.Fatalf("want ≥2 elements (body+footer), got %d", len(elems))
 	}
@@ -58,7 +62,8 @@ func TestStatusReport_IdleNoTurns(t *testing.T) {
 	}
 	var m map[string]any
 	json.Unmarshal(card, &m)
-	elems, _ := m["elements"].([]any)
+	body, _ := m["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
 	md, _ := elems[0].(map[string]any)["content"].(string)
 	if !strings.Contains(md, "当前没有运行中的会话") {
 		t.Errorf("idle body missing; body=%q", md)
@@ -82,7 +87,8 @@ func TestStatusReport_TruncatesHeavyBackend(t *testing.T) {
 	}
 	var m map[string]any
 	json.Unmarshal(card, &m)
-	elems, _ := m["elements"].([]any)
+	body, _ := m["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
 	md, _ := elems[0].(map[string]any)["content"].(string)
 	if !strings.Contains(md, "…另 3 条") {
 		t.Errorf("tail collapse missing; body=%q", md)
@@ -103,7 +109,8 @@ func cardBody(t *testing.T, card []byte) (md string, m map[string]any) {
 	if err := json.Unmarshal(card, &m); err != nil {
 		t.Fatalf("invalid card json: %v", err)
 	}
-	elems, _ := m["elements"].([]any)
+	body, _ := m["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
 	if len(elems) == 0 {
 		t.Fatalf("no elements")
 	}

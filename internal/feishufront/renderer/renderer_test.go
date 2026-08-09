@@ -34,7 +34,8 @@ func parse(t *testing.T, b []byte, err error) map[string]any {
 // real newline runes (JSON marshalling would otherwise escape them as "\n").
 func firstMarkdownContent(t *testing.T, card map[string]any) string {
 	t.Helper()
-	elements, _ := card["elements"].([]any)
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
 	for _, el := range elements {
 		em, ok := el.(map[string]any)
 		if !ok {
@@ -65,33 +66,34 @@ func mustMarshal(t *testing.T, v any) []byte {
 func actionButtons(t *testing.T, card map[string]any) []any {
 	t.Helper()
 	var buttons []any
-	collectButtons(card, &buttons)
+	// Under schema 2.0 the card body holds the elements; fall back to the
+	// root for any still-flat layout.
+	root := card
+	if body, _ := card["body"].(map[string]any); body != nil {
+		root = body
+	}
+	collectButtons(root, &buttons)
 	return buttons
 }
 
-// collectButtons recursively walks node["elements"] collecting buttons,
-// recursing into containers (action/form/column/...) that hold their own
-// elements or actions.
+// collectButtons recursively walks node["elements"] and node["columns"]
+// collecting buttons, recursing into containers (form/column/column_set/...)
+// that hold their own sub-trees. Under schema 2.0 the button list lives under
+// body.elements (column_set for plain buttons, form for submit forms).
 func collectButtons(node map[string]any, out *[]any) {
-	// action container carries buttons in "actions" (schema 1.0 layout).
-	if acts, _ := node["actions"].([]any); acts != nil {
-		for _, a := range acts {
-			if btn, ok := a.(map[string]any); ok && btn["tag"] == "button" {
-				*out = append(*out, btn)
+	for _, key := range []string{"elements", "columns"} {
+		children, _ := node[key].([]any)
+		for _, el := range children {
+			elem, ok := el.(map[string]any)
+			if !ok {
+				continue
 			}
+			if tag, _ := elem["tag"].(string); tag == "button" {
+				*out = append(*out, elem)
+				continue
+			}
+			collectButtons(elem, out)
 		}
-	}
-	elements, _ := node["elements"].([]any)
-	for _, el := range elements {
-		elem, ok := el.(map[string]any)
-		if !ok {
-			continue
-		}
-		if tag, _ := elem["tag"].(string); tag == "button" {
-			*out = append(*out, elem)
-			continue
-		}
-		collectButtons(elem, out)
 	}
 }
 
@@ -102,7 +104,8 @@ func TestProgressRender(t *testing.T) {
 	s.AddProgress()
 	b, err := s.Render(hdr(), ftr())
 	card := parse(t, b, err)
-	elements := card["elements"].([]any)
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
 	all := string(mustMarshal(t, elements))
 	// "Bash" (name) and "ls" (desc) show; the completed tool's output
 	// "file.txt" does NOT — the progress card shows actions, not output.
@@ -132,8 +135,9 @@ func TestResultRender(t *testing.T) {
 	if !strings.Contains(title["content"].(string), "已完成") {
 		t.Errorf("title = %v, want 已完成", title["content"])
 	}
-	body := card["elements"].([]any)
-	md := string(mustMarshal(t, body))
+	body := card["body"].(map[string]any)
+	elems := body["elements"].([]any)
+	md := string(mustMarshal(t, elems))
 	if !strings.Contains(md, "done") || !strings.Contains(md, "42 tokens") {
 		t.Errorf("result body missing text/stats: %s", md)
 	}
@@ -179,7 +183,8 @@ func TestQuestionRender(t *testing.T) {
 	ctrl := &protocol.Control{Question: &protocol.QuestionPayload{RequestID: "r2", Questions: []protocol.QuestionItem{{Label: "pick", Options: []string{"a", "b"}, Multiple: true, Custom: true}}}}
 	b, err := RenderQuestion(ctrl, hdr(), ftr())
 	card := parse(t, b, err)
-	elements := card["elements"].([]any)
+	body := card["body"].(map[string]any)
+	elements := body["elements"].([]any)
 	all := string(mustMarshal(t, elements))
 	if !strings.Contains(all, "multi_select_static") {
 		t.Errorf("question missing multi-select: %s", all)
