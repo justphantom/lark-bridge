@@ -20,7 +20,7 @@ func TestParseCommand(t *testing.T) {
 	}{
 		{"/model claude-sonnet-4-5", "/model", []string{"claude-sonnet-4-5"}},
 		{"/effort max", "/effort", []string{"max"}},
-		{"/perm plan", "/perm", []string{"plan"}},
+		{"/mode plan", "/mode", []string{"plan"}},
 		{"/cd /home/user/repo", "/cd", []string{"/home/user/repo"}},
 		{"/help", "/help", []string{}},
 		{"hello world", "", nil},
@@ -180,23 +180,23 @@ func TestCmdSettings_RejectsCustomPath(t *testing.T) {
 	}
 }
 
-// TestCmdPermission_RejectsDefault verifies /perm rejects "default".
-func TestCmdPermission_RejectsDefault(t *testing.T) {
+// TestCmdMode_RejectsDefault verifies /mode rejects "default".
+func TestCmdMode_RejectsDefault(t *testing.T) {
 	h, _ := newCmdTestHandler(t)
-	_, err := h.cmdPermission(context.Background(), "chat-1", []string{"default"})
+	_, err := h.cmdMode(context.Background(), "chat-1", []string{"default"})
 	if err == nil {
 		t.Fatal("expected error for default permission mode, got nil")
 	}
 }
 
-// TestCmdPermission_Pins verifies /perm with a valid mode pins it on the
+// TestCmdMode_Pins verifies /mode with a valid mode pins it on the
 // binding and returns a structured change result (field/before/after) so the
 // notice card can render the before→after block.
-func TestCmdPermission_Pins(t *testing.T) {
+func TestCmdMode_Pins(t *testing.T) {
 	h, r := newCmdTestHandler(t)
-	res, err := h.cmdPermission(context.Background(), "chat-1", []string{"plan"})
+	res, err := h.cmdMode(context.Background(), "chat-1", []string{"plan"})
 	if err != nil {
-		t.Fatalf("cmdPermission: %v", err)
+		t.Fatalf("cmdMode: %v", err)
 	}
 	b, _ := r.Lookup("chat-1")
 	if b.PermissionMode != "plan" {

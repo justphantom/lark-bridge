@@ -36,7 +36,7 @@ lark-claude-back -version
 | `append_system_prompt` | string | `"你的回答应该简洁，通常不超过1000字"` | 每轮追加 system prompt |
 | `stream_history` | int | 50 | 保留的原始流归档数 |
 | `model_options` | []string | `["haiku","sonnet","opus"]` | `/model` 选择器选项 |
-| `permission_options` | []string | `["acceptEdits","plan","bypassPermissions"]` | `/perm` 选择器选项 |
+| `permission_options` | []string | `["acceptEdits","plan","bypassPermissions"]` | `/mode` 选择器选项 |
 | `effort_options` | []string | `["low","medium","high","xhigh","max"]` | `/effort` 选择器选项 |
 | `settings_dir` | string | `"~/.claude"` | `/config` 扫描目录 |
 | `settings_cache_ttl` | int | 3600 | settings 列表缓存秒数 |
@@ -190,7 +190,7 @@ claude-back 支持以下斜杠命令：
 | `/model [model\|clear]` | 设置模型 |
 | `/cd [dir\|clear]` | 切换工作目录 |
 | `/config [clear]` | 设置 `--settings` 文件 |
-| `/perm [mode\|clear]` | 设置权限模式 |
+| `/mode [mode\|clear]` | 设置权限模式 |
 | `/effort [level\|clear]` | 设置推理级别 |
 | `/pull` / `/push` | 在当前目录执行 git 操作 |
 | `/send [relative-path]` | 发送工作目录文件到群 |
@@ -198,7 +198,7 @@ claude-back 支持以下斜杠命令：
 
 ### 8.1 交互卡片机制
 
-- `/model`、`/cd`、`/config`、`/perm`、`/effort` 无参数时发送 `Question`/`Permission` 卡片，通过 `AnswerBroker` 阻塞等待用户选择。
+- `/model`、`/cd`、`/config`、`/mode`、`/effort` 无参数时发送 `Question`/`Permission` 卡片，通过 `AnswerBroker` 阻塞等待用户选择。
 - 选择器使用 `TakeOverProgress` 把原命令的进度卡片变形为选择卡片，保持单卡片交互。
 - 等待超时约 9 分钟。
 - `/pull`、`/push`、`/send` 每 chat 单飞，git 命令超时 5 分钟，输出保留最后 500 rune。

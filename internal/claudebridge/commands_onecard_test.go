@@ -20,7 +20,7 @@ import (
 // newOneCardHandler wires a Handler whose emit goes through the real IPC
 // client, so tests can assert the promptID/UpdateMessageID wiring of the
 // picker flow against what the frontend would actually see. agent may be nil
-// for the config-driven pickers (/model, /effort, /perm).
+// for the config-driven pickers (/model, /effort, /mode).
 func newOneCardHandler(t *testing.T, agent claudeAPI, opts HandlerConfig) (*Handler, *router.Router, *feishufront.BackendRegistry) {
 	t.Helper()
 	client, reg, cleanup := connectTestRPC(t)

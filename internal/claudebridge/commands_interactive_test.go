@@ -189,13 +189,13 @@ func TestCmdEffort_Clear(t *testing.T) {
 	}
 }
 
-// TestCmdPerm_Picker_Success is the permission analogue.
-func TestCmdPerm_Picker_Success(t *testing.T) {
+// TestCmdMode_Picker_Success is the permission analogue.
+func TestCmdMode_Picker_Success(t *testing.T) {
 	h, r := defaultPickerHandler(t)
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.cmdPermission(context.Background(), "chat-1", nil)
+		_, err := h.cmdMode(context.Background(), "chat-1", nil)
 		done <- err
 	}()
 
@@ -205,10 +205,10 @@ func TestCmdPerm_Picker_Success(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("cmdPermission: %v", err)
+			t.Fatalf("cmdMode: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("cmdPermission did not return")
+		t.Fatal("cmdMode did not return")
 	}
 
 	b, _ := r.Lookup("chat-1")
@@ -217,14 +217,14 @@ func TestCmdPerm_Picker_Success(t *testing.T) {
 	}
 }
 
-// TestCmdPerm_Clear verifies /perm clear falls back to the default.
-func TestCmdPerm_Clear(t *testing.T) {
+// TestCmdMode_Clear verifies /mode clear falls back to the default.
+func TestCmdMode_Clear(t *testing.T) {
 	h, r := defaultPickerHandler(t)
-	if _, err := h.cmdPermission(context.Background(), "chat-1", []string{"plan"}); err != nil {
-		t.Fatalf("cmdPermission set: %v", err)
+	if _, err := h.cmdMode(context.Background(), "chat-1", []string{"plan"}); err != nil {
+		t.Fatalf("cmdMode set: %v", err)
 	}
-	if _, err := h.cmdPermission(context.Background(), "chat-1", []string{"clear"}); err != nil {
-		t.Fatalf("cmdPermission clear: %v", err)
+	if _, err := h.cmdMode(context.Background(), "chat-1", []string{"clear"}); err != nil {
+		t.Fatalf("cmdMode clear: %v", err)
 	}
 	b, _ := r.Lookup("chat-1")
 	if b.PermissionMode != "" {

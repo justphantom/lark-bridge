@@ -14,7 +14,7 @@ func TestParseCommand(t *testing.T) {
 	}{
 		{"/model claude-sonnet-4-5", "/model", []string{"claude-sonnet-4-5"}},
 		{"/effort max", "/effort", []string{"max"}},
-		{"/perm plan", "/perm", []string{"plan"}},
+		{"/mode plan", "/mode", []string{"plan"}},
 		{"/cd /home/user/repo", "/cd", []string{"/home/user/repo"}},
 		{"/help", "/help", []string{}},
 		{"hello world", "", nil},

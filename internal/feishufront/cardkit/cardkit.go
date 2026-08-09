@@ -260,7 +260,7 @@ func FormatElapsed(d time.Duration) string {
 // only the level (→ template + title colour) differs. body is the markdown
 // message. field/before/after, when field is non-empty, render a before→after
 // change block above the body so a setting-change command confirms what moved
-// (e.g. "/perm plan" shows "~default~ → **plan**") instead of only the new
+// (e.g. "/mode plan" shows "~default~ → **plan**") instead of only the new
 // value. before empty (first-time set) collapses to just the new value.
 func Notice(footer FooterInfo, level, title, body, field, before, after string) ([]byte, error) {
 	info := HeaderInfo{

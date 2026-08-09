@@ -12,7 +12,7 @@ import (
 )
 
 // settablePermissionModes is the subset of CLI --permission-mode values
-// the /perm command accepts. "default" is intentionally excluded: it
+// the /mode command accepts. "default" is intentionally excluded: it
 // prompts interactively and would deadlock the non-interactive -p
 // subprocess until prompt_timeout. Built from the claude package's
 // canonical constants so the string values stay single-sourced.
@@ -27,27 +27,27 @@ func isSettablePermissionMode(m string) bool {
 	return ok
 }
 
-// cmdPermission pins, clears, or interactively selects the per-chat Claude
+// cmdMode pins, clears, or interactively selects the per-chat Claude
 // permission mode. Forms:
-//   - /perm             → pop a selection card (options from config; no custom
+//   - /mode             → pop a selection card (options from config; no custom
 //     input — selection is restricted to listed values)
-//   - /perm clear       → clear the pin (fall back to the configured default)
-//   - /perm <mode>      → pin <mode> directly (must be a valid mode)
+//   - /mode clear       → clear the pin (fall back to the configured default)
+//   - /mode <mode>      → pin <mode> directly (must be a valid mode)
 //
 // No session reset is needed: permission mode is orthogonal to conversation
 // context. "default" is rejected on the direct-pin path — it would hang the
 // non-interactive stream subprocess.
-func (h *Handler) cmdPermission(ctx context.Context, chatID string, args []string) (commandResult, error) {
+func (h *Handler) cmdMode(ctx context.Context, chatID string, args []string) (commandResult, error) {
 	b, err := h.ensureBinding(chatID, "", "", "", "")
 	if err != nil {
 		return commandResult{Body: err.Error()}, err
 	}
 
 	if len(args) == 0 {
-		return h.runPermPicker(chatID, b.PermissionMode, bridgebase.ReplyToID(ctx)), nil
+		return h.runModePicker(chatID, b.PermissionMode, bridgebase.ReplyToID(ctx)), nil
 	}
 	if args[0] == "clear" {
-		return clearPermissionMode(h, chatID, b.PermissionMode), nil
+		return clearMode(h, chatID, b.PermissionMode), nil
 	}
 
 	mode := strings.Join(args, " ")
@@ -64,9 +64,9 @@ func (h *Handler) cmdPermission(ctx context.Context, chatID string, args []strin
 	return cmdutil.ChangeResult("权限模式", old, mode, "下次提问生效。"), nil
 }
 
-// runPermPicker is the permission analogue of runModelPicker. allowCustom=false
+// runModePicker is the permission analogue of runModelPicker. allowCustom=false
 // so the picker restricts selection to the configured permission options.
-func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult {
+func (h *Handler) runModePicker(chatID, oldMode, replyToID string) commandResult {
 	opts := make([]protocol.PermissionOption, len(h.permissionOptions))
 	for i, o := range h.permissionOptions {
 		opts[i] = protocol.PermissionOption{Label: o, Value: o}
@@ -87,8 +87,8 @@ func (h *Handler) runPermPicker(chatID, oldMode, replyToID string) commandResult
 	return commandResult{Handled: true}
 }
 
-// clearPermissionMode is the /perm clear path.
-func clearPermissionMode(h *Handler, chatID, oldMode string) commandResult {
+// clearMode is the /mode clear path.
+func clearMode(h *Handler, chatID, oldMode string) commandResult {
 	old := oldMode
 	if old == "" {
 		old = "默认 (" + h.PermissionDefault + ")"

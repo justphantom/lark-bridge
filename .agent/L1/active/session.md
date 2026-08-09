@@ -1,7 +1,7 @@
 ---
 layer: L1
 type: session
-updated: 2026-08-09T14:00:00+08:00
+updated: 2026-08-09T19:45:00+08:00
 ---
 
 # 当前会话
@@ -10,7 +10,7 @@ updated: 2026-08-09T14:00:00+08:00
 无
 
 ## 最近聚焦
-- 将 /send 回弹修复的「终态标记 + 落地前自弃」模式推广到 feishufront 全部卡片写者（已完成，含回归测试与 L2 沉淀）。
+- 统一 mode/perm 指令：claudebridge `/perm`→`/mode`；miniagent `/mode` 空参补 picker、`/thinking`→`/effort` 且空参补 picker；函数名一并重命名。编译/测试/vet 全绿。
 
 ## 未决问题
 无

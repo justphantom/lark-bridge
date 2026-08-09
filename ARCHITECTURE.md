@@ -197,7 +197,7 @@ claude-back 的业务逻辑，共享 `bridgebase` 脊梁。
 | `handler_incoming.go` | 入站预处理 |
 | `stream_loop.go` | 消费 `claude.Run` 事件流 → 转换为 protocol.Control |
 | `stream_archive.go` | 每 turn 落盘原始 stream-json（去 thinking_tokens） |
-| `commands*.go`（6 个） | 斜杠命令：`/running` `/session-*` `/current` `/model` `/cd` `/perm` `/effort` `/pull` `/push` 等 |
+| `commands*.go`（6 个） | 斜杠命令：`/running` `/session-*` `/current` `/model` `/cd` `/mode` `/effort` `/pull` `/push` 等 |
 | `todo.go` | todo 清单渲染 |
 | `deps.go` | `claudeAPI` 接口（便于测试 fake） |
 | `domain.go` | 业务领域类型 |
@@ -228,7 +228,7 @@ claude-back 的业务逻辑，共享 `bridgebase` 脊梁。
 ### 5.6 `miniagent/`（1701 行）与 `miniclient/`（677 行）
 
 - `miniclient/`：fork `miniagent` 二进制（独立项目 `github.com/justphantom/miniagent`），`Run`（client.go:88）启动子进程，信号量限并发，ctx 取消走 SIGKILL 进程组。
-- `miniagent/`：handler + 斜杠命令（`/current` `/model` `/cd` `/pull` `/push` `/running` `/abort`）+ 模型列表（GET /v1/models）。**stateless**（无 session/memory）。
+- `miniagent/`：handler + 斜杠命令（`/current` `/model` `/cd` `/pull` `/push` `/running` `/abort` `/mode` `/effort`）+ 模型列表（GET /v1/models）。**stateless**（无 session/memory）。
 
 ### 5.7 `feishu/`（1490 行）——飞书业务封装层
 

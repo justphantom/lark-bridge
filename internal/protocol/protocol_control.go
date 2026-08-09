@@ -355,7 +355,7 @@ type PermissionOption struct {
 
 // NoticePayload carries a notice control (info/success/warning/error share a template).
 // Field/Before/After are optional and only set by setting-change slash commands
-// (e.g. /perm, /model): when present the frontend renders a before→after block
+// (e.g. /mode, /model): when present the frontend renders a before→after block
 // instead of the flat Message body, so a user sees what changed relative to the
 // prior value. All three are omitted by default (omitempty) so non-change
 // notices render exactly as before.

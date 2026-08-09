@@ -120,7 +120,7 @@ type Claude struct {
 	// to the CLI as --model; the picker also offers a custom-input box so a
 	// model not listed can still be typed.
 	ModelOptions []string `json:"model_options,omitempty"`
-	// PermissionOptions lists the modes offered in the interactive /perm
+	// PermissionOptions lists the modes offered in the interactive /mode
 	// picker card. nil/unset → [acceptEdits, plan, bypassPermissions]. The
 	// picker has no custom-input box: "default" is intentionally excluded by
 	// default as it hangs the non-interactive -p subprocess, but an operator

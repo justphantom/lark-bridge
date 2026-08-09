@@ -72,7 +72,7 @@ func (h *Handler) handlePromptEvent(ctx context.Context, ev *protocol.Event) err
 			Notice: &protocol.NoticePayload{
 				Level:   "error",
 				Title:   "协议违规",
-				Message: "前端不允许设置 " + field + " 字段；请通过 /cd /model /perm /effort /config 等命令调整。",
+				Message: "前端不允许设置 " + field + " 字段；请通过 /cd /model /mode /effort /config 等命令调整。",
 			},
 		})
 	}

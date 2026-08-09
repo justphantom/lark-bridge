@@ -12,7 +12,7 @@ import (
 )
 
 // newSettingsHandler builds a Handler with a persisted router so /mode and
-// /thinking can exercise the SetMode/SetThinking → mutate → saveAsync path.
+// /effort can exercise the SetMode/SetThinking → mutate → saveAsync path.
 // client is nil: clientDefaultMode/Thinking return the "default"/"off"
 // sentinels, which is what the display + clear branches need to assert.
 func newSettingsHandler(t *testing.T) (*Handler, *router.Router) {
@@ -26,21 +26,20 @@ func newSettingsHandler(t *testing.T) (*Handler, *router.Router) {
 	return h, r
 }
 
-// TestCmdMode_ShowDefault verifies /mode with no arg reports the effective
-// mode (client default "default" with no client wired).
-func TestCmdMode_ShowDefault(t *testing.T) {
+// TestCmdMode_PickerIsAsync verifies /mode with no arg returns the "async"
+// sentinel (the actual selection happens in a goroutine; the picker card is
+// driven by askAndWait). The legacy "show current value" behavior was
+// replaced by an interactive picker to align with claude-back's /mode.
+func TestCmdMode_PickerIsAsync(t *testing.T) {
 	h, _ := newSettingsHandler(t)
-	level, _, body := h.cmdMode(context.Background(), "c1", "")
-	if level != "info" {
-		t.Errorf("level = %q, want info", level)
-	}
-	if !strings.Contains(body, "default") {
-		t.Errorf("body = %q, want it to mention the default mode", body)
+	level, _, _ := h.cmdMode(context.Background(), "c1", "")
+	if level != "async" {
+		t.Errorf("level = %q, want async (interactive picker)", level)
 	}
 }
 
 // TestCmdMode_PinValid verifies /mode <valid> creates the binding, persists the
-// pin, and reports success. Subsequent /mode (no arg) shows the pinned value.
+// pin, and reports success.
 func TestCmdMode_PinValid(t *testing.T) {
 	h, r := newSettingsHandler(t)
 	for _, m := range []string{"default", "auto"} {
@@ -50,10 +49,6 @@ func TestCmdMode_PinValid(t *testing.T) {
 		b, _ := r.Lookup("c1")
 		if b.Mode != m {
 			t.Errorf("after pin mode=%s: binding.Mode = %q", m, b.Mode)
-		}
-		_, _, body := h.cmdMode(context.Background(), "c1", "")
-		if !strings.Contains(body, m) {
-			t.Errorf("mode=%s: /mode display body = %q should contain pinned value", m, body)
 		}
 	}
 }
@@ -109,24 +104,22 @@ func TestCmdMode_EnsureBindingCreatesOne(t *testing.T) {
 	}
 }
 
-// TestCmdThinking_ShowDefault verifies /thinking with no arg reports the
-// effective level (client default "off").
-func TestCmdThinking_ShowDefault(t *testing.T) {
+// TestCmdEffort_PickerIsAsync verifies /effort with no arg returns the
+// "async" sentinel (interactive picker via askAndWait). The legacy "show
+// current value" behavior was replaced by a picker to align with claude-back.
+func TestCmdEffort_PickerIsAsync(t *testing.T) {
 	h, _ := newSettingsHandler(t)
-	level, _, body := h.cmdThinking(context.Background(), "c1", "")
-	if level != "info" {
-		t.Errorf("level = %q, want info", level)
-	}
-	if !strings.Contains(body, "off") {
-		t.Errorf("body = %q, want it to mention the default level", body)
+	level, _, _ := h.cmdEffort(context.Background(), "c1", "")
+	if level != "async" {
+		t.Errorf("level = %q, want async (interactive picker)", level)
 	}
 }
 
-// TestCmdThinking_PinValid verifies /thinking <valid> pins each accepted level.
-func TestCmdThinking_PinValid(t *testing.T) {
+// TestCmdEffort_PinValid verifies /effort <valid> pins each accepted level.
+func TestCmdEffort_PinValid(t *testing.T) {
 	h, r := newSettingsHandler(t)
 	for _, lvl := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"} {
-		if level, _, _ := h.cmdThinking(context.Background(), "c1", lvl); level != "success" {
+		if level, _, _ := h.cmdEffort(context.Background(), "c1", lvl); level != "success" {
 			t.Errorf("lvl=%s: level = %q, want success", lvl, level)
 		}
 		b, _ := r.Lookup("c1")
@@ -136,28 +129,28 @@ func TestCmdThinking_PinValid(t *testing.T) {
 	}
 }
 
-// TestCmdThinking_BadValueRejected verifies an out-of-enum value is rejected
+// TestCmdEffort_BadValueRejected verifies an out-of-enum value is rejected
 // without creating a binding.
-func TestCmdThinking_BadValueRejected(t *testing.T) {
+func TestCmdEffort_BadValueRejected(t *testing.T) {
 	h, r := newSettingsHandler(t)
 	// "auto" is NOT in settableThinkingLevels (miniagent v3 has no auto).
-	level, _, _ := h.cmdThinking(context.Background(), "c1", "auto")
+	level, _, _ := h.cmdEffort(context.Background(), "c1", "auto")
 	if level != "error" {
 		t.Errorf("level = %q, want error for auto (miniagent has no auto)", level)
 	}
 	if _, ok := r.Lookup("c1"); ok {
-		t.Error("bad /thinking value must not create a binding")
+		t.Error("bad /effort value must not create a binding")
 	}
 }
 
-// TestCmdThinking_Clear verifies /thinking clear empties the pin and reports
+// TestCmdEffort_Clear verifies /effort clear empties the pin and reports
 // the global default.
-func TestCmdThinking_Clear(t *testing.T) {
+func TestCmdEffort_Clear(t *testing.T) {
 	h, r := newSettingsHandler(t)
 	r.Bind("c1", "", "", "", "", "")
 	r.SetThinking("c1", "high")
 
-	level, _, body := h.cmdThinking(context.Background(), "c1", "clear")
+	level, _, body := h.cmdEffort(context.Background(), "c1", "clear")
 	if level != "success" {
 		t.Errorf("level = %q, want success", level)
 	}

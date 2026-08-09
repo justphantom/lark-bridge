@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 )
 
@@ -13,19 +14,48 @@ var settableModes = map[string]struct{}{
 	"auto":    {},
 }
 
-// settableThinkingLevels is the set of -thinking values /thinking accepts.
+// modeOptions is the sorted list of selectable -mode values offered by the
+// /mode picker. Built once from settableModes so the map stays the single
+// source of truth for both validation and the picker card.
+var modeOptions = func() []string {
+	opts := make([]string, 0, len(settableModes))
+	for m := range settableModes {
+		opts = append(opts, m)
+	}
+	sort.Strings(opts)
+	return opts
+}()
+
+// settableThinkingLevels is the set of -thinking values /effort accepts.
 var settableThinkingLevels = map[string]struct{}{
 	"off": {}, "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
 }
 
-// cmdMode pins/clears/shows the per-chat permission mode (-mode):
+// cmdMode pins/clears/selects the per-chat permission mode (-mode):
 //
-//	/mode              → show current effective mode
+//	/mode              → interactive picker (default|auto)
 //	/mode clear        → clear pin (fall back to global default)
 //	/mode default|auto → pin for this chat
+//
+// The picker reuses the command's progress card (see cmdModel): promptID +
+// TakeOverProgress morph it into the picker, and the result patches the same
+// card via UpdateMessageID.
 func (h *Handler) cmdMode(_ context.Context, chatID, arg string) (level, title, body string) {
 	if arg == "" {
-		return "info", "当前权限模式", fmt.Sprintf("权限模式：%s\n可选：default | auto", h.activeMode(chatID))
+		// Interactive picker: askAndWait blocks for a human click; run off
+		// the turn goroutine like /model and /cd.
+		promptID := h.PromptIDForPickers(chatID)
+		go func() { //nolint:gosec // G118: picker outlives the request ctx
+			choice, messageID, err := h.askAndWait(context.Background(), chatID, promptID, "权限模式", modeOptions)
+			if err != nil {
+				h.notifyWithPromptID(chatID, promptID, "warning", "选择失败", err.Error())
+				return
+			}
+			h.ensureBinding(chatID)
+			h.router.SetMode(chatID, choice)
+			h.notifyWithCardUpdate(chatID, messageID, "success", "已切换权限模式", "已切换到 "+choice+"（下次提问生效）。")
+		}()
+		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
 	if arg == "clear" {
 		h.ensureBinding(chatID)
@@ -40,14 +70,43 @@ func (h *Handler) cmdMode(_ context.Context, chatID, arg string) (level, title, 
 	return "success", "已切换权限模式", "已切换到 " + arg + "（下次提问生效）。"
 }
 
-// cmdThinking pins/clears/shows the per-chat reasoning effort (-thinking):
+// effortOptions is the sorted list of selectable -thinking values offered by
+// the /effort picker. Built once from settableThinkingLevels so the map stays
+// the single source of truth for both validation and the picker card.
+var effortOptions = func() []string {
+	opts := make([]string, 0, len(settableThinkingLevels))
+	for l := range settableThinkingLevels {
+		opts = append(opts, l)
+	}
+	sort.Strings(opts)
+	return opts
+}()
+
+// cmdEffort pins/clears/selects the per-chat reasoning effort (-thinking):
 //
-//	/thinking        → show current effective level
-//	/thinking clear  → clear pin (fall back to global default)
-//	/thinking <lvl>  → pin (off|minimal|low|medium|high|xhigh|max)
-func (h *Handler) cmdThinking(_ context.Context, chatID, arg string) (level, title, body string) {
+//	/effort           → interactive picker (off|minimal|low|medium|high|xhigh|max)
+//	/effort clear     → clear pin (fall back to global default)
+//	/effort <lvl>     → pin for this chat
+//
+// The picker reuses the command's progress card (see cmdModel): promptID +
+// TakeOverProgress morph it into the picker, and the result patches the same
+// card via UpdateMessageID.
+func (h *Handler) cmdEffort(_ context.Context, chatID, arg string) (level, title, body string) {
 	if arg == "" {
-		return "info", "当前思考级别", fmt.Sprintf("思考级别：%s\n可选：off | minimal | low | medium | high | xhigh | max", h.activeThinking(chatID))
+		// Interactive picker: askAndWait blocks for a human click; run off
+		// the turn goroutine like /model and /cd.
+		promptID := h.PromptIDForPickers(chatID)
+		go func() { //nolint:gosec // G118: picker outlives the request ctx
+			choice, messageID, err := h.askAndWait(context.Background(), chatID, promptID, "思考级别", effortOptions)
+			if err != nil {
+				h.notifyWithPromptID(chatID, promptID, "warning", "选择失败", err.Error())
+				return
+			}
+			h.ensureBinding(chatID)
+			h.router.SetThinking(chatID, choice)
+			h.notifyWithCardUpdate(chatID, messageID, "success", "已切换思考级别", "已切换到 "+choice+"（下次提问生效）。")
+		}()
+		return "async", "", "" // sentinel: handleSessionCommand must not notify
 	}
 	if arg == "clear" {
 		h.ensureBinding(chatID)

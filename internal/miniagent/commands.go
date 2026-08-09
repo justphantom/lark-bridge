@@ -29,10 +29,10 @@ func init() {
 			Args: "[dir|clear]", Title: "已切换目录", Level: "success"}, Handler: (*Handler).cmdDirectoryBridge},
 		{Spec: cmdutil.Spec{Name: "/config", Summary: "切换配置文件；不带参数弹出选择；传 clear 清除",
 			Args: "[clear]", Title: "已切换配置文件", Level: "success"}, Handler: (*Handler).cmdConfigBridge},
-		{Spec: cmdutil.Spec{Name: "/mode", Summary: "设置权限模式；不带参数显示当前；传 clear 清除",
-			Args: "[mode|clear]", Title: "权限模式", Level: "info"}, Handler: (*Handler).cmdModeBridge},
-		{Spec: cmdutil.Spec{Name: "/thinking", Summary: "设置思考级别；不带参数显示当前；传 clear 清除",
-			Args: "[level|clear]", Title: "思考级别", Level: "info"}, Handler: (*Handler).cmdThinkingBridge},
+		{Spec: cmdutil.Spec{Name: "/mode", Summary: "设置权限模式；不带参数弹出选择；传 clear 清除",
+			Args: "[mode|clear]", Title: "已切换权限模式", Level: "success"}, Handler: (*Handler).cmdModeBridge},
+		{Spec: cmdutil.Spec{Name: "/effort", Summary: "设置思考级别；不带参数弹出选择；传 clear 清除",
+			Args: "[level|clear]", Title: "已切换思考级别", Level: "success"}, Handler: (*Handler).cmdEffortBridge},
 		{Spec: cmdutil.Spec{Name: "/maxiter", Summary: "设置每轮 LLM 调用上限；不带参数显示当前；传 clear 清除",
 			Args: "[N|clear]", Title: "迭代上限", Level: "info"}, Handler: (*Handler).cmdMaxIterBridge},
 		{Spec: cmdutil.Spec{Name: "/new", Summary: "清空当前会话历史（下次提问开始新会话）",
@@ -147,11 +147,17 @@ func (h *Handler) cmdConfigBridge(ctx context.Context, chatID string, args []str
 
 func (h *Handler) cmdModeBridge(ctx context.Context, chatID string, args []string) (cmdutil.Result, error) {
 	level, title, body := h.cmdMode(ctx, chatID, firstArg(args))
+	if level == "async" {
+		return cmdutil.Result{Handled: true}, nil
+	}
 	return cmdutil.Result{Body: body, Title: title, Level: level}, nil
 }
 
-func (h *Handler) cmdThinkingBridge(ctx context.Context, chatID string, args []string) (cmdutil.Result, error) {
-	level, title, body := h.cmdThinking(ctx, chatID, firstArg(args))
+func (h *Handler) cmdEffortBridge(ctx context.Context, chatID string, args []string) (cmdutil.Result, error) {
+	level, title, body := h.cmdEffort(ctx, chatID, firstArg(args))
+	if level == "async" {
+		return cmdutil.Result{Handled: true}, nil
+	}
 	return cmdutil.Result{Body: body, Title: title, Level: level}, nil
 }
 
