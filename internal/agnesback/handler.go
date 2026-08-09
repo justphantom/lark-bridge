@@ -241,9 +241,10 @@ func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, 
 	h.logger.Info("agnes: sending file control",
 		"chat_id", chatID,
 		"prompt_id", promptID,
+		"card_msg_id", cardMsgID,
 		"bytes", len(data),
 		"mime", mime)
-	return h.rpc.SendControl(nctx, &protocol.Control{
+	if err := h.rpc.SendControl(nctx, &protocol.Control{
 		Type:     protocol.TypeFile,
 		PromptID: promptID,
 		ChatID:   chatID,
@@ -254,7 +255,15 @@ func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, 
 			Content:         base64.StdEncoding.EncodeToString(data),
 			UpdateMessageID: cardMsgID,
 		},
-	})
+	}); err != nil {
+		h.logger.Error("agnes: failed to send image file control",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"card_msg_id", cardMsgID,
+			"error", err)
+		return err
+	}
+	return nil
 }
 
 // handleVideo creates a video task, polls it to completion, and posts the final
@@ -286,23 +295,36 @@ func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, 
 	h.logger.Info("agnes: handle video success",
 		"chat_id", chatID,
 		"prompt_id", promptID,
+		"card_msg_id", cardMsgID,
 		"url", url)
-	return h.notify(nctx, chatID, promptID, cardMsgID, "success", "视频生成完成", url)
+	if err := h.notify(nctx, chatID, promptID, cardMsgID, "success", "视频生成完成", url); err != nil {
+		h.logger.Error("agnes: failed to send video result notice",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"card_msg_id", cardMsgID,
+			"error", err)
+		return err
+	}
+	return nil
 }
 
 // --- emit helpers ---
 
 func (h *Handler) notify(ctx context.Context, chatID, promptID, cardMsgID, level, title, message string) error {
-	if chatID == "" {
-		return fmt.Errorf("notify: chatID is empty")
-	}
-	h.logger.Info("agnes: sending notice",
+	h.logger.Info("agnes: notify called",
 		"chat_id", chatID,
 		"prompt_id", promptID,
 		"card_msg_id", cardMsgID,
 		"level", level,
 		"title", title,
 		"message", truncateString(message, 100))
+	if chatID == "" {
+		return fmt.Errorf("notify: chatID is empty")
+	}
+	h.logger.Info("agnes: sending notice",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"card_msg_id", cardMsgID)
 	err := h.rpc.SendControl(ctx, &protocol.Control{
 		Type:     protocol.TypeNotice,
 		PromptID: promptID,

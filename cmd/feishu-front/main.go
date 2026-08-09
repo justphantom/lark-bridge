@@ -54,9 +54,11 @@ const (
 	//
 	// wsFatalAfter must exceed the SDK's default ping interval (2 min) so a
 	// stable connection that only refreshes health via inbound traffic is not
-	// mistaken for dead during idle periods.
+	// mistaken for dead during idle periods. Increased to 10m to tolerate
+	// transient network issues that can occur during long-running tasks like
+	// video generation (typically 1-2 minutes).
 	wsWatchdogInterval = 30 * time.Second
-	wsFatalAfter       = 5 * time.Minute
+	wsFatalAfter       = 10 * time.Minute
 )
 
 func main() {
