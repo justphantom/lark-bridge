@@ -17,11 +17,6 @@ import (
 // colour when rendered.
 const greenCard = `{"schema":"1.0","config":{"update_multi":true},"header":{"template":"green","title":{"tag":"plain_text","content":"done"}},"elements":[{"tag":"markdown","content":"已发送：x.md"},{"tag":"div","text":{"content":"已完成"}}]}`
 
-// greenReadback mirrors Feishu's actual GET shape: the header is stripped and
-// only elements (plus a promoted title) come back. The elements must match the
-// sent card for the fingerprint to confirm persistence.
-const greenReadback = `{"title":"done","elements":[{"tag":"markdown","content":"已发送：x.md"},{"tag":"div","text":{"content":"已完成"}}]}`
-
 // noVerifyBackoff zeroes the verify-loop backoff for the duration of a test so
 // the PATCH→GET→retry loop is instant, then restores the production default.
 func noVerifyBackoff(t *testing.T) {

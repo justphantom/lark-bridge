@@ -1168,6 +1168,7 @@ func TestSendBrowserButtons_NoForm(t *testing.T) {
 		t.Error("current-round button click should flip the card to its submitted state")
 	}
 }
+
 // picker refresh path (the /send directory browser): a TypeQuestion carrying
 // UpdateMessageID PATCHes that existing card in place (no fresh SendCard),
 // re-binds the new requestID to the card, and evicts the prior round's binding

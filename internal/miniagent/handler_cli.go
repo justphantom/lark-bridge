@@ -128,7 +128,7 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			// so the card shows "shell: ls -la" instead of the raw JSON envelope.
 			// Mirrors claudebridge's stream_loop.go; without this the miniagent
 			// backend leaks {"command":"ls -la"} verbatim onto the card.
-			ToolUse:  &protocol.ToolUsePayload{Name: ev.Name, Input: bridgebase.SummarizeToolInput(ev.Name, ev.Input)},
+			ToolUse: &protocol.ToolUsePayload{Name: ev.Name, Input: bridgebase.SummarizeToolInput(ev.Name, ev.Input)},
 		})
 	case miniclient.KindToolResult:
 		// todo_create / todo_update results carry a single-item JSON the LLM

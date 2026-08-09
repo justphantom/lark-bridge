@@ -3,6 +3,7 @@ package feishufront
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -570,7 +571,7 @@ func (d *Dispatcher) skipSubmitFlip(requestID, messageID string) (bool, error) {
 	submitted, err := renderer.RenderInteractiveSubmitted(orig, "✓ 已提交，正在处理…")
 	if err != nil {
 		d.cardMu.Unlock()
-		return false, nil
+		return false, fmt.Errorf("feishufront: render submitted card for stale click: %w", err)
 	}
 	d.pendingSubmits[messageID] = submitted
 	d.cardMu.Unlock()

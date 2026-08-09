@@ -176,11 +176,11 @@ func actionColumnSet(actions []Action) Element {
 	columns := make([]any, 0, len(row))
 	for _, a := range row {
 		columns = append(columns, map[string]any{
-			"tag":           "column",
-			"width":         "weighted",
-			"weight":        1,
+			"tag":            "column",
+			"width":          "weighted",
+			"weight":         1,
 			"vertical_align": "top",
-			"elements":      []any{a},
+			"elements":       []any{a},
 		})
 	}
 	return Element{

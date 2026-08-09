@@ -24,17 +24,6 @@ import (
 // fallback (e.g. when a result card is rejected for too many tables).
 const MaxTextBodyBytes = 25000
 
-// cardRetry is the max number of extra UpdateCard attempts after a transient
-// failure. UpdateCard is idempotent for a given messageID, so a retry never
-// produces a duplicate card; SendCard is NOT retried (it would double-post).
-// Only network/transport errors retry — business codes (content too large,
-// permission) return immediately since retrying cannot help.
-const cardRetry = 3
-
-// cardRetryBase is the initial backoff between UpdateCard retries; each retry
-// doubles it. Kept small so a stalled update does not wedge the dispatcher.
-const cardRetryBase = 300 * time.Millisecond
-
 // feishuCodeContentTooLarge is the Feishu API error code for "message
 // content reaches its limit" (body byte size). The REST client surfaces this
 // as *lark.APIError whose Error() contains "code:230025"; isCardContentRejected
@@ -256,7 +245,7 @@ func (b *Bot) updateCardLegacy(ctx context.Context, messageID string, card []byt
 		return fmt.Errorf("feishu: update card: %w", err)
 	}
 	if uerr := b.updateFallbackCard(ctx, messageID); uerr != nil {
-		return fmt.Errorf("feishu: update card fallback after rejection (%v): %w", err, uerr)
+		return fmt.Errorf("feishu: update card fallback after rejection: %w (original: %s)", uerr, err.Error())
 	}
 	return nil
 }
@@ -302,7 +291,7 @@ func (b *Bot) updateCardEntity(ctx context.Context, cardID string, card []byte) 
 	st.mu.Unlock()
 	fuuid := strings.Join([]string{"upd", cardID, strconv.FormatInt(fseq, 10)}, "-")
 	if ferr := b.client.UpdateCardEntity(ctx, cardID, string(fallbackCardJSON()), fseq, fuuid); ferr != nil {
-		return fmt.Errorf("feishu: update card fallback after rejection (%v): %w", err, ferr)
+		return fmt.Errorf("feishu: update card fallback after rejection: %w (original: %s)", ferr, err.Error())
 	}
 	b.markHealthy()
 	return nil
@@ -401,24 +390,6 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 		lastErr = ErrCardVerifyMismatch // reverted — loop re-PATCHes
 	}
 	return lastErr
-}
-
-// extractHeaderTemplate pulls the header.template colour out of a card JSON
-// blob. Handles both the schema 1.0 layout we send (top-level
-// {header:{template}}) and the schema 2.0 wrapper Feishu may return on
-// read-back ({data:{template:{header:{template}}}}), so a compare never
-// reports a phantom mismatch just because the envelope differs. Returns "" for
-// a headerless card or an unparseable blob — callers treat "" as "no
-// fingerprint to check, trust the PATCH".
-// jsonKeys returns the sorted top-level keys of a parsed JSON object — a
-// structure probe that never exposes content values (low-18). Diagnostic only.
-func jsonKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // elementsFingerprint canonicalises a card's elements array for comparison.
@@ -528,31 +499,6 @@ func elementText(el map[string]any) string {
 		}
 	}
 	return ""
-}
-
-func extractHeaderTemplate(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	var v1 struct {
-		Header struct {
-			Template string `json:"template"`
-		} `json:"header"`
-	}
-	if err := json.Unmarshal(b, &v1); err == nil && v1.Header.Template != "" {
-		return v1.Header.Template
-	}
-	var v2 struct {
-		Data struct {
-			Template struct {
-				Header struct {
-					Template string `json:"template"`
-				} `json:"header"`
-			} `json:"template"`
-		} `json:"data"`
-	}
-	_ = json.Unmarshal(b, &v2)
-	return v2.Data.Template.Header.Template
 }
 
 // updateFallbackCard re-patches messageID with a minimal card after the

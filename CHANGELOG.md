@@ -4,21 +4,56 @@
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 ## [Unreleased]
 
-### Fixed
+主线：**CardKit 卡片实体引擎**（解决 cardID 透传与卡片验证问题）+ **miniagent v4.0.1 / v4.2.0 跟进**（会话/provider/config）+ **跨后端指令命名统一**（`/mode` `/effort` `/abort` `/config`）+ **scaffold 层 prompt runner 重构**（idle watchdog + session generation guard）。新增功能为主，升 minor。
 
-- **交互卡锁顺序反转死锁**（`internal/feishufront`）。统一 interactive-card 生命周期中的锁顺序：先操作 `TurnManager`，再操作 `Dispatcher.cardMu`，消除 `sendInteractive` 与 `expireInteractive`/`finalizeLinkedInteractive`/`DispatchCardAction` 之间的锁顺序反转死锁风险。
-- **后端 token 比较改为恒定时间**（`internal/feishufront/ipcserver.go`）。`validateBackendToken` 使用 `crypto/subtle.ConstantTimeCompare`，降低 per-backend session token 被时序攻击逐字节猜出的风险。
-- **`Core.WaitPrompts` goroutine 泄漏**（`internal/bridgebase/core.go`）。`Wg` 由 `sync.WaitGroup` 改为可取消的 `cancelableWaitGroup`，`WaitPrompts` 超时返回后不再泄漏阻塞在 `Wait` 的 goroutine。
-- **miniclient pump 无保护发送**（`internal/miniclient/client.go`）。子进程 pump 在 ctx 取消后向 `out` 发送时加 `select`，避免消费者退出后阻塞并耗尽 `MaxConcurrent` 槽位。
-- **router 持久化静默失败与损坏 binding 丢失**（`internal/router/persistence.go`）。`save` 增加 3 次线性退避重试；`load` 遇到损坏 binding 时先将原始文件备份为 `.corrupt.<timestamp>`，再跳过损坏项，防止下次 save 永久丢失原始数据。
-- **SSE 握手定时器竞态**（`internal/backendrpc/client.go`）。`httpClient.Do` 返回后、停止握手定时器前，若定时器已触发导致 ctx 取消，主动关闭响应 body 并返回握手超时，避免把已取消的 body 交给 `readSSE` 误断健康流。
-- **Claude sessionID 写入竞态**（`internal/claudebridge/stream_loop.go`、`internal/router`）。`Binding` 新增进程内 `Generation`；`streamRun` 与 stale-session 恢复使用 `SetSessionIDIfGeneration`，防止旧 turn 的 session id 写入 `/session-del` 后新建的 binding。
+### Added
+
+- **CardKit 卡片实体引擎（方案 B）**（`3aa9375`）。`internal/feishufront/cardkit` 引入显式 cardID 透传机制，将卡片生命周期从 messageID 耦合解绑到独立的 cardID 维度，解决 `/send` 多阶段卡片流中 cardID 丢失导致更新落空的问题。
+- **卡片更新验证机制（UpdateCardVerified）**（`95b1711` / `3918a84`）。`Bot.UpdateCardVerified` 在 PATCH 后回读飞书实际存储的卡片内容，与预期做 elements 内容指纹比对（从 header.template 指纹升级为 elements 指纹），检测静默丢失/拒收。
+- **`turn_started` / `turn_finished` 协议控制**（`9b79c34`）。新增两个 protocol control type，用于 running-session 在前端侧的精确对账：turn 开始/结束时各发一帧，前端据此校正运行中状态的时序边界。
+- **miniagent `/config` 斜杠命令**（`8389dce` / `71349e0`）。每 chat 切换 `-config` 文件（miniagent-cli.json）；config_path 支持经 config_dir 解析 + 自动发现，picker 列出配置目录下的候选文件。
+- **miniagent 适配 v4.0.1 会话机制**（`64c88a8`）。支持 `-save-session` / `-session` 双模式：新会话自动 save-session 落盘 sessionID，后续 turn 经 `-session` 复用，与 claude-back 的 session 持久化对齐。
+- **miniagent 适配 v4.0.1 provider 机制**（`5f9314d`）。`-model` / `-provider` 成对传递；`/model` picker 选中后按 label 反查 ModelRef 写入 binding，保持 provider/model 配对。
+- **miniagent `/current` 显示会话 ID**（`bb556b3`）。
+- **miniagent todo 工具卡片化渲染**（`bbabcb5`）。TodoWrite 工具调用渲染为卡片待办区，替代原始工具行。
+- **统一 mode/perm 与 effort/thinking 指令**（`645b479`）。claude-back `/perm` → `/mode`（函数名 `cmdPermission` → `cmdMode` 等同步重命名）；miniagent-back `/mode` 空参补交互式 picker（对齐 claude-back），`/thinking` → `/effort` 且空参补 picker。
 
 ### Changed
 
-- **跟进 miniagent v4.2.0：移除 `-system`/`-max-tokens` 交付**（`internal/miniclient/client.go`、`internal/config`、`cmd/miniagent-back`、`config.example.json`）。上游 4.2.0 删除 `-system`/`-max-tokens` 两 flag（stdlib `flag` 遇未知 flag `exit(2)`，默认配置即触发），桥停止发射二者并从 `MiniAgent` config 删除 `system_prompt`/`max_tokens` 字段。system prompt 与 max output-token cap 改由 miniagent-cli.json 的 `defaults.system_prompt` / `run.max_tokens`（miniagent 侧，4.2.0+）配置；`minSupportedVersion` 4.0.1 → 4.2.0。**迁移**：因 `DisallowUnknownFields`，手改且仍保留 `miniagent.system_prompt`/`max_tokens` 键的 config.json 须删此两键（标准部署从 `config.example.json` 重生成，不受影响）；原示例 persona 移除后回落 miniagent 内置默认。
-- **示例配置默认脱敏**（`config.example.json`）。`stream_archive_redact` 由 `false` 改为 `true`，与代码默认值一致，避免运维直接复制示例后明文归档 prompt/结果。
-- **文档保鲜**：`ARCHITECTURE.md`、`CODING_STANDARDS.md`、`README.md` 同步当前版本号、二进制数（5）、服务数（3）、Go 文件/行数、miniagent 配置字段、`TypeTurnStarted`/`TypeTurnFinished` 协议控制、`component_log_levels` 组件列表，并移除已删除的 `opencodebridge` 测试引用。
+- **scaffold 层 prompt runner 重构**（`a461101`）。引入 idle watchdog（每轮独立超时）+ per-invocation result metadata，替代旧的固定 timeout + 全局 metadata。
+- **session generation guard + cancelableWaitGroup**（`2b90352`）。`Binding` 新增进程内 `Generation` 字段，`SetSessionIDIfGeneration` 防止旧 turn 的 session id 覆盖新 binding；`sync.WaitGroup` → `cancelableWaitGroup`，`WaitPrompts` 超时后可取消。
+- **跟进 miniagent v4.2.0：移除 `-system`/`-max-tokens` 交付**（`4febfd9`）。上游 4.2.0 删除两 flag（stdlib `flag` 遇未知 flag `exit(2)`），桥停止发射并从 config 删除 `system_prompt`/`max_tokens` 字段；system prompt 与 max output-token cap 改由 miniagent-cli.json 的 `defaults.system_prompt` / `run.max_tokens` 配置。**迁移**：因 `DisallowUnknownFields`，手改 config 须删此两键。
+- **统一 claude-back 指令 `/settings` → `/config`**（`57bbf33`），与 miniagent-back 命名对齐。
+- **统一 `session-abort` 指令为 `/abort`**（`d597ab8`）。
+- **部署脚本简化与重命名**（`780dc42`）。Makefile 拆出单二进制 build target（`build-deploy-monitor` / `build-status-monitor` / `build-services`），消除冗余跨二进制编译；`upgrade-monitor.sh` → `deploy-monitor.sh`、`upgrade-status.sh` → `deploy-status.sh`，动词统一为 `deploy`。
+- **交互卡锁顺序统一**（`2b90352`）。先操作 `TurnManager`，再操作 `Dispatcher.cardMu`，消除 `sendInteractive` 与 `expireInteractive`/`finalizeLinkedInteractive`/`DispatchCardAction` 之间的锁顺序反转死锁风险。
+- **示例配置默认脱敏**（`config.example.json`）。`stream_archive_redact` 由 `false` 改为 `true`，与代码默认值一致。
+- **后端 token 比较改为恒定时间**（`2b90352`）。`validateBackendToken` 使用 `crypto/subtle.ConstantTimeCompare`，降低 per-backend session token 时序攻击风险。
+- **minSupportedVersion 3.5.0**（`d1b748c`）。miniagent v4.0.1 引入 breaking changes，版本门同步提升。
+
+### Fixed
+
+- **`/send` 目录浏览改即点按钮（P0）**（`78be0d0` / `bcd6150` / `5cb3c1d`）。修复提交回弹（选完文件后卡片弹回浏览态）、已发送双卡（发送结果卡片重复）、以及选择文件卡片被飞书拒收（按钮格式不兼容）。改为即点按钮模式，一阶段完成。
+- **文件发送后"已选择"残留 PATCH**（`36538f1`）。`/send` 文件发出后清除上一轮选择残留，避免后续 PATCH 落到已失效的 picker card。
+- **UpdateCardVerified 指纹改 elements 内容指纹**（`3918a84`）。原 header.template 指纹在卡片无 header 时恒为空导致误判通过，改为 elements 内容指纹（解析 + re-marshal 规范化 key 顺序）。
+- **终端卡片守卫泛化**（`ed99b65`）。将 terminal-card guard 从仅守护 `/send` 扩展到所有延迟/TTL 卡片写入，防止过期 TTL 卡片 PATCH 覆盖已最终化的卡片。
+- **reclaim 清理 registry runningTurns**（`5feefd0`）。reclaim 路径未清理 `runningTurns` 导致 turn 槽位泄漏。
+- **`Core.WaitPrompts` goroutine 泄漏**（`2b90352`）。`cancelableWaitGroup` 使 `WaitPrompts` 超时返回后不再泄漏阻塞在 `Wait` 的 goroutine。
+- **miniclient pump 无保护发送**（`2b90352`）。子进程 pump 在 ctx 取消后向 `out` 发送时加 `select`，避免消费者退出后阻塞并耗尽 `MaxConcurrent` 槽位。
+- **router 持久化静默失败与损坏 binding 丢失**（`2b90352`）。`save` 增加 3 次线性退避重试；`load` 遇到损坏 binding 时先备份为 `.corrupt.<timestamp>` 再跳过，防止下次 save 永久丢失原始数据。
+- **SSE 握手定时器竞态**（`2b90352`）。`httpClient.Do` 返回后、停止握手定时器前，若定时器已触发导致 ctx 取消，主动关闭响应 body 并返回握手超时。
+- **Claude sessionID 写入竞态**（`2b90352`）。`SetSessionIDIfGeneration` 防止旧 turn 的 session id 写入 `/session-del` 后新建的 binding。
+- **miniagent 工具输入卡片显示原始 JSON**（`44c7952`）。工具输入摘要化展示，避免裸 JSON envelope 塞入卡片。
+
+### Removed
+
+- **`/models` 和 `/session-del` 指令**（`08cd211`）。`/models` 功能收敛进 `/current` 显示；`/session-del` 收敛进 session 管理流程。
+
+### Notes
+
+- **operator 升级提示**：miniagent v4.0.1+ 需更新本地 miniagent 二进制（`minSupportedVersion` 3.5.0）；手改 config 须删 `miniagent.system_prompt` / `max_tokens` 两键（v4.2.0 适配）。
+- **`/mode` 行为变更**：claude-back `/perm` 改名为 `/mode`，miniagent-back `/mode` 空参从显示当前值改为弹出 picker；miniagent-back `/thinking` 改名为 `/effort` 且空参改为 picker。
+- **发版顺序**：先 feishu-front，后各 backend（claude / miniagent）。
 
 ## [1.12.0] - 2026-08-03
 
