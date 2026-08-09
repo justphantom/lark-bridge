@@ -357,7 +357,7 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 	if len(card) == 0 {
 		return errors.New("feishu: empty card body")
 	}
-	want := extractHeaderTemplate(card)
+	want := elementsFingerprint(card)
 	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cardVerifyTimeout)
 	defer cancel()
 
@@ -381,25 +381,15 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 			continue // transient/network — retry the PATCH
 		}
 		if want == "" {
-			return nil // headerless card: nothing to verify, trust the PATCH
+			return nil // no elements to verify, trust the PATCH
 		}
 		got, err := b.client.GetMessage(vctx, messageID)
 		if err != nil {
 			lastErr = err
 			continue // cannot confirm — retry (loop cap bounds thrash)
 		}
-		gotT := extractHeaderTemplate(got)
-		var probe map[string]any
-		_ = json.Unmarshal(got, &probe)
-		b.logger.Warn("card verify read-back",
-			log.FieldMessageID, messageID,
-			"attempt", attempt,
-			"want", want,
-			"got", gotT,
-			"readback_len", len(got),
-			"keys", jsonKeys(probe))
-		if gotT == want {
-			return nil // colour persisted
+		if elementsFingerprint(got) == want {
+			return nil // content persisted
 		}
 		lastErr = ErrCardVerifyMismatch // reverted — loop re-PATCHes
 	}
@@ -422,6 +412,49 @@ func jsonKeys(m map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// elementsFingerprint canonicalises a card's elements array for comparison.
+// Feishu's read-back strips header/config/schema but keeps elements verbatim,
+// so the elements are the only reliable persistence fingerprint. Parse +
+// re-marshal normalises key order (Go map marshal sorts keys), and numbers are
+// compared via their json re-encoding so 1 vs 1.0 do not false-mismatch.
+// Returns "" for an unparseable blob or a card without elements — callers
+// treat "" as "no fingerprint to check, trust the PATCH".
+func elementsFingerprint(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	var root map[string]any
+	if err := json.Unmarshal(b, &root); err != nil {
+		return ""
+	}
+	// v1 keeps elements at the top level; v2 nests them under body.elements.
+	elems, ok := root["elements"]
+	if !ok {
+		if body, _ := root["body"].(map[string]any); body != nil {
+			elems, ok = body["elements"]
+		}
+	}
+	if !ok || elems == nil {
+		return ""
+	}
+	list, _ := elems.([]any)
+	// Feishu may reorder both object keys AND the elements array on read-back,
+	// so the fingerprint must be order-insensitive at both levels: canonicalize
+	// each element (map keys sort on marshal), then sort the per-element strings
+	// before joining. Two cards with the same element SET fingerprint equal even
+	// when Feishu shuffles their order.
+	parts := make([]string, 0, len(list))
+	for _, el := range list {
+		c, err := json.Marshal(el)
+		if err != nil {
+			return ""
+		}
+		parts = append(parts, string(c))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\x00")
 }
 
 func extractHeaderTemplate(b []byte) string {

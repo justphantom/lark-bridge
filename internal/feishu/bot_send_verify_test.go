@@ -9,9 +9,18 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// greenCard is a schema 1.0 card whose header template the verify loop reads
-// back to confirm a PATCH persisted.
-const greenCard = `{"schema":"1.0","config":{"update_multi":true},"elements":[],"header":{"template":"green","title":{"tag":"plain_text","content":"done"}}}`
+// greenCard is the card the verify loop PATCHes. Its body carries a distinctive
+// "已发送" markdown element so the content fingerprint can tell it apart from a
+// reverted (old) body. Feishu's GET read-back strips the header, so the header
+// colour is irrelevant to verification — the elements fingerprint is what
+// matters. The send layout keeps a header because the card still needs its
+// colour when rendered.
+const greenCard = `{"schema":"1.0","config":{"update_multi":true},"header":{"template":"green","title":{"tag":"plain_text","content":"done"}},"elements":[{"tag":"markdown","content":"已发送：x.md"},{"tag":"div","text":{"content":"已完成"}}]}`
+
+// greenReadback mirrors Feishu's actual GET shape: the header is stripped and
+// only elements (plus a promoted title) come back. The elements must match the
+// sent card for the fingerprint to confirm persistence.
+const greenReadback = `{"title":"done","elements":[{"tag":"markdown","content":"已发送：x.md"},{"tag":"div","text":{"content":"已完成"}}]}`
 
 // noVerifyBackoff zeroes the verify-loop backoff for the duration of a test so
 // the PATCH→GET→retry loop is instant, then restores the production default.
@@ -22,12 +31,12 @@ func noVerifyBackoff(t *testing.T) {
 	t.Cleanup(func() { cardVerifyBackoff = prev })
 }
 
-// TestUpdateCardVerified_HappyPath: the PATCH lands and read-back matches →
-// one PATCH, one GET, no error. The read-back content reorders keys vs. what
-// was sent; the colour fingerprint must match on template alone, not layout.
+// TestUpdateCardVerified_HappyPath: the PATCH lands and the read-back elements
+// match → one PATCH, one GET, no error. The read-back reorders keys and drops
+// the header; the elements fingerprint must match on content alone.
 func TestUpdateCardVerified_HappyPath(t *testing.T) {
 	noVerifyBackoff(t)
-	fc := &fakeClient{getMessageContent: `{"elements":[],"header":{"template":"green"},"schema":"1.0"}`}
+	fc := &fakeClient{getMessageContent: `{"title":"done","elements":[{"text":{"content":"已完成"},"tag":"div"},{"content":"已发送：x.md","tag":"markdown"}]}`}
 	b := &Bot{logger: log.Nop(), client: fc}
 	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard)); err != nil {
 		t.Fatalf("expected nil, got %v", err)
@@ -37,12 +46,12 @@ func TestUpdateCardVerified_HappyPath(t *testing.T) {
 	}
 }
 
-// TestUpdateCardVerified_RevertRetries: read-back keeps returning the OLD
-// colour (bounce-back) → the loop re-PATCHes up to cardVerifyMaxAttempts then
-// surfaces ErrCardVerifyMismatch instead of looping forever.
+// TestUpdateCardVerified_RevertRetries: read-back keeps returning the OLD body
+// (bounce-back, different elements) → the loop re-PATCHes up to
+// cardVerifyMaxAttempts then surfaces ErrCardVerifyMismatch.
 func TestUpdateCardVerified_RevertRetries(t *testing.T) {
 	noVerifyBackoff(t)
-	fc := &fakeClient{getMessageContent: `{"header":{"template":"blue"}}`}
+	fc := &fakeClient{getMessageContent: `{"title":"选择文件","elements":[{"tag":"markdown","content":"请选择"}]}`}
 	b := &Bot{logger: log.Nop(), client: fc}
 	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(greenCard)); !errors.Is(err, ErrCardVerifyMismatch) {
 		t.Fatalf("want ErrCardVerifyMismatch, got %v", err)
@@ -70,17 +79,17 @@ func TestUpdateCardVerified_CardGoneShortCircuits(t *testing.T) {
 	}
 }
 
-// TestUpdateCardVerified_HeaderlessSkipsReadback: a card with no header
-// template has nothing to fingerprint → trust the PATCH and skip the GET.
-func TestUpdateCardVerified_HeaderlessSkipsReadback(t *testing.T) {
+// TestUpdateCardVerified_BodylessSkipsReadback: a card whose body cannot be
+// canonicalized has nothing to fingerprint → trust the PATCH and skip the GET.
+func TestUpdateCardVerified_BodylessSkipsReadback(t *testing.T) {
 	noVerifyBackoff(t)
 	fc := &fakeClient{}
 	b := &Bot{logger: log.Nop(), client: fc}
-	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(`{"schema":"1.0","elements":[]}`)); err != nil {
+	if err := b.UpdateCardVerified(context.Background(), "om_x", "", []byte(`{not json`)); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 	if pc, gc := fc.patchCalls.Load(), fc.getCalls.Load(); pc != 1 || gc != 0 {
-		t.Fatalf("headerless card should skip read-back; got patch=%d get=%d", pc, gc)
+		t.Fatalf("unfingerprintable card should skip read-back; got patch=%d get=%d", pc, gc)
 	}
 }
 
@@ -100,24 +109,39 @@ func TestUpdateCardVerified_GetErrorRetries(t *testing.T) {
 	}
 }
 
-// TestExtractHeaderTemplate covers both the schema 1.0 layout we send and the
-// schema 2.0 wrapper Feishu may return on read-back, plus the empty/headerless
-// fallbacks.
-func TestExtractHeaderTemplate(t *testing.T) {
+// TestElementsFingerprint covers the schema 1.0 layout we send, Feishu's
+// header-stripped read-back, the v2 body wrapper, key-order independence, and
+// the empty/unparseable fallbacks.
+func TestElementsFingerprint(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
 		want string
 	}{
 		{"empty", ``, ""},
-		{"v1 green", `{"header":{"template":"green"}}`, "green"},
-		{"v2 wrapped", `{"data":{"template":{"header":{"template":"red"}}}}`, "red"},
-		{"headerless", `{"elements":[]}`, ""},
 		{"unparseable", `{not json`, ""},
+		{"empty elements", `{"elements":[]}`, ""},
+		{"v1 root", `{"header":{"template":"green"},"elements":[{"tag":"markdown","content":"hi"}]}`,
+			`{"content":"hi","tag":"markdown"}`},
+		{"readback headerless", `{"title":"x","elements":[{"tag":"markdown","content":"hi"}]}`,
+			`{"content":"hi","tag":"markdown"}`},
+		{"v2 body", `{"body":{"elements":[{"tag":"div","text":{"content":"s"}}]}}`,
+			`{"tag":"div","text":{"content":"s"}}`},
 	}
 	for _, c := range cases {
-		if got := extractHeaderTemplate([]byte(c.in)); got != c.want {
+		if got := elementsFingerprint([]byte(c.in)); got != c.want {
 			t.Errorf("%s: want %q, got %q", c.name, c.want, got)
 		}
+	}
+}
+
+// TestElementsFingerprint_KeyOrderIndependent pins that two byte-different but
+// semantically identical bodies (reordered keys) fingerprint equal — the basis
+// for comparing our sent card against Feishu's reordered read-back.
+func TestElementsFingerprint_KeyOrderIndependent(t *testing.T) {
+	a := `{"elements":[{"tag":"markdown","content":"hi"},{"tag":"div","text":{"content":"s"}}]}`
+	b := `{"elements":[{"content":"hi","tag":"markdown"},{"text":{"content":"s"},"tag":"div"}],"title":"x"}`
+	if elementsFingerprint([]byte(a)) != elementsFingerprint([]byte(b)) {
+		t.Error("key order / wrapper must not change the fingerprint")
 	}
 }
