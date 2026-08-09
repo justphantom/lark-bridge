@@ -37,18 +37,19 @@ confidence: high
 
 ## 残余风险与建议
 
-1. **SSE 重连后短暂漏计**
+> 状态核实于 2026-08-09（对照当前代码）。
+
+1. **SSE 重连后短暂漏计** — `[ ] 未实现`
    - 后端 SSE 断开后重连会新建 conn，`runningTurns` 为空，需等 MetricsReport 自愈。
-   - **建议**：SSE handshake 成功后立即推送一次 turn 快照。
-2. **双视图不同步**
-   - `TurnManager` 与 `runningTurns` 分别维护，Start/Finish 触发点不同。
-   - **建议**：`/v1/status` inflight 直接复用 `TurnManager.InFlight()`，废弃 `runningTurns` 的 status 用途。
-3. **reclaim 未清 runningTurns**
-   - `reclaimStrandedTurns` 只清 `TurnManager`。
-   - **建议**：同步调用 `registry.ReclaimTurns(backendID)`。
-4. **miniagent session ID 双写策略**
+   - **建议**：SSE handshake 成功后立即推送一次 turn 快照。（`registry.go` 握手路径无 snapshot 推送，仍是周期自愈）
+2. **双视图不同步** — `[x] 已实现`
+   - `cmd/feishu-front/main.go:205-206`：`ipc.SetInFlightTurns(turns.InFlight)` / `SetInFlightDetail(turns.InFlightTurns)`，`/v1/status` 已直接复用 `TurnManager`。
+3. **reclaim 未清 runningTurns** — `[x] 已修复（2026-08-09）`
+   - `reclaimStrandedTurns`（`dispatcher_backend.go`）现同步调 `registry.ReclaimTurns(backendID)`（`registry.go`），清空该后端在 registry 的 `runningTurns`，两套 in-flight 视图不再分歧。
+   - 回归测试：`TestBackendRegistry_ReclaimTurns` + `TestFireOfflineNotice_ReclaimsStrandedTurns`（断言镜像清理）。
+4. **miniagent session ID 双写策略** — `[x] 已记录（有意保留差异）`
    - claude 后端用 `Binding.SessionID`；miniagent 后端用独立 `.id` 文件。
-   - **建议**：不在代码层统一，只在文档中明确记录差异及原因。
+   - 不在代码层统一，差异及原因以本文档为准。
 
 ## 参考
 - 分析文档：`docs/session-consistency-analysis.md`

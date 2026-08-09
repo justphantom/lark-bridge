@@ -25,7 +25,7 @@ PoC 结论（2026-08-09）：
 2. **按钮容器**：v2 不支持 `{"tag":"action","actions":[...]}`，须用 `column_set > column > button`（实测错误码 200861）。
 3. **双键**：发送后需同时保存 `messageID`（收回调）和 `card_id`（更新操作）。
 4. **sequence**：每张卡维护单调递增计数器；进程重启后可用时间戳作为大基数重启。
-5. **读回校验不可行**：`GetMessage` 对实体卡只返回 card_id 引用或降级文本，无卡片 JSON，`UpdateCardVerified` 整套删除。
+5. **读回校验不可行**：`GetMessage` 对实体卡只返回 card_id 引用或降级文本，无卡片 JSON，`UpdateCardVerified` 整套删除。注意：**legacy v1 im PATCH 路径仍保留 `UpdateCardVerified`**，其指纹校验的陷阱（read-back 深度重写卡片、只有归一化可见文本可比对）详见 [incidents/feishu-card-bounce-back.md](../incidents/feishu-card-bounce-back.md)。
 6. **流式接口限制**：`elements/:element_id/content` 打字机接口**仅限流式模式开启期间**使用；关流式后调用返回 300309。非流式组件更新用 elements 增删改或全量 PUT。
 7. **TTL 与过期**：实体卡 14 天有效期（错误码 200750），过期后降级为发新卡。
 8. **权限**：需新增 scope `cardkit:card:write`。
