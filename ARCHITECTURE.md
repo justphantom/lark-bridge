@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 调查日期：2026-08-07 | 当前版本：v1.12.0
+> 调查日期：2026-08-09 | 当前版本：v1.13.0
 
 ---
 
@@ -12,7 +12,7 @@
 **lark-bridge** 是一个把 **飞书（Lark/Feishu）群聊桥接到本地编程 agent** 的中间层服务。用户在飞书群里 @机器人，即可驱动本地的 Claude Code CLI 或 miniagent（LLM 直调）完成编码任务，并把 agent 的流式进度、工具调用、最终回复渲染成飞书交互卡片。
 
 - 仓库：`github.com/justphantom/lark-bridge`
-- 当前版本：**v1.12.0**（git tag）
+- 当前版本：**v1.13.0**（git tag）
 - 核心问题：飞书开放平台 ↔ 本地 CLI agent 之间没有原生通道；直接把 agent 暴露给飞书缺少鉴权、并发、流式渲染、会话路由等能力
 - 解决思路：采用 **1 前端 + N 后端** 的拆分架构（`README.md:3`、`CHANGELOG.md:131`）
 
@@ -31,8 +31,8 @@
 
 ### 1.3 规模
 
-- **309 个 Go 文件，约 77,541 行**，其中生产代码 **约 46,367 行**，测试代码 **约 31,174 行（约 40.2%）**
-- `internal/` 下 **25 个子包**
+- **311 个 Go 文件，约 65,854 行**，其中生产代码 **约 33,995 行**，测试代码 **约 31,859 行（约 48.4%）**
+- `internal/` 下 **35 个子包**
 - `go.mod` **零外部依赖**（`go.sum` 为空），仅用 Go 标准库
 
 ---
@@ -577,10 +577,10 @@ claude-back 的非业务逻辑抽到 `bridgebase.Core`（router/rpc/cancel/answe
 - **module**：`github.com/justphantom/lark-bridge`（go.mod:1）
 - **Go 版本**：1.25.0（go.mod:3）
 - **二进制数**：5（cmd/ 下 5 子目录）
-- **internal 包数**：25
-- **Go 文件**：309 个，约 77,541 行（生产代码约 46,367 行，测试代码约 31,174 行，约 40.2%）
+- **internal 包数**：35
+- **Go 文件**：311 个，约 65,854 行（生产代码约 33,995 行，测试代码约 31,859 行，约 48.4%）
 - **外部依赖**：0
-- **版本**：v1.12.0
+- **版本**：v1.13.0
 - **License**：MIT（LICENSE）
 - **构建**：`make build` / `make test` / `make deploy`
 - **入口**：`cmd/<binary>/main.go:main()`

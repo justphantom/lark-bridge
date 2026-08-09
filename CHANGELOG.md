@@ -4,6 +4,8 @@
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 ## [Unreleased]
 
+## [1.13.0] - 2026-08-09
+
 主线：**CardKit 卡片实体引擎**（解决 cardID 透传与卡片验证问题）+ **miniagent v4.0.1 / v4.2.0 跟进**（会话/provider/config）+ **跨后端指令命名统一**（`/mode` `/effort` `/abort` `/config`）+ **scaffold 层 prompt runner 重构**（idle watchdog + session generation guard）。新增功能为主，升 minor。
 
 ### Added
