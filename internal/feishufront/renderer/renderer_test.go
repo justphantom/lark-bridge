@@ -286,15 +286,46 @@ func TestRenderInteractive_QuestionAsButtons(t *testing.T) {
 	}
 }
 
+// TestRenderInteractive_QuestionButtonsAtCeiling pins the /send P0 boundary:
+// exactly maxQuestionButtonOptions options still render as immediate-click
+// buttons (no form_submit), and the resulting card stays under the element cap.
+func TestRenderInteractive_QuestionButtonsAtCeiling(t *testing.T) {
+	opts := make([]string, maxQuestionButtonOptions)
+	for i := range opts {
+		opts[i] = "file-" + strconv.Itoa(i)
+	}
+	ctrl := &protocol.Control{Type: protocol.TypeQuestion, Question: &protocol.QuestionPayload{
+		RequestID: "qdir",
+		Questions: []protocol.QuestionItem{{Label: "选择要发送的文件", Options: opts}},
+	}}
+	b, err := RenderInteractive(ctrl, hdr(), ftr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := parse(t, b, nil)
+	buttons := actionButtons(t, card)
+	if len(buttons) != maxQuestionButtonOptions {
+		t.Fatalf("want %d buttons, got %d", maxQuestionButtonOptions, len(buttons))
+	}
+	if all := string(mustMarshal(t, buttons)); strings.Contains(all, "form_submit") {
+		t.Errorf("ceiling question must not use a submit form: %s", all)
+	}
+}
+
 // TestRenderInteractive_QuestionStillFormWhenLarge verifies a question that
 // does NOT fit the button profile (many options, multi-select, custom, or
 // multi-question) still renders via the dropdown+submit form.
 func TestRenderInteractive_QuestionStillFormWhenLarge(t *testing.T) {
+	// many-options case must exceed the button ceiling (45).
+	many := make([]string, maxQuestionButtonOptions+1)
+	for i := range many {
+		many[i] = "opt"
+	}
 	cases := []struct {
 		name string
 		q    *protocol.QuestionPayload
 	}{
-		{"many options", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Options: []string{"a", "b", "c", "d", "e"}}}}},
+		{"many options", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Options: many}}}},
 		{"multi-select", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Multiple: true, Options: []string{"a", "b"}}}}},
 		{"custom input", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Custom: true, Options: []string{"a", "b"}}}}},
 		{"multi-question", &protocol.QuestionPayload{RequestID: "q", Questions: []protocol.QuestionItem{{Label: "x", Options: []string{"a"}}, {Label: "y", Options: []string{"b"}}}}},

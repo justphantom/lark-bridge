@@ -160,20 +160,32 @@ func RenderInteractive(ctrl *protocol.Control, header cardkit.HeaderInfo, footer
 	return RenderQuestion(ctrl, header, footer)
 }
 
-// canRenderQuestionAsButtons reports whether a question is small enough to
-// drop the dropdown+submit form in favour of immediate-click buttons: exactly
-// one question, single-select, 1-4 options, no custom input. Multi-question,
-// multi-select, custom-input, or many-option questions still need the form.
+// maxQuestionButtonOptions bounds a button-rendered question's option count.
+// Each option becomes one immediate-click button (one card element); the card
+// also carries the label line, the wait notice and the footer, so the cap is
+// cardkit.MaxCardElements − 3, mirroring maxPermissionOptions. The immediate-
+// click form matters for /send's directory browser (P0 of
+// send-picker-bounce-and-duplicate-card.md): a button click submits in one
+// action with a short callback window, whereas the dropdown form's select+
+// submit rides a ~25s window that silently reverts the in-place refresh PATCH
+// (picker bounce-back + a duplicate outcome card).
+const maxQuestionButtonOptions = cardkit.MaxCardElements - 3
+
+// canRenderQuestionAsButtons reports whether a question can drop the
+// dropdown+submit form in favour of immediate-click buttons: exactly one
+// question, single-select, no custom input, and few enough options to stay
+// under the card element cap. Multi-question, multi-select, custom-input, or
+// over-cap questions still need the form.
 func canRenderQuestionAsButtons(q *protocol.QuestionPayload) bool {
 	if q == nil || len(q.Questions) != 1 {
 		return false
 	}
 	item := q.Questions[0]
-	return !item.Multiple && !item.Custom && len(item.Options) >= 1 && len(item.Options) <= 4
+	return !item.Multiple && !item.Custom && len(item.Options) >= 1 && len(item.Options) <= maxQuestionButtonOptions
 }
 
 // RenderQuestionButtons renders a single-question, single-select question with
-// ≤4 options and no custom input as immediate-click buttons, mirroring the
+// ≤maxQuestionButtonOptions options and no custom input as immediate-click buttons, mirroring the
 // permission card. Each button carries kind="question" + the option label as
 // "choice"; DispatchCardAction sets Choices=[choice], which
 // questionReplyFromAnswer maps to answers[0] exactly as the dropdown path does

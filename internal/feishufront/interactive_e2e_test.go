@@ -1088,7 +1088,86 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 	}
 }
 
-// TestSendInteractive_QuestionUpdateRefreshesSameCard verifies the multi-round
+// TestSendBrowserButtons_NoForm pins the /send P0 fix: the directory browser
+// options render as immediate-click buttons (no select_static/form_submit), so
+// a pick commits in one click without opening Feishu's long form/select
+// callback window — the window that silently reverted the picker PATCH
+// (回弹) and forced the "已发送" outcome onto a duplicate card. The multi-round
+// refresh (UpdateMessageID) still works on the button card, and the answer is
+// carried in value.choice (not FormValue).
+func TestSendBrowserButtons_NoForm(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	d.SetCardPatchDelay(1 * time.Nanosecond)
+
+	// Round 1: directory browser question with several dir/file options.
+	q1 := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID: "req-b1",
+			Questions: []protocol.QuestionItem{{Label: "选择要发送的文件", Options: []string{"📁 docs/", "📁 src/", "📄 a.md", "📄 b.md", "📄 c.md"}}},
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
+		t.Fatalf("round1: %v", err)
+	}
+	mid, _ := d.turns.InteractiveMessageID("req-b1")
+
+	// The rendered card must be button-based: buttons present, no form/select.
+	sent := string(sink.lastSendCard())
+	if !strings.Contains(sent, `"tag":"button"`) {
+		t.Errorf("browser card should render as buttons: %s", sent)
+	}
+	if strings.Contains(sent, `"tag":"form"`) || strings.Contains(sent, "select_static") || strings.Contains(sent, "form_submit") {
+		t.Errorf("browser card must NOT use a form/select: %s", sent)
+	}
+
+	// A button click carries the choice in value.choice (no FormValue). The
+	// anti-flicker + binding behaviour is asserted below; forwardCardAnswer is
+	// a graceful no-op without a router so we do not assert the answer bytes.
+
+	// Round 2: refresh the SAME card (descending into docs/) under a fresh
+	// requestID. It must rebind to the same messageID without a fresh SendCard.
+	sendsBefore, _ := sink.counts()
+	q2 := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID:       "req-b2",
+			Questions:       []protocol.QuestionItem{{Label: "选择要发送的文件", Options: []string{"⬆️ 返回上级目录", "📄 x.md"}}},
+			UpdateMessageID: mid,
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
+		t.Fatalf("round2: %v", err)
+	}
+	sendsAfter, _ := sink.counts()
+	if sendsAfter != sendsBefore {
+		t.Errorf("in-place refresh must not SendCard, sends %d→%d", sendsBefore, sendsAfter)
+	}
+	if mid2, ok := d.turns.InteractiveMessageID("req-b2"); !ok || mid2 != mid {
+		t.Errorf("req-b2 should own %q, got (%q,%v)", mid, mid2, ok)
+	}
+
+	// Clicking the new round's button flips the card to submitted (the binding
+	// is the CURRENT round, so no skip), and the answer routes via value.choice.
+	if err := d.DispatchCardAction(context.Background(), &feishu.CardAction{
+		ChatID: "oc_c", MessageID: mid,
+		Value: map[string]any{"requestID": "req-b2", "kind": "question", "choice": "📄 x.md"},
+	}); err != nil {
+		t.Fatalf("click: %v", err)
+	}
+	sink.mu.Lock()
+	submitted := false
+	for _, u := range sink.updates {
+		if u.messageID == mid && strings.Contains(string(u.card), "处理中") {
+			submitted = true
+		}
+	}
+	sink.mu.Unlock()
+	if !submitted {
+		t.Error("current-round button click should flip the card to its submitted state")
+	}
+}
 // picker refresh path (the /send directory browser): a TypeQuestion carrying
 // UpdateMessageID PATCHes that existing card in place (no fresh SendCard),
 // re-binds the new requestID to the card, and evicts the prior round's binding

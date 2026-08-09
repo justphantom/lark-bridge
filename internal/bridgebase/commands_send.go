@@ -20,10 +20,15 @@ import (
 // mid-upload failure or an oversized IPC payload.
 const MaxSendFileSize = 30 << 20 // 30 MiB
 
-// sendDirOptionLimit caps one picker card's option count, matching the global
-// maxQuestionOptions so a huge directory truncates rather than producing a
-// card Feishu rejects. The browser surfaces a /send <path> hint when cut.
-const sendDirOptionLimit = maxQuestionOptions
+// sendDirOptionLimit caps one picker card's option count at the button-render
+// ceiling (cardkit.MaxCardElements − header/markdown/footer = 45), NOT the
+// global maxQuestionOptions(100): the directory browser renders as
+// immediate-click buttons (no select_static/form_submit) so a pick commits in
+// one click without opening Feishu's long form/select callback window — the
+// window that silently reverted the picker PATCH (回弹) and forced the "已发送"
+// outcome onto a duplicate card. A huge directory truncates; the user reaches
+// cut entries via /send <path>.
+const sendDirOptionLimit = 45
 
 // SafeJoin constrains rel under root, resolving symlinks so a link that points
 // outside root cannot escape (send-file-design.md §5.1). root and the joined
