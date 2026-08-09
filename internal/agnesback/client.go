@@ -153,6 +153,9 @@ type chatResponse struct {
 // GeneratePrompt calls the chat model to expand userText under systemPrompt,
 // returning the generated prompt text (trimmed).
 func (c *Client) GeneratePrompt(ctx context.Context, systemPrompt, userText string) (string, error) {
+	c.logger.Info("agnes: generate prompt request",
+		"model", c.cfg.ChatModel,
+		"user_text", truncateString(userText, 100))
 	body, err := json.Marshal(chatRequest{
 		Model: c.cfg.ChatModel,
 		Messages: []chatMessage{
@@ -175,12 +178,16 @@ func (c *Client) GeneratePrompt(ctx context.Context, systemPrompt, userText stri
 		return "", fmt.Errorf("agnes: decode chat response: %w", err)
 	}
 	if resp.Error != nil && resp.Error.Message != "" {
+		c.logger.Error("agnes: generate prompt failed", "error", resp.Error.Message)
 		return "", fmt.Errorf("agnes: %s", resp.Error.Message)
 	}
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("agnes: chat returned no choices")
 	}
-	return strings.TrimSpace(resp.Choices[0].Message.Content), nil
+	result := strings.TrimSpace(resp.Choices[0].Message.Content)
+	c.logger.Info("agnes: generate prompt success",
+		"result", truncateString(result, 200))
+	return result, nil
 }
 
 // --- image generation ---
@@ -216,6 +223,11 @@ type imageResponse struct {
 // decoded from the URL Agnes returns). Only text-to-image is supported; the
 // img2img `image` input array is left for a future extension.
 func (c *Client) GenerateImage(ctx context.Context, prompt string) ([]byte, string, error) {
+	c.logger.Info("agnes: generate image request",
+		"model", c.cfg.ImageModel,
+		"size", c.cfg.ImageSize,
+		"ratio", c.cfg.ImageRatio,
+		"prompt", truncateString(prompt, 100))
 	body, err := json.Marshal(imageRequest{
 		Model:  c.cfg.ImageModel,
 		Prompt: prompt,
@@ -238,6 +250,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string) ([]byte, stri
 		return nil, "", fmt.Errorf("agnes: decode image response: %w", err)
 	}
 	if resp.Error != nil && resp.Error.Message != "" {
+		c.logger.Error("agnes: generate image failed", "error", resp.Error.Message)
 		return nil, "", fmt.Errorf("agnes: %s", resp.Error.Message)
 	}
 	if len(resp.Data) == 0 {
@@ -247,6 +260,9 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string) ([]byte, stri
 	if d.URL == "" {
 		return nil, "", fmt.Errorf("agnes: image response missing url")
 	}
+	c.logger.Info("agnes: generate image response received",
+		"url", d.URL,
+		"revised_prompt", truncateString(d.RevisedPrompt, 100))
 
 	// Download the image bytes, bounded by ImageMaxBytes so an oversized
 	// response cannot exhaust memory.
@@ -254,6 +270,9 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string) ([]byte, stri
 	if err != nil {
 		return nil, "", err
 	}
+	c.logger.Info("agnes: image downloaded",
+		"bytes", len(data),
+		"mime", mimeFromURL(d.URL))
 	return data, mimeFromURL(d.URL), nil
 }
 
@@ -306,6 +325,13 @@ type videoResultResponse struct {
 // invoked after each poll with the latest status/progress so the handler can
 // surface progress on the progress card.
 func (c *Client) GenerateVideo(ctx context.Context, prompt string, pollCB func(status string, progress int)) (string, error) {
+	c.logger.Info("agnes: generate video request",
+		"model", c.cfg.VideoModel,
+		"width", DefaultVideoWidth,
+		"height", DefaultVideoHeight,
+		"num_frames", DefaultVideoNumFrames,
+		"frame_rate", DefaultVideoFrameRate,
+		"prompt", truncateString(prompt, 100))
 	body, err := json.Marshal(videoCreateRequest{
 		Model:     c.cfg.VideoModel,
 		Prompt:    prompt,
@@ -327,6 +353,7 @@ func (c *Client) GenerateVideo(ctx context.Context, prompt string, pollCB func(s
 		return "", fmt.Errorf("agnes: decode video create response: %w", err)
 	}
 	if created.Error != nil && created.Error.Message != "" {
+		c.logger.Error("agnes: video create failed", "error", created.Error.Message)
 		return "", fmt.Errorf("agnes: %s", created.Error.Message)
 	}
 	// The doc says new integrations should use video_id; fall back to task_id.
@@ -342,6 +369,11 @@ func (c *Client) GenerateVideo(ctx context.Context, prompt string, pollCB func(s
 	if vid == "" {
 		return "", fmt.Errorf("agnes: video create returned no id")
 	}
+	c.logger.Info("agnes: video task created",
+		"video_id", truncateString(vid, 32),
+		"task_id", created.TaskID,
+		"status", created.Status,
+		"progress", created.Progress)
 
 	if pollCB != nil {
 		pollCB(created.Status, created.Progress)
@@ -361,12 +393,17 @@ const (
 // pollVideo polls GET /agnesapi?video_id=... until the task is completed or the
 // poll timeout (derived from ctx + VideoPollTimeout) elapses.
 func (c *Client) pollVideo(ctx context.Context, vid string, pollCB func(string, int)) (string, error) {
+	c.logger.Info("agnes: start polling video",
+		"video_id", truncateString(vid, 32),
+		"poll_interval", c.cfg.VideoPollInterval,
+		"poll_timeout", c.cfg.VideoPollTimeout)
 	pollCtx, cancel := context.WithTimeout(ctx, c.cfg.VideoPollTimeout)
 	defer cancel()
 
 	ticker := time.NewTicker(c.cfg.VideoPollInterval)
 	defer ticker.Stop()
 
+	pollCount := 0
 	// The create response may already be terminal on rare fast paths; the loop
 	// polls once immediately, then on each tick.
 	for {
@@ -374,6 +411,13 @@ func (c *Client) pollVideo(ctx context.Context, vid string, pollCB func(string, 
 		if err != nil {
 			return "", err
 		}
+		pollCount++
+		c.logger.Debug("agnes: video poll update",
+			"video_id", truncateString(vid, 32),
+			"poll_count", pollCount,
+			"status", status,
+			"progress", progress,
+			"url", url != "")
 		if pollCB != nil {
 			pollCB(status, progress)
 		}
@@ -382,12 +426,25 @@ func (c *Client) pollVideo(ctx context.Context, vid string, pollCB func(string, 
 			if url == "" {
 				return "", fmt.Errorf("agnes: video completed but no url")
 			}
+			c.logger.Info("agnes: video completed",
+				"video_id", truncateString(vid, 32),
+				"poll_count", pollCount,
+				"progress", progress,
+				"url", url)
 			return url, nil
 		case "failed":
+			c.logger.Error("agnes: video generation failed",
+				"video_id", truncateString(vid, 32),
+				"poll_count", pollCount)
 			return "", fmt.Errorf("agnes: video generation failed")
 		}
 		select {
 		case <-pollCtx.Done():
+			c.logger.Warn("agnes: video poll timed out",
+				"video_id", truncateString(vid, 32),
+				"poll_count", pollCount,
+				"last_status", status,
+				"last_progress", progress)
 			return "", fmt.Errorf("agnes: video poll timed out (last status %s)", status)
 		case <-ticker.C:
 		}
@@ -404,10 +461,16 @@ func (c *Client) queryVideo(ctx context.Context, vid string) (status, url string
 	c.setAuth(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.logger.Warn("agnes: video query request failed",
+			"video_id", truncateString(vid, 32),
+			"error", err)
 		return "", "", 0, fmt.Errorf("agnes: video query: %w", err)
 	}
 	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		c.logger.Warn("agnes: video query non-200",
+			"video_id", truncateString(vid, 32),
+			"status_code", resp.StatusCode)
 		return "", "", 0, c.httpError("video query", resp)
 	}
 	var out videoResultResponse
@@ -415,6 +478,9 @@ func (c *Client) queryVideo(ctx context.Context, vid string) (status, url string
 		return "", "", 0, fmt.Errorf("agnes: decode video result: %w", err)
 	}
 	if out.Error != nil && out.Error.Message != "" {
+		c.logger.Error("agnes: video query returned error",
+			"video_id", truncateString(vid, 32),
+			"error", out.Error.Message)
 		return "", "", 0, fmt.Errorf("agnes: %s", out.Error.Message)
 	}
 	// Prefer metadata.url (per docs), fall back to the top-level url field
@@ -448,18 +514,33 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuth(req)
+	c.logger.Debug("agnes: post request",
+		"path", path,
+		"body_bytes", len(body),
+		"body_preview", truncateString(string(body), 200))
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.logger.Warn("agnes: post request failed",
+			"path", path,
+			"error", err)
 		return nil, fmt.Errorf("agnes: %s: %w", path, err)
 	}
 	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		c.logger.Warn("agnes: post request non-200",
+			"path", path,
+			"status_code", resp.StatusCode)
 		return nil, c.httpError(path, resp)
 	}
 	out, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("agnes: read %s response: %w", path, err)
 	}
+	c.logger.Debug("agnes: post response",
+		"path", path,
+		"status_code", resp.StatusCode,
+		"response_bytes", len(out),
+		"response_preview", truncateString(string(out), 400))
 	return out, nil
 }
 
@@ -481,16 +562,25 @@ func (c *Client) httpError(path string, resp *http.Response) error {
 // exceeding the cap is an error so the caller surfaces "image too large" rather
 // than silently truncating a half-image.
 func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
+	c.logger.Debug("agnes: download start",
+		"url", url,
+		"max_bytes", c.cfg.ImageMaxBytes)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("agnes: build image download: %w", err)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.logger.Warn("agnes: download failed",
+			"url", url,
+			"error", err)
 		return nil, fmt.Errorf("agnes: download image: %w", err)
 	}
 	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		c.logger.Warn("agnes: download non-200",
+			"url", url,
+			"status_code", resp.StatusCode)
 		return nil, fmt.Errorf("agnes: image download returned %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.cfg.ImageMaxBytes+1))
@@ -498,6 +588,10 @@ func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("agnes: read image bytes: %w", err)
 	}
 	if int64(len(data)) > c.cfg.ImageMaxBytes {
+		c.logger.Warn("agnes: image too large",
+			"url", url,
+			"bytes", len(data),
+			"max_bytes", c.cfg.ImageMaxBytes)
 		return nil, fmt.Errorf("agnes: image exceeds %d bytes", c.cfg.ImageMaxBytes)
 	}
 	return data, nil
@@ -521,4 +615,18 @@ func mimeFromURL(u string) string {
 	default:
 		return "image/png"
 	}
+}
+
+// truncateString truncates s to at most n runes, appending "…" if truncated.
+// Safe for logging long strings like prompts, URLs, or video IDs.
+func truncateString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// For UTF-8, approximate rune truncation (not exact but sufficient for logging).
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }

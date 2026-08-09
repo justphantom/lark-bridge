@@ -95,37 +95,61 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	cardMsgID := ev.Prompt.CardMessageID
 	prompt := strings.TrimSpace(ev.Prompt.Text)
 
+	h.logger.Info("agnes: handle event",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"prompt", truncateString(prompt, 100))
 	cmd, arg := splitCommand(prompt)
 	switch cmd {
 	case "/image-prompt":
 		if arg == "" {
+			h.logger.Info("agnes: image-prompt missing args", "chat_id", chatID)
 			return h.notify(ctx, chatID, promptID, cardMsgID, "error", "用法",
 				"用法：/image-prompt <图片描述>\n例如：/image-prompt 一只在雨中漫步的橘猫")
 		}
+		h.logger.Info("agnes: image-prompt job start",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"arg", truncateString(arg, 100))
 		h.runJob(chatID, promptID, cardMsgID, "图片提示词", func(c context.Context) error {
 			return h.handleImagePrompt(c, chatID, promptID, arg)
 		})
 	case "/image":
 		if arg == "" {
+			h.logger.Info("agnes: image missing args", "chat_id", chatID)
 			return h.notify(ctx, chatID, promptID, cardMsgID, "error", "用法",
 				"用法：/image <提示词>\n例如：/image A luminous floating city above a misty canyon")
 		}
+		h.logger.Info("agnes: image job start",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"prompt", truncateString(arg, 100))
 		h.runJob(chatID, promptID, cardMsgID, "图片生成", func(c context.Context) error {
 			return h.handleImage(c, chatID, promptID, cardMsgID, arg)
 		})
 	case "/video-prompt":
 		if arg == "" {
+			h.logger.Info("agnes: video-prompt missing args", "chat_id", chatID)
 			return h.notify(ctx, chatID, promptID, cardMsgID, "error", "用法",
 				"用法：/video-prompt <视频描述>\n例如：/video-prompt 猫咪在海滩上漫步的日落场景")
 		}
+		h.logger.Info("agnes: video-prompt job start",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"arg", truncateString(arg, 100))
 		h.runJob(chatID, promptID, cardMsgID, "视频提示词", func(c context.Context) error {
 			return h.handleVideoPrompt(c, chatID, promptID, arg)
 		})
 	case "/video":
 		if arg == "" {
+			h.logger.Info("agnes: video missing args", "chat_id", chatID)
 			return h.notify(ctx, chatID, promptID, cardMsgID, "error", "用法",
 				"用法：/video <提示词>\n例如：/video A cinematic shot of a cat walking on the beach")
 		}
+		h.logger.Info("agnes: video job start",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"prompt", truncateString(arg, 100))
 		h.runJob(chatID, promptID, cardMsgID, "视频生成", func(c context.Context) error {
 			return h.handleVideo(c, chatID, promptID, cardMsgID, arg)
 		})
@@ -165,20 +189,36 @@ func (h *Handler) runJob(chatID, promptID, cardMsgID, label string, fn func(cont
 // handleImagePrompt calls the chat model to expand a terse description into a
 // full image-generation prompt, then returns it as a terminal result.
 func (h *Handler) handleImagePrompt(ctx context.Context, chatID, promptID, desc string) error {
+	h.logger.Info("agnes: handle image prompt start",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"desc", truncateString(desc, 100))
 	text, err := h.client.GeneratePrompt(ctx, imagePromptSystem, desc)
 	if err != nil {
 		return err
 	}
+	h.logger.Info("agnes: handle image prompt success",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"result", truncateString(text, 200))
 	return h.notify(ctx, chatID, promptID, "", "success", "图片提示词", text)
 }
 
 // handleVideoPrompt calls the chat model to expand a description into a
 // full video-generation prompt.
 func (h *Handler) handleVideoPrompt(ctx context.Context, chatID, promptID, desc string) error {
+	h.logger.Info("agnes: handle video prompt start",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"desc", truncateString(desc, 100))
 	text, err := h.client.GeneratePrompt(ctx, videoPromptSystem, desc)
 	if err != nil {
 		return err
 	}
+	h.logger.Info("agnes: handle video prompt success",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"result", truncateString(text, 200))
 	return h.notify(ctx, chatID, promptID, "", "success", "视频提示词", text)
 }
 
@@ -187,12 +227,21 @@ func (h *Handler) handleVideoPrompt(ctx context.Context, chatID, promptID, desc 
 // API returns a URL by default; GenerateImage downloads the bytes internally so
 // the chat gets an inline image, not a bare link.
 func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, prompt string) error {
+	h.logger.Info("agnes: handle image start",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"prompt", truncateString(prompt, 100))
 	data, mime, err := h.client.GenerateImage(ctx, prompt)
 	if err != nil {
 		return err
 	}
 	nctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
 	defer cancel()
+	h.logger.Info("agnes: sending file control",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"bytes", len(data),
+		"mime", mime)
 	return h.rpc.SendControl(nctx, &protocol.Control{
 		Type:     protocol.TypeFile,
 		PromptID: promptID,
@@ -212,10 +261,19 @@ func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, 
 // Feishu 30 MiB file cap, so we surface the URL rather than shipping bytes.
 // Progress is reflected on the command's own progress card after each poll.
 func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, prompt string) error {
+	h.logger.Info("agnes: handle video start",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"prompt", truncateString(prompt, 100))
 	progress := func(status string, pct int) {
 		pctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
 		defer cancel()
 		msg := fmt.Sprintf("视频生成中…（%s %d%%）", status, pct)
+		h.logger.Debug("agnes: video progress",
+			"chat_id", chatID,
+			"prompt_id", promptID,
+			"status", status,
+			"progress", pct)
 		_ = h.notifyProgress(pctx, chatID, promptID, msg)
 	}
 	url, err := h.client.GenerateVideo(ctx, prompt, progress)
@@ -224,6 +282,10 @@ func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, 
 	}
 	nctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
 	defer cancel()
+	h.logger.Info("agnes: handle video success",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"url", url)
 	return h.notify(nctx, chatID, promptID, cardMsgID, "success", "视频生成完成", url)
 }
 
