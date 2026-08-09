@@ -32,4 +32,5 @@ PoC 结论（2026-08-09）：
 7. **TTL 与过期**：实体卡 14 天有效期（错误码 200750），过期后降级为发新卡。
 8. **权限**：需新增 scope `cardkit:card:write`。
 9. **全量切换**（2026-08-09）：灰度开关 `card_engine` 已移除，项目唯一卡片路径为 CardKit 实体（schema 2.0）。存量 v1 卡（如果有）过期后自然失效，发新卡即可。
+10. **callback 回归修正**（2026-08-10）：全量切换引入两个叠加回归——①CardKit 实体引用卡片（card_id 模式）不触发 `card.action.trigger`，交互卡片必须用 inline JSON 发送；②button 的 `behaviors:[{type:"callback"}]` 对 inline 卡片**抑制**回调而非声明，必须移除（依赖 button value 字段触发回调，与 schema 1.0 一致）。详见 [incidents/schema2-card-action-regression.md](../incidents/schema2-card-action-regression.md)。
 
