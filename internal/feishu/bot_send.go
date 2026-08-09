@@ -446,22 +446,88 @@ func elementsFingerprint(b []byte) string {
 	if !ok || elems == nil {
 		return ""
 	}
-	list, _ := elems.([]any)
-	// Feishu may reorder both object keys AND the elements array on read-back,
-	// so the fingerprint must be order-insensitive at both levels: canonicalize
-	// each element (map keys sort on marshal), then sort the per-element strings
-	// before joining. Two cards with the same element SET fingerprint equal even
-	// when Feishu shuffles their order.
-	parts := make([]string, 0, len(list))
-	for _, el := range list {
-		c, err := json.Marshal(el)
-		if err != nil {
-			return ""
-		}
-		parts = append(parts, string(c))
+	texts := collectVisibleTexts(elems)
+	if len(texts) == 0 {
+		return ""
 	}
-	sort.Strings(parts)
-	return strings.Join(parts, "\x00")
+	return strings.Join(texts, "\x00")
+}
+
+// normalizeFingerprintText canonicalizes one visible text so that a markdown
+// source card and Feishu's plain-text read-back produce the same fingerprint.
+// Feishu renders markdown in read-back (drops the source syntax): **bold**
+// becomes bold, so we strip the emphasis markers; collapsing whitespace covers
+// the newlines/indent Feishu reflows.
+func normalizeFingerprintText(s string) string {
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "__", "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// collectVisibleTexts extracts the visible text of every element (button label,
+// markdown content, div/text content), recursing into containers (action/form/
+// column_set). Feishu's read-back deeply rewrites elements — buttons collapse to
+// {tag,text(拍平),type}, markdown/div become {tag:"text",text}, and value/disabled/
+// name are stripped — but the VISIBLE TEXT survives verbatim. It is therefore the
+// only persistence fingerprint stable across send ↔ read-back. Texts are sorted so
+// Feishu reordering the elements array does not false-mismatch.
+func collectVisibleTexts(v any) []string {
+	var out []string
+	var walk func(x any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			if s := elementText(t); s != "" {
+				out = append(out, s)
+			}
+			for _, key := range []string{"elements", "actions", "columns"} {
+				if child, ok := t[key]; ok {
+					walk(child)
+				}
+			}
+		}
+	}
+	walk(v)
+	// Normalize each text (markdown syntax → plain) and dedupe: Feishu read-back
+	// sometimes renders the same label twice (e.g. a div and a markdown both
+	// carrying the selection), which would otherwise false-mismatch on count.
+	seen := make(map[string]bool, len(out))
+	deduped := out[:0]
+	for _, s := range out {
+		n := normalizeFingerprintText(s)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		deduped = append(deduped, n)
+	}
+	sort.Strings(deduped)
+	return deduped
+}
+
+// elementText returns the visible text carried by one element node, or "".
+// Handles both the send shape (nested plain_text/lark_md objects) and Feishu's
+// flattened read-back shape (a bare "text"/"content" string).
+func elementText(el map[string]any) string {
+	// Flattened read-back: {"tag":"text","text":"…"} or a bare string field.
+	for _, k := range []string{"text", "content"} {
+		if s, ok := el[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	// Send shape: text/content is a nested {"tag":…,"content":"…"} object.
+	for _, k := range []string{"text", "content", "title", "placeholder"} {
+		if m, ok := el[k].(map[string]any); ok {
+			if s, _ := m["content"].(string); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func extractHeaderTemplate(b []byte) string {

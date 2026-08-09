@@ -122,11 +122,11 @@ func TestElementsFingerprint(t *testing.T) {
 		{"unparseable", `{not json`, ""},
 		{"empty elements", `{"elements":[]}`, ""},
 		{"v1 root", `{"header":{"template":"green"},"elements":[{"tag":"markdown","content":"hi"}]}`,
-			`{"content":"hi","tag":"markdown"}`},
+			"hi"},
 		{"readback headerless", `{"title":"x","elements":[{"tag":"markdown","content":"hi"}]}`,
-			`{"content":"hi","tag":"markdown"}`},
+			"hi"},
 		{"v2 body", `{"body":{"elements":[{"tag":"div","text":{"content":"s"}}]}}`,
-			`{"tag":"div","text":{"content":"s"}}`},
+			"s"},
 	}
 	for _, c := range cases {
 		if got := elementsFingerprint([]byte(c.in)); got != c.want {

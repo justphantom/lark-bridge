@@ -148,6 +148,10 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 		// reverted; read-back verification re-PATCHes if so.
 		err = d.bot.UpdateCardVerified(ctx, updateID, d.interactiveCardID(updateID), card)
 		if err == nil {
+			// Outcome landed: mark terminal so a delayed emitSelectedCard
+			// ("已选择 X") PATCH still sleeping out the click window is dropped
+			// instead of reverting this frame — the bounce-back fix.
+			d.markCardTerminal(updateID)
 			return
 		}
 		// Card withdrawn on success: drop silently (the file already arrived).

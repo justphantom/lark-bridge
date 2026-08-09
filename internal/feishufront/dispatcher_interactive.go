@@ -130,6 +130,18 @@ func (d *Dispatcher) sendInteractiveCard(ctx context.Context, ctrl *protocol.Con
 		}
 		goSafe(func() {
 			time.Sleep(delay)
+			// Stale-refresh guard: emitSendFile's outcome PATCH lands
+			// immediately and marks this card terminal, while emitSelectedCard's
+			// "已选择 X" PATCH sleeps out the click window. If the card already
+			// reached its terminal frame during our sleep, drop this PATCH —
+			// otherwise it lands LAST and reverts the green outcome to grey.
+			if d.isCardTerminal(msgID) {
+				if l := d.logger.Load(); l != nil {
+					l.Debug("delayed picker refresh dropped: card already terminal",
+						log.FieldMessageID, msgID)
+				}
+				return
+			}
 			patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 			defer cancel()
 			if err := d.bot.UpdateCardVerified(patchCtx, msgID, cardID, card); err != nil {

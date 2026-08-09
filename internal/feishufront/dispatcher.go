@@ -141,6 +141,18 @@ type Dispatcher struct {
 	// cardkit mode. Same lifecycle/lock as pickerCards. Legacy mode leaves it
 	// empty (the update falls back to the im PATCH by messageID).
 	pickerCardIDs map[string]string
+	// terminalCards records picker messageIDs that already received their
+	// terminal outcome PATCH (reflectFileOutcome's "已发送"/"发送失败"), with the
+	// completion time. The /send flow emits an "已选择 X" question control
+	// (UpdateMessageID) immediately before the TypeFile outcome; that control's
+	// PATCH is delayed by cardPatchDelay while the outcome PATCH is immediate,
+	// so without a guard the delayed "已选择" PATCH lands AFTER the green
+	// outcome and overwrites it — the bounce-back. The delayed refresh goroutine
+	// in sendInteractiveCard checks this set and abandons its PATCH when the
+	// card is already terminal. Entries expire after terminalCardTTL so a
+	// long-lived dispatcher does not accumulate stale messageIDs. Guarded by
+	// cardMu.
+	terminalCards map[string]time.Time
 
 	// flapMu guards flap, the per-backend debounce state for online/offline
 	// notices. A flapping backend (rapid disconnect/reconnect) would otherwise
@@ -277,6 +289,7 @@ func NewDispatcher(bot CardSink, registry *BackendRegistry, turns *TurnManager, 
 		pickerCards:           make(map[string][]byte),
 		pickerTimers:          make(map[string]*time.Timer),
 		pickerCardIDs:         make(map[string]string),
+		terminalCards:         make(map[string]time.Time),
 		flap:                  make(map[string]*flapState),
 		statusCards:           make(map[string]string),
 		statusCardIDs:         make(map[string]string),
@@ -302,6 +315,53 @@ func (d *Dispatcher) SetCardPatchDelay(delay time.Duration) {
 	if delay > 0 {
 		d.cardPatchDelay = delay
 	}
+}
+
+// terminalCardTTL bounds how long a msgID stays in terminalCards. It must
+// outlive the longest cardPatchDelay a stale UpdateMessageID PATCH can sleep
+// (default 5s) plus margin; InteractiveTimeout is reused so the entry lives at
+// least as long as the card it guards could still receive a refresh PATCH.
+const terminalCardTTL = cardkit.InteractiveTimeout
+
+// markCardTerminal records that messageID's card has reached its terminal
+// frame (e.g. the green "已发送" outcome), so any delayed in-place picker
+// PATCH still sleeping out the click window must NOT overwrite it. This is the
+// fix for the bounce-back: emitSelectedCard's "已选择 X" PATCH is delayed past
+// Feishu's click window, but emitSendFile's outcome PATCH lands immediately —
+// without this guard the delayed selected-card PATCH lands LAST and reverts the
+// green outcome to the grey "已选择" card.
+func (d *Dispatcher) markCardTerminal(messageID string) {
+	if messageID == "" {
+		return
+	}
+	d.cardMu.Lock()
+	// Opportunistically sweep expired entries so a long-running process does
+	// not accumulate msgIDs from every /send forever.
+	cutoff := time.Now().Add(-terminalCardTTL)
+	for mid, at := range d.terminalCards {
+		if at.Before(cutoff) {
+			delete(d.terminalCards, mid)
+		}
+	}
+	d.terminalCards[messageID] = time.Now()
+	d.cardMu.Unlock()
+}
+
+// isCardTerminal reports whether messageID's card reached its terminal frame
+// within terminalCardTTL — i.e. a pending delayed picker PATCH targeting it is
+// stale and must be dropped.
+func (d *Dispatcher) isCardTerminal(messageID string) bool {
+	if messageID == "" {
+		return false
+	}
+	d.cardMu.Lock()
+	at, ok := d.terminalCards[messageID]
+	if ok && time.Since(at) > terminalCardTTL {
+		delete(d.terminalCards, messageID)
+		ok = false
+	}
+	d.cardMu.Unlock()
+	return ok
 }
 
 // SetMaxThinkingRunes overrides the progress card's reasoning-zone cap.

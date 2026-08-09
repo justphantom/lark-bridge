@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -163,5 +164,74 @@ func TestReflectFileOutcome_EvictsInteractiveBinding(t *testing.T) {
 	sends, updates := sink.counts()
 	if sends != 0 || updates != 1 {
 		t.Errorf("sends=%d updates=%d, want 0 sends and 1 outcome patch", sends, updates)
+	}
+}
+
+// TestDelayedSelectedPatch_DroppedAfterOutcome pins the fix for the reported
+// 回弹: miniagent /send's file pick fires emitSelectedCard ("已选择 X",
+// TypeQuestion+UpdateMessageID, PATCH delayed past the click window) and then
+// emitSendFile (TypeFile, outcome PATCH immediate). The outcome lands FIRST and
+// marks the card terminal; the still-sleeping "已选择 X" PATCH must then be
+// dropped instead of reverting the green outcome frame back to the grey
+// selected echo. Without the terminal guard, the delayed PATCH lands last and
+// the user sees the card bounce from 已发送 back to 已选择.
+func TestDelayedSelectedPatch_DroppedAfterOutcome(t *testing.T) {
+	sink := &fakeSink{}
+	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	// Long enough that the outcome PATCH below lands before the delayed
+	// "已选择 X" goroutine wakes, short enough the test finishes fast.
+	d.SetCardPatchDelay(300 * time.Millisecond)
+
+	// Register the picker card so the UpdateMessageID refresh path rebinds it.
+	d.turns.BindInteractive("q-pick", "om_picker", "", "prompt_x")
+	d.cardMu.Lock()
+	d.cards["q-pick"] = []byte(`{"header":{"template":"grey"},"config":{}}`)
+	d.cardMu.Unlock()
+
+	// emitSelectedCard: "已选择 X" refresh, PATCH sleeps cardPatchDelay.
+	sel := &protocol.Control{
+		Type: protocol.TypeQuestion, ChatID: "oc_c",
+		Question: &protocol.QuestionPayload{
+			RequestID:       "q-sel",
+			Questions:       []protocol.QuestionItem{{Label: "已选择 a.txt", Options: []string{"已选择 a.txt"}}},
+			UpdateMessageID: "om_picker",
+		},
+	}
+	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "miniagent-1", Control: sel}); err != nil {
+		t.Fatalf("emitSelectedCard: %v", err)
+	}
+
+	// emitSendFile outcome: lands immediately, marks om_picker terminal.
+	d.reflectFileOutcome(context.Background(),
+		&protocol.Control{ChatID: "oc_c", File: &protocol.FilePayload{FileName: "a.txt", UpdateMessageID: "om_picker"}},
+		"", "success", "已发送", "已发送：a.txt")
+
+	// Wait out the delayed selected PATCH window.
+	time.Sleep(600 * time.Millisecond)
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var outcomeSeen, selectedAfterOutcome bool
+	outcomeIdx := -1
+	for i, u := range sink.updates {
+		if u.messageID != "om_picker" {
+			continue
+		}
+		body := string(u.card)
+		if strings.Contains(body, "已发送") {
+			outcomeSeen = true
+			outcomeIdx = i
+		}
+	}
+	if !outcomeSeen {
+		t.Fatal("outcome (已发送) PATCH never landed on om_picker")
+	}
+	for i, u := range sink.updates {
+		if i > outcomeIdx && u.messageID == "om_picker" && strings.Contains(string(u.card), "已选择") {
+			selectedAfterOutcome = true
+		}
+	}
+	if selectedAfterOutcome {
+		t.Error("delayed \"已选择 X\" PATCH landed AFTER the outcome — the bounce-back the terminal guard must prevent")
 	}
 }
