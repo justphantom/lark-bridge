@@ -41,7 +41,7 @@ func testClient(h HTTPClient) *Client {
 		ImageSize:  "2K",
 		ImageRatio: "16:9",
 		HTTPClient: h,
-	})
+	}, nil)
 }
 
 func TestGeneratePrompt_OK(t *testing.T) {
@@ -111,7 +111,7 @@ func TestGenerateImage_TooLarge(t *testing.T) {
 		BaseURL: "https://api.example.test", APIKey: "k",
 		ImageModel: "m", ImageSize: "1K", ImageRatio: "1:1",
 		ImageMaxBytes: 3,
-	})
+	}, nil)
 	c.http = &multiHTTP{seq: []HTTPClient{
 		&capturingDoer{status: 200, body: `{"data":[{"url":"https://cdn.test/a.png"}]}`},
 		&capturingDoer{status: 200, body: "1234"},

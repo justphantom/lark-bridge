@@ -101,7 +101,7 @@ func run(cfgPath string) error {
 	// Build the config (defaults already applied by config.Load) + the real
 	// API client, then wire the handler. FromConfig resolves the AgnesBack
 	// config block into the ClientConfig the client/handler share.
-	cc, client := agnesback.FromConfig(cfg.AgnesBack)
+	cc, client := agnesback.FromConfig(cfg.AgnesBack, logger)
 	h := agnesback.NewHandler(cc, client, rpc, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

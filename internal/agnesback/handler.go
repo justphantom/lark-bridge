@@ -69,8 +69,8 @@ func NewHandler(cfg Config, client APIClient, rpc controlSender, logger *log.Log
 
 // FromConfig builds a Config + real Client from config.AgnesBack, ready for New.
 // It maps the config struct (defaults already applied by config.Load) onto
-// ClientConfig fields.
-func FromConfig(c config.AgnesBack) (Config, *Client) {
+// ClientConfig fields. logger is optional (defaults to Nop).
+func FromConfig(c config.AgnesBack, logger *log.Logger) (Config, *Client) {
 	cc := ClientConfig{
 		BaseURL:    c.BaseURL,
 		APIKey:     c.APIKey,
@@ -80,7 +80,7 @@ func FromConfig(c config.AgnesBack) (Config, *Client) {
 		ImageSize:  c.ImageSize,
 		ImageRatio: c.ImageRatio,
 	}
-	return cc, New(cc)
+	return cc, New(cc, logger)
 }
 
 // HandleEvent dispatches Prompt events to the command handlers. Unknown

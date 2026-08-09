@@ -30,6 +30,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // DefaultBaseURL is the Agnes API origin. Overridable via config base_url.
@@ -84,13 +86,17 @@ const defaultHTTPTimeout = 5 * time.Minute
 
 // Client wraps the Agnes API.
 type Client struct {
-	cfg ClientConfig
-	http HTTPClient
+	cfg    ClientConfig
+	http   HTTPClient
+	logger *log.Logger
 }
 
 // New builds a Client. baseURL must be an origin with no trailing slash; the
-// client appends "/v1/..." paths to it.
-func New(cfg ClientConfig) *Client {
+// client appends "/v1/..." paths to it. logger is optional (defaults to Nop).
+func New(cfg ClientConfig, logger *log.Logger) *Client {
+	if logger == nil {
+		logger = log.Nop()
+	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
@@ -103,7 +109,7 @@ func New(cfg ClientConfig) *Client {
 	if cfg.VideoPollTimeout <= 0 {
 		cfg.VideoPollTimeout = DefaultVideoPollTimeout
 	}
-	return &Client{cfg: cfg, http: cfg.HTTPClient}
+	return &Client{cfg: cfg, http: cfg.HTTPClient, logger: logger}
 }
 
 // DefaultVideoPollInterval / DefaultVideoPollTimeout bound the async video
@@ -416,6 +422,16 @@ func (c *Client) queryVideo(ctx context.Context, vid string) (status, url string
 	url = out.Metadata.URL
 	if url == "" {
 		url = out.URL
+	}
+	// Log the complete response for diagnostics, especially when status=completed but url is empty.
+	if out.Status == "completed" && url == "" {
+		c.logger.Warn("agnes: video completed but no url",
+			"video_id", vid,
+			"status", out.Status,
+			"progress", out.Progress,
+			"top_level_url", out.URL,
+			"metadata_url", out.Metadata.URL,
+			"raw_error", out.Error)
 	}
 	return out.Status, url, out.Progress, nil
 }
