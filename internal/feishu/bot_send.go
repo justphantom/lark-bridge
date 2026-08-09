@@ -387,7 +387,14 @@ func (b *Bot) UpdateCardVerified(ctx context.Context, messageID, cardID string, 
 			lastErr = err
 			continue // cannot confirm — retry (loop cap bounds thrash)
 		}
-		if extractHeaderTemplate(got) == want {
+		gotT := extractHeaderTemplate(got)
+		b.logger.Warn("card verify read-back",
+			log.FieldMessageID, messageID,
+			"attempt", attempt,
+			"want", want,
+			"got", gotT,
+			"readback_len", len(got))
+		if gotT == want {
 			return nil // colour persisted
 		}
 		lastErr = ErrCardVerifyMismatch // reverted — loop re-PATCHes
