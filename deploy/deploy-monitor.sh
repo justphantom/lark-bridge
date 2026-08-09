@@ -216,6 +216,12 @@ upgrade_monitor() {
     # daemon-reload 在 migrate_unit 内部按需触发。
     migrate_unit
 
+    # 复制 .env 到 CONFIG_DIR（与 deploy.sh 同逻辑：repo-root .env 是 source of truth）
+    info "复制环境变量配置..."
+    sudo cp "$PROJECT_ROOT/.env" "$CONFIG_DIR/.env"
+    sudo chmod 600 "$CONFIG_DIR/.env"
+    sudo chown "$RUN_USER":"$RUN_USER" "$CONFIG_DIR/.env"
+
     info "替换二进制（原子 rename）..."
     sudo cp "$BIN_DIR/$UNIT_NAME" "$DEPLOY_DIR/.${UNIT_NAME}.new"
     sudo mv -f "$DEPLOY_DIR/.${UNIT_NAME}.new" "$DEPLOY_DIR/$UNIT_NAME"
