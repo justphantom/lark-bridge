@@ -19,10 +19,22 @@ func HrElement() Element {
 
 // callbackBehaviors declares a click that ships the action back to the
 // backend. Card JSON 2.0 requires this explicit behaviors declaration for
-// interactive callbacks; v1 ignores unknown fields, so the builder sets it
-// unconditionally and both schema paths share one button shape.
+// interactive callbacks. Schema 1.0 does NOT tolerate it: the platform
+// strict-validates v1 buttons and, when the unknown field is present, stops
+// classifying the button as a form's submit button (230099 "there is no
+// submit button in the form container"). So behaviors is added only on the
+// v2 path; v1 buttons keep the legacy shape.
 func callbackBehaviors() []map[string]any {
 	return []map[string]any{{"type": "callback", "callback": map[string]any{}}}
+}
+
+// maybeBehaviors returns the v2 behaviors declaration, or nil under schema 1.0
+// so the field is omitted entirely (not emitted as null) on the legacy path.
+func maybeBehaviors() []map[string]any {
+	if schemaV2.Load() {
+		return callbackBehaviors()
+	}
+	return nil
 }
 
 // ButtonAction builds a button action. actionType is stored in value.kind
@@ -35,12 +47,14 @@ func ButtonAction(label, actionType string, value map[string]any, primary bool, 
 	}
 	value["kind"] = actionType
 	btn := map[string]any{
-		"tag":       "button",
-		"text":      map[string]any{"tag": "plain_text", "content": label},
-		"type":      "default",
-		"value":     value,
-		"disabled":  disabled,
-		"behaviors": callbackBehaviors(),
+		"tag":      "button",
+		"text":     map[string]any{"tag": "plain_text", "content": label},
+		"type":     "default",
+		"value":    value,
+		"disabled": disabled,
+	}
+	if b := maybeBehaviors(); b != nil {
+		btn["behaviors"] = b
 	}
 	if primary {
 		btn["type"] = "primary"
@@ -63,8 +77,8 @@ func FormElement(name string, elements []Element) Element {
 // SubmitButtonAction builds a button that triggers form submission. On click
 // Feishu returns value as action.value (for requestID routing) and the form's
 // component values as action.form_value. primary controls the button style.
-// form_submit already implies a callback round-trip; behaviors is added anyway
-// so the v2 layout accepts it (harmless under v1).
+// form_submit already implies a callback round-trip; behaviors is added only
+// on the v2 path (schema 1.0 rejects the unknown field — see maybeBehaviors).
 func SubmitButtonAction(label string, value map[string]any, primary bool) Action {
 	if value == nil {
 		value = map[string]any{}
@@ -76,7 +90,9 @@ func SubmitButtonAction(label string, value map[string]any, primary bool) Action
 		"name":        "submit",
 		"action_type": "form_submit",
 		"value":       value,
-		"behaviors":   callbackBehaviors(),
+	}
+	if b := maybeBehaviors(); b != nil {
+		btn["behaviors"] = b
 	}
 	if primary {
 		btn["type"] = "primary"

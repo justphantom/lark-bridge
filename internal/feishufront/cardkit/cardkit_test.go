@@ -92,6 +92,34 @@ func TestCardWithActions(t *testing.T) {
 	}
 }
 
+// TestV1FormSubmitButtonHasNoBehaviors pins the /send picker regression
+// (docs/send-picker-behaviors-regression.md): schema 1.0 strictly validates
+// button fields, so a `behaviors` key on a form's submit button makes the
+// server stop recognising it as the form's submit control → 230099 "no submit
+// button in the form container". v1 buttons must omit behaviors entirely.
+func TestV1FormSubmitButtonHasNoBehaviors(t *testing.T) {
+	schemaV2.Store(false)
+	submit := SubmitButtonAction("提交", map[string]any{"requestID": "r"}, true)
+	form := FormElement("f", []Element{Element(submit)})
+	b, err := Card(HeaderInfo{Title: "t"}, FooterInfo{}, []Element{form}, nil)
+	card := jsonOf(t, b, err)
+	if _, has := card["elements"]; !has {
+		t.Fatal("v1 card must use top-level elements")
+	}
+	raw := string(b)
+	if strings.Contains(raw, "behaviors") {
+		t.Fatalf("v1 card must not contain behaviors: %s", raw)
+	}
+	// structural: the form still ends with a form_submit button.
+	elems := card["elements"].([]any)
+	f := elems[0].(map[string]any)
+	fe := f["elements"].([]any)
+	last := fe[len(fe)-1].(map[string]any)
+	if last["tag"] != "button" || last["action_type"] != "form_submit" {
+		t.Fatalf("form submit button missing/mis-shaped: %v", last)
+	}
+}
+
 func TestFooterContainsFields(t *testing.T) {
 	ftr := FooterInfo{
 		BackendType: "opencode",
