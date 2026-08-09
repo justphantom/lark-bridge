@@ -372,10 +372,22 @@ func (d *Dispatcher) expirePicker(messageID string) {
 	if orig == nil {
 		return
 	}
+	// An outcome frame may have landed first (e.g. a delayed terminal
+	// PATCH raced this TTL); do not overwrite a terminal card.
+	if d.isCardTerminal(messageID) {
+		d.logger.Load().Debug("picker expiry dropped: card already terminal",
+			log.FieldMessageID, messageID)
+		return
+	}
 	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
 		defer cancel()
-		_ = d.bot.UpdateCard(ctx, messageID, cardID, expired)
+		if err := d.bot.UpdateCard(ctx, messageID, cardID, expired); err == nil {
+			// Expired is a terminal frame: mark it so any delayed writer
+			// (e.g. the delayed outcome PATCH above) still sleeping out the
+			// click window cannot revive the expired card.
+			d.markCardTerminal(messageID)
+		}
 	}
 }
 
@@ -451,11 +463,22 @@ func (d *Dispatcher) handleBackendChoice(ctx context.Context, action *feishu.Car
 		// itself so the goroutine never hangs.
 		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 		defer cancel()
+		// A TTL expiry or another terminal writer may have landed first while
+		// we slept out the click window; do not overwrite a terminal frame.
+		if d.isCardTerminal(msgID) {
+			d.logger.Load().Debug("delayed backend outcome dropped: card already terminal",
+				log.FieldMessageID, msgID)
+			return
+		}
 		if err := d.bot.UpdateCardVerified(patchCtx, msgID, cardID, card); err != nil {
 			d.logger.Load().Warn("delayed picker UpdateCard failed",
 				log.FieldMessageID, msgID,
 				log.FieldError, err.Error())
+			return
 		}
+		// The outcome card is the picker's terminal frame: mark it so any
+		// other delayed writer targeting this card self-abandons.
+		d.markCardTerminal(msgID)
 	})
 	return nil
 }

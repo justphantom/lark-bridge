@@ -159,7 +159,11 @@ func (d *Dispatcher) reflectFileOutcome(ctx context.Context, ctrl *protocol.Cont
 			return
 		}
 		// Otherwise — withdrawn card on failure, or any transient patch error
-		// — fall through to a fresh card so the outcome is never lost.
+		// — mark the old card terminal so a delayed picker refresh still
+		// sleeping out the click window cannot revive it after we fall through
+		// to a fresh card.
+		d.markCardTerminal(updateID)
+		// fall through to a fresh card so the outcome is never lost.
 	}
 	if _, err := d.bot.SendCard(ctx, ctrl.ChatID, card, ""); err != nil {
 		if l := d.logger.Load(); l != nil {

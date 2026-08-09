@@ -266,10 +266,21 @@ func (d *Dispatcher) expireInteractive(requestID, messageID, cardID string) {
 	if orig == nil {
 		return
 	}
+	// Terminal guard: if an outcome/finalize frame already landed (marked
+	// terminal) after this TTL timer fired, the expiry notice must not
+	// overwrite it.
+	if d.isCardTerminal(messageID) {
+		return
+	}
 	if expired, err := renderer.RenderInteractiveExpired(orig); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), noticeSendTimeout)
 		defer cancel()
-		_ = d.bot.UpdateCard(ctx, messageID, cardID, expired)
+		if err := d.bot.UpdateCard(ctx, messageID, cardID, expired); err == nil {
+			// The expiry frame is itself terminal: a delayed picker refresh
+			// sleeping out the click window must not revive the card from
+			// "已失效" back to live options.
+			d.markCardTerminal(messageID)
+		}
 	}
 }
 
@@ -300,7 +311,11 @@ func (d *Dispatcher) finalizeLinkedInteractive(ctx context.Context, promptID str
 	for _, b := range bindings {
 		if orig := origs[b.RequestID]; orig != nil {
 			if fin, ferr := renderer.RenderInteractiveFinalized(orig); ferr == nil {
-				_ = d.bot.UpdateCard(ctx, b.MessageID, b.CardID, fin)
+				if err := d.bot.UpdateCard(ctx, b.MessageID, b.CardID, fin); err == nil {
+					// The finalized frame is terminal: block any delayed
+					// refresh or stale TTL/click write still in flight.
+					d.markCardTerminal(b.MessageID)
+				}
 			}
 		}
 	}
@@ -463,6 +478,17 @@ func (d *Dispatcher) scheduleSubmitFallback(ctx context.Context, chatID, request
 		time.Sleep(fbDelay)
 		_, cardID, ok := d.turns.InteractiveCardRef(requestID)
 		if !ok {
+			return
+		}
+		// Second line of defense beyond the binding check above: if any
+		// writer (finalize, expire, file outcome, ...) has already landed a
+		// terminal frame on this card, the submitted fallback is stale.
+		if d.isCardTerminal(messageID) {
+			if l := d.logger.Load(); l != nil {
+				l.Debug("delayed submit fallback dropped: card already terminal",
+					log.FieldChatID, chatID,
+					log.FieldMessageID, messageID)
+			}
 			return
 		}
 		patchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
