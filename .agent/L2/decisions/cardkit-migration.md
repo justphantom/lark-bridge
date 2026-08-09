@@ -31,5 +31,3 @@ PoC 结论（2026-08-09）：
 8. **权限**：需新增 scope `cardkit:card:write`。
 9. **灰度**：配置开关 `card_engine: cardkit|legacy`；存量 v1 卡继续走旧 PATCH 路径（按是否存 card_id 区分）。
 
-## 参考
-- 评估文档：`docs/feishu-cardkit-migration-assessment.md`

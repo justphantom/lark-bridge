@@ -47,5 +47,3 @@ tool:      {"type":"message","role":"tool","tool_call_id":"call_<hex>","content"
 4. **`/usage`**：聚合 `assistant.usage` 的输入/输出 token。
 5. **`/search`**：在 user/assistant/tool 内容中子串匹配。
 
-## 参考
-- 分析文档：`docs/miniagent-session-archive-optimization.md`

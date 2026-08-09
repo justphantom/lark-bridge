@@ -20,10 +20,10 @@ created: 2026-08-09T18:45:00+08:00
 4. 完成后沉淀 `.agent/L2/patterns/card-terminal-state-guard.md` 并与 incident 互链
 
 ## 进度
-- [ ] 代码改动
-- [ ] 回归测试
-- [ ] go test ./... 通过
-- [ ] L2 沉淀
+- [x] 代码改动
+- [x] 回归测试
+- [x] go test ./... 通过
+- [x] L2 沉淀
 
 ## 结果（2026-08-09 完成）
 - 6 处写者补齐标记/检查（file_send、backend、interactive）。

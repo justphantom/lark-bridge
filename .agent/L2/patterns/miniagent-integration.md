@@ -27,8 +27,8 @@ confidence: high
    - 必须特判 `dev` / 脏构建，避免挡住本地开发。
 2. **ConfigPath 未校验绝对路径**
    - 启动时检查 `filepath.IsAbs(cfg.MiniAgent.ConfigPath)`，相对路径会导致 session/workdir 解析失败。
-3. **per-turn 指标未进 eventmetrics**
-   - `handler_cli.go` 已结构化记录 `steps/finish/input_tokens/output_tokens/duration`，需同步到 `internal/eventmetrics/`。
+3. **per-turn 指标已接入 eventmetrics** — `[x] 已实现`
+   - `handler_cli.go` 已结构化记录 `steps/finish/input_tokens/output_tokens/duration`，并同步到 `internal/eventmetrics/`（`MiniAgentTurnCount/Duration/InputTokens/OutputTokens`）。
 4. **StreamArchiveRedact 默认关闭**
    - `applyDefaults` 阶段应显式置为 `true`，否则流归档中敏感字段明文落盘。
    - 注意：`bool + omitempty` 无法区分“未设置”与“显式 false”；若需保留关闭能力，字段应改为 `*bool`。
@@ -36,5 +36,4 @@ confidence: high
    - `../miniagent` 是独立 Go module，bridge 无法 import 其 `internal` 函数（如 `readMemoryRecords`）。需在 bridge 侧自实现 jsonl 解析。
 
 ## 参考
-- 分析文档：`docs/miniagent-integration-analysis.md`
 - 相关代码：`internal/miniclient/client.go`、`internal/miniagent/handler_cli.go`

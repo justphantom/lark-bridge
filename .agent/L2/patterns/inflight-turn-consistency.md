@@ -51,5 +51,3 @@ confidence: high
    - claude 后端用 `Binding.SessionID`；miniagent 后端用独立 `.id` 文件。
    - 不在代码层统一，差异及原因以本文档为准。
 
-## 参考
-- 分析文档：`docs/session-consistency-analysis.md`
