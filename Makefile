@@ -23,7 +23,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-check test vet fmt lint prerelease clean deploy upgrade-monitor upgrade-status pack
+.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-monitor deploy-status pack
 
 # Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
@@ -43,13 +43,35 @@ GOARCH ?= $(shell go env GOARCH)
 build-check:
 	go build ./...
 
-build:
+# Per-binary targets compile a single binary into bin/; deploy scripts call
+# only the target(s) they need (deploy.sh → build-services, deploy-monitor.sh →
+# build-deploy-monitor), avoiding wasted cross-binary builds.
+build-feishu-front:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-feishu-front ./cmd/feishu-front
+
+build-claude-back:
+	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
+
+build-miniagent-back:
+	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
+
+build-deploy-monitor:
+	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
+
+build-status-monitor:
+	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-status-monitor ./cmd/status-monitor
+
+# build-services compiles only the 3 business services that deploy.sh manages;
+# the two monitors are deployed independently by deploy-monitor.sh / deploy-status.sh.
+build-services: build-feishu-front build-claude-back build-miniagent-back
+
+# build compiles all five binaries (version-stamped).
+build: build-feishu-front build-claude-back build-miniagent-back build-deploy-monitor build-status-monitor
 
 # pack 交叉编译七个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
@@ -105,20 +127,20 @@ clean:
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
 # Note: deploy.sh manages the 3 business services (feishu / claude
 # / miniagent). lark-deploy-monitor is managed independently
-# by upgrade-monitor.sh (it triggers deploy, so self-managing would be a
+# by deploy-monitor.sh (it triggers deploy, so self-managing would be a
 # circular dependency).
 deploy:
 	./deploy/deploy.sh $(ARGS)
 
-# upgrade-monitor builds and restarts ONLY lark-deploy-monitor, decoupled
+# deploy-monitor builds and restarts ONLY lark-deploy-monitor, decoupled
 # from deploy.sh. Use --init for first-time install (creates config + unit).
 # In pro mode (LARK_RUN_MODE=pro) this target is a no-op: deploy-monitor is
 # intentionally not deployed.
-upgrade-monitor:
-	./deploy/upgrade-monitor.sh $(ARGS)
+deploy-monitor:
+	./deploy/deploy-monitor.sh $(ARGS)
 
-# upgrade-status builds and restarts ONLY lark-status-monitor (the periodic
+# deploy-status builds and restarts ONLY lark-status-monitor (the periodic
 # overview-card pusher), decoupled from deploy.sh for the same reason monitor
 # is. Use --init for first-time install (creates config + unit).
-upgrade-status:
-	./deploy/upgrade-status.sh $(ARGS)
+deploy-status:
+	./deploy/deploy-status.sh $(ARGS)

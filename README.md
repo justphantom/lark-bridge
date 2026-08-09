@@ -67,13 +67,13 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 make deploy                              # 构建 + 安装 3 个业务 systemd 服务
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services claude       # 单独部署某服务子集（逗号分隔）
-make upgrade-monitor                     # 单独升级 deploy-monitor（~2s 离线）
-make upgrade-monitor ARGS=--init
-make upgrade-status                      # 单独升级 status-monitor（~2s 离线）
-make upgrade-status ARGS=--init
+make deploy-monitor                     # 单独升级 deploy-monitor（~2s 离线）
+make deploy-monitor ARGS=--init
+make deploy-status                      # 单独升级 status-monitor（~2s 离线）
+make deploy-status ARGS=--init
 ```
 
-> **升级注意**：`opencode-back` 与 `omp-back` 已移除（后端对接收敛到 claude + miniagent）。`make deploy` 会自动检测并清理遗留的 `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与 config 模板；已部署 config 里残留的 `opencode` / `omp` 块也会被 upgrade-monitor / upgrade-status 迁移剥离。
+> **升级注意**：`opencode-back` 与 `omp-back` 已移除（后端对接收敛到 claude + miniagent）。`make deploy` 会自动检测并清理遗留的 `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与config 模板；已部署 config 里残留的 `opencode` / `omp` 块也会被 deploy-monitor / deploy-status 迁移剥离。
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 

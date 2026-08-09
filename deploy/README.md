@@ -13,7 +13,7 @@
 
 前端 feishu-front + 两个 agent 后端（claude/miniagent）由 `make deploy`
 管理（默认 3 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
-（`make upgrade-monitor`），避免「部署脚本管自己的触发者」循环依赖。
+（`make deploy-monitor`），避免「部署脚本管自己的触发者」循环依赖。
 
 ## 前置条件
 
@@ -235,10 +235,10 @@ deploy-monitor 是「部署触发者」（收到飞书群 `/deploy` → `make de
 
 ```bash
 # 首次安装（生成 config + unit + enable + start）
-make upgrade-monitor ARGS=--init
+make deploy-monitor ARGS=--init
 
 # 后续升级（构建 + 替换二进制 + restart，~2s 离线）
-make upgrade-monitor
+make deploy-monitor
 ```
 
 运行模式 `LARK_RUN_MODE` 控制是否部署 deploy-monitor：
@@ -246,7 +246,7 @@ make upgrade-monitor
 | 模式 | 行为 |
 |------|------|
 | `dev`（默认） | 正常安装/升级 deploy-monitor |
-| `pro` | `make upgrade-monitor` 为 no-op，不部署 deploy-monitor；若从 dev 切换而来，会停用已有的 unit |
+| `pro` | `make deploy-monitor` 为 no-op，不部署 deploy-monitor；若从 dev 切换而来，会停用已有的 unit |
 
 配置源优先级：环境变量 `LARK_RUN_MODE` > repo 根 `.env` > 默认 `dev`。
 
@@ -261,10 +261,10 @@ status-monitor 是「观察者」（每 `status_monitor.interval` 秒向绑定�
 
 ```bash
 # 首次安装（生成 config + unit + enable + start）
-make upgrade-status ARGS=--init
+make deploy-status ARGS=--init
 
 # 后续升级（构建 + 替换二进制 + restart，~2s 离线）
-make upgrade-status
+make deploy-status
 ```
 
 部署后在飞书群里 `/backend` 选择 `status-monitor` 绑定，下个 tick 起开始收卡。

@@ -274,7 +274,8 @@ stop_services() {
     info "All existing services stopped"
 }
 
-# Source mode: `make build` compiles locally. --binaries mode: extract from
+# Source mode: `make build-services` compiles the 3 business services locally.
+# --binaries mode: extract from
 # tarball or copy from a directory, decoupling build from deploy (target host
 # needs neither Go nor repo). Both modes drop artifacts into BIN_DIR; the
 # subsequent cp to DEPLOY_DIR is identical.
@@ -282,7 +283,7 @@ ensure_binaries() {
     mkdir -p "$BIN_DIR"
     if [[ -z "$BINARIES_SRC" ]]; then
         info "Building binaries (source compile)..."
-        make -C "$PROJECT_ROOT" build
+        make -C "$PROJECT_ROOT" build-services
         return
     fi
     if [[ -f "$BINARIES_SRC" ]]; then
@@ -304,9 +305,9 @@ verify_artifacts() {
     # NOTE: the miniagent binary (github.com/justphantom/miniagent) is a separate
     # project; deploy it to /usr/local/bin/miniagent via its own Makefile. Not
     # managed by this script. Same for lark-deploy-monitor: shipped in this
-    # tarball but deployed independently by upgrade-monitor.sh; leaving the binary
+    # tarball but deployed independently by deploy-monitor.sh; leaving the binary
     # in BIN_DIR is harmless -- the cp below moves it to DEPLOY_DIR for
-    # upgrade-monitor to overwrite.
+    # deploy-monitor.sh to overwrite.
 }
 
 # Warn if .env still contains placeholder values (a common first-deploy oversight)
@@ -412,7 +413,7 @@ filter_env_ready() {
 # (each process reads only the fields it needs; extras are inert).
 # Each backend must use a distinct router_path (except feishu-front), otherwise
 # they overwrite each other's chat bindings.
-# deploy-monitor's config/unit is managed by upgrade-monitor.sh and not in this flow.
+# deploy-monitor's config/unit is managed by deploy-monitor.sh and not in this flow.
 #
 # All sed runs operate on the staging copy; repo source configs stay untouched
 # (git tree does not go dirty).
@@ -635,7 +636,7 @@ install_files() {
     # file lives in the same $DEPLOY_DIR so mv is a same-filesystem rename
     # (atomic, no cross-device copy). Business services are already stopped in
     # stop_services, so the rename is also safe.
-    # Note: deploy-monitor's binary is not in this flow -- upgrade-monitor.sh
+    # Note: deploy-monitor's binary is not in this flow -- deploy-monitor.sh
     # manages it independently.
     local s u
     for s in "${SELECTED[@]}"; do

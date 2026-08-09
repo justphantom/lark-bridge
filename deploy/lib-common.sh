@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # vars are consumed by the sourcing entry scripts
 #
 # lib-common.sh — shared helpers for the lark-bridge deploy scripts
-# (deploy.sh / upgrade-monitor.sh / upgrade-status.sh). Source, do not
+# (deploy.sh / deploy-monitor.sh / deploy-status.sh). Source, do not
 # execute:
 #
 #   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
@@ -61,7 +61,7 @@ env_get() {
 }
 
 # run_mode returns the effective LARK_RUN_MODE value: env var > repo-root .env >
-# default "dev". Used by upgrade-monitor.sh to decide whether deploy-monitor
+# default "dev". Used by deploy-monitor.sh to decide whether deploy-monitor
 # should be installed/started. Invalid values are rejected by the caller.
 run_mode() {
     local mode="${LARK_RUN_MODE:-$(env_get LARK_RUN_MODE)}"

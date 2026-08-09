@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# upgrade-monitor.sh — 独立管理 lark-deploy-monitor 的部署。
+# deploy-monitor.sh — 独立管理 lark-deploy-monitor 的部署。
 #
 # 与 deploy.sh 完全解耦：deploy.sh 默认管 3 个业务服务（feishu-front/claude/
 # miniagent），不碰 monitor。monitor 是「部署的触发者」，
 # 让它管自己的升级会形成循环依赖，故分离。
 #
 # 用法：
-#   ./deploy/upgrade-monitor.sh           # 升级（构建 + 替换二进制 + restart）
-#   ./deploy/upgrade-monitor.sh --init    # 首次安装（config + unit + enable + start）
+#   ./deploy/deploy-monitor.sh           # 升级（构建 + 替换二进制 + restart）
+#   ./deploy/deploy-monitor.sh --init    # 首次安装（config + unit + enable + start）
 #
 # monitor 升级时短暂离线 ~2s（systemd restart），期间 /deploy 不可达。
 # monitor 代码极少变更（统计上远低于业务服务），这个代价可接受。
@@ -44,7 +44,7 @@ guard_pro_mode
 # ── 构建 ──────────────────────────────────────────────
 build_monitor() {
     info "构建 $UNIT_NAME..."
-    make -C "$PROJECT_ROOT" build
+    make -C "$PROJECT_ROOT" build-deploy-monitor
     [[ -x "$BIN_DIR/$UNIT_NAME" ]] || fail "构建失败：$BIN_DIR/$UNIT_NAME 不存在"
 }
 

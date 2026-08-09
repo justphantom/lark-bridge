@@ -750,8 +750,8 @@ func TestLoad_StreamArchiveRedact_DefaultsTrue(t *testing.T) {
 }
 
 // TestLoadConfigExample validates that the repo-root config.example.json is
-// always loadable. It is the source template for deploy.sh / upgrade-monitor.sh
-// / upgrade-status.sh; a broken example (e.g. an explicit "0s" duration that
+// always loadable. It is the source template for deploy.sh / deploy-monitor.sh
+// / deploy-status.sh; a broken example (e.g. an explicit "0s" duration that
 // Duration.UnmarshalJSON rejects) causes every deployment command to fail at
 // startup.
 func TestLoadConfigExample(t *testing.T) {

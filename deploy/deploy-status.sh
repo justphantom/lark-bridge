@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# upgrade-status.sh — 独立管理 lark-status-monitor 的部署。
+# deploy-status.sh — 独立管理 lark-status-monitor 的部署。
 #
-# 与 deploy.sh 完全解耦（与 upgrade-monitor.sh 同模式）：deploy.sh 管 3 个业务
+# 与 deploy.sh 完全解耦（与 deploy-monitor.sh 同模式）：deploy.sh 管 3 个业务
 # 服务，不碰 status-monitor。status-monitor 是「观察者」，独立升级避免与业务
 # 服务互相牵连；它只读 GET /v1/status 并 push 卡片，无副作用、无需提权。
 #
 # 用法：
-#   ./deploy/upgrade-status.sh           # 升级（构建 + 替换二进制 + restart）
-#   ./deploy/upgrade-status.sh --init    # 首次安装（config + unit + enable + start）
+#   ./deploy/deploy-status.sh           # 升级（构建 + 替换二进制 + restart）
+#   ./deploy/deploy-status.sh --init    # 首次安装（config + unit + enable + start）
 #
 # 升级时短暂离线 ~2s（systemd restart），期间总览卡停推一帧，下个 tick 自动恢复。
 #
@@ -24,7 +24,7 @@ CONFIG_NAME="status-monitor-config.json"
 # ── 构建 ──────────────────────────────────────────────
 build_status() {
     info "构建 $UNIT_NAME..."
-    make -C "$PROJECT_ROOT" build
+    make -C "$PROJECT_ROOT" build-status-monitor
     [[ -x "$BIN_DIR/$UNIT_NAME" ]] || fail "构建失败：$BIN_DIR/$UNIT_NAME 不存在"
 }
 
@@ -52,7 +52,7 @@ init_status() {
             && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"
     done
     # status_monitor 块必须存活（它是本后端唯一的业务配置）。base 里该块是多行
-    # 格式（key 与 interval 不在同一行），不能像 upgrade-monitor 那样单行匹配，
+    # 格式（key 与 interval 不在同一行），不能像 deploy-monitor 那样单行匹配，
     # 因此用双 token 校验：key 与 interval 都在即视为块存活。
     # shellcheck disable=SC2015  # A && B || fail：fail 必退出，语义正确
     grep -q '"status_monitor"' "$stage/$CONFIG_NAME" \
@@ -68,7 +68,7 @@ init_status() {
     sudo cp "$BIN_DIR/$UNIT_NAME" "$DEPLOY_DIR/$UNIT_NAME"
     sudo chmod 755 "$DEPLOY_DIR/$UNIT_NAME"
 
-    # unit：无沙箱（与 upgrade-monitor 同结构）。status-monitor 无副作用、不提权，
+    # unit：无沙箱（与 deploy-monitor 同结构）。status-monitor 无副作用、不提权，
     # 将来可加硬化（ProtectSystem/NoNewPrivileges 等），但先用简单 unit 保证一致。
     write_status_unit
     sudo systemctl daemon-reload
@@ -108,7 +108,7 @@ EOF
 # DisallowUnknownFields 模式下，未知字段会让 status-monitor 反复 crash。init
 # 路径从最新 config.example.json 派生，不会撞坑；但已部署的 /etc config 不会
 # 自动同步。升级路径在替换二进制前先迁移，避免每次升级都要人工编辑 config。
-# 与 upgrade-monitor.sh 的 migrate_config 同构；removed_blocks 增量维护。
+# 与 deploy-monitor.sh 的 migrate_config 同构；removed_blocks 增量维护。
 migrate_config() {
     local cfg="$CONFIG_DIR/$CONFIG_NAME"
     [[ -f "$cfg" ]] || return 0

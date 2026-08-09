@@ -77,7 +77,7 @@ PROJECT_ROOT="$_proj_root_bak"
 if [[ -n "$_saved_run_mode" ]]; then export LARK_RUN_MODE="$_saved_run_mode"; else unset LARK_RUN_MODE 2>/dev/null || true; fi
 
 # -- guard_pro_mode: dev passes, pro skips, invalid fails ----------------------
-# Source upgrade-monitor.sh (source guard prevents auto-execution) and call the
+# Source deploy-monitor.sh (source guard prevents auto-execution) and call the
 # guard directly. Stub systemctl so the pro-mode disable branch is exercised.
 systemctl() {
     if [[ "$1" == "is-enabled" && "$2" == "lark-deploy-monitor" ]]; then
@@ -86,8 +86,8 @@ systemctl() {
     return 0
 }
 export -f systemctl
-# shellcheck source=deploy/upgrade-monitor.sh
-source "$DEPLOY_DIR_SRC/upgrade-monitor.sh"
+# shellcheck source=deploy/deploy-monitor.sh
+source "$DEPLOY_DIR_SRC/deploy-monitor.sh"
 # dev: guard returns 0 and does not exit.
 (
     LARK_RUN_MODE=dev

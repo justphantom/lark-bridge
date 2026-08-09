@@ -532,7 +532,7 @@ func TestControlRoundTrip(t *testing.T) {
 | `clean` | `rm -rf bin/` |
 | `pack` | 交叉编译 5 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
 | `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 3 个业务 systemd 服务 |
-| `upgrade-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
+| `deploy-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
 
 ### 9.2 开发流程（推荐顺序）
 ```
@@ -547,7 +547,7 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 make deploy                  # 构建 + 3 个业务服务 systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services claude   # 子集部署
-make upgrade-monitor         # ~2s 离线升级 deploy-monitor
+make deploy-monitor         # ~2s 离线升级 deploy-monitor
 ```
 环境变量：`IPC_ADDR`、`STATE_DIR` 可命令行覆盖（`Makefile:19-21`）。
 

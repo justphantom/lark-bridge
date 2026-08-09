@@ -48,7 +48,7 @@
 | 配置 | JSON + `${VAR}` 环境变量展开 | `internal/config/config.go:263` |
 | HTTP/IPC | 标准库 `net/http`（SSE 长连接 + POST） | `internal/feishufront/ipcserver.go:277` |
 | 构建工具 | GNU Make（git 版本号注入 `-X main.version`） | `Makefile:31-49` |
-| 部署 | systemd unit + shell 脚本 | `deploy/deploy.sh`、`deploy/upgrade-monitor.sh` |
+| 部署 | systemd unit + shell 脚本 | `deploy/deploy.sh`、`deploy/deploy-monitor.sh` |
 | 静态检查 | golangci-lint（`.golangci.yml` 9594 字节） | 根目录 |
 | 测试 | `go test -race ./...`，表驱动 + fake 注入 | `Makefile:78` |
 | CI 工具脚本 | `scripts/openapi_to_md.py`（拉取飞书 OpenAPI 生成参考文档） | `scripts/` |
@@ -116,7 +116,7 @@ lark-bridge/
 |---|---|---|
 | `cmd/` | 5 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
 | `internal/` | 全部业务代码 | 不对外暴露 |
-| `deploy/` | `deploy.sh`（业务 3 服务：feishu/claude/miniagent）、`upgrade-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
+| `deploy/` | `deploy.sh`（业务 3 服务：feishu/claude/miniagent）、`deploy-monitor.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
 | `bin/` | `make build` 产物（5 个二进制） | gitignore |
 
@@ -134,7 +134,7 @@ lark-bridge/
 | **deploy-monitor** | `cmd/deploy-monitor/main.go:33` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` (:72) + `backendrpc.Run` (:96) + 优雅 drain (:110) |
 | **status-monitor** | `cmd/status-monitor/main.go:29` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` (:66) + `backendrpc.Run` (:82)（独立部署） |
 
-> **注意**：`cmd/` 下共 5 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `upgrade-monitor.sh` / `upgrade-status.sh` 管理，不纳入 `deploy.sh` 的 3 个业务服务（feishu / claude / miniagent）。
+> **注意**：`cmd/` 下共 5 个二进制。其中 `deploy-monitor` 与 `status-monitor` 因会触发部署 / 需独立刷新，分别由 `deploy-monitor.sh` / `deploy-status.sh` 管理，不纳入 `deploy.sh` 的 3 个业务服务（feishu / claude / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:32`），`git describe --tags --always --dirty`。
 
@@ -499,11 +499,11 @@ claude-back miniagent-back  deploy-monitor
 | `make deploy ARGS=--init` | 首次：从示例生成 config.json + .env | systemd |
 | `make deploy ARGS=--services claude` | 只部署子集 | systemd |
 | `make deploy ARGS=--binaries <tar>` | 从 tarball 部署（目标机免 Go） | systemd |
-| `make upgrade-monitor [ARGS=--init]` | 单独升级 deploy-monitor（~2s 离线） | systemd |
+| `make deploy-monitor [ARGS=--init]` | 单独升级 deploy-monitor（~2s 离线） | systemd |
 
 ### 8.3 循环依赖规避（`README.md:18`, `deploy/README.md:194-208`）
 
-deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deploy-monitor 自己**，会形成"部署脚本管自己的触发者"。解法：deploy-monitor 由独立的 `upgrade-monitor.sh` 管理，deploy.sh 仅管 5 个业务服务。
+deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deploy-monitor 自己**，会形成"部署脚本管自己的触发者"。解法：deploy-monitor 由独立的 `deploy-monitor.sh` 管理，deploy.sh 仅管 5 个业务服务。
 
 ### 8.4 分布式部署（`deploy/README.md:261-280`）
 
