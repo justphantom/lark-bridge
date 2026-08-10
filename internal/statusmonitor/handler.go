@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -133,11 +134,27 @@ func (h *Handler) tick(ctx context.Context) {
 //   - /backends → list online backends.
 //   - /help, "", or any unknown text → enumerate the commands.
 //
-// Answer / Abort / Ping are ignored (no interaction model to drive). Every
+// Answer / Abort are ignored (no interaction model to drive); Ping is
+// answered with a TypePong heartbeat. Every
 // branch finalises the triggering promptID so the command's progress card does
 // not orphan into /v1/status InFlight. Returns nil on a non-Prompt event so
 // backendrpc.Run's loop never aborts on one.
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
+	// TypePing: the frontend's C2 app-level health probe. Answer on this
+	// dispatch loop itself — a wedged loop never pongs and the frontend
+	// evicts the backend after maxMissedPongs. Fire-and-forget with its own
+	// short ctx: pong is disposable and must not stall the loop on slow IPC.
+	// PromptID stays empty (pong is keyed by the URL-path BackendID).
+	if ev.Type == protocol.TypePing {
+		bridgebase.GoSafe(h.logger, "pong", func() {
+			pctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := h.rpc.SendControl(pctx, &protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}}); err != nil {
+				h.logger.Debug("status-monitor: pong reply failed", log.FieldError, err)
+			}
+		})
+		return nil
+	}
 	if ev.Type != protocol.TypePrompt || ev.Prompt == nil {
 		return nil
 	}

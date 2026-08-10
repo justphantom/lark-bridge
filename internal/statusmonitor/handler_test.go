@@ -103,11 +103,35 @@ func TestHandleEvent_PromptRepliesNotice(t *testing.T) {
 func TestHandleEvent_NonPromptIgnored(t *testing.T) {
 	ctrl := &fakeCtrl{}
 	h := New(Config{}, ctrl, &fakeStatus{}, "status-1", nil)
+	// A non-prompt, non-ping event (e.g. Abort) must be silently ignored.
+	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypeAbort}); err != nil {
+		t.Fatalf("HandleEvent(abort): %v", err)
+	}
+	if len(ctrl.controls) != 0 {
+		t.Errorf("abort should be ignored, got %d controls", len(ctrl.controls))
+	}
+}
+
+func TestHandleEvent_PingAnswersPong(t *testing.T) {
+	ctrl := &fakeCtrl{}
+	h := New(Config{}, ctrl, &fakeStatus{}, "status-1", nil)
+	// The frontend's C2 health probe must be answered with a TypePong,
+	// otherwise the backend is evicted after maxMissedPongs.
 	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePing}); err != nil {
 		t.Fatalf("HandleEvent(ping): %v", err)
 	}
-	if len(ctrl.controls) != 0 {
-		t.Errorf("ping should be ignored, got %d controls", len(ctrl.controls))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := ctrl.latest(); got != nil {
+			if got.Type != protocol.TypePong || got.Pong == nil {
+				t.Fatalf("expected TypePong, got %+v", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no pong control emitted")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

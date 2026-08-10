@@ -464,6 +464,32 @@ func TestHandleEvent_IgnoresNonPrompt(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_PingAnswersPong(t *testing.T) {
+	rpc := &fakeSender{}
+	cmd := &fakeCommander{}
+	h := newHandler(rpc, cmd)
+
+	// The frontend's C2 health probe must be answered with a TypePong,
+	// otherwise the backend is evicted after maxMissedPongs.
+	if err := h.HandleEvent(context.Background(), &protocol.Event{Type: protocol.TypePing}); err != nil {
+		t.Fatalf("HandleEvent(ping): %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := rpc.snapshot()
+		if len(got) == 1 {
+			if got[0].Type != protocol.TypePong || got[0].Pong == nil {
+				t.Fatalf("expected TypePong, got %+v", got[0])
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected one TypePong control, got %+v", got)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestTailOutput(t *testing.T) {
 	if got := tailOutput([]byte("hello"), 100); got != "hello" {
 		t.Errorf("short input want 'hello', got %q", got)

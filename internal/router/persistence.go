@@ -64,7 +64,7 @@ func (r *Router) load() error {
 				if !backedUp {
 					backedUp = true
 					backupPath := r.persistPath + ".corrupt." + time.Now().Format("20060102-150405.000000000")
-					if writeErr := os.WriteFile(backupPath, data, filePerm); writeErr != nil {
+					if writeErr := os.WriteFile(backupPath, data, filePerm); writeErr != nil { //nolint:gosec // G703: backupPath = 配置的 persistPath(state_dir 内) + 固定后缀/时间戳，非用户输入；写入目标是本地备份文件
 						r.logger.Error("persist load backup failed",
 							log.FieldPath, r.persistPath,
 							log.FieldError, writeErr)
