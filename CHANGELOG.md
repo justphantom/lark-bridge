@@ -4,6 +4,40 @@
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 ## [Unreleased]
 
+## [1.14.0] - 2026-08-10
+
+主线：**agnes-back 新后端**（Agnes AI 图片/视频生成接入飞书）+ **卡片链路全量切换 schema 2.0**（删除 legacy 1.0 双路灰度，**breaking**）+ **心跳 / 重试 / 诊断日志加固**（三后端补 Pong 应答、SendControl 瞬态重试、ws 看门狗放宽）。含新增功能与 breaking change，升 minor。发版顺序：先 feishu-front，后各 backend。
+
+### Added
+
+- **agnes-back 新后端**（`08e3033`）。新增 `lark-agnes-back`（backendType `agnes`），封装 Agnes AI 三个模型：`agnes-2.5-flash`（文本提示词 `/image-prompt`、`/video-prompt`）、`agnes-image-2.1-flash`（图片生成 `/image`，图片经 TypeFile 内联到群）、`agnes-video-v2.0`（视频生成 `/video`，异步轮询）。架构仿 deploy-monitor/status-monitor：SSE 注册 + POST 发 Control，不 fork 子进程；慢任务跑在 GoSafe goroutine 不阻塞 SSE 循环，视频轮询期间用 Progress 卡片显示进度。配置段 `agnes`（api_key / base_url / 三模型名 / size / ratio）全部可配（`config.example.json` + `AGNES_*` env 已补）；新增 `deploy-agnes.sh` 与 Makefile `build-agnes-back` / `deploy-agnes` 目标。
+- **agnes 视频生成后下载并以文件发送到飞书**（`bf3d54e`）。视频结果从仅下发 URL 改为下载后作为文件消息发送到群。
+- **backendrpc SendControl 瞬态错误重试**（`b367ca1`）。指数退避，最多 3 次，降低视频生成等长任务期间前端抖动导致的通知丢失。
+- **全链路诊断日志**（`b3553ee` / `e5611b3` / `296ec8f`）。agnesback handler / client、feishu bot_send、dispatcher、ipcserver 在关键控制流节点补结构化日志（notify 请求/结果、PatchMessage 失败 Warn 含 message_id/card_size、prompt 转发、control auth 失败），并清理每步成功/失败双份 Info 及 ipcserver 无效 `http.MaxBytesReader` 废代码。
+
+### Changed
+
+- **卡片链路全量切换 schema 2.0，删除 legacy 1.0 双路灰度**（`b214834`，**breaking**）。所有卡片仅以 schema 2.0 渲染，legacy 1.0 渲染路径与灰度开关一并删除；任何依赖 schema 1.0 输出的定制不再适用。
+- **ws 看门狗超时 5m → 10m**（`e73713e`）。容忍视频生成（1–2min）期间瞬态网络中断，避免误杀健康长连接。
+- **三个独立后端升级路径补 .env 同步**（`8ef267b`）。agnes / deploy-monitor / status-monitor 的 deploy 脚本升级时同步刷新 .env。
+- **migrate_config 增加块内叶子字段清理**（`5e7f59f`）。`card_patch_delay` 等废弃字段迁移时自动清除。
+- **agnesback 错误处理增强**（`e73713e`）。`handleImage` / `handleVideo` 的 SendControl / notify 返回值改为显式错误处理，失败 Error 日志含 card_msg_id；notify 拆分为参数日志 + 发送日志两步。
+- **agnes 视频轮询查询级容错**（`8c6dd2b`）。连续 3 次失败才放弃，单次瞬态失败不再中断整个轮询。
+
+### Fixed
+
+- **schema 2.0 交互卡片按钮点击全部无回调（P0）**（`e223940`）。根因：`b214834` 全量切 schema 2.0 后 button 无条件声明 `behaviors:[{type:callback}]`，而飞书 schema 2.0 inline 卡片携带此声明时反而不触发 `card.action.trigger` 事件（实测：移除 behaviors 后回调立即恢复），导致 `/backend` picker、permission、question 等所有交互卡片按钮失效。修复：`ButtonAction` / `SubmitButtonAction` 移除 behaviors 声明（button 的 value 字段自动触发回调，与 schema 1.0 行为一致）；同提交修复 picker 列表省略号问题。
+- **agnes / deploy-monitor / status-monitor 周期性 offline/online 抖动（P1）**（`dad828b`）。三者 `HandleEvent` 此前静默丢弃前端 TypePing 健康探测，missedPongs 只增不减，每 ~60–90s 被 feishufront 按 `maxMissedPongs=3` 判定消费循环卡死而强制 Unregister。修复：对齐 miniagent-back 模式，GoSafe fire-and-forget 回 TypePong。
+- **agnesback 图片/视频结果更新回弹**（`8091aa6`）。不再用 UpdateMessageID 更新原卡，改为发新卡。
+- **Makefile `build-deploy-monitor` 缺 `mkdir -p bin`**（`c591cba`）。
+- **lint 回归**（`110e66d`）。agnesback handler_test goimports 对齐 + SA2001 空临界区。
+
+### Notes
+
+- **operator 升级提示**：agnes-back 为新增可选服务，按 `deploy/README.md` §6.7 执行 `make deploy-agnes ARGS=--init` 初始化；bridge config 需新增 `agnes` 段（或经 env 注入 `AGNES_*`）。
+- **已知限制**：agnes 视频 CDN 偶发 TLS reset，属外部服务问题，重试可恢复；form_submit 交互路径尚未实测。
+- **发版顺序**：先 feishu-front，后各 backend（claude / miniagent / agnes / deploy-monitor / status-monitor）。
+
 ## [1.13.0] - 2026-08-09
 
 主线：**CardKit 卡片实体引擎**（解决 cardID 透传与卡片验证问题）+ **miniagent v4.0.1 / v4.2.0 跟进**（会话/provider/config）+ **跨后端指令命名统一**（`/mode` `/effort` `/abort` `/config`）+ **scaffold 层 prompt runner 重构**（idle watchdog + session generation guard）。新增功能为主，升 minor。
