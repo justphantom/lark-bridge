@@ -10,6 +10,8 @@
 #   prerelease  test + lint — the pre-tag gate, run before `git tag v1.x.0`
 #   deploy-smoke bash helper unit tests (deploy/tests/smoke.sh)
 #   deploy      build, then install as systemd services via deploy/deploy.sh
+#   deploy-bg   same as deploy, but setsid-detached so an SSH drop / Ctrl-C
+#               cannot kill a manual deploy mid-flight (manual path only)
 #   pack        build all six binaries and bundle into a distributable tarball
 #               (bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz); cross-compile via
 #               GOOS=/GOARCH= on the command line
@@ -23,7 +25,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-monitor deploy-status deploy-agnes pack
+.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-bg deploy-monitor deploy-status deploy-agnes pack
 
 # Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
@@ -135,6 +137,30 @@ clean:
 # circular dependency).
 deploy:
 	./deploy/deploy.sh $(ARGS)
+
+# deploy-bg runs the SAME deploy as `deploy`, but detached via setsid so an SSH
+# disconnect (SIGHUP) or a stray Ctrl-C (SIGINT) in the now-dead terminal cannot
+# abort a deploy mid-way — critically between stop_services and start_services
+# (deploy.sh:629→:922), where services are already stopped and the EXIT trap
+# (deploy.sh:427) only cleans temp files, it does NOT restart them.
+#
+# setsid (NOT nohup): a new session with no controlling tty removes the deploy
+# from the SSH session's foreground process group, defeating BOTH the disconnect
+# SIGHUP AND a Ctrl-C from the original terminal; nohup only ignores SIGHUP,
+# leaving SIGINT live. Mirrors the chat path's own Setpgid grouping
+# (internal/cmdutil/spawn_group.go).
+#
+# MANUAL-ONLY. The chat path (/deploy -> lark-deploy-monitor) execs `make deploy`
+# SYNCHRONOUSLY and captures stdout/stderr into a 1 MiB buffer to render the
+# Feishu progress card (spawn_group.go RunCombinedBounded); it is already
+# daemonized (GoSafe + context.Background + Setpgid). Do NOT route the chat path
+# here: a self-detach makes the call return at once with empty capture, clearing
+# the single-flight slot early (a racing /deploy could double-deploy).
+deploy-bg:
+	@log="deploy-$$(date +%Y%m%d-%H%M%S).log"; \
+	echo "[deploy-bg] detached via setsid; log: $$log"; \
+	echo "[deploy-bg] watch: tail -f $$log   |   stop: pkill -f deploy.sh"; \
+	setsid ./deploy/deploy.sh $(ARGS) >"$$log" 2>&1 </dev/null &
 
 # deploy-monitor builds and restarts ONLY lark-deploy-monitor, decoupled
 # from deploy.sh. Use --init for first-time install (creates config + unit).

@@ -228,6 +228,29 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now lark-feishu-front lark-claude-back lark-miniagent-back
 ```
 
+## 6.1. 后台部署（防 SSH 断线杀进程）
+
+`make deploy` / `./deploy/deploy.sh` 跑在 SSH 会话的前台进程组里，断网、合盖、
+`ServerAliveInterval` 超时或误关终端会向其投 SIGHUP，部署被杀在半路。最危险的是
+`stop_services` → `start_services`（`deploy.sh` 约 `:629→:922`）这 ~10–40s 窗口——
+服务已停、EXIT trap 只清临时目录不重启，导致全量停服直到人工 `systemctl start`。
+
+手动部署改用后台分离：
+
+```bash
+make deploy-bg                       # 等价 make deploy，但 setsid 分离
+# 或直接调脚本：
+setsid ./deploy/deploy.sh [--force|--services claude,miniagent] \
+  >deploy.$(date +%F-%H%M).log 2>&1 </dev/null &
+```
+
+`setsid` 起新会话、脱离控制终端，同时挡住断线 SIGHUP 和旧终端的 Ctrl-C（比 `nohup`
+更强，后者只忽略 SIGHUP）。查看进度 `tail -f deploy-*.log`，停止 `pkill -f deploy.sh`。
+
+> 仅手动路径需要。飞书 `/deploy` 走 deploy-monitor，已在 GoSafe goroutine +
+> `context.Background()` + `Setpgid` 中守护化，**不要** 改路由到 `deploy-bg`——
+> 那会让进度卡捕获空输出并提前释放 single-flight 槽。
+
 ## 6.5. deploy-monitor 部署（独立）
 
 deploy-monitor 是「部署触发者」（收到飞书群 `/deploy` → `make deploy`），

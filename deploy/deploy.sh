@@ -113,22 +113,16 @@ preflight_toolchain() {
 }
 
 # Health check: does RUN_USER have passwordless sudo? A remote /deploy (this
-# script triggered by deploy-monitor) has no tty; without NOPASSWD sudo hangs
-# until deploy-monitor times out. Front-load this to step 0 so the operator
-# sees the fix hint immediately, not after the next remote call hangs.
+# script triggered by deploy-monitor) and a backgrounded manual deploy
+# (`make deploy-bg`) both run without a tty; without NOPASSWD the first sudo
+# hangs silently until the monitor times out or the operator abandons it.
+# Hard-fail here (step 0) so the operator sees the fix immediately instead of a
+# hanging/abandoned deploy that may have already stopped services.
 deploy_sudo_check() {
     if sudo -u "$RUN_USER" sudo -n systemctl is-active "$(svc_unit feishu)" >/dev/null 2>&1; then
         info "$RUN_USER has passwordless sudo"
     else
-        warn "$RUN_USER lacks passwordless sudo; remote /deploy will hang until timeout"
-        warn "  Fix: configure /etc/sudoers.d/lark-bridge, e.g.:"
-        warn "    $RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl"
-        warn "  Least-privilege: grant NOPASSWD only on systemctl. The script's"
-        warn "  cp/mkdir/chmod/chown/tee steps already run under a root-owned"
-        warn "  install (deploy.sh is invoked by an operator with root sudo),"
-        warn "  and the remote /deploy path only needs systemctl to restart units."
-        warn "  Avoid NOPASSWD on sed/tee/rm/mv: with arbitrary args those are"
-        warn "  equivalent to root (read/write/delete any file)."
+        fail "$RUN_USER lacks passwordless sudo (NOPASSWD required). Without a tty the first sudo (stop_services) hangs silently — remote /deploy and 'make deploy-bg' are both affected. Fix: add '$RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl' under /etc/sudoers.d/lark-bridge. Least-privilege: grant NOPASSWD on systemctl only — NOT on sed/tee/rm/mv, which with arbitrary args are root-equivalent (read/write/delete any file)."
     fi
 }
 
