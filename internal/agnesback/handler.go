@@ -34,6 +34,7 @@ type APIClient interface {
 	GeneratePrompt(ctx context.Context, systemPrompt, userText string) (string, error)
 	GenerateImage(ctx context.Context, prompt string) ([]byte, string, error)
 	GenerateVideo(ctx context.Context, prompt string, pollCB func(status string, progress int)) (string, error)
+	DownloadVideo(ctx context.Context, url string) ([]byte, error)
 }
 
 // jobTimeout bounds one /image or /video call (the API call itself plus, for
@@ -266,9 +267,10 @@ func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, 
 	return nil
 }
 
-// handleVideo creates a video task, polls it to completion, and posts the final
-// video URL as a terminal notice. Video files are large and often exceed the
-// Feishu 30 MiB file cap, so we surface the URL rather than shipping bytes.
+// handleVideo creates a video task, polls it to completion, then downloads the
+// video and ships it as a TypeFile control so it lands inline in the chat (same
+// path as handleImage). If the download fails (oversized, CDN reset), it
+// falls back to a notice carrying the video URL so the result is never lost.
 // Progress is reflected on the command's own progress card after each poll.
 func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, prompt string) error {
 	h.logger.Info("agnes: handle video start",
@@ -290,22 +292,45 @@ func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, 
 	if err != nil {
 		return err
 	}
-	nctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
-	defer cancel()
 	h.logger.Info("agnes: handle video success",
 		"chat_id", chatID,
 		"prompt_id", promptID,
 		"card_msg_id", cardMsgID,
 		"url", url)
-	if err := h.notify(nctx, chatID, promptID, "", "success", "视频生成完成", url); err != nil {
-		h.logger.Error("agnes: failed to send video result notice",
+
+	// Try to download the video and ship it as a file (inline in chat).
+	// On failure (oversized, CDN reset), fall back to a URL notice.
+	dlCtx, dlCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer dlCancel()
+	data, dlErr := h.client.DownloadVideo(dlCtx, url)
+	if dlErr != nil {
+		h.logger.Warn("agnes: video download failed, falling back to URL notice",
 			"chat_id", chatID,
 			"prompt_id", promptID,
-			"card_msg_id", cardMsgID,
-			"error", err)
-		return err
+			"url", url,
+			"error", dlErr)
+		nctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
+		defer cancel()
+		return h.notify(nctx, chatID, promptID, "", "success", "视频生成完成", url)
 	}
-	return nil
+
+	nctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
+	defer cancel()
+	h.logger.Info("agnes: sending video file control",
+		"chat_id", chatID,
+		"prompt_id", promptID,
+		"bytes", len(data))
+	return h.rpc.SendControl(nctx, &protocol.Control{
+		Type:     protocol.TypeFile,
+		PromptID: promptID,
+		ChatID:   chatID,
+		File: &protocol.FilePayload{
+			ChatID:   chatID,
+			FileName: "agnes-video.mp4",
+			MIMEType: "video/mp4",
+			Content:  base64.StdEncoding.EncodeToString(data),
+		},
+	})
 }
 
 // --- emit helpers ---

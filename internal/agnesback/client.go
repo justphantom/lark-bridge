@@ -266,7 +266,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string) ([]byte, stri
 
 	// Download the image bytes, bounded by ImageMaxBytes so an oversized
 	// response cannot exhaust memory.
-	data, err := c.download(ctx, d.URL)
+	data, err := c.download(ctx, d.URL, "image", c.cfg.ImageMaxBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -389,6 +389,19 @@ const (
 	DefaultVideoNumFrames = 121 // 8*15+1, ~5s at 24fps
 	DefaultVideoFrameRate = 24
 )
+
+// DefaultVideoMaxBytes caps a downloaded video at 30 MiB, matching the Feishu
+// IM file upload limit (the TypeFile pipeline ships the bytes through to
+// Feishu's im/v1/files, which rejects anything larger).
+const DefaultVideoMaxBytes = 30 << 20
+
+// DownloadVideo fetches the video bytes at url, capped at DefaultVideoMaxBytes.
+// The handler uses this to ship the video as a TypeFile Control so it lands
+// inline in the Feishu chat; a size/network failure surfaces as an error the
+// handler falls back to a URL notice for.
+func (c *Client) DownloadVideo(ctx context.Context, url string) ([]byte, error) {
+	return c.download(ctx, url, "video", DefaultVideoMaxBytes)
+}
 
 // pollVideo polls GET /agnesapi?video_id=... until the task is completed or the
 // poll timeout (derived from ctx + VideoPollTimeout) elapses.
@@ -558,41 +571,45 @@ func (c *Client) httpError(path string, resp *http.Response) error {
 	return fmt.Errorf("agnes: %s returned %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))
 }
 
-// download fetches url and returns its bytes, capped at ImageMaxBytes. A body
-// exceeding the cap is an error so the caller surfaces "image too large" rather
-// than silently truncating a half-image.
-func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
+// download fetches url and returns its bytes, capped at maxBytes. A body
+// exceeding the cap is an error so the caller surfaces "too large" rather
+// than silently truncating. kind is a short label ("image"/"video") for logs.
+func (c *Client) download(ctx context.Context, url string, kind string, maxBytes int64) ([]byte, error) {
 	c.logger.Debug("agnes: download start",
 		"url", url,
-		"max_bytes", c.cfg.ImageMaxBytes)
+		"kind", kind,
+		"max_bytes", maxBytes)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("agnes: build image download: %w", err)
+		return nil, fmt.Errorf("agnes: build %s download: %w", kind, err)
 	}
 	resp, err := c.http.Do(req) //nolint:bodyclose // closed via defer drainAndClose below
 	if err != nil {
 		c.logger.Warn("agnes: download failed",
 			"url", url,
+			"kind", kind,
 			"error", err)
-		return nil, fmt.Errorf("agnes: download image: %w", err)
+		return nil, fmt.Errorf("agnes: download %s: %w", kind, err)
 	}
 	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Warn("agnes: download non-200",
 			"url", url,
+			"kind", kind,
 			"status_code", resp.StatusCode)
-		return nil, fmt.Errorf("agnes: image download returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("agnes: %s download returned %d", kind, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, c.cfg.ImageMaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("agnes: read image bytes: %w", err)
+		return nil, fmt.Errorf("agnes: read %s bytes: %w", kind, err)
 	}
-	if int64(len(data)) > c.cfg.ImageMaxBytes {
-		c.logger.Warn("agnes: image too large",
+	if int64(len(data)) > maxBytes {
+		c.logger.Warn("agnes: download too large",
 			"url", url,
+			"kind", kind,
 			"bytes", len(data),
-			"max_bytes", c.cfg.ImageMaxBytes)
-		return nil, fmt.Errorf("agnes: image exceeds %d bytes", c.cfg.ImageMaxBytes)
+			"max_bytes", maxBytes)
+		return nil, fmt.Errorf("agnes: %s exceeds %d bytes", kind, maxBytes)
 	}
 	return data, nil
 }

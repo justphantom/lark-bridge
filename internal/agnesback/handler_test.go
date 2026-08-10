@@ -26,6 +26,10 @@ type fakeClient struct {
 	videoErr      error
 	videoProgress []int // progress values passed to pollCB, for assertions
 
+	videoData    []byte // bytes returned by DownloadVideo; nil → error
+	videoDlErr   error
+
+
 	promptCalls int
 	imageCalls  int
 	videoCalls  int
@@ -56,6 +60,15 @@ func (f *fakeClient) GenerateVideo(_ context.Context, _ string, pollCB func(stri
 		}
 	}
 	return f.videoOut, f.videoErr
+}
+
+func (f *fakeClient) DownloadVideo(_ context.Context, _ string) ([]byte, error) {
+	f.mu.Lock()
+	f.mu.Unlock()
+	if f.videoDlErr != nil {
+		return nil, f.videoDlErr
+	}
+	return f.videoData, nil
 }
 
 // fakeSender captures SendControl calls under a mutex.
@@ -187,16 +200,53 @@ func TestHandleEvent_Image_TooLarge_FallsBackToURL(t *testing.T) {
 }
 
 func TestHandleEvent_Video_OK(t *testing.T) {
-	fc := &fakeClient{videoOut: "https://example.com/v.mp4", videoProgress: []int{10, 50, 100}}
+	fc := &fakeClient{
+		videoOut:      "https://example.com/v.mp4",
+		videoProgress: []int{10, 50, 100},
+		videoData:     []byte{0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70}, // fake mp4 header
+	}
 	h, s := newTestHandler(fc)
 	_ = h.HandleEvent(context.Background(), promptEvent("/video 一只猫在跑"))
 	got := s.waitTerminal(t, 1)
+	// Video downloaded successfully → TypeFile (inline file in chat).
+	var file *protocol.Control
+	for _, c := range got {
+		if c.Type == protocol.TypeFile {
+			file = c
+			break
+		}
+	}
+	if file == nil {
+		t.Fatalf("no TypeFile control emitted; got %+v", got)
+	}
+	if file.File.FileName == "" || !strings.HasSuffix(file.File.FileName, ".mp4") {
+		t.Fatalf("file name = %q", file.File.FileName)
+	}
+	if file.File.MIMEType != "video/mp4" {
+		t.Fatalf("mime = %q", file.File.MIMEType)
+	}
+}
+
+// TestHandleEvent_Video_DownloadFails_FallsBackToURL verifies that when the
+// video download fails (e.g. exceeds 30 MiB or CDN unreachable), the handler
+// falls back to delivering the video URL as a notice so the user still gets
+// the result.
+func TestHandleEvent_Video_DownloadFails_FallsBackToURL(t *testing.T) {
+	fc := &fakeClient{
+		videoOut:      "https://example.com/v.mp4",
+		videoProgress: []int{100},
+		videoData:     nil,
+		videoDlErr:    errors.New("agnes: video exceeds 31457280 bytes"),
+	}
+	h, s := newTestHandler(fc)
+	_ = h.HandleEvent(context.Background(), promptEvent("/video big"))
+	got := s.waitTerminal(t, 1)
 	last := got[len(got)-1]
 	if last.Type != protocol.TypeNotice {
-		t.Fatalf("expected terminal notice, got %s", last.Type)
+		t.Fatalf("expected fallback notice, got %s", last.Type)
 	}
 	if last.Notice.Level != "success" || !strings.Contains(last.Notice.Message, "example.com/v.mp4") {
-		t.Fatalf("notice = %+v", last.Notice)
+		t.Fatalf("fallback notice = %+v", last.Notice)
 	}
 }
 

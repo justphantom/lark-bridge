@@ -1,6 +1,7 @@
 package agnesback
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -172,6 +173,25 @@ func TestGenerateVideo_Failed(t *testing.T) {
 }
 
 // --- multi-call helpers ---
+
+func TestDownloadVideo_OK(t *testing.T) {
+	c := testClient(&capturingDoer{status: 200, body: string(bytes.Repeat([]byte{0xAB}, 1024))})
+	data, err := c.DownloadVideo(context.Background(), "https://cdn.test/v.mp4")
+	if err != nil {
+		t.Fatalf("DownloadVideo: %v", err)
+	}
+	if len(data) != 1024 {
+		t.Errorf("downloaded %d bytes, want 1024", len(data))
+	}
+}
+
+func TestDownloadVideo_TooLarge(t *testing.T) {
+	c := testClient(&capturingDoer{status: 200, body: string(bytes.Repeat([]byte{0xAB}, int(DefaultVideoMaxBytes)+1))})
+	_, err := c.DownloadVideo(context.Background(), "https://cdn.test/v.mp4")
+	if err == nil {
+		t.Fatal("expected error for oversized video")
+	}
+}
 
 type capturingDoer struct {
 	status int
