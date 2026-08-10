@@ -2,7 +2,8 @@
 layer: L1
 type: task
 created: 2026-08-10T11:30:00+08:00
-status: in_progress
+status: completed
+archived: 2026-08-10
 ---
 
 # 发版前评估（v1.13.0 → v1.14.0）

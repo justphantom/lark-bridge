@@ -11,7 +11,7 @@ updated: 2026-08-10T00:50:00+08:00
 
 ## L1 活跃过程
 - [session.md](L1/active/session.md)
-- [tasks/pre-release-v1.14.0.md](L1/tasks/pre-release-v1.14.0.md) — 发版前评估（进行中）
+- [archive/release-v1.14.0.md](L1/archive/release-v1.14.0.md) — v1.14.0 发版评估与执行（已完成）
 
 ## L2 经验教训
 - [incidents/feishu-card-bounce-back.md](L2/incidents/feishu-card-bounce-back.md) — `/send` 文件卡片回弹事故
