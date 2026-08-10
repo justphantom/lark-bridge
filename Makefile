@@ -63,6 +63,8 @@ build-agnes-back:
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-agnes-back ./cmd/agnes-back
 
 build-deploy-monitor:
+	mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/lark-deploy-monitor ./cmd/deploy-monitor
 
 build-status-monitor:
 	mkdir -p bin
