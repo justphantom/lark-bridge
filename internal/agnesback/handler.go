@@ -86,8 +86,8 @@ func NewHandler(cfg Config, client APIClient, rpc controlSender, logger *log.Log
 // ClientConfig fields. logger is optional (defaults to Nop).
 func FromConfig(c config.AgnesBack, logger *log.Logger) (Config, *Client) {
 	cc := ClientConfig{
-		BaseURL:    c.BaseURL,
-		APIKey:     c.APIKey,
+		BaseURL:     c.BaseURL,
+		APIKey:      c.APIKey,
 		ChatModel:   c.ChatModel,
 		ImageModel:  c.ImageModel,
 		VideoModel:  c.VideoModel,

@@ -63,12 +63,17 @@ func (h *Handler) runModelPicker(chatID, promptID string) {
 
 	requestID, err := newPickerRequestID()
 	if err != nil {
-		h.notify(context.Background(), chatID, promptID, "", "error", "选择失败", "生成请求 ID 失败："+err.Error())
+		// Picker flow: notify failure can only be logged — no card to patch.
+		if nerr := h.notify(context.Background(), chatID, promptID, "", "error", "选择失败", "生成请求 ID 失败："+err.Error()); nerr != nil {
+			h.logger.Warn("agnes: picker requestID-failure notice not delivered", "error", nerr)
+		}
 		return
 	}
 	ch, ok := h.answers.Register(requestID)
 	if !ok {
-		h.notify(context.Background(), chatID, promptID, "", "error", "选择失败", "生成请求 ID 冲突，请重试")
+		if nerr := h.notify(context.Background(), chatID, promptID, "", "error", "选择失败", "生成请求 ID 冲突，请重试"); nerr != nil {
+			h.logger.Warn("agnes: picker register-conflict notice not delivered", "error", nerr)
+		}
 		return
 	}
 
@@ -94,8 +99,10 @@ func (h *Handler) runModelPicker(chatID, promptID string) {
 		ans = a
 	case <-waitCtx.Done():
 		h.answers.Cancel(requestID)
-		h.notify(context.Background(), chatID, promptID, "", "warning", "选择超时",
-			fmt.Sprintf("模型选择超时（>%s），请重新发送 /model。", pickerWaitTimeout))
+		if nerr := h.notify(context.Background(), chatID, promptID, "", "warning", "选择超时",
+			fmt.Sprintf("模型选择超时（>%s），请重新发送 /model。", pickerWaitTimeout)); nerr != nil {
+			h.logger.Warn("agnes: picker timeout notice not delivered", "error", nerr)
+		}
 		return
 	}
 
@@ -128,10 +135,10 @@ func (h *Handler) runModelPicker(chatID, promptID string) {
 		Type:   protocol.TypeNotice,
 		ChatID: chatID,
 		Notice: &protocol.NoticePayload{
-			Level:            "success",
-			Title:            title,
-			Message:          body,
-			UpdateMessageID:  messageID,
+			Level:           "success",
+			Title:           title,
+			Message:         body,
+			UpdateMessageID: messageID,
 		},
 	})
 }
