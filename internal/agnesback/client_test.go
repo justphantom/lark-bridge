@@ -222,3 +222,48 @@ func (m *multiHTTP) Do(req *http.Request) (*http.Response, error) {
 	m.n++
 	return d.Do(req)
 }
+
+// TestGenerateVideo_TransientErrorRetries verifies a transient query error
+// (network/5xx) is tolerated up to maxConsecutivePollErrors times, then the
+// poll recovers when the next query succeeds.
+func TestGenerateVideo_TransientErrorRetries(t *testing.T) {
+	c := testClient(nil)
+	c.cfg.VideoPollInterval = 5 * time.Millisecond
+	c.http = &multiHTTP{seq: []HTTPClient{
+		&capturingDoer{status: 200, body: `{"video_id":"v1","status":"queued","progress":0}`},
+		&errDoer{err: errors.New("connection reset")},
+		&errDoer{err: errors.New("timeout")},
+		&capturingDoer{status: 200, body: `{"status":"completed","progress":100,"url":"https://cdn.test/v.mp4"}`},
+	}}
+	url, err := c.GenerateVideo(context.Background(), "x", nil)
+	if err != nil {
+		t.Fatalf("expected recovery after transient errors, got: %v", err)
+	}
+	if url != "https://cdn.test/v.mp4" {
+		t.Errorf("url=%q, want https://cdn.test/v.mp4", url)
+	}
+}
+
+// TestGenerateVideo_TooManyTransientErrors verifies that more than
+// maxConsecutivePollErrors consecutive failures abandons the task.
+func TestGenerateVideo_TooManyTransientErrors(t *testing.T) {
+	c := testClient(nil)
+	c.cfg.VideoPollInterval = 5 * time.Millisecond
+	c.http = &multiHTTP{seq: []HTTPClient{
+		&capturingDoer{status: 200, body: `{"video_id":"v1","status":"queued","progress":0}`},
+		&errDoer{err: errors.New("fail1")},
+		&errDoer{err: errors.New("fail2")},
+		&errDoer{err: errors.New("fail3")},
+	}}
+	_, err := c.GenerateVideo(context.Background(), "x", nil)
+	if err == nil {
+		t.Fatal("expected error after too many consecutive failures, got nil")
+	}
+}
+
+// errDoer always returns the configured error, simulating a network/5xx failure.
+type errDoer struct{ err error }
+
+func (e *errDoer) Do(*http.Request) (*http.Response, error) {
+	return nil, e.err
+}

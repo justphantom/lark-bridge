@@ -403,8 +403,17 @@ func (c *Client) DownloadVideo(ctx context.Context, url string) ([]byte, error) 
 	return c.download(ctx, url, "video", DefaultVideoMaxBytes)
 }
 
+// maxConsecutivePollErrors is the number of consecutive queryVideo failures
+// pollVideo tolerates before giving up. At the default 10s poll interval this
+// is a ~30s tolerance window for transient network blips or API 5xx hiccups
+// — without it, a single flaky query would abort a task that would have
+// succeeded on the next poll.
+const maxConsecutivePollErrors = 3
+
 // pollVideo polls GET /agnesapi?video_id=... until the task is completed or the
-// poll timeout (derived from ctx + VideoPollTimeout) elapses.
+// poll timeout (derived from ctx + VideoPollTimeout) elapses. Transient query
+// errors (network blips, API 5xx) are tolerated up to maxConsecutivePollErrors
+// consecutive failures before the task is abandoned.
 func (c *Client) pollVideo(ctx context.Context, vid string, pollCB func(string, int)) (string, error) {
 	c.logger.Info("agnes: start polling video",
 		"video_id", truncateString(vid, 32),
@@ -417,13 +426,31 @@ func (c *Client) pollVideo(ctx context.Context, vid string, pollCB func(string, 
 	defer ticker.Stop()
 
 	pollCount := 0
+	consecutiveErrs := 0
 	// The create response may already be terminal on rare fast paths; the loop
 	// polls once immediately, then on each tick.
 	for {
 		status, url, progress, err := c.queryVideo(pollCtx, vid)
 		if err != nil {
-			return "", err
+			consecutiveErrs++
+			c.logger.Warn("agnes: video poll query failed",
+				"video_id", truncateString(vid, 32),
+				"poll_count", pollCount,
+				"consecutive_errors", consecutiveErrs,
+				"max", maxConsecutivePollErrors,
+				"error", err)
+			if consecutiveErrs >= maxConsecutivePollErrors {
+				return "", fmt.Errorf("agnes: video poll failed after %d consecutive errors: %w", consecutiveErrs, err)
+			}
+			// Transient error: wait for the next tick, then retry.
+			select {
+			case <-pollCtx.Done():
+				return "", fmt.Errorf("agnes: video poll timed out (last status: querying)")
+			case <-ticker.C:
+			}
+			continue
 		}
+		consecutiveErrs = 0 // success resets the counter
 		pollCount++
 		c.logger.Debug("agnes: video poll update",
 			"video_id", truncateString(vid, 32),
