@@ -28,14 +28,14 @@ type fakeClient struct {
 	// non-zero, returns the error only on the Nth call (1-indexed); other calls
 	// use updateErr. Lets the fallback-card test simulate "first PUT rejected,
 	// second succeeds".
-	updateErr      error
-	updateErrOnNth int32
-	updateCalls    atomic.Int32
-	updateLast     string
-	createErr      error
-	createCalls    atomic.Int32
-	patchErr       error
-	patchCalls     atomic.Int32
+	updateErr        error
+	updateErrOnNth   int32
+	updateCalls      atomic.Int32
+	updateLast       string
+	createErr        error
+	createCalls      atomic.Int32
+	patchErr         error
+	patchCalls       atomic.Int32
 	startErr         error
 	started          atomic.Int32
 	stopped          atomic.Int32

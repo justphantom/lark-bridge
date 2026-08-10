@@ -57,7 +57,7 @@ func TestGeneratePrompt_OK(t *testing.T) {
 	if h.last == nil || h.last.URL.String() != "https://api.example.test/v1/chat/completions" {
 		t.Errorf("unexpected request url: %+v", h.last)
 	}
-	if h.last.Header.Get("X-Test-API-Key") != "k" {
+	if h.last.Header.Get("X-Test-Api-Key") != "k" {
 		t.Errorf("api key not attached")
 	}
 }

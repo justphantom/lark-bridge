@@ -38,7 +38,7 @@ import (
 const DefaultBaseURL = "https://api.agnes-ai.cn"
 
 // apiKeyHeader is injected by tests to assert the bearer token is set.
-const apiKeyHeader = "X-Test-API-Key"
+const apiKeyHeader = "X-Test-Api-Key"
 
 // HTTPClient is the subset of *http.Client the client needs, lifted to an
 // interface so tests inject a stub that answers canned JSON without TLS.
@@ -193,12 +193,12 @@ func (c *Client) GeneratePrompt(ctx context.Context, systemPrompt, userText stri
 // --- image generation ---
 
 type imageRequest struct {
-	Model        string             `json:"model"`
-	Prompt       string             `json:"prompt"`
-	Size         string             `json:"size"`
-	Ratio        string             `json:"ratio,omitempty"`
-	ExtraBody    imageExtraBody     `json:"extra_body,omitempty"`
-	ReturnBase64 bool               `json:"return_base64,omitempty"`
+	Model        string         `json:"model"`
+	Prompt       string         `json:"prompt"`
+	Size         string         `json:"size"`
+	Ratio        string         `json:"ratio,omitempty"`
+	ExtraBody    imageExtraBody `json:"extra_body,omitempty"`
+	ReturnBase64 bool           `json:"return_base64,omitempty"`
 	// raw is used to inject extra_body for img2img; not exported on the wire.
 }
 
@@ -210,8 +210,8 @@ type imageExtraBody struct {
 type imageResponse struct {
 	Created int `json:"created"`
 	Data    []struct {
-		URL          string `json:"url"`
-		B64JSON      string `json:"b64_json"`
+		URL           string `json:"url"`
+		B64JSON       string `json:"b64_json"`
 		RevisedPrompt string `json:"revised_prompt"`
 	} `json:"data"`
 	Error *struct {
@@ -285,10 +285,10 @@ type videoCreateRequest struct {
 	// Height are intentionally NOT user-tunable from the slash command: the
 	// doc warns num_frames must follow the 8n+1 rule and the service
 	// normalizes unsupported sizes, so exposing them invites footguns.
-	Width     int     `json:"width,omitempty"`
-	Height    int     `json:"height,omitempty"`
-	NumFrames int     `json:"num_frames,omitempty"`
-	FrameRate int     `json:"frame_rate,omitempty"`
+	Width     int `json:"width,omitempty"`
+	Height    int `json:"height,omitempty"`
+	NumFrames int `json:"num_frames,omitempty"`
+	FrameRate int `json:"frame_rate,omitempty"`
 }
 
 type videoCreateResponse struct {
@@ -311,7 +311,7 @@ type videoResultResponse struct {
 	Progress int    `json:"progress"`
 	// URL is the top-level video URL the live API actually populates on
 	// completion. Prefer this; fall back to metadata.url below.
-	URL string `json:"url,omitempty"`
+	URL      string `json:"url,omitempty"`
 	Metadata struct {
 		URL string `json:"url"`
 	} `json:"metadata"`
@@ -459,7 +459,7 @@ func (c *Client) queryVideo(ctx context.Context, vid string) (status, url string
 		return "", "", 0, fmt.Errorf("agnes: build video query: %w", err)
 	}
 	c.setAuth(req)
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:bodyclose // closed via defer drainAndClose below
 	if err != nil {
 		c.logger.Warn("agnes: video query request failed",
 			"video_id", truncateString(vid, 32),
@@ -518,7 +518,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 		"path", path,
 		"body_bytes", len(body),
 		"body_preview", truncateString(string(body), 200))
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:bodyclose // closed via defer drainAndClose below
 	if err != nil {
 		c.logger.Warn("agnes: post request failed",
 			"path", path,
@@ -569,7 +569,7 @@ func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agnes: build image download: %w", err)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:bodyclose // closed via defer drainAndClose below
 	if err != nil {
 		c.logger.Warn("agnes: download failed",
 			"url", url,

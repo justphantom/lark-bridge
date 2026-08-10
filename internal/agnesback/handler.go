@@ -253,7 +253,7 @@ func (h *Handler) handleImage(ctx context.Context, chatID, promptID, cardMsgID, 
 			FileName:        "agnes-image.png",
 			MIMEType:        mime,
 			Content:         base64.StdEncoding.EncodeToString(data),
-			UpdateMessageID: cardMsgID,
+			UpdateMessageID: "", // 最终结果发新卡，避免更新卡片回弹
 		},
 	}); err != nil {
 		h.logger.Error("agnes: failed to send image file control",
@@ -297,7 +297,7 @@ func (h *Handler) handleVideo(ctx context.Context, chatID, promptID, cardMsgID, 
 		"prompt_id", promptID,
 		"card_msg_id", cardMsgID,
 		"url", url)
-	if err := h.notify(nctx, chatID, promptID, cardMsgID, "success", "视频生成完成", url); err != nil {
+	if err := h.notify(nctx, chatID, promptID, "", "success", "视频生成完成", url); err != nil {
 		h.logger.Error("agnes: failed to send video result notice",
 			"chat_id", chatID,
 			"prompt_id", promptID,

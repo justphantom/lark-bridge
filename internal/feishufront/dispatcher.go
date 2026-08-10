@@ -279,7 +279,6 @@ func (d *Dispatcher) SetLogger(l *log.Logger) {
 	}
 }
 
-
 // SetMaxThinkingRunes overrides the progress card's reasoning-zone cap. Called
 // by main.go from config (renderer.max_thinking_runes); non-positive
 // values keep the renderer's built-in default.

@@ -127,6 +127,7 @@ func TestCardWithColumns(t *testing.T) {
 		t.Errorf("column_sets = %d, want 3 (one per button at maxCols=1)", columnSets)
 	}
 }
+
 // TestFormSubmitButtonActionType pins that the submit button declares
 // action_type="form_submit" so Feishu routes the form values back as
 // action.form_value. NOTE: behaviors:[{type:callback}] is deliberately NOT

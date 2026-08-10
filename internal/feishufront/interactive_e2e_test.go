@@ -728,19 +728,6 @@ func lastUpdateFor(updates []updatedCard, messageID string) []byte {
 	return nil
 }
 
-// countUpdatesFor reports how many UpdateCard calls targeted messageID. Used
-// by the submit double-PATCH test to assert both the immediate and the
-// delayed fallback PATCH landed on the same card.
-func countUpdatesFor(updates []updatedCard, messageID string) int {
-	n := 0
-	for _, u := range updates {
-		if u.messageID == messageID {
-			n++
-		}
-	}
-	return n
-}
-
 // TestInteractiveSubmittedThenFinalized pins the full mid-turn gate lifecycle:
 // emit → submit (✓ echo + 处理中) → turn result → the SAME card advances to
 // finalized (✓ echo PRESERVED + 已完成). Prior to the fix, submit deleted the

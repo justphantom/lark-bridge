@@ -302,18 +302,6 @@ func isCardContentRejected(err error) bool {
 		strings.Contains(s, "over limit")
 }
 
-// truncateString truncates s to at most n runes, appending "…" if truncated.
-func truncateString(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "…"
-}
-
 // IsCardGone reports whether err represents a card that can no longer be
 // updated. CardKit codes (feishu-cardkit-migration-assessment.md §3.3):
 // 200740 (实体不存在) and 200750 (卡片实体超过 14 天有效期) — both mean the
