@@ -71,6 +71,15 @@ var handshakeTimeout = 10 * time.Second
 // caller's ctx has none, so a wedged frontend cannot pin the emit goroutine.
 const sendControlTimeout = 15 * time.Second
 
+// sendControlMaxRetries is the maximum number of retry attempts for transient
+// errors (connection failures, timeouts, 5xx). Set to 3 for ~700ms total
+// retry window (100ms + 200ms + 400ms exponential backoff).
+const sendControlMaxRetries = 3
+
+// sendControlRetryBaseDelay is the initial delay before the first retry.
+// Subsequent retries double this delay (exponential backoff).
+const sendControlRetryBaseDelay = 100 * time.Millisecond
+
 // statusQueryTimeout is the fallback deadline Status applies when the caller's
 // ctx has none, so a wedged frontend cannot block a /running query.
 const statusQueryTimeout = 5 * time.Second
@@ -464,6 +473,10 @@ func (c *Client) RecvEvent() (*protocol.Event, error) {
 // whose BackendID is empty is acceptable (the frontend backfills it). When ctx
 // has no deadline, SendControl wraps it with sendControlTimeout so a stalled
 // frontend cannot block the bridge's emit path indefinitely.
+//
+// Retries transient errors (connection failures, timeouts, 5xx) up to
+// sendControlMaxRetries with exponential backoff. Non-transient errors (4xx,
+// validation failures, context cancellation) are returned immediately.
 func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error {
 	if err := ctrl.Validate(); err != nil {
 		return err
@@ -472,29 +485,100 @@ func (c *Client) SendControl(ctx context.Context, ctrl *protocol.Control) error 
 	if err != nil {
 		return err
 	}
-	if _, ok := ctx.Deadline(); !ok {
+
+	// Prepare the request once (we'll recreate it for retries to get a fresh Body).
+	url := fmt.Sprintf("%s/v1/control/%s", c.frontendURL, c.backendID)
+
+	// If caller provided no deadline, bound the entire retry loop.
+	_, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, sendControlTimeout)
 		defer cancel()
 	}
-	url := fmt.Sprintf("%s/v1/control/%s", c.frontendURL, c.backendID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setAuth(req)
-	c.setBackendToken(req)
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }() // control POST fire-and-forget
-	if resp.StatusCode != http.StatusAccepted {
+
+	var lastErr error
+	logger := c.logger.Load()
+	for attempt := 0; attempt <= sendControlMaxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 100ms, 200ms, 400ms
+			delay := sendControlRetryBaseDelay * time.Duration(1<<(attempt-1))
+			if logger != nil {
+				logger.Debug("sendControl retry",
+					"attempt", attempt,
+					"max_retries", sendControlMaxRetries,
+					"delay_ms", delay.Milliseconds(),
+					"backend_id", c.backendID,
+					"control_type", ctrl.Type,
+					"last_error", lastErr.Error())
+			}
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		// Create a fresh request for each attempt (Body can only be read once).
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return err // Request creation errors are not transient
+		}
+		req.Header.Set("Content-Type", "application/json")
+		c.setAuth(req)
+		c.setBackendToken(req)
+
+		resp, err := c.httpClient.Do(req) //nolint:gosec // G704: frontendURL is trusted config, not user input
+		if err != nil {
+			// Network errors are transient (connection refused, timeout, etc.)
+			lastErr = err
+			continue
+		}
+
+		// Successfully got a response - check status code
+		defer func() { _ = resp.Body.Close() }() // control POST fire-and-forget
+
+		if resp.StatusCode == http.StatusAccepted {
+			return nil // Success - no retry needed
+		}
+
+		// Read response body for error details
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
-		return fmt.Errorf("send control %d: %s", resp.StatusCode, respBody)
+		lastErr = fmt.Errorf("send control %d: %s", resp.StatusCode, respBody)
+
+		// Don't retry client errors (4xx) - they're not transient
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			if logger != nil {
+				logger.Warn("sendControl non-retryable error",
+					"status_code", resp.StatusCode,
+					"backend_id", c.backendID,
+					"control_type", ctrl.Type,
+					"error", lastErr.Error())
+			}
+			return lastErr
+		}
+
+		// Server errors (5xx) are transient - retry
+		if logger != nil {
+			logger.Warn("sendControl server error, will retry",
+				"attempt", attempt,
+				"max_retries", sendControlMaxRetries,
+				"status_code", resp.StatusCode,
+				"backend_id", c.backendID,
+				"control_type", ctrl.Type,
+				"error", lastErr.Error())
+		}
 	}
-	return nil
+
+	// All retries exhausted
+	if logger != nil {
+		logger.Error("sendControl all retries exhausted",
+			"attempts", sendControlMaxRetries,
+			"backend_id", c.backendID,
+			"control_type", ctrl.Type,
+			"final_error", lastErr.Error())
+	}
+	return lastErr
 }
 
 // metricsPushTimeout bounds a PushMetrics POST when the caller's ctx has no
