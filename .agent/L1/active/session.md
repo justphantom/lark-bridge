@@ -5,7 +5,7 @@ updated: 2026-08-10T12:45:00+08:00
 # 会话状态
 
 ## 当前任务
-无（/send 省略号修复 e5fbc3f 已推送；agnesback lint 清零 5a99571 已推送）
+无（monitor/status/agnes 三服务已部署 v1.14.0-5-ga0c37ba，均 active）
 
 ## 活跃文件
 - 无
