@@ -190,6 +190,11 @@ func canRenderQuestionAsButtons(q *protocol.QuestionPayload) bool {
 // "choice"; DispatchCardAction sets Choices=[choice], which
 // questionReplyFromAnswer maps to answers[0] exactly as the dropdown path does
 // (SelectOption uses label-as-value too), so the bridge mapping is unchanged.
+//
+// Button rows default to cardkit's 5-per-row grid, but picker cards whose
+// options look like file/dir names or paths (the /send directory browser)
+// switch to one button per row: a 5-column row on a phone gives each button
+// ~65pt, so Feishu's client-side ellipsis turns every label into "📄 a….go".
 func RenderQuestionButtons(ctrl *protocol.Control, header cardkit.HeaderInfo, footer cardkit.FooterInfo) ([]byte, error) {
 	header.Template = "orange"
 	if header.Title == "" {
@@ -208,7 +213,27 @@ func RenderQuestionButtons(ctrl *protocol.Control, header cardkit.HeaderInfo, fo
 			truncateRunes(opt, maxInteractiveBodyRunes), "question",
 			map[string]any{"requestID": q.RequestID, "choice": opt}, false, false))
 	}
-	return cardkit.Card(header, footer, elements, actions)
+	return cardkit.CardWithColumns(header, footer, elements, actions, questionButtonColumns(item.Options))
+}
+
+// questionButtonRunesPerRow is the per-button text budget of a 5-column row on
+// a phone-width card (~350pt card / 5 columns ≈ 65pt ≈ 8 CJK runes). An option
+// longer than this gets Feishu-client-ellipsised in the grid layout, so such
+// pickers render one button per full-width row instead.
+const questionButtonRunesPerRow = 8
+
+// questionButtonColumns picks the button grid width for a button-rendered
+// question: 1 (one full-width button per row) when any option is path-like —
+// carries the /send 📁/📄 prefixes, contains "/", or simply exceeds the
+// 5-column per-button budget — else 0 (cardkit's default 5-per-row grid).
+func questionButtonColumns(options []string) int {
+	for _, opt := range options {
+		if strings.HasPrefix(opt, "📁 ") || strings.HasPrefix(opt, "📄 ") ||
+			strings.Contains(opt, "/") || len([]rune(opt)) > questionButtonRunesPerRow {
+			return 1
+		}
+	}
+	return 0
 }
 
 // capOptions builds the options list for a question, stopping once the

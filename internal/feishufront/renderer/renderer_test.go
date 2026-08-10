@@ -348,6 +348,76 @@ func TestRenderInteractive_QuestionStillFormWhenLarge(t *testing.T) {
 	}
 }
 
+// columnSetColumnCounts returns, per column_set row in the card body, how many
+// columns that row holds — the per-row button count.
+func columnSetColumnCounts(t *testing.T, card map[string]any) []int {
+	t.Helper()
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+	var counts []int
+	for _, el := range elements {
+		em, ok := el.(map[string]any)
+		if !ok || em["tag"] != "column_set" {
+			continue
+		}
+		cols, _ := em["columns"].([]any)
+		counts = append(counts, len(cols))
+	}
+	return counts
+}
+
+// TestRenderInteractive_QuestionButtonsListLayout pins the /send mobile fix:
+// options that look like file/dir names (or are simply long) render one button
+// per row so Feishu's mobile client does not ellipsis-truncate every label the
+// way the default 5-per-row grid does.
+func TestRenderInteractive_QuestionButtonsListLayout(t *testing.T) {
+	cases := []struct {
+		name string
+		opts []string
+	}{
+		{"dir prefix", []string{"📁 docs/", "📄 a.go"}},
+		{"file prefix", []string{"📄 README.md", "📄 main.go"}},
+		{"contains slash", []string{"src/cmd/main.go", "x"}},
+		{"long label", []string{"short", "a-very-long-option-name"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := &protocol.Control{Type: protocol.TypeQuestion, Question: &protocol.QuestionPayload{
+				RequestID: "q",
+				Questions: []protocol.QuestionItem{{Label: "选择要发送的文件", Options: tc.opts}},
+			}}
+			raw, err := RenderInteractive(ctrl, hdr(), ftr())
+			card := parse(t, raw, err)
+			counts := columnSetColumnCounts(t, card)
+			if len(counts) != len(tc.opts) {
+				t.Fatalf("want %d one-column rows, got rows %v", len(tc.opts), counts)
+			}
+			for _, c := range counts {
+				if c != 1 {
+					t.Errorf("want 1 column per row, got rows %v", counts)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderInteractive_QuestionButtonsGridLayout pins the unchanged default:
+// short plain options (models, yes/no) still share rows 5-per-row so those
+// pickers stay compact.
+func TestRenderInteractive_QuestionButtonsGridLayout(t *testing.T) {
+	opts := []string{"a", "b", "c", "d", "e", "f", "g"}
+	ctrl := &protocol.Control{Type: protocol.TypeQuestion, Question: &protocol.QuestionPayload{
+		RequestID: "q",
+		Questions: []protocol.QuestionItem{{Label: "选模型", Options: opts}},
+	}}
+	raw, err := RenderInteractive(ctrl, hdr(), ftr())
+	card := parse(t, raw, err)
+	counts := columnSetColumnCounts(t, card)
+	if len(counts) != 2 || counts[0] != 5 || counts[1] != 2 {
+		t.Errorf("want rows [5 2], got %v", counts)
+	}
+}
+
 func TestPermissionRender(t *testing.T) {
 	ctrl := &protocol.Control{Permission: &protocol.PermissionPayload{
 		RequestID: "p1",
