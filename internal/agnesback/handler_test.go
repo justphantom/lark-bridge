@@ -118,7 +118,16 @@ func countTerminal(ctrls []*protocol.Control) int {
 
 func newTestHandler(fc APIClient) (*Handler, *fakeSender) {
 	s := &fakeSender{}
-	h := NewHandler(Config{ChatModel: "agnes-2.5-flash"}, fc, s, nil)
+	h := NewHandler(Config{
+		ChatModel:   "agnes-2.5-flash",
+		ImageModel:  "agnes-image-2.1-flash",
+		VideoModel:  "agnes-video-v2.0",
+		ImageSize:   "1K",
+		ImageRatio:  "1:1",
+		ChatModels:  []string{"agnes-2.5-flash", "agnes-2.5-pro"},
+		ImageModels: []string{"agnes-image-2.1-flash", "agnes-image-2.2"},
+		VideoModels: []string{"agnes-video-v2.0", "agnes-video-v3.0"},
+	}, fc, s, nil)
 	return h, s
 }
 
@@ -323,10 +332,224 @@ func TestHandleEvent_PingAnswersPong(t *testing.T) {
 func TestHandleEvent_Help(t *testing.T) {
 	fc := &fakeClient{}
 	h, s := newTestHandler(fc)
-	_ = h.HandleEvent(context.Background(), promptEvent("/agnes-help"))
+	_ = h.HandleEvent(context.Background(), promptEvent("/help"))
 	got := s.waitTerminal(t, 1)
 	last := got[len(got)-1]
 	if last.Type != protocol.TypeNotice || !strings.Contains(last.Notice.Message, "/image-prompt") {
 		t.Fatalf("help notice = %+v", last.Notice)
+	}
+	if !strings.Contains(last.Notice.Message, "/model") {
+		t.Fatalf("help should list /model, got %q", last.Notice.Message)
+	}
+}
+
+func TestHandleEvent_ModelSetAndClear(t *testing.T) {
+	fc := &fakeClient{}
+	h, s := newTestHandler(fc)
+
+	// Direct set.
+	_ = h.HandleEvent(context.Background(), promptEvent("/model image agnes-image-2.2"))
+	got := s.waitTerminal(t, 1)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "success" ||
+		!strings.Contains(n.Message, "agnes-image-2.2") {
+		t.Fatalf("set notice = %+v", got[len(got)-1].Notice)
+	}
+	eff, overridden := h.effectiveModels()
+	if eff[ModelSlotImage] != "agnes-image-2.2" || !overridden[ModelSlotImage] {
+		t.Fatalf("eff = %v overridden = %v", eff, overridden)
+	}
+
+	// Unknown model.
+	_ = h.HandleEvent(context.Background(), promptEvent("/model chat unknown-model"))
+	got = s.waitTerminal(t, 2)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "error" {
+		t.Fatalf("unknown-model notice = %+v", got[len(got)-1].Notice)
+	}
+
+	// Bad slot.
+	_ = h.HandleEvent(context.Background(), promptEvent("/model bogus x"))
+	got = s.waitTerminal(t, 3)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "error" {
+		t.Fatalf("bad-slot notice = %+v", got[len(got)-1].Notice)
+	}
+
+	// Clear one slot.
+	_ = h.HandleEvent(context.Background(), promptEvent("/model image clear"))
+	got = s.waitTerminal(t, 4)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "success" {
+		t.Fatalf("clear notice = %+v", got[len(got)-1].Notice)
+	}
+	eff, overridden = h.effectiveModels()
+	if eff[ModelSlotImage] != "agnes-image-2.1-flash" || overridden[ModelSlotImage] {
+		t.Fatalf("after clear eff = %v overridden = %v", eff, overridden)
+	}
+}
+
+func TestHandleEvent_ModelClearAll(t *testing.T) {
+	fc := &fakeClient{}
+	h, s := newTestHandler(fc)
+	h.setModelOverride(ModelSlotChat, "agnes-2.5-pro")
+	h.setModelOverride(ModelSlotVideo, "agnes-video-v3.0")
+
+	_ = h.HandleEvent(context.Background(), promptEvent("/model clear"))
+	got := s.waitTerminal(t, 1)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "success" || !strings.Contains(n.Message, "已清除全部模型覆盖") {
+		t.Fatalf("clear-all notice = %+v", got[len(got)-1].Notice)
+	}
+	_, overridden := h.effectiveModels()
+	if overridden[ModelSlotChat] || overridden[ModelSlotImage] || overridden[ModelSlotVideo] {
+		t.Fatalf("overrides should be cleared, got %v", overridden)
+	}
+}
+
+func TestHandleEvent_ModelUsage(t *testing.T) {
+	fc := &fakeClient{}
+	h, s := newTestHandler(fc)
+	_ = h.HandleEvent(context.Background(), promptEvent("/model chat"))
+	got := s.waitTerminal(t, 1)
+	if n := got[len(got)-1].Notice; n == nil || n.Level != "error" || !strings.Contains(n.Message, "用法") {
+		t.Fatalf("usage notice = %+v", got[len(got)-1].Notice)
+	}
+}
+
+// TestHandleEvent_ModelPicker drives the full interactive flow: /model emits a
+// three-question card; a delivered Answer applies the changed slots and patches
+// the card in place via UpdateMessageID.
+func TestHandleEvent_ModelPicker(t *testing.T) {
+	fc := &fakeClient{}
+	h, s := newTestHandler(fc)
+
+	// Fire /model (no args) — it spawns the picker goroutine.
+	_ = h.HandleEvent(context.Background(), promptEvent("/model"))
+
+	// Wait for the question card.
+	var q *protocol.Control
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, c := range s.snapshot() {
+			if c.Type == protocol.TypeQuestion {
+				q = c
+			}
+		}
+		if q != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for question card")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if len(q.Question.Questions) != 3 {
+		t.Fatalf("want 3 questions, got %d", len(q.Question.Questions))
+	}
+	if !q.Question.TakeOverProgress {
+		t.Fatal("question should take over the progress card")
+	}
+	// First option of each question is the keep-current entry.
+	for i, item := range q.Question.Questions {
+		if len(item.Options) < 2 || !strings.HasPrefix(item.Options[0], modelKeepPrefix) {
+			t.Fatalf("question %d options = %v", i, item.Options)
+		}
+	}
+
+	// Deliver an answer: change chat + video, keep image.
+	ans := &protocol.AnswerPayload{
+		ChatID:    "oc_test",
+		RequestID: q.Question.RequestID,
+		MessageID: "om_picker",
+		Choices:   []string{"agnes-2.5-pro", q.Question.Questions[1].Options[0], "agnes-video-v3.0"},
+	}
+	_ = h.HandleEvent(context.Background(), &protocol.Event{
+		Type:   protocol.TypeAnswer,
+		ChatID: "oc_test",
+		Answer: ans,
+	})
+
+	// Wait for the result card patch.
+	deadline = time.Now().Add(2 * time.Second)
+	var res *protocol.Control
+	for {
+		for _, c := range s.snapshot() {
+			if c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.UpdateMessageID == "om_picker" {
+				res = c
+			}
+		}
+		if res != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for result card patch")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if res.Notice.Title != "已切换模型" ||
+		!strings.Contains(res.Notice.Message, "chat：agnes-2.5-flash → agnes-2.5-pro") ||
+		!strings.Contains(res.Notice.Message, "video：agnes-video-v2.0 → agnes-video-v3.0") {
+		t.Fatalf("result card = %+v", res.Notice)
+	}
+	eff, overridden := h.effectiveModels()
+	if eff[ModelSlotChat] != "agnes-2.5-pro" || eff[ModelSlotVideo] != "agnes-video-v3.0" ||
+		eff[ModelSlotImage] != "agnes-image-2.1-flash" || overridden[ModelSlotImage] {
+		t.Fatalf("eff = %v overridden = %v", eff, overridden)
+	}
+}
+
+// TestHandleEvent_ModelPickerUnchanged verifies the all-keep answer reports no
+// change and installs no overrides.
+func TestHandleEvent_ModelPickerUnchanged(t *testing.T) {
+	fc := &fakeClient{}
+	h, s := newTestHandler(fc)
+	_ = h.HandleEvent(context.Background(), promptEvent("/model"))
+
+	var q *protocol.Control
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, c := range s.snapshot() {
+			if c.Type == protocol.TypeQuestion {
+				q = c
+			}
+		}
+		if q != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for question card")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	choices := make([]string, 3)
+	for i, item := range q.Question.Questions {
+		choices[i] = item.Options[0] // keep current
+	}
+	_ = h.HandleEvent(context.Background(), &protocol.Event{
+		Type:   protocol.TypeAnswer,
+		ChatID: "oc_test",
+		Answer: &protocol.AnswerPayload{
+			ChatID: "oc_test", RequestID: q.Question.RequestID, MessageID: "om_k", Choices: choices,
+		},
+	})
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		found := false
+		for _, c := range s.snapshot() {
+			if c.Type == protocol.TypeNotice && c.Notice != nil && c.Notice.UpdateMessageID == "om_k" {
+				if c.Notice.Title != "模型未变化" {
+					t.Fatalf("title = %q, want 模型未变化", c.Notice.Title)
+				}
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for no-change card")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, overridden := h.effectiveModels(); overridden[ModelSlotChat] || overridden[ModelSlotImage] || overridden[ModelSlotVideo] {
+		t.Fatalf("no overrides expected, got %v", overridden)
 	}
 }

@@ -60,6 +60,13 @@ type ClientConfig struct {
 	ImageSize  string // "1K"/"2K"/"3K"/"4K"
 	ImageRatio string // "1:1"/"16:9"/...
 
+	// ChatModels/ImageModels/VideoModels feed the /model picker card: the
+	// selectable options per slot. config.applyDefaults guarantees each list
+	// holds at least the configured default model.
+	ChatModels  []string
+	ImageModels []string
+	VideoModels []string
+
 	// Video polling cadence (package-level defaults override when zero).
 	VideoPollInterval time.Duration
 	VideoPollTimeout  time.Duration
@@ -110,6 +117,18 @@ func New(cfg ClientConfig, logger *log.Logger) *Client {
 		cfg.VideoPollTimeout = DefaultVideoPollTimeout
 	}
 	return &Client{cfg: cfg, http: cfg.HTTPClient, logger: logger}
+}
+
+// Model slots accepted by the /model command flow.
+const (
+	ModelSlotChat  = "chat"
+	ModelSlotImage = "image"
+	ModelSlotVideo = "video"
+)
+
+// ValidModelSlot reports whether slot is one of chat/image/video.
+func ValidModelSlot(slot string) bool {
+	return slot == ModelSlotChat || slot == ModelSlotImage || slot == ModelSlotVideo
 }
 
 // DefaultVideoPollInterval / DefaultVideoPollTimeout bound the async video

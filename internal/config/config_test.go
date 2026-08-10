@@ -728,12 +728,26 @@ func TestLoadAgnesDefaults(t *testing.T) {
 	if cfg.AgnesBack.APIKey != "" {
 		t.Errorf("agnes api_key should default empty, got %q", cfg.AgnesBack.APIKey)
 	}
+	// Picker lists fall back to the single configured default model.
+	for _, c := range []struct {
+		name string
+		got  []string
+		want string
+	}{
+		{"chat_models", cfg.AgnesBack.ChatModels, "agnes-2.5-flash"},
+		{"image_models", cfg.AgnesBack.ImageModels, "agnes-image-2.1-flash"},
+		{"video_models", cfg.AgnesBack.VideoModels, "agnes-video-v2.0"},
+	} {
+		if len(c.got) != 1 || c.got[0] != c.want {
+			t.Errorf("default agnes %s = %v, want [%q]", c.name, c.got, c.want)
+		}
+	}
 }
 
 // TestLoadAgnesOverrides verifies that explicit AgnesBack values are NOT
 // overwritten by applyDefaults.
 func TestLoadAgnesOverrides(t *testing.T) {
-	path := writeConfig(t, `{"agnes":{"base_url":"https://custom.example.com","image_size":"1K","image_ratio":"1:1"}}`)
+	path := writeConfig(t, `{"agnes":{"base_url":"https://custom.example.com","image_size":"1K","image_ratio":"1:1","image_models":["agnes-image-2.1-flash","agnes-image-2.2"]}}`)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -743,6 +757,9 @@ func TestLoadAgnesOverrides(t *testing.T) {
 	}
 	if cfg.AgnesBack.ImageSize != "1K" || cfg.AgnesBack.ImageRatio != "1:1" {
 		t.Errorf("agnes overrides lost: size=%q ratio=%q", cfg.AgnesBack.ImageSize, cfg.AgnesBack.ImageRatio)
+	}
+	if len(cfg.AgnesBack.ImageModels) != 2 || cfg.AgnesBack.ImageModels[1] != "agnes-image-2.2" {
+		t.Errorf("agnes image_models override lost: %v", cfg.AgnesBack.ImageModels)
 	}
 }
 

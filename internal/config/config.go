@@ -253,6 +253,14 @@ type AgnesBack struct {
 	// VideoModel is the model name used by /video to generate a video.
 	// Defaults to "agnes-video-v2.0" (applyDefaults).
 	VideoModel string `json:"video_model,omitempty"`
+	// ChatModels / ImageModels / VideoModels list the selectable models the
+	// /model picker card offers per slot. Empty falls back to the single
+	// configured model (applyDefaults), so a default deployment still gets a
+	// one-option card. Models not in the list remain reachable via the direct
+	// form /model <slot> <model>.
+	ChatModels  []string `json:"chat_models,omitempty"`
+	ImageModels []string `json:"image_models,omitempty"`
+	VideoModels []string `json:"video_models,omitempty"`
 	// ImageSize is the size tier for /image ("1K"/"2K"/"3K"/"4K").
 	// Defaults to "2K" (applyDefaults).
 	ImageSize string `json:"image_size,omitempty"`

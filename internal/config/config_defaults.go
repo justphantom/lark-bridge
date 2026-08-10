@@ -160,6 +160,17 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.AgnesBack.ImageRatio == "" {
 		cfg.AgnesBack.ImageRatio = "16:9"
 	}
+	// Picker lists fall back to the single configured model so the /model
+	// card always has at least one option per slot.
+	if len(cfg.AgnesBack.ChatModels) == 0 {
+		cfg.AgnesBack.ChatModels = []string{cfg.AgnesBack.ChatModel}
+	}
+	if len(cfg.AgnesBack.ImageModels) == 0 {
+		cfg.AgnesBack.ImageModels = []string{cfg.AgnesBack.ImageModel}
+	}
+	if len(cfg.AgnesBack.VideoModels) == 0 {
+		cfg.AgnesBack.VideoModels = []string{cfg.AgnesBack.VideoModel}
+	}
 }
 
 // ResolveConfigPath resolves the miniagent config path for the bridge.

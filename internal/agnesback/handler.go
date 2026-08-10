@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
@@ -58,6 +59,18 @@ type Handler struct {
 	client APIClient
 	rpc    controlSender
 	logger *log.Logger
+
+	// answers routes the /model picker card's TypeAnswer event back to the
+	// goroutine blocked in runModelPicker.
+	answers *bridgebase.AnswerBroker
+
+	// modelMu guards the runtime model overrides installed by /model ("" = use
+	// cfg). Process-global (agnes-back keeps no per-chat state) and lost on
+	// restart, falling back to config values.
+	modelMu    sync.RWMutex
+	chatModel  string
+	imageModel string
+	videoModel string
 }
 
 // NewHandler wires the handler. rpc is typically a *backendrpc.Client.
@@ -65,7 +78,7 @@ func NewHandler(cfg Config, client APIClient, rpc controlSender, logger *log.Log
 	if logger == nil {
 		logger = log.Nop()
 	}
-	return &Handler{cfg: cfg, client: client, rpc: rpc, logger: logger}
+	return &Handler{cfg: cfg, client: client, rpc: rpc, logger: logger, answers: bridgebase.NewAnswerBroker()}
 }
 
 // FromConfig builds a Config + real Client from config.AgnesBack, ready for New.
@@ -75,11 +88,14 @@ func FromConfig(c config.AgnesBack, logger *log.Logger) (Config, *Client) {
 	cc := ClientConfig{
 		BaseURL:    c.BaseURL,
 		APIKey:     c.APIKey,
-		ChatModel:  c.ChatModel,
-		ImageModel: c.ImageModel,
-		VideoModel: c.VideoModel,
-		ImageSize:  c.ImageSize,
-		ImageRatio: c.ImageRatio,
+		ChatModel:   c.ChatModel,
+		ImageModel:  c.ImageModel,
+		VideoModel:  c.VideoModel,
+		ChatModels:  c.ChatModels,
+		ImageModels: c.ImageModels,
+		VideoModels: c.VideoModels,
+		ImageSize:   c.ImageSize,
+		ImageRatio:  c.ImageRatio,
 	}
 	return cc, New(cc, logger)
 }
@@ -88,6 +104,15 @@ func FromConfig(c config.AgnesBack, logger *log.Logger) (Config, *Client) {
 // commands and empty args surface as a terminal notice bound to promptID so the
 // frontend finalises the progress card instead of leaving it spinning.
 func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
+	// TypeAnswer: the frontend relays the /model picker card's submit. Route it
+	// to the goroutine blocked in runModelPicker; a late/duplicate click with no
+	// waiter is discarded.
+	if ev.Type == protocol.TypeAnswer {
+		if ev.Answer != nil && ev.Answer.RequestID != "" {
+			h.answers.Deliver(ev.Answer.RequestID, ev.Answer)
+		}
+		return nil
+	}
 	// TypePing: the frontend's C2 app-level health probe. Answer on this
 	// dispatch loop itself — a wedged loop never pongs and the frontend
 	// evicts the backend after maxMissedPongs. Fire-and-forget with its own
@@ -170,11 +195,13 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 		h.runJob(chatID, promptID, cardMsgID, "视频生成", func(c context.Context) error {
 			return h.handleVideo(c, chatID, promptID, cardMsgID, arg)
 		})
-	case "/agnes-help", "":
+	case "/model":
+		return h.handleModelCommand(ctx, chatID, promptID, cardMsgID, arg)
+	case "/help", "":
 		return h.notify(ctx, chatID, promptID, cardMsgID, "info", "Agnes 用法", helpText)
 	default:
 		return h.notify(ctx, chatID, promptID, cardMsgID, "warning", "未知指令",
-			"未识别的指令："+cmd+"。发送 /agnes-help 查看可用指令。")
+			"未识别的指令："+cmd+"。发送 /help 查看可用指令。")
 	}
 	return nil
 }
@@ -428,6 +455,147 @@ func splitCommand(prompt string) (cmd, arg string) {
 	return cmd, arg
 }
 
+// handleModelCommand implements /model. No args: show the current effective
+// models (config value marked 默认) and open the interactive picker. Args:
+// "clear" resets all slots; "<slot> clear" resets one; "<slot> <model>" pins
+// directly (any string — new models not in the configured list are usable).
+func (h *Handler) handleModelCommand(ctx context.Context, chatID, promptID, cardMsgID, arg string) error {
+	if arg == "" {
+		eff, overridden := h.effectiveModels()
+		body := currentModelsBody(eff, overridden)
+		if len(h.cfg.ChatModels)+len(h.cfg.ImageModels)+len(h.cfg.VideoModels) > 0 {
+			body += "\n已弹出选择卡片，可直接在卡片中切换。"
+			go h.runModelPicker(chatID, promptID)
+		}
+		return h.notify(ctx, chatID, promptID, cardMsgID, "info", "当前模型", body)
+	}
+	fields := strings.Fields(arg)
+	if len(fields) == 1 && fields[0] == "clear" {
+		h.clearAllModelOverrides()
+		return h.notify(ctx, chatID, promptID, cardMsgID, "success", "已恢复默认",
+			"已清除全部模型覆盖，三个槽位均回落到配置文件值。")
+	}
+	if len(fields) != 2 {
+		return h.notify(ctx, chatID, promptID, cardMsgID, "error", "用法",
+			"用法：/model ｜ /model clear ｜ /model <chat|image|video> <型号|clear>")
+	}
+	slot, value := fields[0], fields[1]
+	if !ValidModelSlot(slot) {
+		return h.notify(ctx, chatID, promptID, cardMsgID, "error", "未知槽位",
+			"槽位必须是 chat / image / video，收到："+slot)
+	}
+	if value == "clear" {
+		h.clearModelOverride(slot)
+		return h.notify(ctx, chatID, promptID, cardMsgID, "success", "已恢复默认",
+			h.modelLine(slot)+" 已清除覆盖，回落到配置文件值。")
+	}
+	if !h.knownModel(slot, value) {
+		return h.notify(ctx, chatID, promptID, cardMsgID, "error", "未知型号",
+			fmt.Sprintf("型号 %q 不在 %s 的配置列表中；请先用 /model 查看可用型号，或在配置文件中加入该型号。", value, slot))
+	}
+	h.setModelOverride(slot, value)
+	return h.notify(ctx, chatID, promptID, cardMsgID, "success", "已切换模型",
+		h.modelLine(slot)+" 已切换为 "+value+"\n进程级生效，重启后回落配置文件值。")
+}
+
+// knownModel reports whether value is in the configured model list for slot
+// (the list /model displays). An empty configured list accepts anything so a
+// hand-rolled Config without the picker lists does not reject every pin.
+func (h *Handler) knownModel(slot, value string) bool {
+	var list []string
+	switch slot {
+	case ModelSlotChat:
+		list = h.cfg.ChatModels
+	case ModelSlotImage:
+		list = h.cfg.ImageModels
+	case ModelSlotVideo:
+		list = h.cfg.VideoModels
+	}
+	if len(list) == 0 {
+		return true
+	}
+	for _, m := range list {
+		if m == value {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveModels returns each slot's current model and which slots carry a
+// runtime override (vs the config default).
+func (h *Handler) effectiveModels() (eff map[string]string, overridden map[string]bool) {
+	h.modelMu.RLock()
+	defer h.modelMu.RUnlock()
+	eff = map[string]string{
+		ModelSlotChat:  orModel(h.chatModel, h.cfg.ChatModel),
+		ModelSlotImage: orModel(h.imageModel, h.cfg.ImageModel),
+		ModelSlotVideo: orModel(h.videoModel, h.cfg.VideoModel),
+	}
+	overridden = map[string]bool{
+		ModelSlotChat:  h.chatModel != "",
+		ModelSlotImage: h.imageModel != "",
+		ModelSlotVideo: h.videoModel != "",
+	}
+	return eff, overridden
+}
+
+// setModelOverride pins slot to model ("" clears). The change takes effect on
+// the next generation call: generate prompts read it directly, and generation
+// jobs receive it as an explicit argument.
+func (h *Handler) setModelOverride(slot, model string) {
+	h.modelMu.Lock()
+	defer h.modelMu.Unlock()
+	switch slot {
+	case ModelSlotChat:
+		h.chatModel = model
+	case ModelSlotImage:
+		h.imageModel = model
+	case ModelSlotVideo:
+		h.videoModel = model
+	}
+}
+
+// clearModelOverride resets one slot to its config value.
+func (h *Handler) clearModelOverride(slot string) { h.setModelOverride(slot, "") }
+
+// clearAllModelOverrides resets all three slots to their config values.
+func (h *Handler) clearAllModelOverrides() {
+	h.modelMu.Lock()
+	h.chatModel, h.imageModel, h.videoModel = "", "", ""
+	h.modelMu.Unlock()
+}
+
+// modelLine renders one slot's effective model with a 默认 marker.
+func (h *Handler) modelLine(slot string) string {
+	eff, overridden := h.effectiveModels()
+	if overridden[slot] {
+		return slot + " 模型"
+	}
+	return slot + " 模型（默认 " + eff[slot] + "）"
+}
+
+// sendCtrl posts a control via the backend RPC client. Picker goroutines use
+// it directly (not notify) because Question/result-patch controls carry their
+// own PromptID/UpdateMessageID semantics.
+func (h *Handler) sendCtrl(ctrl *protocol.Control) {
+	ctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
+	defer cancel()
+	if err := h.rpc.SendControl(ctx, ctrl); err != nil {
+		h.logger.Warn("agnes: send control failed",
+			"chat_id", ctrl.ChatID,
+			"type", ctrl.Type,
+			"error", err)
+	}
+}
+
+func orModel(override, fallback string) string {
+	if override != "" {
+		return override
+	}
+	return fallback
+}
+
 const helpText = "**Agnes AI 后端指令**\n\n" +
 	"**生成提示词**\n" +
 	"• /image-prompt <图片描述> — 生成图片提示词（文生图风格）\n" +
@@ -435,4 +603,7 @@ const helpText = "**Agnes AI 后端指令**\n\n" +
 	"**生成图片/视频**\n" +
 	"• /image <提示词> — 用提示词生成图片并发到群里\n" +
 	"• /video <提示词> — 用提示词生成视频，返回视频链接\n\n" +
+	"**模型切换**\n" +
+	"• /model — 弹出选择卡片，一次性切换 chat/image/video 三个槽位的模型\n" +
+	"• /model <槽位> <型号> — 直接切换（槽位：chat/image/video）；/model <槽位> clear 恢复配置默认\n\n" +
 	"> 提示词可以是任意自然语言描述；也可先用 /image-prompt / /video-prompt 生成结构化提示词，再用其结果调用 /image / /video。"
