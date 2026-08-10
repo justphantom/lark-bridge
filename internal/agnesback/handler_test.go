@@ -26,9 +26,8 @@ type fakeClient struct {
 	videoErr      error
 	videoProgress []int // progress values passed to pollCB, for assertions
 
-	videoData    []byte // bytes returned by DownloadVideo; nil → error
-	videoDlErr   error
-
+	videoData  []byte // bytes returned by DownloadVideo; nil → error
+	videoDlErr error
 
 	promptCalls int
 	imageCalls  int
@@ -63,8 +62,6 @@ func (f *fakeClient) GenerateVideo(_ context.Context, _ string, pollCB func(stri
 }
 
 func (f *fakeClient) DownloadVideo(_ context.Context, _ string) ([]byte, error) {
-	f.mu.Lock()
-	f.mu.Unlock()
 	if f.videoDlErr != nil {
 		return nil, f.videoDlErr
 	}
