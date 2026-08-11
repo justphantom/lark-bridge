@@ -1,10 +1,15 @@
 ---
-updated: 2026-08-11T23:38:38+08:00
+updated: 2026-08-12T01:45:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
+**钉死 miniagent CLI 的 workdir 契约（非空+绝对路径+只认 `-workdir` flag）—— 全部实施 + 验证通过，未提交**（跨仓 `/opt/code/miniagent`，待用户 commit）。详见 [tasks/miniagent-workdir-pin.md](tasks/miniagent-workdir-pin.md)。
+- 起因：排查"miniagent-back 工作目录飘到 /home/dev"。结论 = **conflation**（systemd 下无真实漂移，`/home/dev` 是 `-config` 路径被 `/current` 相邻行误读）；顺带把 CLI workdir 契约收紧（删 config `run.workdir`、删 `os.Getwd()` 回退、auto 模式也强制 workdir）。
+- 验证全绿：build/vet/test -race ./...、golangci-lint 0 issue、smoke 五项。**注意：在线 CLI 仍 v4.4.0，需重装才生效**。
+
+## 前序：agnes-back 移除（已完成，未提交）
 **彻底移除 agnes-back（C 档·全量清零）—— 全部实施 + 验证通过，未提交**（待用户决定 commit）。详见 [tasks/agnes-backend-removal.md](tasks/agnes-backend-removal.md)。
 
 继 claude-back（B+C）、deploy-monitor 之后第三个移除的后端，后端收敛到 **miniagent + status-monitor**。用户拍板：彻底移除 + C 档全量清零（接受永久丢失图片/视频生成——agnes 是唯一媒体后端，无法迁移）。前置评估 `.claude/wf-agnes-removal-eval.js`（76 agent 对抗式核验，65 confirmed）。

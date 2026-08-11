@@ -34,6 +34,10 @@ confidence: high
    - 注意：`bool + omitempty` 无法区分“未设置”与“显式 false”；若需保留关闭能力，字段应改为 `*bool`。
 5. **不可直接引用上游 internal 包**
    - `../miniagent` 是独立 Go module，bridge 无法 import 其 `internal` 函数（如 `readMemoryRecords`）。需在 bridge 侧自实现 jsonl 解析。
+6. **workdir 契约已钉死（2026-08-12，上游 fbfd848+）** — `[x] 已实现`
+   - miniagent CLI 的 workdir：非空 + 必须绝对路径 + **只来自 `-workdir` flag**（删 config `run.workdir`、删 `absWorkdir` 的 `os.Getwd()` 回退、auto 模式也强制）。bridge 恒传绝对 `-workdir`（`workspaceRoot`/`b.Directory` 均绝对），本就合规、无需改动。
+   - **教训（排查"漂移到 /home/dev"）**：那是 conflation——`/home/dev/.miniagent` 是 `-config` 配置目录，`/current` 把 `配置文件：…` 印在 `工作目录：…` 下一行易被误读；`/var/lib/lark-bridge/router-miniagent.v5.json`（非 config 里失效的 `router_path`）才是真 binding 来源。systemd 下进程 cwd=`/`、HOME=`/var/lib/lark-bridge`，全链路 workdir 恒为 `/opt/code/*`。
+   - **部署生效前提**：在线 `/usr/local/bin/miniagent` 须 `make build` 重装，否则仍是旧契约。
 
 ## 参考
 - 相关代码：`internal/miniclient/client.go`、`internal/miniagent/handler_cli.go`
