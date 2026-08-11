@@ -56,15 +56,13 @@ const (
 	FieldDirectory   = "directory"
 	FieldControlType = "control_type"
 
-	// Claude-backend fields.
-	FieldModel          = "model"
-	FieldPermissionMode = "permission_mode"
-	FieldEffortLevel    = "effort_level"
-	FieldPromptLength   = "prompt_length"
-	FieldEventType      = "event_type"
-	FieldEventSubtype   = "event_subtype"
-	FieldToolName       = "tool_name"
-	FieldPromptID       = "prompt_id"
+	// Event-stream fields (shared across backends).
+	FieldModel        = "model"
+	FieldPromptLength = "prompt_length"
+	FieldEventType    = "event_type"
+	FieldEventSubtype = "event_subtype"
+	FieldToolName     = "tool_name"
+	FieldPromptID     = "prompt_id"
 )
 
 // LevelVar is a variable Level.

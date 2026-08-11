@@ -30,49 +30,13 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.IPCAddr == "" {
 		cfg.IPCAddr = "localhost:6060"
 	}
-	if cfg.Claude.CLIPath == "" {
-		cfg.Claude.CLIPath = "claude"
-	}
-	if cfg.Claude.PermissionMode == "" {
-		cfg.Claude.PermissionMode = "acceptEdits"
-	}
-	if cfg.Claude.MaxConcurrent == 0 {
-		cfg.Claude.MaxConcurrent = 4
-	}
-	// StreamHistory: 0 (unset) → default 50; negative → explicit disable so
-	// streamarchive.NewSink's history<=0 disable branch becomes reachable
-	// (matches ListCacheTTL/SettingsCacheTTL's "negative = off" semantics).
-	if cfg.Claude.StreamHistory == 0 {
-		cfg.Claude.StreamHistory = 50
-	}
-	if cfg.Claude.AppendSystemPrompt == "" {
-		cfg.Claude.AppendSystemPrompt = "你的回答应该简洁，通常不超过1000字"
-	}
-	// Interactive picker option lists. nil (the JSON zero value for a slice)
-	// triggers the default. An explicit empty array [] would NOT match, but
-	// JSON omitempty on the struct tag means an absent field unmarshals to
-	// nil, which is the common case.
-	if cfg.Claude.ModelOptions == nil {
-		cfg.Claude.ModelOptions = []string{"haiku", "sonnet", "opus"}
-	}
-	if cfg.Claude.PermissionOptions == nil {
-		// "default" is intentionally excluded: it hangs the non-interactive
-		// -p subprocess. Values are the string forms of claude.PermissionMode*.
-		cfg.Claude.PermissionOptions = []string{"acceptEdits", "plan", "bypassPermissions"}
-	}
-	if cfg.Claude.EffortOptions == nil {
-		cfg.Claude.EffortOptions = []string{"low", "medium", "high", "xhigh", "max"}
-	}
-	if cfg.Claude.SettingsCacheTTL == 0 {
-		cfg.Claude.SettingsCacheTTL = 3600
-	}
 	if cfg.DeployMonitor.DeployTarget == "" {
 		cfg.DeployMonitor.DeployTarget = "deploy"
 	}
 	if cfg.StatusMonitor.Interval == 0 {
 		cfg.StatusMonitor.Interval = Duration(60 * time.Second)
 	}
-	// StreamHistory: see Claude note — negative disables archiving.
+	// StreamHistory: negative disables archiving.
 	if cfg.MiniAgent.StreamHistory == 0 {
 		cfg.MiniAgent.StreamHistory = 50
 	}

@@ -6,22 +6,8 @@
 
   "ipc_secret":   "${IPC_SECRET}",
   "ipc_addr":     "${IPC_ADDR}",
-  "backend_id":   "claude-1",
+  "backend_id":   "backend-1",
   "frontend_url": "${FRONTEND_URL}",
-
-  "claude": {
-    "cli_path":            "claude",
-    "permission_mode":     "acceptEdits",
-    "default_directory":   "${STATE_DIR}/claude",
-    "max_concurrent":      4,
-    "append_system_prompt": "你的回答应该简洁，通常不超过1000字",
-    "stream_history":      50,
-    "model_options":       ["haiku", "sonnet", "opus"],
-    "permission_options":  ["acceptEdits", "plan", "bypassPermissions"],
-    "effort_options":      ["low", "medium", "high", "xhigh", "max"],
-    "settings_dir":        "~/.claude",
-    "settings_cache_ttl":  3600
-  },
 
   "miniagent": {
     "api_key":         "${MINIAGENT_API_KEY}",

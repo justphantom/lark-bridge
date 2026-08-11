@@ -61,7 +61,7 @@ vX.Y.Z: <主线一句话（逗号分隔的主题列表）>
 
 ## 5. 发版顺序
 
-**先 feishu-front，后各 backend**（claude / miniagent）。
+**先 feishu-front，后各 backend**（miniagent / agnes）。
 `deploy.sh` 的服务部署顺序天然满足该约束；前端先升级可保证新协议字段（Event/Control）
 对旧后端向后兼容，后端后升级再启用新能力。
 
@@ -77,7 +77,7 @@ vX.Y.Z: <主线一句话（逗号分隔的主题列表）>
 
 ## 7. 提交信息风格（与发版相关的约定）
 
-- 格式：`<type>(<scope>): <主题>`，scope 为包名（feishufront/claudebridge/protocol/…）。
+- 格式：`<type>(<scope>): <主题>`，scope 为包名（feishufront/miniagent/protocol/…）。
 - type：`feat` / `fix` / `refactor` / `style` / `docs` / `chore`；一个提交只做一件事，
   跨主题的改动拆多个提交（参考 v1.8.0 期间 fix/style/docs 三分提交）。
 - 主题行后可接 `—` 补充细节；正文写动机与关键设计取舍，不重复 diff。

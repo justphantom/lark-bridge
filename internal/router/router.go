@@ -1,7 +1,7 @@
 // Package router maps a Feishu chatID to a persistent backend session id
 // and the working directory that session lives in, plus the pinned model,
-// agent, permission mode, effort level and settings file the bridge
-// forwards to the backend on every prompt.
+// agent and run-mode overrides the bridge forwards to the backend on every
+// prompt.
 //
 // One chatID maps to exactly one Binding for the lifetime of the bridge
 // process. If persistPath is non-empty, bindings are saved to disk on every
@@ -18,31 +18,27 @@ import (
 )
 
 // Binding pairs a backend session id with the working directory the session
-// lives in, a title snapshot used for display, and the pinned model / agent
-// (opencode) / permission mode / effort level / settings file (claude) that
-// the bridge should forward. Fields are the union of both source backends.
+// lives in, a title snapshot used for display, and the pinned model / agent /
+// run-mode overrides that the bridge should forward.
 //
 // Empty means "not set" for every optional field; callers fall back to the
 // backend's configured default.
 type Binding struct {
-	SessionID      string `json:"sessionID,omitempty"`
-	Directory      string `json:"directory,omitempty"`
-	Title          string `json:"title,omitempty"`
-	ModelSpec      string `json:"modelSpec,omitempty"`
-	Provider       string `json:"provider,omitempty"`       // miniagent (-provider; paired with ModelSpec → -model)
-	Agent          string `json:"agent,omitempty"`          // opencode
-	PermissionMode string `json:"permissionMode,omitempty"` // claude
-	EffortLevel    string `json:"effortLevel,omitempty"`    // claude
-	SettingsFile   string `json:"settingsFile,omitempty"`   // claude
-	Mode           string `json:"mode,omitempty"`           // miniagent
-	Thinking       string `json:"thinking,omitempty"`       // miniagent
-	MaxIterations  int    `json:"maxIterations,omitempty"`  // miniagent (-max-iterations; 0 = unset)
-	ConfigFile     string `json:"configFile,omitempty"`     // miniagent (-config absolute path; "" → client default)
+	SessionID     string `json:"sessionID,omitempty"`
+	Directory     string `json:"directory,omitempty"`
+	Title         string `json:"title,omitempty"`
+	ModelSpec     string `json:"modelSpec,omitempty"`
+	Provider      string `json:"provider,omitempty"`      // miniagent (-provider; paired with ModelSpec → -model)
+	Agent         string `json:"agent,omitempty"`         // opencode
+	Mode          string `json:"mode,omitempty"`          // miniagent
+	Thinking      string `json:"thinking,omitempty"`      // miniagent
+	MaxIterations int    `json:"maxIterations,omitempty"` // miniagent (-max-iterations; 0 = unset)
+	ConfigFile    string `json:"configFile,omitempty"`    // miniagent (-config absolute path; "" → client default)
 
 	// Generation is an in-process incarnation token for this binding. It is
 	// assigned by Bind when a binding is created and is NOT persisted: it only
-	// protects cross-goroutine updates (e.g. the Claude stream loop back-filling
-	// a session id) from landing on a binding that has been deleted and replaced
+	// protects cross-goroutine updates (e.g. a stream loop back-filling a
+	// session id) from landing on a binding that has been deleted and replaced
 	// since the turn started.
 	Generation uint64 `json:"-"`
 }

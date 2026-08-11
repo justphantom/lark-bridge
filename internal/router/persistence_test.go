@@ -95,9 +95,6 @@ func TestClosePersistsLastMutation(t *testing.T) {
 	r1, _ := New(path, log.Nop())
 	r1.Bind("c1", "s1", "/d", "updated-title", "m", "a")
 	r1.SetModelSpec("c1", "updated-model")
-	r1.SetPermissionMode("c1", "plan")
-	r1.SetEffortLevel("c1", "high")
-	r1.SetSettingsFile("c1", "${HOME}/.claude/kimi.json")
 	r1.SetAgent("c1", "build")
 	r1.Close()
 
@@ -109,16 +106,15 @@ func TestClosePersistsLastMutation(t *testing.T) {
 	}
 	if got.SessionID != "s1" || got.Directory != "/d" ||
 		got.ModelSpec != "updated-model" || got.Title != "updated-title" ||
-		got.Agent != "build" ||
-		got.PermissionMode != "plan" || got.EffortLevel != "high" ||
-		got.SettingsFile != "${HOME}/.claude/kimi.json" {
+		got.Agent != "build" {
 		t.Fatalf("unexpected binding after reload: %+v", got)
 	}
 }
 
-// TestLoadIgnoresCrossBackendFields verifies a v5 file written by one backend
-// loads cleanly when read by the other (json.Unmarshal ignores unknown
-// fields). A claude file with agent/lastUserMsgID still maps chatID→binding.
+// TestLoadIgnoresCrossBackendFields verifies a v5 file carrying now-removed
+// fields (permissionMode/effortLevel from the deleted claude backend) still
+// loads cleanly: json.Unmarshal silently drops unknown keys, so a stale state
+// file written by an older release does not break a newer binary.
 func TestLoadIgnoresCrossBackendFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "router.v5.json")
@@ -130,7 +126,7 @@ func TestLoadIgnoresCrossBackendFields(t *testing.T) {
 	if !ok {
 		t.Fatal("expected c1 binding")
 	}
-	if got.SessionID != "s1" || got.ModelSpec != "m" || got.PermissionMode != "plan" || got.Agent != "build" {
+	if got.SessionID != "s1" || got.ModelSpec != "m" || got.Agent != "build" {
 		t.Fatalf("cross-backend tolerance failed: %+v", got)
 	}
 }

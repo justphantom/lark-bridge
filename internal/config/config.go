@@ -1,8 +1,8 @@
 // Package config loads and validates bridge configuration from a JSON file.
 //
-// The merged Config is the union of the claude and opencode source configs
-// plus the new IPC fields (BackendID/FrontendURL/RouterPath) added by the
-// 1-frontend/N-backend split. Each of the three binaries reads only
+// The merged Config is the union of per-backend settings plus the IPC
+// fields (BackendID/FrontendURL/RouterPath) added by the 1-frontend/N-backend
+// split. Each of the binaries reads only
 // the subset of fields it owns; cross-binary required-field checks are the
 // responsibility of each binary's main.go, not this shared Load — a config
 // file for a backend does not need Feishu credentials, and vice versa.
@@ -57,7 +57,6 @@ type Config struct {
 	RouterPath           string `json:"router_path,omitempty"` // router 持久化文件路径（前后端共用）
 
 	// —— 后端运行时：各后端按需 ——
-	Claude        Claude        `json:"claude,omitempty"`         // claude-back 用
 	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 	StatusMonitor StatusMonitor `json:"status_monitor,omitempty"` // status-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
@@ -95,49 +94,6 @@ type Config struct {
 	// —— 文件上传：feishu-front 用，后端忽略 ——
 	// 仅有该段时才放开 file-type 消息；未配置 → 文件消息照旧被拒。
 	FileConvert FileConvert `json:"file_convert,omitempty"`
-}
-
-// Claude holds settings for the local Claude Code CLI subprocess that
-// acts as the agent backend. The claude-back binary shells out to the
-// `claude` CLI per turn and reads a stream-json event flow from stdout.
-type Claude struct {
-	CLIPath            string `json:"cli_path,omitempty"`             // path to the claude binary (default "claude")
-	PermissionMode     string `json:"permission_mode,omitempty"`      // acceptEdits | plan | bypassPermissions ("default" hangs the non-interactive -p stream)
-	DefaultDirectory   string `json:"default_directory,omitempty"`    // base dir for per-chat session working dirs
-	MaxConcurrent      int    `json:"max_concurrent,omitempty"`       // max parallel CLI invocations (default 4)
-	AppendSystemPrompt string `json:"append_system_prompt,omitempty"` // system prompt to append (default: "你的回答应该简洁，通常不超过1000字")
-	// StreamHistory caps how many recent per-run raw stream-json captures
-	// are kept under {state_dir}/streams. 0 (unset) → 50; negative → disable
-	// archiving entirely (streamarchive.NewSink history<=0 branch). The archive
-	// is best-effort and stores lines verbatim (no redaction); see claudebridge.
-	StreamHistory int `json:"stream_history,omitempty"`
-
-	// ModelOptions lists the models offered in the interactive /model picker
-	// card. nil/unset → ["haiku","sonnet","opus"]. Values are passed verbatim
-	// to the CLI as --model; the picker also offers a custom-input box so a
-	// model not listed can still be typed.
-	ModelOptions []string `json:"model_options,omitempty"`
-	// PermissionOptions lists the modes offered in the interactive /mode
-	// picker card. nil/unset → [acceptEdits, plan, bypassPermissions]. The
-	// picker has no custom-input box: "default" is intentionally excluded by
-	// default as it hangs the non-interactive -p subprocess, but an operator
-	// who understands the risk may add it here.
-	PermissionOptions []string `json:"permission_options,omitempty"`
-	// EffortOptions lists the levels offered in the interactive /effort
-	// picker card. nil/unset → [low, medium, high, xhigh, max]. No
-	// custom-input box; the picker restricts selection to listed values.
-	EffortOptions []string `json:"effort_options,omitempty"`
-
-	// SettingsDir is the directory scanned for the interactive /config
-	// picker (settings.json and *-settings.json). Empty/unset → the Client
-	// resolves to ~/.claude at runtime via os.UserHomeDir, so the config
-	// layer stays independent of the process user's HOME.
-	SettingsDir string `json:"settings_dir,omitempty"`
-	// SettingsCacheTTL bounds how long ListSettings results stay cached
-	// (seconds). The scan is cheap (local fs), but caching keeps repeated
-	// /config pickers instant and mirrors opencode's list_cache_ttl.
-	// 0/unset → 3600; negative disables caching.
-	SettingsCacheTTL int `json:"settings_cache_ttl,omitempty"`
 }
 
 // DeployMonitor holds settings for the lark-deploy-monitor backend, which
@@ -231,7 +187,7 @@ type MiniAgent struct {
 }
 
 // AgnesBack configures the lark-agnes-back backend (cmd/agnes-back). Unlike the
-// CLI backends (claude/miniagent), it does NOT fork a subprocess: it calls the
+// CLI backend (miniagent), it does NOT fork a subprocess: it calls the
 // Agnes AI REST API directly over net/http for image/video prompt generation,
 // image generation, and video generation. All three model names are operator-
 // configurable so a new model revision (e.g. agnes-image-2.2-flash) needs no

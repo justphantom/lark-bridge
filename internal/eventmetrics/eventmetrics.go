@@ -29,18 +29,7 @@ func (c *Counter) Value() int64 { return c.v.Load() }
 // Reset sets the counter to zero. Intended for tests only.
 func (c *Counter) Reset() { c.v.Store(0) }
 
-// ---- Pre-defined counters (F2/F4/F8) ----
-
-// ClaudeResultLenientHit counts how many times parseResultLenient successfully
-// recovered a result event after strict json.Unmarshal failed. A hit means
-// the Claude CLI's result-line schema has drifted (e.g. a numeric field type
-// changed).
-var ClaudeResultLenientHit Counter
-
-// ClaudeResultParseFail counts how many times even the lenient fallback
-// failed to parse a result-type line. A non-zero value signals a more severe
-// schema break.
-var ClaudeResultParseFail Counter
+// ---- Pre-defined counters ----
 
 // ---- MiniAgent per-turn counters ----
 
@@ -58,15 +47,6 @@ var MiniAgentTurnOutputTokens Counter
 // MiniAgentTurnIncomplete counts turns that ended with FinishMaxIterations
 // (hit the LLM-call cap) rather than a clean stop.
 var MiniAgentTurnIncomplete Counter
-
-// OMPTextEndFallback counts how many times the bridge used text_end content
-// as fallback because no text_delta was received in an assistant round. A
-// hit means the OMP CLI omitted text_delta for a message.
-var OMPTextEndFallback Counter
-
-// OMPAutoRetryLimit counts how many times the bridge terminated a turn
-// because the auto_retry attempt count exceeded the configured limit.
-var OMPAutoRetryLimit Counter
 
 // TerminalEmitRetries counts extra emit attempts for terminal controls
 // (TypeResult/TypeError/terminal TypeNotice) beyond the first. A non-zero value
@@ -100,18 +80,14 @@ func UnknownEvent(backend, eventType string) *Counter {
 var globalTruncatedStore = newUnknownStore()
 
 // LineTruncated returns the Counter for oversized-line truncations in a
-// given backend ("claude"/"opencode"/"omp"/"miniagent"). A non-zero value
-// means a single stream line exceeded the backend's maxLineLen.
+// given backend (e.g. "miniagent"). A non-zero value means a single stream
+// line exceeded the backend's maxLineLen.
 func LineTruncated(backend string) *Counter {
 	return globalTruncatedStore.get(backend)
 }
 
 // ResetAll resets every pre-defined counter. Intended for tests.
 func ResetAll() {
-	ClaudeResultLenientHit.Reset()
-	ClaudeResultParseFail.Reset()
-	OMPTextEndFallback.Reset()
-	OMPAutoRetryLimit.Reset()
 	TerminalEmitRetries.Reset()
 	TerminalEmitLost.Reset()
 	globalUnknownStore.reset()

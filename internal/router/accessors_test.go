@@ -67,36 +67,6 @@ func TestSetDirectory(t *testing.T) {
 	}
 }
 
-// TestSetPermissionMode verifies the Claude permission mode field.
-func TestSetPermissionMode(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetPermissionMode("c1", "plan")
-	b, _ := r.Lookup("c1")
-	if b.PermissionMode != "plan" {
-		t.Errorf("PermissionMode = %q, want plan", b.PermissionMode)
-	}
-}
-
-// TestSetEffortLevel verifies the Claude effort level field.
-func TestSetEffortLevel(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetEffortLevel("c1", "max")
-	b, _ := r.Lookup("c1")
-	if b.EffortLevel != "max" {
-		t.Errorf("EffortLevel = %q, want max", b.EffortLevel)
-	}
-}
-
-// TestSetSettingsFile verifies the settings file field.
-func TestSetSettingsFile(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetSettingsFile("c1", "/home/u/.claude/k.json")
-	b, _ := r.Lookup("c1")
-	if b.SettingsFile != "/home/u/.claude/k.json" {
-		t.Errorf("SettingsFile = %q", b.SettingsFile)
-	}
-}
-
 // TestSetMode verifies the miniagent -mode field round-trips.
 func TestSetMode(t *testing.T) {
 	r := newTestRouter(t, "c1")
@@ -195,9 +165,6 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	r.SetAgent("c1", "build")
 	r.SetSessionID("c1", "sess-1")
 	r.SetDirectory("c1", "/work")
-	r.SetPermissionMode("c1", "plan")
-	r.SetEffortLevel("c1", "max")
-	r.SetSettingsFile("c1", "/k.json")
 	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
 	r.SetMaxIterations("c1", 30)
@@ -209,7 +176,6 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 		t.Errorf("ModelSpec = %q, want opus", b.ModelSpec)
 	}
 	if b.Agent != "build" || b.SessionID != "sess-1" || b.Directory != "/work" ||
-		b.PermissionMode != "plan" || b.EffortLevel != "max" || b.SettingsFile != "/k.json" ||
 		b.Mode != "auto" || b.Thinking != "high" || b.MaxIterations != 30 {
 		t.Errorf("SetModelSpec corrupted other fields: %+v", b)
 	}
@@ -227,9 +193,6 @@ func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
 	r.SetAgent("ghost", "x")
 	r.SetSessionID("ghost", "x")
 	r.SetDirectory("ghost", "x")
-	r.SetPermissionMode("ghost", "x")
-	r.SetEffortLevel("ghost", "x")
-	r.SetSettingsFile("ghost", "x")
 	r.SetMode("ghost", "x")
 	r.SetThinking("ghost", "x")
 	r.SetMaxIterations("ghost", 5)

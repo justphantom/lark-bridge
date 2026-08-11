@@ -1,7 +1,6 @@
 package bridgebase
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -131,10 +129,10 @@ func ParseSendOption(choice string) (kind, name string) {
 }
 
 // ReadFilePayload reads one file, enforces the size cap, and wraps it as a
-// TypeFile payload (base64 content). Shared by the Core-based bridges and
-// miniagent so the size/encoding/escape policy lives in one place. updateMessageID
-// is threaded through so the frontend can PATCH the picker card the user just
-// clicked instead of sending a standalone result notice.
+// TypeFile payload (base64 content). Shared by the bridges so the
+// size/encoding/escape policy lives in one place. updateMessageID is threaded
+// through so the frontend can PATCH the picker card the user just clicked
+// instead of sending a standalone result notice.
 //
 // root is the chat's bound directory: the path is re-validated here (symlink
 // resolution + containment) at read time rather than only at selection time,
@@ -197,177 +195,4 @@ func sendFileSize(n int64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 	return fmt.Sprintf("%.1f MiB", float64(n)/float64(mi))
-}
-
-// CmdSend is the Core-based /send entry point shared by claude/opencode backs.
-// rootDir is the chat's bound working directory (the wrapper resolves it from
-// the router binding). With args it sends the relative path directly; without
-// args it spawns the directory browser. Either path runs on the Core's
-// process-lifetime context (file read + base64 + emit can outlast the
-// dispatcher's 15s command timeout), so the handler returns Handled=true
-// immediately and emits its own TypeFile / notice.
-func CmdSend(ctx context.Context, c *Core, chatID, rootDir string, args []string) (cmdutil.Result, error) {
-	replyToID := ReplyToID(ctx)
-	if rootDir == "" {
-		return cmdutil.ErrorResult("尚未设置工作目录。发送 `/cd` 选择一个项目目录后再发送文件。")
-	}
-	absRoot, err := ResolveRoot(rootDir)
-	if err != nil {
-		return cmdutil.ErrorResult("工作目录无效：%v", err)
-	}
-	if len(args) > 0 {
-		// Join rather than args[0]: Fields-splitting breaks paths containing
-		// spaces, and silently truncating to the first word would send the
-		// wrong file or report a confusing "not exists".
-		target, jerr := SafeJoin(absRoot, strings.Join(args, " "))
-		if jerr != nil {
-			return cmdutil.ErrorResult("%v", jerr)
-		}
-		GoSafe(c.Logger, "send:direct", func() { emitSendFile(c, chatID, absRoot, target, "") })
-		return cmdutil.Result{Handled: true}, nil
-	}
-	GoSafe(c.Logger, "send:browser", func() { runSendBrowser(c, chatID, replyToID, absRoot) })
-	return cmdutil.Result{Handled: true}, nil
-}
-
-// runSendBrowser is the multi-round directory picker: each round reads the
-// current dir, builds the option list, asks one question via Core.AskAndWait,
-// and descends / ascends / sends on the user's pick. AskAndWait's appCtx +
-// 9-minute wait outlast the dispatcher timeout, and its TakeOverProgress
-// morphs the /send progress card into the picker card each round.
-//
-// Round 1 morphs the progress card; every later round PATCHes that SAME card
-// in place via AskCardUpdate (QuestionPayload.UpdateMessageID), so descending
-// into a directory updates the picker rather than leaving the prior card
-// behind and piling up a new one per level. pickerMsgID carries the round-1
-// card's message_id across iterations; AskCardUpdate returns the message_id
-// the click actually landed on (the same card unless the frontend fell back to
-// a standalone send).
-func runSendBrowser(c *Core, chatID, replyToID, absRoot string) {
-	currDir := absRoot
-	pickerMsgID := ""
-	for {
-		entries, err := os.ReadDir(currDir)
-		if err != nil {
-			c.EmitNoticeLogged(chatID, "error", "发送失败", "读取目录失败："+err.Error())
-			return
-		}
-		options := BuildSendOptions(currDir, absRoot, entries)
-		if len(options) == 0 {
-			c.EmitNoticeLogged(chatID, "warning", "发送文件", "当前目录为空。")
-			return
-		}
-		label := "选择要发送的文件（📁 进入子目录，⬆️ 返回上级）"
-		var (
-			choice    string
-			messageID string
-			aerr      error
-		)
-		if pickerMsgID == "" {
-			choice, messageID, aerr = c.AskAndWait(chatID, replyToID, "文件", label, StaticOptions(options), false)
-		} else {
-			choice, messageID, aerr = c.AskCardUpdate(chatID, pickerMsgID, "文件", label, StaticOptions(options), false)
-		}
-		if aerr != nil {
-			c.EmitNoticeLogged(chatID, "warning", "发送取消", aerr.Error())
-			return
-		}
-		if pickerMsgID == "" {
-			pickerMsgID = messageID
-		}
-		kind, name := ParseSendOption(choice)
-		switch kind {
-		case "up":
-			currDir = sendParentDir(currDir, absRoot)
-		case "dir":
-			// SafeJoin per transition (not just at the final file pick) so a
-			// symlinked directory — or one swapped in mid-browse — cannot walk
-			// the browser outside absRoot.
-			target, jerr := SafeJoin(currDir, name)
-			if jerr != nil {
-				c.EmitNoticeLogged(chatID, "error", "发送失败", jerr.Error())
-				return
-			}
-			currDir = target
-		case "file":
-			target, jerr := SafeJoin(currDir, name)
-			if jerr != nil {
-				c.EmitNoticeLogged(chatID, "error", "发送失败", jerr.Error())
-				return
-			}
-			// Lock the picker card into a "selected" state BEFORE the upload:
-			// ends the interactive binding immediately (no delayed submit-
-			// fallback PATCH can race the outcome card) and gives the user a
-			// stable card while the file uploads.
-			c.AskSelectedCard(chatID, messageID, "已选择 "+name)
-			emitSendFile(c, chatID, absRoot, target, messageID)
-			return
-		default:
-			c.EmitNoticeLogged(chatID, "warning", "发送取消", "未识别的选择。")
-			return
-		}
-	}
-}
-
-// AskSelectedCard PATCHes a multi-round picker card into its final locked
-// "user picked X" state — same single-option question-card trick
-// AskCardUpdate uses for intermediate refresh rounds, except the single
-// option is the chosen file and the requestID is fresh. Because the frontend
-// ends any prior interactive binding on this card when it registers the
-// refresh (sendInteractive evicts same-card bindings), the delayed submit
-// fallback from the click that JUST selected this file finds no binding and
-// never fires; the card stays on the locked bytes until the file-outcome
-// frame (green "已发送") replaces them. Best-effort: a failure leaves the
-// prior round's card, which the outcome still patches.
-func (c *Core) AskSelectedCard(chatID, updateMessageID, label string) {
-	if updateMessageID == "" {
-		return
-	}
-	requestID, err := newRequestID()
-	if err != nil {
-		return
-	}
-	// A "selected" terminal card stays in place until the file outcome
-	// (green "已发送") replaces it. Fire-and-forget like AskCardUpdate.
-	c.EmitAsync("", &protocol.Control{
-		Type:   protocol.TypeQuestion,
-		ChatID: chatID,
-		Question: &protocol.QuestionPayload{
-			RequestID:       requestID,
-			Questions:       []protocol.QuestionItem{{Label: label, Options: []string{label}}},
-			UpdateMessageID: updateMessageID,
-		},
-	})
-}
-
-// sendParentDir moves up one level without escaping absRoot. Cleaned Rel
-// check guards against a currDir already at root (returns root unchanged).
-func sendParentDir(currDir, absRoot string) string {
-	parent := filepath.Dir(currDir)
-	if !withinRoot(absRoot, parent) {
-		return absRoot
-	}
-	return parent
-}
-
-// emitSendFile reads one file into a FilePayload and ships a TypeFile control
-// to the frontend, which uploads and sends it. updateMessageID (the picker
-// card when set) lets the frontend PATCH that card with the outcome; "" falls
-// back to a standalone notice on failure (success is silent — the file itself
-// landing in the chat is the confirmation). absRoot is re-enforced inside
-// ReadFilePayload at read time.
-func emitSendFile(c *Core, chatID, absRoot, path, updateMessageID string) {
-	fileName := filepath.Base(path)
-	payload, err := ReadFilePayload(chatID, fileName, absRoot, path, updateMessageID)
-	if err != nil {
-		c.EmitNoticeLogged(chatID, "error", "发送失败", err.Error())
-		return
-	}
-	if err := c.Emit(c.AppCtx, "", &protocol.Control{
-		Type:   protocol.TypeFile,
-		ChatID: chatID,
-		File:   payload,
-	}); err != nil {
-		c.EmitNoticeLogged(chatID, "error", "发送失败", "递交文件失败："+err.Error())
-	}
 }

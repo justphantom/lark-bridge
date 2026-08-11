@@ -120,27 +120,6 @@ func (r *Router) SetDirectory(chatID, directory string) {
 	r.mutate(chatID, func(b *Binding) { b.Directory = directory })
 }
 
-// SetPermissionMode replaces the pinned Claude permission mode on the binding
-// for chatID and persists the change. No-op when the binding does not exist.
-// Pass "" to clear.
-func (r *Router) SetPermissionMode(chatID, permissionMode string) {
-	r.mutate(chatID, func(b *Binding) { b.PermissionMode = permissionMode })
-}
-
-// SetEffortLevel replaces the pinned Claude effort level on the binding for
-// chatID and persists the change. No-op when the binding does not exist. Pass
-// "" to clear.
-func (r *Router) SetEffortLevel(chatID, effortLevel string) {
-	r.mutate(chatID, func(b *Binding) { b.EffortLevel = effortLevel })
-}
-
-// SetSettingsFile replaces the pinned Claude --settings file path on the
-// binding for chatID and persists the change. No-op when the binding does not
-// exist. Pass "" to clear.
-func (r *Router) SetSettingsFile(chatID, settingsFile string) {
-	r.mutate(chatID, func(b *Binding) { b.SettingsFile = settingsFile })
-}
-
 // SetMode replaces the pinned miniagent -mode on the binding for chatID and
 // persists the change. No-op when the binding does not exist. Pass "" to clear.
 func (r *Router) SetMode(chatID, mode string) {

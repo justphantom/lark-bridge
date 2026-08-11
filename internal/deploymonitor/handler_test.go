@@ -841,8 +841,8 @@ func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
 	if !item.Multiple {
 		t.Errorf("question item must be Multiple=true for /deploy-some")
 	}
-	if got := strings.Join(item.Options, ","); got != "feishu,claude,miniagent" {
-		t.Errorf("options = %q, want feishu,claude,miniagent", got)
+	if got := strings.Join(item.Options, ","); got != "feishu,miniagent" {
+		t.Errorf("options = %q, want feishu,miniagent", got)
 	}
 	if !q.Question.TakeOverProgress {
 		t.Errorf("deploy-some picker must TakeOverProgress")
@@ -855,8 +855,8 @@ func TestHandleEvent_DeploySome_EmitsMultiSelectCard(t *testing.T) {
 	_ = h.HandleEvent(context.Background(), answerEventChoices("cs", "msg-cs", nil))
 }
 
-// TestHandleEvent_DeploySome_MultiSelectRuns delivers a [feishu,claude] pick
-// and asserts make deploy ARGS=--services=feishu,claude actually runs.
+// TestHandleEvent_DeploySome_MultiSelectRuns delivers a [feishu,miniagent] pick
+// and asserts make deploy ARGS=--services=feishu,miniagent actually runs.
 func TestHandleEvent_DeploySome_MultiSelectRuns(t *testing.T) {
 	rpc := &fakeSender{}
 	cmd := &fakeCommander{out: []byte("deployed")}
@@ -868,15 +868,15 @@ func TestHandleEvent_DeploySome_MultiSelectRuns(t *testing.T) {
 	if waitForQuestion(rpc) == nil {
 		t.Fatalf("picker card never emitted")
 	}
-	if err := h.HandleEvent(context.Background(), answerEventChoices("cs", "msg-cs", []string{"feishu", "claude"})); err != nil {
+	if err := h.HandleEvent(context.Background(), answerEventChoices("cs", "msg-cs", []string{"feishu", "miniagent"})); err != nil {
 		t.Fatalf("HandleEvent answer: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
 	for cmd.callCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy ARGS=--services=feishu,claude" {
-		t.Errorf("submit should run `make deploy ARGS=--services=feishu,claude`, got %q", got)
+	if got := strings.Join(cmd.lastCmd(), " "); got != "make deploy ARGS=--services=feishu,miniagent" {
+		t.Errorf("submit should run `make deploy ARGS=--services=feishu,miniagent`, got %q", got)
 	}
 }
 

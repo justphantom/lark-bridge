@@ -75,22 +75,6 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("component_log_levels.%s must be one of debug/info/warn/error, got %q", comp, level)
 	}
 
-	// Claude fields. applyDefaults always populates cfg.Claude (cli_path,
-	// permission_mode, max_concurrent, ...), so this always runs; harmless for
-	// configs that omit claude since the defaults themselves validate.
-	//
-	// "default" is rejected: claude-back runs the CLI non-interactively
-	// (-p --output-format stream-json), where an interactive permission
-	// prompt would hang the subprocess forever.
-	switch cfg.Claude.PermissionMode {
-	case "acceptEdits", "plan", "bypassPermissions", "":
-	default:
-		return fmt.Errorf("claude.permission_mode must be one of acceptEdits/plan/bypassPermissions, got %q", cfg.Claude.PermissionMode)
-	}
-	if cfg.Claude.MaxConcurrent < 1 {
-		return fmt.Errorf("claude.max_concurrent must be >= 1, got %d", cfg.Claude.MaxConcurrent)
-	}
-
 	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
 	// reaching validate with "" means an explicit clear; the default values
 	// themselves are valid. (WorkspaceRoot/ConfigPath requireds are binary-specific

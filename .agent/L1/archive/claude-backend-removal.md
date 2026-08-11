@@ -3,10 +3,12 @@ layer: L1
 type: task
 status: done
 created: 2026-08-11
-updated: 2026-08-11T10:37:34+08:00
+updated: 2026-08-11T12:37:01+08:00
 ---
 
 # 清理 Claude 对接（项目聚焦 miniagent）
+
+> B 已提交（commit `d13898a`）；C 已完成未提交。
 
 ## 目标
 移除 claude-back 对接，项目聚焦 miniagent。
@@ -33,12 +35,20 @@ updated: 2026-08-11T10:37:34+08:00
 - `deploy-{monitor,status,agnes}.sh` 的 strip 循环：剥的是 `claude{}` JSON 键（保留中），正确无害。
 - CHANGELOG：留作历史。
 
-## 待续（如需进一步清理，即当时的方案 C）
-- 删 config.Claude + claude{} 块（须同时重构 config.example.json base 派生）。
-- 剪 bridgebase 死叶符号。
-- 删 router.Binding 的 claude 字段（注意已部署 router-claude.v5.json 兼容）。
-- 重写 ARCHITECTURE/README；归档 CLAUDE_INTEGRATION_SPEC。
+## 方案 C（已完成 — 全量清零，未提交，49 文件 +460/−4002）
+用户拍板执行 C 的全部 4 阶段 + BackendType 字符串延后单独评估。
+- **Phase 1a 安全死叶**：删 bridgebase 8 整死文件(prompt/enum_picker/dir_validate/periodic_reporter/singleflight_job/prompt_scaffold/prompt_slot/git_job)+各_test、eventmetrics 4 死计数器、logger 2 死常量；删 CLAUDE_INTEGRATION_SPEC.md + NOTICES.txt。
+- **Phase 1b Core 摘除**（核验后发现的核心放大项）：bridgebase.Core/NewCore/CoreConfig 在包外仅注释出现（miniagent 明文 "has no bridgebase.Core"，自用 PromptCancel + 包级 helper）→ 整删 Core 类型 + ~24 方法 + cancelableWaitGroup；core.go 缩成仅 PromptCancel；interactive/prompt_result/commands_send/running 保留包级活函数、剔 Core 方法 + 相关测试重写。
+- **Phase 2 config 原子组**：删 config.Claude 结构体+字段+defaults+validate+config_test claude 用例；config.example.json 去 claude{} 块 + backend_id 改 backend-1；deploy-{monitor,status,agnes}.sh 的 migrate_config removed_blocks 加 "claude"（迁移已部署 /etc 配置，防 DisallowUnknownFields 解析崩）。
+- **Phase 3 router**：删 Binding.PermissionMode/EffortLevel/SettingsFile + Set* 访问器（router 裸 json.Unmarshal，旧状态文件未知键静默丢弃，升级兼容）。
+- **Phase 4 文档**：README/RELEASING 定向修；ARCHITECTURE/deploy-README/CODING_STANDARDS 用 workflow 全量重写为 miniagent（file:line 逐项对抗式核验，残留 claude 全为合法历史注）。
+- **顺手修 B 回归**：deploymonitor `/deploy-some` 仍把 claude 当合法部署目标（select.go deployServices / confirm.go 文案 / handler_test）—— B 漏网，已修。
+
+## 仍保留（C 后刻意，非 bug）
+- protocol.PromptPayload.{PermissionMode,EffortLevel,SettingsFile}：wire-format，feishufront 在用，未动。
+- 运行期 "claude" BackendType 字符串（feishufront registry 等惰性元数据/测试夹具）：**用户决定 C 之后单独评估**。
+- cleanup_legacy 不删 STATE_DIR/claude/（可能含用户数据）。
 
 ## 参考
-- 选型测绘：本会话 workflow `map-claude-cleanup`（journal 在 subagents/workflows/）。
+- 选型测绘：workflow `map-claude-cleanup`；C 核验：workflow `eval-claude-option-c`；文档重写：workflow `rewrite-docs-to-miniagent`（journal 在 subagents/workflows/）。
 - 沉淀：[[backend-removal-checklist]]。

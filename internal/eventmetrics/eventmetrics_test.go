@@ -86,19 +86,16 @@ func TestUnknownEventConcurrent(t *testing.T) {
 }
 
 func TestResetAll(t *testing.T) {
-	ClaudeResultLenientHit.Inc()
-	ClaudeResultParseFail.Inc()
-	OMPTextEndFallback.Inc()
-	OMPAutoRetryLimit.Inc()
-	UnknownEvent("omp", "unknown").Inc()
+	TerminalEmitRetries.Inc()
+	UnknownEvent("miniagent", "unknown").Inc()
 
 	ResetAll()
 
-	if v := ClaudeResultLenientHit.Value(); v != 0 {
-		t.Errorf("ClaudeResultLenientHit = %d after ResetAll, want 0", v)
+	if v := TerminalEmitRetries.Value(); v != 0 {
+		t.Errorf("TerminalEmitRetries = %d after ResetAll, want 0", v)
 	}
-	if v := UnknownEvent("omp", "unknown").Value(); v != 0 {
-		t.Errorf("UnknownEvent(omp,unknown) = %d after ResetAll, want 0", v)
+	if v := UnknownEvent("miniagent", "unknown").Value(); v != 0 {
+		t.Errorf("UnknownEvent(miniagent,unknown) = %d after ResetAll, want 0", v)
 	}
 }
 

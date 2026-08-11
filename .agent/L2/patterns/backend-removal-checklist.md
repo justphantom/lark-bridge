@@ -30,6 +30,12 @@ confidence: high
 - **留共享层（B）**：config.<X> 结构体、bridgebase 死叶符号、router 字段、文档全留作 dormant/stale。低风险。
 - **全量清零（C）**：额外删 config.<X> + bridgebase 死叶 + router 字段 + 重写文档。**必须**同时重构 config.example.json base 派生；router 字段删除可能破坏已部署状态文件。高风险，仅在确认无隐藏引用时做。
 
+## 深一层：删后端可能让整层抽象变死（不只死叶）
+B 之后做 C 核验时发现：`bridgebase.Core`（含 NewCore/CoreConfig + ~24 方法 + cancelableWaitGroup）在包外**仅注释出现**——miniagent 明文 "has no bridgebase.Core"，自己用 PromptCancel + 包级 helper 实现同等生命周期。即删掉唯一消费者(claudebridge)后，整层 Core 抽象成死码，而不只是几个死叶符号。教训：
+- 核验死码时，**除了查符号级死叶，还要查"类型/构造器"本身是否还有外部 new/嵌入点**（grep `NewXxx(`、`*Pkg.Type` 嵌入、`Pkg.Type{` 在包外）。
+- miniagent 这种"用包级 helper 而非嵌入 Core"的写法是项目当前的范式；Core 是 claudebridge/opencode 时代的遗留。
+- 摘除整层抽象是"分阶段"的重活：prod 5 文件手术 + 配套 5 测试文件重写/删，须 build-gate 逐文件验证。
+
 ## 参考
 - 先例：opencode-back/omp-back 移除（CHANGELOG；cleanup_legacy 的现有段）。
 - 配置派生流：`deploy/deploy.sh:stage_configs` + `inject_router_path`。

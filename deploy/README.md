@@ -5,14 +5,14 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-   ┌──────────┬──────────┬──────────────────┬──────────────┐
- claude-back miniagent-back       deploy-monitor
- (Claude CLI)(LLM API 直调)       (make deploy)
-                                ↑ 独立部署
+   ┌──────────────┬──────────────────┐
+ miniagent-back        deploy-monitor
+ (LLM API 直调)        (make deploy)
+                     ↑ 独立部署
 ```
 
-前端 feishu-front + 两个 agent 后端（claude/miniagent）由 `make deploy`
-管理（默认 3 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
+前端 feishu-front + 一个 agent 后端（miniagent）由 `make deploy`
+管理（默认 2 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
 （`make deploy-monitor`），避免「部署脚本管自己的触发者」循环依赖。
 
 ## 前置条件
@@ -20,7 +20,7 @@
 | 组件 | 要求 |
 |------|------|
 | Go | 1.25+ |
-| Claude CLI | `claude` 在 PATH 中（仅 claude-back） |
+| miniagent 二进制 | `miniagent` 在 PATH 中（仅 miniagent-back；独立项目 github.com/justphantom/miniagent，经其自身 Makefile 部署到 /usr/local/bin/miniagent） |
 | miniagent | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；见 .env） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
 
@@ -83,10 +83,11 @@ prompt 模板。**可选**：留空时 post 消息降级为纯 Markdown 文本�
 ```bash
 make build
 # 产物（5 个二进制）：
-#   bin/lark-feishu-front, bin/lark-claude-back, bin/lark-miniagent-back,
+#   bin/lark-feishu-front, bin/lark-miniagent-back, bin/lark-agnes-back,
 #   bin/lark-deploy-monitor, bin/lark-status-monitor.
-# miniagent 是 miniagent-back fork 的子进程（独立项目，不在本仓库 make build 范围内）：
-# 每个 prompt fork 一次，跑完退出。类比 claude CLI 被 claude-back fork 的模式。
+# miniagent 是 miniagent-back fork 的子进程（独立项目 github.com/justphantom/miniagent，
+# 经其自身 Makefile 部署到 /usr/local/bin/miniagent，不在本仓库 make build 范围内）：
+# 每个 prompt fork 一次，跑完退出。
 ```
 
 ## 2. 准备配置
@@ -100,15 +101,15 @@ cp deploy/env.example .env
 # 单文件派生：config.example.json 是唯一真源（deploy.sh / upgrade-*.sh
 # 均从此派生运行时 config）。手动启动也可直接共用 config.example.json，
 # 或复制成每服务一份按需裁剪。
-cp config.example.json claude-config.json
+cp config.example.json base-config.json
 # 编辑 backend_id / frontend_url / state_dir
-# feishu/miniagent 各自再复制一份（或直接共用 claude-config.json）
+# feishu/miniagent 各自再复制一份（或直接共用 base-config.json）
 ```
 
 ## 3. 创建 state 目录
 
 ```bash
-mkdir -p /var/lib/lark-bridge/claude
+mkdir -p /var/lib/lark-bridge
 ```
 
 ## 4. 启动
@@ -121,10 +122,7 @@ set -a; source .env; set +a
 ./bin/lark-feishu-front \
   -config feishu-config.json &
 
-# Claude 后端
-./bin/lark-claude-back -config claude-config.json &
-
-# miniagent 后端（可选）
+# miniagent 后端
 ./bin/lark-miniagent-back -config miniagent-config.json &
 ```
 
@@ -138,11 +136,10 @@ set -a; source .env; set +a
 |------|--------|------|
 | `feishu_app_id` | feishu-front | 飞书应用 App ID |
 | `feishu_app_secret` | feishu-front | 飞书应用 App Secret |
-| `ipc_secret` | 三者 | IPC 共享密钥，必须一致；留空拒绝启动 |
+| `ipc_secret` | 两者 | IPC 共享密钥，必须一致；留空拒绝启动 |
 | `backend_id` | 后端 | 在前端 registry 的唯一标识 |
 | `frontend_url` | 后端 | 前端 IPC 地址 |
-| `claude.default_directory` | claude-back | 每个群的工作目录基路径 |
-| `miniagent.api_key` | miniagent-back | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；`${MINIAGENT_API_KEY}`） |
+| `miniagent.api_key` 或 `miniagent.key_file` | miniagent-back | OpenAI 兼容 endpoint 的 API key（二选一；stateless，无 sessions/memory；`${MINIAGENT_API_KEY}` 或从 `key_file` 读取注入子进程 env） |
 
 ### 机密字段
 
@@ -163,10 +160,9 @@ set -a; source .env; set +a
 | `log_format` | `text` |
 | `log_debug_redact` | `false` |
 | `state_dir` | 配置文件所在目录 |
-| `claude.cli_path` | `claude` |
-| `claude.permission_mode` | `acceptEdits` |
-| `claude.max_concurrent` | `4` |
-| `claude.stream_history` | `50` |
+| `miniagent.stream_history` | `50` |
+| `miniagent.mode` | `default` |
+| `miniagent.thinking` | `off` |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}` |
@@ -175,15 +171,6 @@ set -a; source .env; set +a
 | `dedup.event_max_entries` | `1000` |
 
 完整默认值见 `internal/config/config_defaults.go`。
-
-### permission_mode
-
-| 值 | 行为 |
-|----|------|
-| `acceptEdits` | 自动放行文件编辑（默认） |
-| `plan` | 只读，不修改文件 |
-| `bypassPermissions` | 跳过所有权限检查 |
-| ~~`default`~~ | **不可用**——非交互模式会卡死 |
 
 ## 6. systemd 部署
 
@@ -207,15 +194,15 @@ WantedBy=multi-user.target
 ```
 
 ```ini
-# /etc/systemd/system/lark-claude-back.service
+# /etc/systemd/system/lark-miniagent-back.service
 [Unit]
-Description=lark-bridge lark-claude-back
+Description=lark-bridge lark-miniagent-back
 After=lark-feishu-front.service
 
 [Service]
 EnvironmentFile=/etc/lark-bridge/.env
-ExecStart=/opt/lark-bridge/bin/lark-claude-back \
-  -config /etc/lark-bridge/claude-config.json
+ExecStart=/opt/lark-bridge/bin/lark-miniagent-back \
+  -config /etc/lark-bridge/miniagent-config.json
 Restart=on-failure
 User=user
 
@@ -225,7 +212,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lark-feishu-front lark-claude-back lark-miniagent-back
+sudo systemctl enable --now lark-feishu-front lark-miniagent-back
 ```
 
 ## 6.1. 后台部署（防 SSH 断线杀进程）
@@ -369,7 +356,6 @@ curl -s localhost:6060/v1/events  # 应返回 401（鉴权拦截）
 
 # 日志
 journalctl -u lark-feishu-front -f
-journalctl -u lark-claude-back -f
 journalctl -u lark-miniagent-back -f
 journalctl -u lark-status-monitor -f
 
@@ -381,7 +367,7 @@ journalctl -u lark-status-monitor -f
 deploy.sh 支持三种正交维度，组合使用：
 
 - `--binaries <tar|dir>`：从已编译产物部署，目标机无需 Go/repo。
-- `--services <list>`：只部署服务子集（逗号分隔：`feishu claude miniagent`）。
+- `--services <list>`：只部署服务子集（逗号分隔：`feishu miniagent`）。
 - `--init` / `--force`：首次生成配置 / 跳过运行中会话检查。
 
 **运行中会话检查（preflight）**：部署前 deploy.sh 调用 feishu-front 的
@@ -397,7 +383,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 7 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机
@@ -412,8 +398,8 @@ cd /opt/lark-bridge
 ### 8.2 部分部署
 
 ```bash
-# 只更新 claude 后端（其余服务不动）
-./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services claude
+# 只更新 miniagent 后端（其余服务不动）
+./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services miniagent
 
 # 前端机只装前端
 ./deploy/deploy.sh --init --binaries /tmp/xxx.tar.gz --services feishu
@@ -438,11 +424,10 @@ IPC_ADDR=0.0.0.0:6060
 # ── backend 机（192.168.1.20）──────────────────────
 # .env: FRONTEND_URL 指前端机；IPC_ADDR 本机无关（backend 不监听）
 FRONTEND_URL=http://192.168.1.10:6060
-./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services claude,miniagent
+./deploy/deploy.sh --binaries /tmp/xxx.tar.gz --services miniagent
 ```
 
 要点：
-- `IPC_SECRET` 三机必须一致（鉴权共享）。
+- `IPC_SECRET` 两机必须一致（鉴权共享）。
 - IPC 为明文 HTTP，跨机仅限可信内网；跨不可信网络请走 SSH 隧道或 wireguard。
 - `state_dir` 各机独立（会话绑定经 router_path 文件，前后端同机时才共享；分机时 router 文件随前端）。
-

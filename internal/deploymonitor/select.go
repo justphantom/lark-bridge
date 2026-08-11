@@ -19,7 +19,7 @@ import (
 // deployServices is the fixed business-service short-name set, matching
 // deploy.sh select_services (deploy.sh:90). Validated up front so an invalid
 // pick fails fast here instead of after a wasted make run.
-var deployServices = []string{"feishu", "claude", "miniagent"}
+var deployServices = []string{"feishu", "miniagent"}
 
 func isKnownService(s string) bool {
 	for _, k := range deployServices {

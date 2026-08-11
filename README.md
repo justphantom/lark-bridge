@@ -1,6 +1,6 @@
 # lark-bridge
 
-把飞书群聊桥接到本地编程 agent（Claude Code / miniagent）。采用 **1 前端 + N 后端** 的拆分架构，前端通过 SSE/POST 与后端通信，飞书群里一个会话绑定一个后端。
+把飞书群聊桥接到本地编程 agent（miniagent）。采用 **1 前端 + N 后端** 的拆分架构，前端通过 SSE/POST 与后端通信，飞书群里一个会话绑定一个后端。
 
 ## 架构
 
@@ -8,13 +8,13 @@
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
         ┌──────────┬──────────┬────────────────┬──────────────┐
-   claude-back miniagent-back  deploy-monitor  status-monitor
-   (Claude CLI)(LLM API 直调)  (make deploy)   (状态总览)
+  miniagent-back  agnes-back  deploy-monitor  status-monitor
+  (LLM API 直调) (图片/视频)  (make deploy)   (状态总览)
 ```
 
 - `feishu-front`：持有飞书 WebSocket 机器人，IPC 服务（SSE + Control POST），chatID→后端路由，分发器（消息→Prompt 事件，Control→卡片）。
-- `claude-back`：每个 prompt fork 一次 Claude Code CLI 子进程。
 - `miniagent-back`：每个 prompt fork 一次 miniagent 二进制（自带 ReAct 循环与 LLM 调用）。
+- `agnes-back`：调用 Agnes AI REST API 生成图片/视频并把产物以文件消息发回群。
 - `deploy-monitor`：收到 `/deploy`、`/pull`、`/push` 在项目根执行 `make`，单飞（single-flight），结果回执。**独立部署**，避免「部署脚本管自己的触发者」循环依赖。
 - `status-monitor`：每 N 秒（`status_monitor.interval`，默认 60s）向绑定的每个群推送一张总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。**独立部署**，push-only。
 
@@ -27,7 +27,6 @@
 ## 斜杠命令
 
 - 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
-- claude-back：`/running` `/session` `/new` `/abort` `/current` `/model` `/cd` `/config` `/mode` `/effort` `/send` `/pull` `/push` `/help`。
 - miniagent-back：`/current` `/model` `/cd` `/new` `/send` `/pull` `/push` `/running` `/abort` `/mode` `/effort` `/help`。
 - deploy-monitor：`/deploy` `/deploy-force` `/deploy-some` `/pull` `/push` `/running`。
 - status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。
@@ -58,7 +57,7 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 
 ### 敏感数据落盘
 
-- **streamarchive**：`stream_history > 0` 时，每个 backend 把该轮 CLI stdout 原文落盘到 `{state_dir}/streams/{backend}/`（仅剔除 claude 的 thinking_tokens 行）。**含用户 prompt、agent 读到的文件内容、模型回复**。文件权限 0600，但若 `state_dir` 进了备份/日志转发/共享快照，这些内容随之离开主机。生产环境若不需要排障，设 `stream_history: 0` 关闭，或把 `streams/` 排除出备份。`stream_archive_redact` 默认 `true`，会对 archive 中的敏感字段做行级脱敏；`log_debug_redact` 只影响日志，不影响 archive。
+- **streamarchive**：`stream_history > 0` 时，每个 backend 把该轮 CLI stdout 原文落盘到 `{state_dir}/streams/{backend}/`。**含用户 prompt、agent 读到的文件内容、模型回复**。文件权限 0600，但若 `state_dir` 进了备份/日志转发/共享快照，这些内容随之离开主机。生产环境若不需要排障，设 `stream_history: 0` 关闭，或把 `streams/` 排除出备份。`stream_archive_redact` 默认 `true`，会对 archive 中的敏感字段做行级脱敏；`log_debug_redact` 只影响日志，不影响 archive。
 - **debug 日志**：`log_debug_redact` 默认 `false`（零值）时 prompt/result/error 文本原样进 debug 日志。生产建议显式设 `true`。`stream_archive_redact` 与 `log_debug_redact` 独立，示例配置已把前者设为 `true`。
 
 ## 部署
@@ -66,14 +65,14 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 ```bash
 make deploy                              # 构建 + 安装 3 个业务 systemd 服务
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
-make deploy ARGS=--services claude       # 单独部署某服务子集（逗号分隔）
+make deploy ARGS=--services miniagent   # 单独部署某服务子集（逗号分隔）
 make deploy-monitor                     # 单独升级 deploy-monitor（~2s 离线）
 make deploy-monitor ARGS=--init
 make deploy-status                      # 单独升级 status-monitor（~2s 离线）
 make deploy-status ARGS=--init
 ```
 
-> **升级注意**：`opencode-back` 与 `omp-back` 已移除（后端对接收敛到 claude + miniagent）。`make deploy` 会自动检测并清理遗留的 `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与config 模板；已部署 config 里残留的 `opencode` / `omp` 块也会被 deploy-monitor / deploy-status 迁移剥离。
+> **升级注意**：`claude-back`、`opencode-back`、`omp-back` 均已移除（后端对接收敛到 miniagent + agnes）。`make deploy` 会自动检测并清理遗留的 `lark-claude-back` / `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与 config 模板；已部署 config 里残留的 `claude` / `opencode` / `omp` 块也会被 deploy-monitor / deploy-status / deploy-agnes 迁移剥离。
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 
@@ -85,7 +84,7 @@ systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](dep
 
 ## 目录约定
 
-- `cmd/`：5 个二进制的入口（feishu-front、claude-back、miniagent-back、deploy-monitor、status-monitor）。
-- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `claude` `claudebridge` `miniagent` `miniclient` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
+- `cmd/`：5 个二进制的入口（feishu-front、miniagent-back、agnes-back、deploy-monitor、status-monitor）。
+- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `miniagent` `miniclient` `agnesback` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

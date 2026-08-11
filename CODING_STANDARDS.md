@@ -17,7 +17,7 @@
 | Formatter | **goimports**（含 `local-prefixes` 分组） | `.golangci.yml:16-24` |
 | 构建工具 | Make（默认目标 `build`），ldflags 注入 git 版本号 | `Makefile` |
 | 部署形态 | 5 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
-| 平台约束 | `//go:build linux || darwin`（agent 子进程包） | `internal/claude/*`、`internal/miniclient/*` |
+| 平台约束 | `//go:build linux || darwin`（平台相关系统调用包） | `internal/atomicwrite/*`、`internal/cmdutil/*` |
 
 设计哲学（从配置文件中明示）：
 - **显式允许名单制**：`.golangci.yml` 用 `default: none` + 显式 `enable:`，**不**用 `default: all`，并把每个**未启用**的 linter 都附上理由注释（`.golangci.yml:76-148`）——「这份文件就是项目的风格契约」。
@@ -62,17 +62,15 @@ golangci-lint run   # 风格检查（手动）
 lark-bridge/
 ├── cmd/                         # 5 个二进制入口，每个一个子目录
 │   ├── feishu-front/            #   main.go (+ main_test.go)
-│   ├── claude-back/
-│   ├── miniagent-back/
+│   ├── miniagent-back/          #   miniagent CLI 后端（每轮 fork 子进程）
+│   ├── agnes-back/              #   Agnes AI 图片/视频 REST 后端
 │   ├── deploy-monitor/
 │   └── status-monitor/
 ├── internal/                    # 禁止跨项目引用
 │   ├── atomicwrite/             # 单一职责小包
 │   ├── backendrpc/              # 后端→前端 IPC 客户端
-│   ├── bridgebase/              # CLI 后端共享脊柱（claudebridge 嵌入）
-│   ├── claude/                  # 内联的 claude-go-sdk（带 doc.go）
-│   ├── claudebridge/  miniagent/
-│   ├── cmdutil/                 # 斜杠命令基础设施
+│   ├── bridgebase/              # CLI 后端共享脊柱（命令/answer broker/git runner 等包级辅助）
+│   ├── cmdutil/                 # 斜杠命令基础设施 + 子进程平台封装
 │   ├── config/                  # JSON 配置 load+validate+defaults
 │   ├── deploymonitor/
 │   ├── feishu/                  # 业务封装层
@@ -80,6 +78,8 @@ lark-bridge/
 │   ├── lark/                    # 自实现飞书客户端（含 doc.go）
 │   │   ├── websocket/           #   RFC 6455 传输
 │   │   └── ws/                  #   lark WS 子协议
+│   ├── miniagent/               # miniagent 后端 handler/命令/生命周期
+│   ├── miniclient/              # miniagent CLI 子进程封装（NDJSON 事件流）
 │   ├── log/  protocol/  router/  streamarchive/  strutil/  usage/
 │   └── ...
 ├── deploy/                      # systemd 部署脚本与配置模板
@@ -96,7 +96,7 @@ lark-bridge/
 规范要点：
 - **`cmd/<bin>/main.go`** 只做装配（flag 解析 → 构造依赖 → 调 `run()`），业务逻辑全在 `internal/`。例：`cmd/feishu-front/main.go:57-74` 仅 18 行的 `main()`。
 - **包粒度**：单一职责，小而专。`atomicwrite`（63 行）、`strutil`（多文件 ≤60 行）、`log`（176 行）都是典型。
-- **`doc.go`** 用于「需要解释分层/协议方向的较大公共包」：`internal/lark/doc.go`（17 行，含分层图）、`internal/claude/doc.go`（19 行，含用法示例）。小工具包（atomicwrite/strutil）只在入口 `*.go` 顶部写包注释即可。
+- **`doc.go`** 用于「需要解释分层/协议方向的较大公共包」：`internal/lark/doc.go`（17 行，含分层图）。无 `doc.go` 的包在入口 `*.go` 顶部写包注释即可，例如 `internal/miniclient/event.go:1-4` 说明「fork 子进程 + NDJSON 事件流」的职责。小工具包（atomicwrite/strutil）同样只在入口 `*.go` 顶部写包注释。
 - **子包按抽象层切分**：`internal/lark/{websocket,ws}` 明确「RFC 6455 传输 / lark WS 子协议」分层（`internal/lark/doc.go:8-13`）。
 - **文件按前缀分组**：`commands_*.go`、`dispatcher_*.go`、`bot_*.go`、`config_*.go`、`event_parse*.go`，避免单文件膨胀（`internal/feishufront/`、`internal/bridgebase/` 是范例）。
 
@@ -107,19 +107,19 @@ lark-bridge/
 ### 3.1 包命名
 全小写、单词型，**无下划线/驼峰**：
 - 单词：`log`、`config`、`router`、`protocol`、`usage`、`strutil`
-- 复合（仍全小写连写）：`atomicwrite`、`bridgebase`、`cmdutil`、`backendrpc`、`streamarchive`、`deploymonitor`、`miniclient`、`feishufront`、`claudebridge`
+- 复合（仍全小写连写）：`atomicwrite`、`bridgebase`、`cmdutil`、`backendrpc`、`streamarchive`、`deploymonitor`、`miniclient`、`feishufront`、`miniagent`
 
-依据：`internal/` 下全部 24 个目录。
+依据：`internal/` 下全部 22 个目录。
 
 ### 3.2 文件命名
 **snake_case**，常带语义前缀做分组：
 - 单词：`core.go`、`answer.go`、`conn.go`、`dial.go`、`auth.go`、`debouncer.go`
 - 下划线分组：`commands_session_mgmt.go`、`dispatcher_backend.go`、`dispatcher_control.go`、`dispatcher_interactive.go`、`bot_dispatch.go`、`bot_send.go`、`config_defaults.go`、`config_validate.go`、`event_parse_content.go`、`client_session.go`、`wsclient_test.go`
 
-依据：`internal/feishufront/`、`internal/claudebridge/`、`internal/claude/` 全部文件名。
+依据：`internal/feishufront/`、`internal/miniagent/`、`internal/miniclient/` 全部文件名。
 
 ### 3.3 标识符
-- **导出**：PascalCase。例：`Config`、`Core`、`NewCore`、`Emit`、`EmitLogged`、`EmitAsync`、`FieldError`、`TypePrompt`。
+- **导出**：PascalCase。例：`Config`、`Handler`、`NewCommands`、`EmitTerminalControl`、`EmitNotice`、`FieldError`、`TypePrompt`。
 - **未导出**：camelCase。例：`newLogger`、`handlerOpts`、`ensureDir`、`tailRunes`、`applyDefaults`、`envVarPattern`、`replyToIDKey`。
 - 缩写词全大写保持：`APIError`、`IPCAddr`、`IPCSecret`、`URL`、`HTTP`、`ID`、`TTL`（见 `internal/config/config.go:30-62`、`internal/lark/auth.go:145`）。
 
@@ -161,7 +161,7 @@ const (
     FieldError     = "error"
 )
 
-// internal/bridgebase/core.go:16-26   —— 私有调优常量带 why 注释
+// internal/bridgebase/prompt_result.go:130-141   —— 私有调优常量带 why 注释
 const (
     shutdownGrace   = 5 * time.Second
     emitConcurrency = 32
@@ -182,8 +182,8 @@ const (
   ```go
   // internal/protocol/protocol_test.go:10
   func roundTrip[T any](t *testing.T, v T) T { t.Helper(); ... }
-  // internal/bridgebase/running_test.go:32
-  func newTestCore(t *testing.T) *Core { ... }
+  // internal/router/accessors_test.go:12
+  func newTestRouter(t *testing.T, chatID string) *Router { ... }
   ```
 
 ---
@@ -234,8 +234,8 @@ func (e *APIError) Error() string { return fmt.Sprintf("code:%d msg:%s", e.Code,
 if err != nil && !errors.Is(err, context.Canceled) { firstErr = err }
 // internal/feishufront/dispatcher_control.go:217   —— 哨兵分支
 } else if errors.Is(err, feishu.ErrCardContentRejected) && ctrl.Result.Text != "" {
-// internal/claudebridge/handler_prompt.go:178   —— 超时归因
-if errors.Is(context.Cause(ctx), context.DeadlineExceeded) { ... }
+// internal/bridgebase/commands.go:96   —— 超时归因
+if errors.Is(handlerErr, context.DeadlineExceeded) { ... }
 // internal/lark/ws/reconnect.go:57   —— 类型断言
 return errors.As(err, &f)
 ```
@@ -252,23 +252,22 @@ return errors.As(err, &f)
   ```
 - **记录**：用 `Logger.Error/Warn` + `log.FieldError` 字段，**不直接 `log.Fatal`**。
   ```go
-  // internal/bridgebase/core.go:181-186
-  if err := c.Emit(ctx, promptID, ctrl); err != nil {
-      c.Logger.Warn("emit failed",
-          log.FieldChatID, chatID,
-          log.FieldError, err)
+  // internal/bridgebase/prompt_result.go:74-79
+  if logger != nil {
+      logger.Warn("terminal control send failed",
+          log.FieldChatID, chatID, log.FieldPromptID, promptID,
+          log.FieldControlType, ctrl.Type, log.FieldError, sendErr, "attempt", attempt)
   }
   ```
-- **fire-and-forget 失败**：用 `*Logged` 后缀的封装（`EmitLogged` / `EmitNoticeLogged` / `EmitCardUpdateLogged`），即"Emit + 失败 Warn"，避免静默吞错（`internal/bridgebase/core.go:180-207`）。
-- **零值/空 rpc 安全**：`Emit` 遇 `c.RPC == nil` 直接 `return nil`，让测试不接 IPC 也能跑（`core.go:171-173`）。
+- **fire-and-forget 失败**：失败路径记 Warn 而非静默吞错——`EmitTerminalControl` 在发送失败/无 ACK 重试时记 Warn（`internal/bridgebase/prompt_result.go:61-79`）。
+- **零值/空 rpc 安全**：`EmitTerminalControl` 遇 `rpc == nil` 直接 `return nil`，让测试不接 IPC 也能跑（`internal/bridgebase/prompt_result.go:51-54`）。
 
 ### 4.5 panic 使用 —— 仅限测试
 - 生产代码 **0 处 `panic`**。
-- 测试中 **3 处**（全部是故意触发以验证 `recover`）：
+- 测试中 **2 处**（全部是故意触发以验证 `recover`）：
   ```
   internal/feishufront/ipcserver_test.go:408   panic("boom")
   internal/feishufront/dispatcher_test.go:718  panic("callback boom")
-  internal/claudebridge/handler_prompt_test.go:103   panic("simulated agent panic")
   ```
 - **goroutine 必须配 `recover`**：`bridgebase.GoSafe`（`gosafe.go:24-35`）统一封装——任何长生命周期 goroutine 用它启动，panic 自动 `recover` + 记 `log.FieldPanic/FieldStack`。main 控制泵同样手工 `defer recover`（`cmd/feishu-front/main.go:179-187`）。
 
@@ -313,7 +312,7 @@ logger.Error("...", "error", err)   // 应用 log.FieldError
 
 ### 5.4 便捷函数
 - `log.NewFromConfig(level, output, format, component)`：4 个 main 共用（`logger.go:90-103`），消除重复样板。
-- `log.Nop()`：测试专用空 logger；构造函数对 `nil` logger 自动替换为 Nop（`bridgebase.NewCore:136-138`、`git_runner.go:62-64`）。
+- `log.Nop()`：测试专用空 logger；构造函数对 `nil` logger 自动替换为 Nop（`router.New:81-83`、`git_runner.go:62-64`）。
 - `log.LogOperation(logger, name, fn)`：包裹一段操作，自动计时 + 成功/失败两态分别记一条（`logger.go:159-176`）——失败时**只记 Error 一条**，不先记 Info 再记 Error 制造噪音（注释 `logger.go:164-166` 明示）。
 
 ### 5.5 脱敏
@@ -342,24 +341,21 @@ package protocol
 ```
 
 ```go
-// internal/claude/doc.go:3-18   —— 带可运行示例
-// Package claude wraps the Claude Code CLI as a standalone SDK.
-// ...
-// Minimal example:
-//
-//	c := claude.New(claude.Options{})
-//	ch, err := c.Run(ctx, claude.RunOptions{Prompt: "hello"})
+// internal/miniclient/event.go:1-4   —— 入口文件顶部包注释（无 doc.go）
+// Package miniclient wraps the miniagent subprocess: it forks the CLI,
+// pipes the prompt via stdin, and pumps stdout NDJSON events into a channel.
+package miniclient
 ```
 
 ### 6.2 导出标识符注释
 **每个导出标识符都有 godoc 注释**（以标识符名字开头），强调「为什么」而非「是什么」：
 ```go
-// internal/bridgebase/core.go:62-65
-// Core is the backend-agnostic spine every bridge's Handler embeds: the
-// router, the IPC client, per-chat cancel tracking, the answer broker, the
-// emit helpers, and shutdown. Bridge code keeps only its agent client and
-// option lists on top.
-type Core struct { ... }
+// internal/miniagent/handler.go:25-29
+// Handler owns the per-process bridge state: the IPC sender, the CLI
+// subprocess client (one fork per turn), the per-chat binding router, and
+// the picker/answer-broker machinery. One Handler per process; each turn
+// runs on its own goroutine.
+type Handler struct { ... }
 
 // internal/protocol/protocol.go:38-47   —— 字段级注释解释不变量/安全约束
 // PromptPayload carries a user prompt. Text has already been @-stripped.
@@ -390,7 +386,7 @@ type Core struct { ... }
 ## 7. 代码组织规范
 
 ### 7.1 函数长度
-- **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（claudebridge.streamRun），拆分反而降低可读性」。
+- **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（`miniagent.emitCLIEvent`，`internal/miniagent/handler_cli.go:112`），拆分反而降低可读性」。
 - **软目标**：单文件 ≤300 行（项目惯例，源自历史 AGENTS.md/CLAUDE.md）。当前最大的 `internal/lark/ws/frame.go` 422 行被 review 标为「建议触及时拆分」。
 
 ### 7.2 函数顺序
@@ -399,7 +395,7 @@ type Core struct { ... }
 ### 7.3 接收者
 - **命名**：类型首字母（短）。`recvcheck` linter 强制同一类型所有方法接收者名一致（`.golangci.yml:70`）。
   ```go
-  c *Core           // internal/bridgebase/core.go
+  h *Handler         // internal/miniagent/handler.go
   t *tokenManager   // internal/lark/auth.go
   e *APIError       // internal/lark/auth.go:150
   n *nopHandler     // internal/log/logger.go:152
@@ -411,32 +407,31 @@ type Core struct { ... }
 ### 7.4 import 分组（goimports + local-prefixes）
 **三段式**，空行分隔，goimports 自动维护（`.golangci.yml:18-24`，`local-prefixes: github.com/justphantom/lark-bridge`）：
 ```go
-// internal/bridgebase/core.go:3-14
+// internal/bridgebase/prompt_result.go:3-13
 import (
     "context"
-    "sync"
-    "sync/atomic"
+    "errors"
+    "fmt"
     "time"
 
     "github.com/justphantom/lark-bridge/internal/backendrpc"
+    "github.com/justphantom/lark-bridge/internal/eventmetrics"
     "github.com/justphantom/lark-bridge/internal/log"
     "github.com/justphantom/lark-bridge/internal/protocol"
-    "github.com/justphantom/lark-bridge/internal/router"
-    "github.com/justphantom/lark-bridge/internal/usage"
 )
 ```
 当前因零第三方依赖，只有「标准库 / 本模块」两组；将来加第三方时插在中间组。
 
 ### 7.5 其他组织习惯
-- **构造函数**统一 `NewXxx`（全仓 18 处），如 `NewCore`、`NewCommands`、`NewGitRunner`、`NewFromConfig`、`NewIPCServer`。
-- **构造函数对 nil 参数兜底**：`NewCore(nil logger) → log.Nop()`（`core.go:136-138`），降低测试负担。
+- **构造函数**统一 `NewXxx`（全仓 18 处），如 `miniagent.New`、`NewCommands`、`NewGitRunner`、`NewFromConfig`、`NewIPCServer`。
+- **构造函数对 nil 参数兜底**：`router.New(nil logger) → log.Nop()`（`router.go:81-83`），降低测试负担。
 - **零值优先**：`.golangci.yml:146-148` 禁用 `exhaustruct`，理由「project uses zero-value defaults intentionally」。`applyDefaults` 只填空字段（`config_defaults.go`）。
 - **不预建（no speculative code）**：review 把 `var _ = strings.TrimSpace`（假性引用）、未被引用的 `HeadersView()`/`WithLogLevel` 都标为违反「不预建」原则，要求删除（`code-review-2026-07.md:60-69`）。
 
 ### 7.6 并发原语
 - **goroutine 必须有退出路径**：`context.Context` 驱动 + `select { case <-ctx.Done(): return }`（`feishu-front/main.go:173-194`）。
 - **panic-safe goroutine** 一律走 `GoSafe`（§4.5）。
-- **per-chat 单飞**用 `sync.Mutex.TryLock`（`git_runner.go:81`）；进程级单飞用 `sync.Once`（`core.go:250`）。
+- **per-chat 单飞**用 `sync.Mutex.TryLock`（`git_runner.go:81`）；进程级一次性初始化用 `sync.Once`（`internal/lark/client.go:68`）。
 - **embedded mutex 禁用**：`embeddedstructfieldcheck: forbid-mutex: true`（`.golangci.yml:162-165`），避免外层类型暴露 `Lock/Unlock`。
 
 ---
@@ -446,7 +441,7 @@ import (
 ### 8.1 位置与包名
 - 测试文件与被测代码**同目录同包**（**不**用 `xxx_test` 后缀包）。
   - 93 个 `*_test.go` 文件中 **93/93** 与生产代码同 `package`。
-- 理由（`.golangci.yml:86-90`）：`testpackage` linter **被显式禁用**——需要直接测未导出 helper（`parseEvent`、`newTestCore`、`emitCLIEvent`、`captureSender` …），用 `_test` 包会丢失这部分覆盖。
+- 理由（`.golangci.yml:86-90`）：`testpackage` linter **被显式禁用**——需要直接测未导出 helper（`parseEvent`、`newTestHandler`、`emitCLIEvent`、`newTestRouter` …），用 `_test` 包会丢失这部分覆盖。
 
 ### 8.2 测试函数命名
 - `TestXxx` 或 `TestXxx_Yyy`（下划线分场景），例：
@@ -490,11 +485,11 @@ func TestControlRoundTrip(t *testing.T) {
       ...
   }
   ```
-- 每包的 `newTestXxx`：`newTestCore`、`newTestHandler`、`newTestBot`、`newTestRouter`、`newTestRestClient`。
+- 每包的 `newTestXxx`：`newTestHandler`、`newTestBot`、`newTestRouter`、`newTestRestClient`。
 - **断言**：原生 `t.Errorf/t.Fatalf/t.Fatal`，**不使用 testify**（`testifylint` 在 `.golangci.yml:119-122` 标为「library-specific; project does not use testify」）。
 
 ### 8.5 并行与子测试
-- **不并行**：全仓 `t.Parallel()` 出现 **0 次**。理由（`.golangci.yml:91-94`）：很多测试通过 `newTestCore` / `router.v5.json` / `t.TempDir` 共享文件系统状态，强制并行需引入额外隔离复杂度且无正确性收益。`paralleltest/tparallel` 因此禁用。
+- **不并行**：全仓 `t.Parallel()` 出现 **0 次**。理由（`.golangci.yml:91-94`）：很多测试通过 `newTestHandler` / `router.v5.json` / `t.TempDir` 共享文件系统状态，强制并行需引入额外隔离复杂度且无正确性收益。`paralleltest/tparallel` 因此禁用。
 - 子测试用 `t.Run(tc.name, ...)`。
 
 ### 8.6 资源与隔离
@@ -508,9 +503,8 @@ func TestControlRoundTrip(t *testing.T) {
 | 符号 | 位置 | 调用分布 | 保留理由 |
 |------|------|---------|---------|
 | `backendrpc.ConnectWithHTTPClient` | `backendrpc/client.go` | 跨包（feishufront 测试） | 跨包测试注入自定义 `http.Client` 起假 SSE server |
-| `bridgebase.AnswerBroker.PendingIDs` | `bridgebase/answer.go` | 跨包（claudebridge 测试） | 跨包测试取待选槽 requestID（picker 刚注册的槽） |
+| `bridgebase.AnswerBroker.PendingIDs` | `bridgebase/answer.go` | 仅同包（bridgebase 测试） | 同包测试断言待选槽 requestID（picker 刚注册的槽） |
 | `lark/websocket.ComputeAccept` | `lark/websocket/dial.go` | 跨包（lark/ws 测试） | 假 test server 构造 `Sec-WebSocket-Accept` 握手回执 |
-| `claude.ParseEvent` | `claude/event_parse.go` | 跨包（claudebridge 测试）+ 同包 | 跨包回放抓包的真实 stream-json 行 |
 | `feishufront.TurnManager.TurnsByBackend` | `feishufront/turn.go` | 仅同包测试 | 零生产调用（原服务 `OnBackendOffline` 清理，该路径已废弃）；保留作外部诊断接口 |
 | `usage.Store.Snapshot` | `usage/usage.go` | 仅同包测试 | 同包测试断言用量快照；保留供未来跨包诊断/CLI 复用 |
 
@@ -531,7 +525,7 @@ func TestControlRoundTrip(t *testing.T) {
 | `test` | `build-check` → `vet` → `go test -race ./...`（CGO 默认开，启用 race） |
 | `clean` | `rm -rf bin/` |
 | `pack` | 交叉编译 5 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
-| `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 3 个业务 systemd 服务 |
+| `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 2 个业务 systemd 服务（feishu / miniagent） |
 | `deploy-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
 
 ### 9.2 开发流程（推荐顺序）
@@ -544,9 +538,9 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 
 ### 9.3 部署流程
 ```
-make deploy                  # 构建 + 3 个业务服务 systemd 装机
+make deploy                  # 构建 + 2 个业务服务（feishu / miniagent）systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
-make deploy ARGS=--services claude   # 子集部署
+make deploy ARGS=--services miniagent   # 子集部署（可选值：feishu / miniagent）
 make deploy-monitor         # ~2s 离线升级 deploy-monitor
 ```
 环境变量：`IPC_ADDR`、`STATE_DIR` 可命令行覆盖（`Makefile:19-21`）。
@@ -561,7 +555,7 @@ make deploy-monitor         # ~2s 离线升级 deploy-monitor
 ### 10.2 Commit message 风格
 **轻量 Conventional Commits**，全部**英文、祈使句、单行、首字母大写**。统计最近 50 条：
 - 严格 Conventional（`type(scope): desc`）约占 6 条：`fix(feishufront): ...`、`fix(ws): ...`。
-- **`scope:` 前缀无 type**（最常见）：`feishufront: ...`、`lark: ...`、`deploy: ...`、`renderer: ...`、`vendor: ...`、`opencode: ...`、`claude-back: ...`、`deploy.sh: ...`。
+- **`scope:` 前缀无 type**（最常见）：`feishufront: ...`、`lark: ...`、`deploy: ...`、`renderer: ...`、`vendor: ...`、`opencode: ...`、`miniagent-back: ...`、`deploy.sh: ...`。
 - **自由句首大写**（描述性）：`Refine /backend picker: in-place outcome flip + 10min TTL`、`Slim progress card: drop step banner dup, fix dead SessionInit path`、`Remove opencode-serve-back; port /use to opencode-back (CLI)`。
 - **阶段化代号**：`P0 fixes: ...`、`P1 hardening: ...`、`P2 cleanup: ...`、`P3 engineering: ...`（一组连续提交的工程化整改）。
 
@@ -573,12 +567,12 @@ make deploy-monitor         # ~2s 离线升级 deploy-monitor
 4b39726 feishufront: log card-action ingress + empty-kind value to diagnose picker no-update
 396a278 P1 hardening: resource bounds, auth, env, reconnect budget
 345c2a4 Release v1.2.0
-2c9ae0a vendor: inline claude-go-sdk into internal/claude
+25f526e Add miniclient: CLI subprocess wrapper (P2)
 4ad0950 deploy.sh: translate all logs and comments to English ASCII
 ```
 
 要点：
-- **scope 用包名 / 组件名**（`feishufront`、`ws`、`lark`、`claude-back`、`renderer`）。
+- **scope 用包名 / 组件名**（`feishufront`、`ws`、`lark`、`miniagent-back`、`renderer`）。
 - 描述里允许冒号接副标题（`fix X, drop Y`）。
 - 几乎**不带 body**，信息密度全在标题。
 - **不发"Update X"、"修复"这类空泛/中文 message**。

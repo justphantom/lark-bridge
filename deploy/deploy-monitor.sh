@@ -143,7 +143,7 @@ migrate_config() {
     local cfg="$CONFIG_DIR/$CONFIG_NAME"
     [[ -f "$cfg" ]] || return 0
 
-    local removed_blocks=("opencode_serve" "opencode" "omp")
+    local removed_blocks=("opencode_serve" "opencode" "omp" "claude")
     for block in "${removed_blocks[@]}"; do
         sudo grep -q "^  \"$block\":" "$cfg" || continue
         info "迁移：删除残留字段 $block"

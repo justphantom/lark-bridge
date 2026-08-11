@@ -194,143 +194,25 @@ func TestLoadRouterPathDefault(t *testing.T) {
 	}
 }
 
-// TestLoadClaudeFields verifies claude defaults and validation when a
-// claude section is present.
-func TestLoadClaudeFields(t *testing.T) {
-	path := writeConfig(t, `{"claude":{}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Claude.CLIPath != "claude" {
-		t.Errorf("default cli_path = %q, want claude", cfg.Claude.CLIPath)
-	}
-	if cfg.Claude.PermissionMode != "acceptEdits" {
-		t.Errorf("default permission_mode = %q, want acceptEdits", cfg.Claude.PermissionMode)
-	}
-	if cfg.Claude.MaxConcurrent != 4 {
-		t.Errorf("default max_concurrent = %d, want 4", cfg.Claude.MaxConcurrent)
-	}
-	if cfg.Claude.StreamHistory != 50 {
-		t.Errorf("default stream_history = %d, want 50", cfg.Claude.StreamHistory)
-	}
-	if len(cfg.Claude.ModelOptions) != 3 || cfg.Claude.ModelOptions[0] != "haiku" {
-		t.Errorf("default model_options = %v, want [haiku sonnet opus]", cfg.Claude.ModelOptions)
-	}
-	wantPerm := []string{"acceptEdits", "plan", "bypassPermissions"}
-	if len(cfg.Claude.PermissionOptions) != 3 || cfg.Claude.PermissionOptions[0] != wantPerm[0] {
-		t.Errorf("default permission_options = %v, want %v", cfg.Claude.PermissionOptions, wantPerm)
-	}
-	wantEffort := []string{"low", "medium", "high", "xhigh", "max"}
-	if len(cfg.Claude.EffortOptions) != 5 || cfg.Claude.EffortOptions[0] != wantEffort[0] {
-		t.Errorf("default effort_options = %v, want %v", cfg.Claude.EffortOptions, wantEffort)
-	}
-	if cfg.Claude.SettingsCacheTTL != 3600 {
-		t.Errorf("default settings_cache_ttl = %d, want 3600", cfg.Claude.SettingsCacheTTL)
-	}
-}
-
-// TestLoadClaudePickerOptionsOverride verifies explicit model/permission/effort
-// option lists survive applyDefaults (they are nil-only-defaulted).
-func TestLoadClaudePickerOptionsOverride(t *testing.T) {
-	path := writeConfig(t, `{"claude":{"model_options":["a","b"],"permission_options":["plan"],"effort_options":["max"]}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(cfg.Claude.ModelOptions) != 2 || cfg.Claude.ModelOptions[0] != "a" {
-		t.Errorf("model_options = %v, want [a b]", cfg.Claude.ModelOptions)
-	}
-	if len(cfg.Claude.PermissionOptions) != 1 || cfg.Claude.PermissionOptions[0] != "plan" {
-		t.Errorf("permission_options = %v, want [plan]", cfg.Claude.PermissionOptions)
-	}
-	if len(cfg.Claude.EffortOptions) != 1 || cfg.Claude.EffortOptions[0] != "max" {
-		t.Errorf("effort_options = %v, want [max]", cfg.Claude.EffortOptions)
-	}
-}
-
-// TestLoadClaudeSettingsCacheTTLDefault verifies the default settings_cache_ttl
-// is applied (3600) and an explicit value survives.
-func TestLoadClaudeSettingsCacheTTL(t *testing.T) {
-	// Default
-	path := writeConfig(t, `{"claude":{}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Claude.SettingsCacheTTL != 3600 {
-		t.Errorf("default settings_cache_ttl = %d, want 3600", cfg.Claude.SettingsCacheTTL)
-	}
-	// Override
-	path = writeConfig(t, `{"claude":{"settings_cache_ttl":120,"settings_dir":"/etc/claude"}}`)
-	cfg, err = Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Claude.SettingsCacheTTL != 120 {
-		t.Errorf("settings_cache_ttl = %d, want 120", cfg.Claude.SettingsCacheTTL)
-	}
-	if cfg.Claude.SettingsDir != "/etc/claude" {
-		t.Errorf("settings_dir = %q, want /etc/claude", cfg.Claude.SettingsDir)
-	}
-}
-
-// TestLoadStreamHistoryOverride ensures an explicit stream_history survives
-// applyDefaults (the ==0 coercion only fills the unset value).
-func TestLoadStreamHistoryOverride(t *testing.T) {
-	path := writeConfig(t, `{"claude":{"stream_history":7}}`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Claude.StreamHistory != 7 {
-		t.Errorf("stream_history = %d, want 7", cfg.Claude.StreamHistory)
-	}
-}
-
 // TestLoadStreamHistoryNegativeDisables pins D1: a negative stream_history is
 // an explicit "disable archiving" signal that must survive applyDefaults
 // (previously <=0 was coerced to 50, making streamarchive.NewSink's
 // history<=0 disable branch unreachable). The negative value must reach the
 // sink so the disable branch fires.
 func TestLoadStreamHistoryNegativeDisables(t *testing.T) {
-	for _, backend := range []string{"claude", "miniagent"} {
-		path := writeConfig(t, `{"`+backend+`":{"stream_history":-1}}`)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("%s: Load: %v", backend, err)
-		}
-		var got int
-		switch backend {
-		case "claude":
-			got = cfg.Claude.StreamHistory
-		case "miniagent":
-			got = cfg.MiniAgent.StreamHistory
-		}
-		if got != -1 {
-			t.Errorf("%s: stream_history = %d, want -1 (negative must disable, not coerce to 50)", backend, got)
-		}
+	path := writeConfig(t, `{"miniagent":{"stream_history":-1}}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-}
-
-func TestValidateRejectsDefaultPermissionMode(t *testing.T) {
-	path := writeConfig(t, `{"claude":{"permission_mode":"default"}}`)
-	if _, err := Load(path); err == nil {
-		t.Fatal(`expected error for permission_mode "default"`)
-	}
-}
-
-func TestValidateBadPermissionMode(t *testing.T) {
-	path := writeConfig(t, `{"claude":{"permission_mode":"bogus"}}`)
-	if _, err := Load(path); err == nil {
-		t.Fatal("expected error for bad permission_mode")
+	if cfg.MiniAgent.StreamHistory != -1 {
+		t.Errorf("stream_history = %d, want -1 (negative must disable, not coerce to 50)", cfg.MiniAgent.StreamHistory)
 	}
 }
 
 // TestLoad_ValidationFailures table-drives the shared validate rules.
 // Each row pins one return-error branch in config_validate.go so future
-// refactors of validate cannot silently drop a guard. Cases that already
-// had a dedicated test (TestValidateBadPermissionMode) are not duplicated.
+// refactors of validate cannot silently drop a guard.
 func TestLoad_ValidationFailures(t *testing.T) {
 	stateDirMissing := filepath.Join(t.TempDir(), "does", "not", "exist")
 	tests := []struct {
@@ -343,7 +225,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{"bad log format", `{"log_format":"yaml"}`, "log_format"},
 		{"bad feishu log level", `{"feishu_log_level":"trace"}`, "feishu_log_level"},
 		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
-		{"claude negative concurrency", `{"claude":{"max_concurrent":-1}}`, "claude.max_concurrent"},
 		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
 		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
 		{"prompt_timeout too short", `{"timeouts":{"prompt_timeout":"100ms"}}`, "timeouts.prompt_timeout"},

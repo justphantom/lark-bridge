@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -24,10 +23,10 @@ const (
 	emitNoticeTimeout = 10 * time.Second
 
 	// listFnTimeout bounds a backend's models/agent list subcommand invoked by
-	// the picker. CLI startups are heavy: opencode's provider/config load takes
-	// 25–50s, and omp's `models --json` was measured at ~137s (it fetches the
-	// provider catalog over the network before printing). 300s covers the worst
-	// observed case with headroom while still bounding a genuinely hung fork.
+	// the picker. CLI startups are heavy: a provider/config load can take tens
+	// of seconds, and a models catalog fetch over the network has been
+	// measured at minutes. 300s covers the worst observed case with headroom
+	// while still bounding a genuinely hung fork.
 	listFnTimeout = 300 * time.Second
 
 	// maxQuestionOptions caps the number of options shown in a single picker
@@ -43,7 +42,7 @@ const (
 // control to an in-flight turn (empty for a standalone picker card).
 type EmitFunc func(ctx context.Context, promptID string, ctrl *protocol.Control) error
 
-// ErrPickerInFlight is returned by Core.AskAndWait when a picker is already
+// ErrPickerInFlight is returned by AskAndWait when a picker is already
 // open in the same chat. The caller surfaces err.Error() as a notice, so the
 // message is user-facing.
 var ErrPickerInFlight = errors.New("本群已有一个选择进行中，请先完成或等待其失效")
@@ -61,9 +60,9 @@ func StaticOptions(options []string) func(context.Context) ([]string, error) {
 // blocks until the user answers or AskWaitTimeout elapses.
 //
 // Both the listFn call and the answer wait derive their ctx from appCtx, NOT
-// from any caller ctx: a backend CLI may take 25–50s to list models, far
-// exceeding the dispatcher's cmdutil.Timeout (15s). Callers MUST run this in
-// a background goroutine (the dispatcher returns immediately with a
+// from any caller ctx: a backend CLI may take tens of seconds to list models,
+// far exceeding the dispatcher's cmdutil.Timeout (15s). Callers MUST run this
+// in a background goroutine (the dispatcher returns immediately with a
 // placeholder Notice and Handled=true). chatID satisfies protocol.Validate
 // (Question controls require ChatID). kind/label tailor the card copy.
 //
@@ -157,81 +156,6 @@ func AskAndWait(
 	}
 }
 
-// AskPermission emits a button permission card and blocks for the user's pick,
-// mirroring AskAndWait's lifecycle but for a fixed option set rendered as
-// immediate-click buttons (no dropdown, no custom input). takeOver controls
-// whether the card morphs the progress card (a slash-command picker) or ships
-// standalone (a mid-turn permission gate); promptID is still emitted so a
-// finalised turn can flip the card either way. kind flavours the error text.
-// msg carries the structured body (Type/Title/Detail for a typed render, plus
-// Message as the flat fallback for older frontends).
-func AskPermission(
-	appCtx context.Context,
-	answers *AnswerBroker,
-	emit EmitFunc,
-	chatID, promptID, requestID, kind string,
-	msg protocol.PermissionMessage,
-	options []protocol.PermissionOption,
-	takeOver bool,
-) (string, string, error) {
-	if len(options) == 0 {
-		return "", "", fmt.Errorf("没有可用的%s", kind)
-	}
-	if requestID == "" {
-		var err error
-		requestID, err = newRequestID()
-		if err != nil {
-			return "", "", fmt.Errorf("生成请求 ID 失败：%w", err)
-		}
-	}
-	ch, ok := answers.Register(requestID)
-	if !ok {
-		return "", "", fmt.Errorf("已有一个进行中的选择，请先完成或等待其失效")
-	}
-	ctrl := &protocol.Control{
-		Type:   protocol.TypePermission,
-		ChatID: chatID,
-		Permission: &protocol.PermissionPayload{
-			RequestID:        requestID,
-			Message:          msg.Message,
-			Type:             msg.Type,
-			Title:            msg.Title,
-			Detail:           msg.Detail,
-			Options:          options,
-			TakeOverProgress: takeOver,
-		},
-	}
-	emitCtx, emitCancel := context.WithTimeout(appCtx, emitNoticeTimeout)
-	defer emitCancel()
-	if err := emit(emitCtx, promptID, ctrl); err != nil {
-		answers.Cancel(requestID)
-		return "", "", fmt.Errorf("发送权限卡片失败：%w", err)
-	}
-	waitCtx, waitCancel := context.WithTimeout(appCtx, AskWaitTimeout)
-	defer waitCancel()
-	select {
-	case ans, ok := <-ch:
-		if !ok {
-			return "", "", errors.New("服务正在关闭，请稍后重试")
-		}
-		choice := PickAnswerValue(ans)
-		if choice == "" {
-			return "", "", fmt.Errorf("未选择任何%s", kind)
-		}
-		messageID := ""
-		if ans != nil {
-			messageID = ans.MessageID
-		}
-		return choice, messageID, nil
-	case <-waitCtx.Done():
-		answers.Cancel(requestID)
-		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-			return "", "", fmt.Errorf("选择超时（>%s），请重新发起", AskWaitTimeout)
-		}
-		return "", "", errors.New("等待选择被中断")
-	}
-}
-
 // PickAnswerValue extracts the user's selection from an AnswerPayload. A
 // custom-typed value wins over a listed pick (the user explicitly overrode
 // the list); the Choices slice carries a single-select's value at index 0.
@@ -297,32 +221,6 @@ func EmitCardUpdate(appCtx context.Context, emit EmitFunc, chatID, updateMessage
 		ChatID: chatID,
 		Notice: np,
 	})
-}
-
-// AskAndWait is the receiver form of the package-level AskAndWait, binding
-// the Core's appCtx, answer broker, and emit. It is the single entry point
-// every bridge's interactive picker uses.
-//
-// It enforces per-chat single-flight: a chat that already has a picker open
-// gets ErrPickerInFlight instead of a second concurrent picker, so a flood of
-// /model (刷屏) cannot stack goroutines (each blocked up to AskWaitTimeout)
-// and duplicate cards. The heavy CLI fork behind the list is already deduped
-// by the backends' cachedList single-flight; this guard bounds the rest.
-func (c *Core) AskAndWait(
-	chatID, replyToID, kind, label string,
-	listFn func(context.Context) ([]string, error),
-	allowCustom bool,
-) (string, string, error) {
-	slot, _ := c.pickerSlots.LoadOrStore(chatID, &sync.Mutex{})
-	mu, ok := slot.(*sync.Mutex)
-	if !ok {
-		return "", "", fmt.Errorf("picker slot for chat %s has unexpected type %T", chatID, slot)
-	}
-	if !mu.TryLock() {
-		return "", "", ErrPickerInFlight
-	}
-	defer mu.Unlock()
-	return AskAndWait(c.AppCtx, c.Answers, c.Emit, chatID, replyToID, kind, label, listFn, allowCustom)
 }
 
 // AskCardUpdate refreshes an existing picker card in place for the next round
@@ -410,17 +308,4 @@ func AskCardUpdate(
 		}
 		return "", "", errors.New("等待选择被中断")
 	}
-}
-
-// AskCardUpdate is the receiver form binding the Core's appCtx, answers, emit.
-func (c *Core) AskCardUpdate(
-	chatID, updateMessageID, kind, label string,
-	listFn func(context.Context) ([]string, error),
-	allowCustom bool,
-) (string, string, error) {
-	return AskCardUpdate(c.AppCtx, c.Answers, c.Emit, chatID, updateMessageID, kind, label, listFn, allowCustom)
-}
-
-func (c *Core) AskPermission(chatID, promptID, requestID, kind string, msg protocol.PermissionMessage, options []protocol.PermissionOption, takeOver bool) (string, string, error) {
-	return AskPermission(c.AppCtx, c.Answers, c.Emit, chatID, promptID, requestID, kind, msg, options, takeOver)
 }
