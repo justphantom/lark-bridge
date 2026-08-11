@@ -1,7 +1,7 @@
 # lark-bridge build and test entry points.
 #
 # Targets:
-#   build       compile the six binaries into bin/ (version-stamped)
+#   build       compile the five binaries into bin/ (version-stamped)
 #   build-check go build ./... (catch internal-package compile errors)
 #   vet         go vet ./...
 #   fmt         gofmt -s -w .
@@ -25,7 +25,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-services build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-bg deploy-monitor deploy-status deploy-agnes pack
+.PHONY: build build-services build-feishu-front build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-bg deploy-monitor deploy-status deploy-agnes pack
 
 # Default to `build` so a bare `make` produces the five binaries.
 .DEFAULT_GOAL := build
@@ -52,10 +52,6 @@ build-feishu-front:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-feishu-front ./cmd/feishu-front
 
-build-claude-back:
-	mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/lark-claude-back ./cmd/claude-back
-
 build-miniagent-back:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-miniagent-back ./cmd/miniagent-back
@@ -72,12 +68,12 @@ build-status-monitor:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-status-monitor ./cmd/status-monitor
 
-# build-services compiles only the 3 business services that deploy.sh manages;
+# build-services compiles only the 2 business services that deploy.sh manages;
 # the two monitors are deployed independently by deploy-monitor.sh / deploy-status.sh.
-build-services: build-feishu-front build-claude-back build-miniagent-back
+build-services: build-feishu-front build-miniagent-back
 
-# build compiles all six binaries (version-stamped).
-build: build-feishu-front build-claude-back build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor
+# build compiles all five binaries (version-stamped).
+build: build-feishu-front build-miniagent-back build-agnes-back build-deploy-monitor build-status-monitor
 
 # pack 交叉编译七个二进制 + VERSION 标记，打成一个可分发的 tarball。
 # 在临时 staging 目录构建，避免 bin/ 里已有的旧 tarball/二进制被卷进新包。
@@ -85,7 +81,7 @@ build: build-feishu-front build-claude-back build-miniagent-back build-agnes-bac
 pack:
 	@tmp=$$(mktemp -d) && trap "rm -rf $$tmp" EXIT; \
 	mkdir -p bin; \
-	for name in lark-feishu-front:cmd/feishu-front lark-claude-back:cmd/claude-back lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor lark-agnes-back:cmd/agnes-back; do \
+	for name in lark-feishu-front:cmd/feishu-front lark-miniagent-back:cmd/miniagent-back lark-deploy-monitor:cmd/deploy-monitor lark-status-monitor:cmd/status-monitor lark-agnes-back:cmd/agnes-back; do \
 		out=$${name%%:*}; src=./$${name##*:}; \
 		echo "build  $$out ($(GOOS)/$(GOARCH))"; \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $$tmp/$$out $$src; \
@@ -131,8 +127,8 @@ clean:
 
 # deploy hands off to the systemd deploy script, which runs `make build`
 # internally. deploy.sh is also runnable standalone (./deploy/deploy.sh).
-# Note: deploy.sh manages the 3 business services (feishu / claude
-# / miniagent). lark-deploy-monitor is managed independently
+# Note: deploy.sh manages the 2 business services (feishu / miniagent).
+# lark-deploy-monitor is managed independently
 # by deploy-monitor.sh (it triggers deploy, so self-managing would be a
 # circular dependency).
 deploy:
