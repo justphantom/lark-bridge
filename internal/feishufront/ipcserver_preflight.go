@@ -87,7 +87,7 @@ func (s *IPCServer) handleDeployPreflight(w http.ResponseWriter, r *http.Request
 }
 
 // stripInstanceSuffix drops a trailing "-<digits>" instance suffix
-// ("claude-1" → "claude"), matching deploy.sh's backend_id→service mapping.
+// ("miniagent-1" → "miniagent"), matching deploy.sh's backend_id→service mapping.
 // An ID without a numeric suffix is returned unchanged, so unknown backends
 // simply never match a service short name (non-conflicting).
 func stripInstanceSuffix(backendID string) string {

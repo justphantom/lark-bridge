@@ -63,12 +63,14 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 ## 部署
 
 ```bash
-make deploy                              # 构建 + 安装 3 个业务 systemd 服务
+make deploy                              # 构建 + 安装 2 个业务服务（feishu + miniagent）
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services miniagent   # 单独部署某服务子集（逗号分隔）
-make deploy-monitor                     # 单独升级 deploy-monitor（~2s 离线）
+make deploy-all                          # 全量：业务→agnes→status→monitor（操作员手动一键）
+make deploy-agnes                        # 单独升级 agnes-back
+make deploy-monitor                      # 单独升级 deploy-monitor（~2s 离线）
 make deploy-monitor ARGS=--init
-make deploy-status                      # 单独升级 status-monitor（~2s 离线）
+make deploy-status                       # 单独升级 status-monitor（~2s 离线）
 make deploy-status ARGS=--init
 ```
 

@@ -16,7 +16,7 @@ updated: 2026-08-11T10:37:34+08:00
 - [archive/agnes-model-command.md](L1/archive/agnes-model-command.md) — agnes-back /model 指令：单卡三问弹卡 + 配置化模型列表（已完成）
 - [archive/send-picker-ellipsis-fix.md](L1/archive/send-picker-ellipsis-fix.md) — /send 弹卡省略号修复：按钮卡启发式纵向单列布局（已完成）
 - [archive/claude-backend-removal.md](L1/archive/claude-backend-removal.md) — 清理 Claude 对接：方案 B(已提交 d13898a) + C 全量清零（B+C 完成）
-- [L1/active/session.md](L1/active/session.md) — 方案 C 已提交（49 文件死叶清理，commit 0580361）
+- [L1/active/session.md](L1/active/session.md) — 方案 B+C 已提交（B: `d13898a`、C: `0580361`）
 
 ## L2 经验教训
 - [incidents/feishu-card-bounce-back.md](L2/incidents/feishu-card-bounce-back.md) — `/send` 文件卡片回弹事故

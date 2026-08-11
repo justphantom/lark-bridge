@@ -56,7 +56,7 @@ func truncateRunes(s string, maxRunes int) string {
 // HeaderInfo describes a card header: backendType prefixes the title,
 // template sets the colour band.
 type HeaderInfo struct {
-	BackendType string // "claude" | "opencode"
+	BackendType string // "miniagent" | "agnes"
 	Title       string
 	Template    string // blue | green | orange | red | grey
 }
