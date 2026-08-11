@@ -17,7 +17,7 @@ confidence: high
 ## 模式
 1. **按钮卡布局按选项内容选择列数**：短标签（是/否、模型名）用 5 列网格保持紧凑；文件名/路径/长标签用 `CardWithColumns(maxCols=1)` 纵向单列全宽。
 2. **启发式判断放在 renderer**（`questionButtonsUseListLayout`）：含 `📁 `/`📄 ` 前缀、含 `/`、或 > `pickerListLayoutRunes`(16) runes 即判为长标签。无需改协议，一个入口覆盖所有后端。
-3. **阈值从已知案例标定**：backend picker 的 "deploy-monitor-1（deploy-monitor）" 19 runes 是已知最短会截断的标签（`cardkit.CardWithColumns` 注释），阈值取 16 留余量。
+3. **阈值从已知案例标定**：backend picker 的长标签约 19 runes 是已知最短会截断的案例（`cardkit.CardWithColumns` 注释记录的历史案例），阈值取 16 留余量。
 4. **项目已有先例**：`CardWithColumns` 的 maxCols 参数就是为长标签 picker 设计的，但只有 backend picker 用了；新 picker 默认 5 列是漏网之鱼。改通用入口比逐个调用点指定更防漏。
 
 ## 测试要点

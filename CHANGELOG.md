@@ -10,7 +10,7 @@
 
 ### Added
 
-- **agnes-back 新后端**（`08e3033`）。新增 `lark-agnes-back`（backendType `agnes`），封装 Agnes AI 三个模型：`agnes-2.5-flash`（文本提示词 `/image-prompt`、`/video-prompt`）、`agnes-image-2.1-flash`（图片生成 `/image`，图片经 TypeFile 内联到群）、`agnes-video-v2.0`（视频生成 `/video`，异步轮询）。架构仿 deploy-monitor/status-monitor：SSE 注册 + POST 发 Control，不 fork 子进程；慢任务跑在 GoSafe goroutine 不阻塞 SSE 循环，视频轮询期间用 Progress 卡片显示进度。配置段 `agnes`（api_key / base_url / 三模型名 / size / ratio）全部可配（`config.example.json` + `AGNES_*` env 已补）；新增 `deploy-agnes.sh` 与 Makefile `build-agnes-back` / `deploy-agnes` 目标。
+- **agnes-back 新后端**（`08e3033`）。新增 `lark-agnes-back`（backendType `agnes`），封装 Agnes AI 三个模型：`agnes-2.5-flash`（文本提示词 `/image-prompt`、`/video-prompt`）、`agnes-image-2.1-flash`（图片生成 `/image`，图片经 TypeFile 内联到群）、`agnes-video-v2.0`（视频生成 `/video`，异步轮询）。架构仿 status-monitor：SSE 注册 + POST 发 Control，不 fork 子进程；慢任务跑在 GoSafe goroutine 不阻塞 SSE 循环，视频轮询期间用 Progress 卡片显示进度。配置段 `agnes`（api_key / base_url / 三模型名 / size / ratio）全部可配（`config.example.json` + `AGNES_*` env 已补）；新增 `deploy-agnes.sh` 与 Makefile `build-agnes-back` / `deploy-agnes` 目标。
 - **agnes 视频生成后下载并以文件发送到飞书**（`bf3d54e`）。视频结果从仅下发 URL 改为下载后作为文件消息发送到群。
 - **backendrpc SendControl 瞬态错误重试**（`b367ca1`）。指数退避，最多 3 次，降低视频生成等长任务期间前端抖动导致的通知丢失。
 - **全链路诊断日志**（`b3553ee` / `e5611b3` / `296ec8f`）。agnesback handler / client、feishu bot_send、dispatcher、ipcserver 在关键控制流节点补结构化日志（notify 请求/结果、PatchMessage 失败 Warn 含 message_id/card_size、prompt 转发、control auth 失败），并清理每步成功/失败双份 Info 及 ipcserver 无效 `http.MaxBytesReader` 废代码。
@@ -19,7 +19,7 @@
 
 - **卡片链路全量切换 schema 2.0，删除 legacy 1.0 双路灰度**（`b214834`，**breaking**）。所有卡片仅以 schema 2.0 渲染，legacy 1.0 渲染路径与灰度开关一并删除；任何依赖 schema 1.0 输出的定制不再适用。
 - **ws 看门狗超时 5m → 10m**（`e73713e`）。容忍视频生成（1–2min）期间瞬态网络中断，避免误杀健康长连接。
-- **三个独立后端升级路径补 .env 同步**（`8ef267b`）。agnes / deploy-monitor / status-monitor 的 deploy 脚本升级时同步刷新 .env。
+- **两个独立后端升级路径补 .env 同步**（`8ef267b`）。agnes / status-monitor 的 deploy 脚本升级时同步刷新 .env。
 - **migrate_config 增加块内叶子字段清理**（`5e7f59f`）。`card_patch_delay` 等废弃字段迁移时自动清除。
 - **agnesback 错误处理增强**（`e73713e`）。`handleImage` / `handleVideo` 的 SendControl / notify 返回值改为显式错误处理，失败 Error 日志含 card_msg_id；notify 拆分为参数日志 + 发送日志两步。
 - **agnes 视频轮询查询级容错**（`8c6dd2b`）。连续 3 次失败才放弃，单次瞬态失败不再中断整个轮询。
@@ -27,16 +27,15 @@
 ### Fixed
 
 - **schema 2.0 交互卡片按钮点击全部无回调（P0）**（`e223940`）。根因：`b214834` 全量切 schema 2.0 后 button 无条件声明 `behaviors:[{type:callback}]`，而飞书 schema 2.0 inline 卡片携带此声明时反而不触发 `card.action.trigger` 事件（实测：移除 behaviors 后回调立即恢复），导致 `/backend` picker、permission、question 等所有交互卡片按钮失效。修复：`ButtonAction` / `SubmitButtonAction` 移除 behaviors 声明（button 的 value 字段自动触发回调，与 schema 1.0 行为一致）；同提交修复 picker 列表省略号问题。
-- **agnes / deploy-monitor / status-monitor 周期性 offline/online 抖动（P1）**（`dad828b`）。三者 `HandleEvent` 此前静默丢弃前端 TypePing 健康探测，missedPongs 只增不减，每 ~60–90s 被 feishufront 按 `maxMissedPongs=3` 判定消费循环卡死而强制 Unregister。修复：对齐 miniagent-back 模式，GoSafe fire-and-forget 回 TypePong。
+- **agnes / status-monitor 周期性 offline/online 抖动（P1）**（`dad828b`）。两者 `HandleEvent` 此前静默丢弃前端 TypePing 健康探测，missedPongs 只增不减，每 ~60–90s 被 feishufront 按 `maxMissedPongs=3` 判定消费循环卡死而强制 Unregister。修复：对齐 miniagent-back 模式，GoSafe fire-and-forget 回 TypePong。
 - **agnesback 图片/视频结果更新回弹**（`8091aa6`）。不再用 UpdateMessageID 更新原卡，改为发新卡。
-- **Makefile `build-deploy-monitor` 缺 `mkdir -p bin`**（`c591cba`）。
 - **lint 回归**（`110e66d`）。agnesback handler_test goimports 对齐 + SA2001 空临界区。
 
 ### Notes
 
 - **operator 升级提示**：agnes-back 为新增可选服务，按 `deploy/README.md` §6.7 执行 `make deploy-agnes ARGS=--init` 初始化；bridge config 需新增 `agnes` 段（或经 env 注入 `AGNES_*`）。
 - **已知限制**：agnes 视频 CDN 偶发 TLS reset，属外部服务问题，重试可恢复；form_submit 交互路径尚未实测。
-- **发版顺序**：先 feishu-front，后各 backend（claude / miniagent / agnes / deploy-monitor / status-monitor）。
+- **发版顺序**：先 feishu-front，后各 backend（claude / miniagent / agnes / status-monitor）。
 
 ## [1.13.0] - 2026-08-09
 
@@ -61,7 +60,7 @@
 - **跟进 miniagent v4.2.0：移除 `-system`/`-max-tokens` 交付**（`4febfd9`）。上游 4.2.0 删除两 flag（stdlib `flag` 遇未知 flag `exit(2)`），桥停止发射并从 config 删除 `system_prompt`/`max_tokens` 字段；system prompt 与 max output-token cap 改由 miniagent-cli.json 的 `defaults.system_prompt` / `run.max_tokens` 配置。**迁移**：因 `DisallowUnknownFields`，手改 config 须删此两键。
 - **统一 claude-back 指令 `/settings` → `/config`**（`57bbf33`），与 miniagent-back 命名对齐。
 - **统一 `session-abort` 指令为 `/abort`**（`d597ab8`）。
-- **部署脚本简化与重命名**（`780dc42`）。Makefile 拆出单二进制 build target（`build-deploy-monitor` / `build-status-monitor` / `build-services`），消除冗余跨二进制编译；`upgrade-monitor.sh` → `deploy-monitor.sh`、`upgrade-status.sh` → `deploy-status.sh`，动词统一为 `deploy`。
+- **部署脚本简化与重命名**（`780dc42`）。Makefile 拆出单二进制 build target（`build-status-monitor` / `build-services`），消除冗余跨二进制编译；`upgrade-status.sh` → `deploy-status.sh`，动词统一为 `deploy`。
 - **交互卡锁顺序统一**（`2b90352`）。先操作 `TurnManager`，再操作 `Dispatcher.cardMu`，消除 `sendInteractive` 与 `expireInteractive`/`finalizeLinkedInteractive`/`DispatchCardAction` 之间的锁顺序反转死锁风险。
 - **示例配置默认脱敏**（`config.example.json`）。`stream_archive_redact` 由 `false` 改为 `true`，与代码默认值一致。
 - **后端 token 比较改为恒定时间**（`2b90352`）。`validateBackendToken` 使用 `crypto/subtle.ConstantTimeCompare`，降低 per-backend session token 时序攻击风险。
@@ -112,13 +111,12 @@
 
 - **deploy 期 `${VAR}` 展开（P0，升级即崩）**（`0414716`）。miniagent v3.3.0 `c51d91c` 移除了 config 加载时的 `${VAR}` 展开，`deploy.sh` 生成 `miniagent-cli.json` 的 heredoc 原先带 `'EOF'` 引号导致 URL 被字面量传递。改为 unquoted heredoc 让 bash 在 deploy 期展开，与 bridge 自身 config（仍走 `expandEnvVars`）解耦。
 - **`/models` 当前模型标记适配 v3.3.0+1**（`8a472c2`）。上游 `b9a38fa` 统一输出为 `provider/model_id`，`cmdModels` 现检测单 provider 后将裸 current 规范化为 `provider/model_id` 再比较；多 provider 下裸 default 保持不标记。
-- **deploymonitor 服务列表移除 opencode / omp**（`018597e`）。`deployServices` 精简为 `feishu` / `claude` / `miniagent`，与已移除后端对齐。
 - **lint 4 项**（760620b，v1.11.0 合入）。
 - **renderer 删除 `Multi_edit` 死分支**（`0414716`）。miniagent v3.2.0 `edd6ba5` 将 `multi_edit` 并入 `edit` 的 `edits` 数组，`progress_category.go` 移除对应 case。
 
 ### Removed
 
-- **`opencode-back` 与 `omp-back` 整体移除**（`e22ac59` / `45bd5ea` / `7ffda4c`）。后端对接收敛到 claude + miniagent 两个 agent。移除范围：`cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、`internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）；`config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；`OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`；`Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；`config.example.json` 的 `opencode{}` / `omp{}` 块；`deploy.sh` 服务列表、产物检查、config 派生、CLI 警告及 `lib-common.sh` 映射；`upgrade-monitor.sh` / `upgrade-status.sh` 遗留清理扩展。
+- **`opencode-back` 与 `omp-back` 整体移除**（`e22ac59` / `45bd5ea` / `7ffda4c`）。后端对接收敛到 claude + miniagent 两个 agent。移除范围：`cmd/opencode-back/`、`cmd/omp-back/` 与 `internal/opencode/`、`internal/opencodebridge/`、`internal/omp/`、`internal/ompbridge/`（约 1.3 万行）；`config.Opencode` / `config.OMP` 结构体、默认值、校验与测试；`OPENCODE_INTEGRATION_SPEC.md` / `OMP_INTEGRATION_SPEC.md`；`Makefile` 的 `lark-opencode-back` / `lark-omp-back` build 与 pack 项；`config.example.json` 的 `opencode{}` / `omp{}` 块；`deploy.sh` 服务列表、产物检查、config 派生、CLI 警告及 `lib-common.sh` 映射；`upgrade-status.sh` 遗留清理扩展。
 - **`/session-new` 等 claude 会话命令旧名**（`b5b3017` / `7d1b37f` / `ae0e9de` / `4ecbd59`）。`/session-new` / `/session-use` / `/session-clean` / `/session-list` 旧名从命令注册表中移除，统一替换为 `/new` / `/use` / `/clean` / `/session`。
 - **`/memory` 命令与 `.miniagent/memory.jsonl`**（`0d90584` / `9b07db4`）。项目级记忆系统移除，`/memory` 命令及其相关处理逻辑、`memory.jsonl` 写入与 `.gitignore` 条目一并清理。
 
@@ -204,8 +202,6 @@ miniagent **v3.0.0** 全面落地（破坏性迁移）。主线：吸收上游 v
 - **`-list-models` 适配 v3**（`a3cdfef`）。bare 模式传 `-chat-url`+`-models-url`；config 模式只传 `-config`。
 - **`env.example` 字段同步**（`f649c37`）。`MINIAGENT_BASE_URL` 废弃（保留仅兼容旧文档）；新增
   `MINIAGENT_CHAT_URL`、`MINIAGENT_MODELS_URL`；`MINIAGENT_DEFAULT_MODEL` 保留。
-- **`upgrade-monitor.sh` wait_active**（`f649c37`）。用 `wait_active` 轮询取代固定 `sleep 1` + 单次
-  `is-active`，覆盖冷启动窗口，避免误判失败。
 
 ### Fixed
 
@@ -338,8 +334,7 @@ v1.8.0 之后的增量。主线：**miniagent v1.1.0 接入**（finish→Incompl
 ## [1.8.0] - 2026-07-31
 
 v1.7.0 之后的增量。主线是**会话管理命令对齐**（claude `/use`/`/clean`/`/session`、
-omp `/session`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` 确认门、
-`LARK_RUN_MODE` 双模式）、**事件流健壮性**（超长行截断、未知事件计数、流归档字段脱敏），以及修复
+omp `/session`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`LARK_RUN_MODE` 双模式）、**事件流健壮性**（超长行截断、未知事件计数、流归档字段脱敏），以及修复
 **inflight 会话状态不一致导致的部署死锁**。无协议层 breaking change，新增功能 → 按 semver 升 minor。
 **发版顺序**：先 feishu-front 后各 backend（deploy.sh 顺序天然满足）。
 
@@ -365,13 +360,9 @@ omp `/session`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` �
   store；新增配置 `omp.agent_dir`、`omp.gc_cold_archive_after_days`/`gc_retain_newest_per_cwd`/
   `gc_timeout`；terminal-event 检测加固。
 
-- **deploy-monitor `/deploy` 确认门 + `/deploy-some` 增强**（`f98ad73`）。`/deploy` 现弹出二次
-  确认卡，主确认按钮；`/deploy-some` 多选纳入 omp 服务，进度卡 takeover（`TakeOverProgress`）。
-
-- **`LARK_RUN_MODE` 双模式门**（`316f6be` + `d8a586d`）。`LARK_RUN_MODE=pro` 时 deploy 流程跳过
-  deploy-monitor（pro 环境不部署部署触发器），并在 dev→pro 切换时禁用遗留的 deploy-monitor
-  systemd 单元；CLI 健康探测改为按可执行位判定（去掉 `--version`，适配不实现该 flag 的 CLI），
-  过滤后无存活服务时 fail-fast。
+- **`LARK_RUN_MODE` 双模式门 + CLI 健康探测按可执行位判定**（`316f6be` + `d8a586d`）。`LARK_RUN_MODE=pro`
+  控制 deploy 流程行为；CLI 健康探测去掉 `--version`、改为按可执行位判定（适配不实现该 flag
+  的 CLI），过滤后无存活服务时 fail-fast。
 
 - **streamarchive 字段级脱敏 + miniagent 流归档**（`662e7d2`，F7/F9）。stream 归档新增 opt-in
   字段级 redaction；miniagent 对话输出持久化到 `{state_dir}/streams/miniagent/`（与
@@ -447,15 +438,14 @@ omp `/session`/`/use`/`/clean`/`/session-gc`）、**部署加固**（`/deploy` �
   未释放 interactive binding 致延迟兜底 PATCH 误命中的连带 bug（`/clean` 悬卡）。
 
 - **status-monitor `/status` 按需刷新**（`3846b89`）。`buildStatusReport` 抽取共用，`/status`/
-  `/refresh` 立即推一张总览卡（不等 `interval`）；`/running`/`/help` 分派对齐 deploy-monitor。
+  `/refresh` 立即推一张总览卡（不等 `interval`）；`/running`/`/help` 分派补齐。
 
 - **主机按 `ReportedAt` 去重 + ws 帧合并 flake**（`3846b89`）。总览卡主机行按上报时间去重；
   修 `wsclient_test` 帧合并导致的偶发 flake。
 - **长时 job goroutine panic 恢复**（`b0e4a8c`）。git / singleflight / deploy job 内的 panic
   此前会崩溃整个后端进程（连带所有在途 turn）。现经 `bridgebase.GoSafe` 运行：延迟的槽位释放
   （`mu.Unlock` / `jobWg.Done`）在 `recover` 前的 panic unwind 中仍执行，无槽位泄漏，`Close`
-  不会卡在死 job 上。涉及 `internal/bridgebase/git_runner.go`、`singleflight_job.go`、
-  `internal/deploymonitor/handler.go`。
+  不会卡在死 job 上。涉及 `internal/bridgebase/git_runner.go`、`singleflight_job.go`。
 - **config.example.json 启动即崩**（`73bf2e8`）。示例配置的 `timeouts.prompt_timeout: "0s"` 在
   `config.Load` 解析阶段被拒，导致每个 deploy 命令启动即失败。删除该显式字段（由 `applyDefaults`
   默认值生效）；新增 `TestLoadConfigExample` 钉住「示例配置永远可加载」，防回归。
@@ -755,15 +745,15 @@ omitempty 新字段（非 frontend-override），`/v1/metrics/<id>` 与
   身份行带版本漂移 / stale 标记，下面每指标一行缩进；版本号不再截断，
   summary 拆为两行。
 
-- **deploy-monitor terminal notice 原地 patch 命令卡**：`/deploy` 会重启
+- **terminal notice 原地 patch 命令卡（`PromptPayload.CardMessageID`）**：后端重启
   feishu-front，内存中的 promptID→turn 映射被清空，terminal notice 此前
-  回退为独立卡，导致原 "⏳ 部署执行中…" 进度卡永久卡死。现在前端在 Prompt
+  回退为独立卡，导致原进度卡永久卡死。现在前端在 Prompt
   事件里盖进度卡的 message_id（`PromptPayload.CardMessageID`，omitempty，
-  非 override），deploy-monitor 在每个 terminal notice 上原样回带
+  非 override），后端在每个 terminal notice 上原样回带
   （`Notice.UpdateMessageID`），frontend 的 UpdateMessageID 快路径（裸
   message_id 跨重启存活）即可原地 patch 原卡。同时补两个洞：快路径现在会
   释放该 prompt 的 turn（否则 feishu-front 未重启场景如 `/pull` 会留下活
-  turn 污染 `/running`），引用卡被撤回时回退 `SendCard`（部署结果不再丢失）。
+  turn 污染 `/running`），引用卡被撤回时回退 `SendCard`（结果不再丢失）。
 
 ### Changed
 
@@ -775,8 +765,7 @@ omitempty 新字段（非 frontend-override），`/v1/metrics/<id>` 与
     长期存在的 shellcheck SC1073 解析错误，四个脚本 shellcheck-clean。
   - B) 在途 preflight 规则离开 bash 的 sed/grep JSON 解析，改走前端新端点
     `GET /v1/deploy-preflight?services=...`：200 安全 / 409 + 受影响
-    backends + 预渲染原因。deploy-monitor 自身的 turn 被排除，远端 `/deploy`
-    不会自死锁。deploy.sh 收敛为一次 curl + status-code 分支；前端老于该
+    backends + 预渲染原因。deploy.sh 收敛为一次 curl + status-code 分支；前端老于该
     端点时保守回退（任何 inflight 都阻断）。
 - **`idle_timeout` 示例改为 `600s`**：`config.example.json` 的
   `timeouts.idle_timeout` 从零值默认（禁用）改为推荐的 `600s`，与 README
@@ -792,8 +781,7 @@ omitempty 新字段（非 frontend-override），`/v1/metrics/<id>` 与
 
 ## [1.4.0] - 2026-07-28
 
-file upload (pandoc) / post rich-text / opencode idle watchdog / deploy-monitor
-cgroup 内存回收。所有改动 opt-in：缺依赖 / 权限时降级通知，旧部署行为不变。
+file upload (pandoc) / post rich-text / opencode idle watchdog。所有改动 opt-in：缺依赖 / 权限时降级通知，旧部署行为不变。
 
 ### Added
 
@@ -871,20 +859,6 @@ cgroup 内存回收。所有改动 opt-in：缺依赖 / 权限时降级通知，
 
 ### Fixed
 
-- **deploy-monitor cgroup 内存回收（MemoryHigh/MemoryMax）**：观察到
-  `systemctl status` 报告的 idle Memory 长期 88M+ 不回落。根因是 `make deploy`
-  子进程读取的文件页（go-build 缓存、源码、docker 层）作为 `inactive_file`
-  留在 cgroup 内核记账里（进程本体 `anon` 仅 7M，`VmHWM` 仅 14M）。
-  - `upgrade-monitor.sh` 的 unit 模板加 `MemoryHigh=50M` / `MemoryMax=300M`，
-    新部署自动生效；已部署 unit 由新增的 `migrate_unit` 幂等注入。
-  - 实测：idle Memory 88.1M → 3.0M，进程 anon 无变化。
-  - `MemoryMax=300M` 是硬上限（实测 MemoryPeak ~207M，余量到 300M），
-    防一次失控 deploy 把整机吃满。
-
-- **upgrade-monitor EXIT trap 引用已出作用域的 local 变量**：`init_monitor`
-  中 `stage` 为 `local`，函数返回后 EXIT trap 访问它会触发 `unbound variable`，
-  临时目录泄漏。改用全局 `INIT_STAGE` 替代，trap 在任意路径都能正确清理。
-
 - **修 flaky 测试 `TestWSClient_PingSent`**：`PingInterval: 80ms` 在 `-race`
   下调度抖动，约 10% 概率在 3s 窗口内抢不到时间片而失败（20 次跑出 2 次）。
   interval 提升到 `200ms`（窗口内仍有 ~15 次 ping 机会），`-race -count=30`
@@ -916,7 +890,7 @@ systemd hardening）。所有改动向后兼容：对外协议字段不变；移
   以 backendType `status-monitor` 注册到前端，按 `status_monitor.interval`（默认
   60s）轮询 `GET /v1/status` 并发 `TypeStatusReport`；前端向每个绑定此后端的群推送
   一张常驻总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。
-  push-only；与 deploy-monitor 同样解耦于 `deploy.sh` 之外，由 `make upgrade-status`
+  push-only；解耦于 `deploy.sh` 之外，由 `make upgrade-status`
   独立管理。
 - **renderer subagent zone**：进度卡为 agent 委派（sub-agent delegation）新增专属
   呈现区域，与主 turn 的工具行分离。
@@ -939,8 +913,7 @@ systemd hardening）。所有改动向后兼容：对外协议字段不变；移
   本包 `Mention`（字段集不变，下游 `internal/feishufront` 零改动）。
 - **P1 资源/鉴权加固**：补全各类上界（buffer / 重连预算 / sweep）、IPC 鉴权强度提升、
   子进程 env 收敛到白名单传递。
-- **P2 清理**：死代码删除、flap 状态机竞态修复、deploymonitor graceful drain、
-  wsclient 按职责拆分。
+- **P2 清理**：死代码删除、flap 状态机竞态修复、wsclient 按职责拆分。
 - **P3 工程化**：build tags、systemd unit hardening、sudoers 指引、补测试。
 
 ### Fixed
@@ -1057,7 +1030,6 @@ omitempty；旧前端遇 null 自动回退）。
 - `bridgebase.AskPermission` 签名收 `protocol.PermissionMessage`（结构化正文载体）。
 - `bridgebase.WithReplyToID` 导出（`ReplyToID` 的逆，供测试/直驱命令 handler 用）。
 - `bridgebase.GitRunner.AcquireAndRun` 改返回 `bool`，不再自发"已触发"（caller 发 banner）。
-- deploymonitor 拆 `confirm.go`（force 确认门）/`render.go`（格式化）以守住 300 行上限。
 - `opencode-go-sdk-lite` → v0.2.0；ListModels/ListAgents 缓存移至 `lists.go`。
 
 ## [1.0.0] - 2026-07-25
@@ -1074,7 +1046,6 @@ omitempty；旧前端遇 null 自动回退）。
 - **opencode-back**：每个 prompt fork `opencode` CLI
 - **opencode-serve-back**：连常驻 `opencode serve` HTTP server，长连接复用，适合长期高并发
 - **miniagent-back**：每个 prompt fork miniagent 二进制（自带 ReAct 循环 + LLM 直调）
-- **deploy-monitor**：接收飞书群 `/deploy` `/pull` `/push`，独立部署（避免循环依赖）
 
 ### 关键能力
 
@@ -1106,6 +1077,6 @@ validate 与 enum 校验路径。
   单 Lock 段防双 finalize。
 - **配置/部署**：`OpencodeServe.MaxConcurrent` defaults+validate 对齐、
   `deploy/*.json` 与 `.env` 经 `${VAR}` 联动、deploy.sh 二进制存在性全检 +
-  `log_level` 占位符 regex 容错、upgrade-monitor.sh SC2015 修正。
-- **文档**：Makefile/README/deploy 二进制与服务数真源统一（6 个二进制 / 5 个业务
+  `log_level` 占位符 regex 容错。
+- **文档**：Makefile/README/deploy 二进制与服务数真源统一（5 个二进制 / 5 个业务
   systemd 服务）、deploy/README 双重真源警示、补 LICENSE（MIT）与 CHANGELOG。

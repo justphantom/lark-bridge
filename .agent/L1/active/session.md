@@ -1,59 +1,30 @@
 ---
-updated: 2026-08-12T01:45:00+08:00
+updated: 2026-08-12T02:30:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
-**钉死 miniagent CLI 的 workdir 契约（非空+绝对路径+只认 `-workdir` flag）—— 全部实施 + 验证通过，未提交**（跨仓 `/opt/code/miniagent`，待用户 commit）。详见 [tasks/miniagent-workdir-pin.md](tasks/miniagent-workdir-pin.md)。
-- 起因：排查"miniagent-back 工作目录飘到 /home/dev"。结论 = **conflation**（systemd 下无真实漂移，`/home/dev` 是 `-config` 路径被 `/current` 相邻行误读）；顺带把 CLI workdir 契约收紧（删 config `run.workdir`、删 `os.Getwd()` 回退、auto 模式也强制 workdir）。
-- 验证全绿：build/vet/test -race ./...、golangci-lint 0 issue、smoke 五项。**注意：在线 CLI 仍 v4.4.0，需重装才生效**。
+**激进清零某已移除后端的全部残留引用** —— 源码早在 `89e29e6` 整目录删除（8 文件 ~2365 行 + config/Makefile/docs 全清零，工作树已无该后端任何源码），本次扫尾抹除非源码残留：CHANGELOG 历史、`.agent` 记忆、`deploy-status.sh` 迁移数组（用户拍板放弃该后端的旧 config 自动迁移能力）。
+- 目标：全仓 grep 该后端名（含下划线/连字符/旧脚本名变体）零命中。git commit message 属不可改写历史，不在范围。
+- 改动：`deploy/deploy-status.sh`（迁移数组删一项）、`CHANGELOG.md`（纯该后端条目整删、并列提及去 token）、`.agent` 6 文件（genericize/删）。
+- ⚠️ 运维后果：`deploy-status.sh` 迁移数组去掉该项后，仍带该 config 块的已部署 `status-monitor-config.json` 下次升级不再自动剥离 → `DisallowUnknownFields` 严格解析崩。升级前需手动确认/清理此类旧 config。
+- 验证全绿：grep 零命中（deploy-monitor/deploymonitor/deploy_monitor/upgrade-monitor 全变体）、bash -n/shellcheck clean、make deploy-smoke 34/0、对抗式核验 workflow（3 agent）0 blocker/high、3 low（binary 计数 + 孤悬 summary + 残留二进制，均已修）。待用户确认提交。
 
-## 前序：agnes-back 移除（已完成，未提交）
-**彻底移除 agnes-back（C 档·全量清零）—— 全部实施 + 验证通过，未提交**（待用户决定 commit）。详见 [tasks/agnes-backend-removal.md](tasks/agnes-backend-removal.md)。
+## 前序：miniagent CLI workdir 契约钉死（已提交 `0494eed`）
+非空 + 绝对路径 + 只认 `-workdir` flag（跨仓 `/opt/code/miniagent`）。起因是排查「工作目录飘到 /home/dev」，结论为 conflation（systemd 下无真实漂移，`/home/dev` 是 `-config` 路径被相邻行误读），顺带收紧 CLI workdir 契约。验证全绿。**在线 CLI 仍 v4.4.0，需重装才生效**。详见 [tasks/miniagent-workdir-pin.md](tasks/miniagent-workdir-pin.md)。
 
-继 claude-back（B+C）、deploy-monitor 之后第三个移除的后端，后端收敛到 **miniagent + status-monitor**。用户拍板：彻底移除 + C 档全量清零（接受永久丢失图片/视频生成——agnes 是唯一媒体后端，无法迁移）。前置评估 `.claude/wf-agnes-removal-eval.js`（76 agent 对抗式核验，65 confirmed）。
-- 改动：删 Go 包(8 文件/2494 行) + config 全量清零(struct/字段/ComponentLogLevel.Agnes/defaults/validate/example/test) + Makefile(目标/列表/.PHONY、计数 4→3) + deploy(cleanup_legacy 加 lark-agnes-back+agnes-back-config.json、deploy-status removed_blocks 加 "agnes"、删 deploy-agnes.sh、env.example/smoke.sh/deploy-README §6.7/lib-common 注释) + 共享注释(registry/cardkit/sink) + 文档(README/ARCHITECTURE §5.6 整删+§5.7–5.12→5.6–5.11 重编号/CODING_STANDARDS/RELEASING) + .agent(new-backend-skeleton 死链重指 status-monitor、diagnostic-logging/multi-question-card 案例标历史)。
-- 验证全绿：build/vet/test -race ./...、golangci-lint 0 issue、deploy-smoke 34/0、shellcheck -S warning 清零、bash -n 全过。grep 残留全合法（向后兼容迁移 / 历史 / 再对接知识 / 测试夹具标签）。
-- 关键坑：`ComponentLogLevel.Agnes` 嵌套于 DisallowUnknownFields（claude 没有的 footgun）→ 靠 deploy-status removed_blocks 加 "agnes" 迁移。
-- 运维收尾：纯 agnes 主机手动清 lark-agnes-back 单元/config/二进制；AGNES_API_KEY 去控制台吊销 + 手动剔 .env 的 AGNES_* 行（backfill_env 只增不删）。
+## 前序：agnes-back 彻底移除（C 档全量清零，已提交 `89e29e6`）
+继 claude-back（B+C）之后第二个移除的后端，后端收敛到 **miniagent + status-monitor**。用户拍板彻底移除 + C 档全量清零（接受永久丢失图片/视频生成——agnes 是唯一媒体后端，无法迁移）。前置评估 `.claude/wf-agnes-removal-eval.js`（76 agent 对抗式核验，65 confirmed）。详见 [tasks/agnes-backend-removal.md](tasks/agnes-backend-removal.md)。
+- 关键坑：`ComponentLogLevel.Agnes` 嵌套于 `DisallowUnknownFields` → 靠 `deploy-status.sh` removed_blocks 加 `"agnes"` 迁移。
+- 运维收尾：纯 agnes 主机手动清单元 + AGNES_API_KEY 吊销 + 手动剔 `.env` 的 `AGNES_*` 行。
 
-## 前序：`/config` 扫描路径可配置（`MINIAGENT_CONFIG_DIR` 部署注入）—— 已完成，未提交
-详见 [tasks/config-dir-env-injection.md](tasks/config-dir-env-injection.md)。
-- 4 文件改动：`deploy.sh`（`inject_config_dir` + 调用点，**双层转义**）、`env.example`、`smoke.sh`(+6 断言)、`README.md`。
-- Go 零改动（`ResolveConfigDir` 已就绪）。验证：bash -n / shellcheck clean / deploy-smoke **36/36** / go test 全绿。
-- 决策：`.env` 未设 → `config_dir` 空 → 回退 `$HOME/.miniagent`；命名错配（`miniagent-cli.json` 不匹配过滤）不在范围。
-- 关键坑：`expandEnvVars` 严格模式 → 不能用 `${}` 占位符，必须 sed 注入字面量；双层转义（值穿 sed 再落 JSON）；`set -e` 下用 `if` 非 `[[ -n ]] &&`。
-- 待续：用户确认提交；可选手动端到端（`./deploy/deploy.sh --services miniagent` 后查 `/etc/lark-bridge/miniagent-config.json`）。
+## 前序：`/config` 扫描路径可配置（`MINIAGENT_CONFIG_DIR`，已提交）
+4 文件改动：`deploy.sh`（`inject_config_dir` + 调用点，双层转义）、`env.example`、`smoke.sh`(+6 断言)、`README.md`。Go 零改动（`ResolveConfigDir` 已就绪）。决策：`.env` 未设 → 回退 `$HOME/.miniagent`。详见 [tasks/config-dir-env-injection.md](tasks/config-dir-env-injection.md)。
 
-## 前序任务：deploy 改造三件套（已完成，待提交）
-deploy 改造三件套，**全部实施 + 验证通过，未提交**（待用户决定 commit）：
-1. RUN_USER 解耦（前序，未提交）
-2. **彻底移除 deploy-monitor**（飞书 /deploy 触发下线，改为仅手动部署）
-3. **三项零风险权限修复**
-
-### 改动概览（本次 deploy-monitor 移除 + 权限修复）
-- **删除**：`cmd/deploy-monitor/`、`internal/deploymonitor/`、`deploy/deploy-monitor.sh`（8 文件 ~2365 行）。
-- **Go**：`internal/config`（删 DeployMonitor 字段/struct/ComponentLogLevel/默认/校验）；`internal/feishufront`（删 turn.go typeResolver + InFlight 排除、ipcserver_preflight/control 排除、feishu-front/main.go 注入）；多处注释去 deploy-monitor 措辞；测试同步（删 2 测试、重写 4 处）。
-- **DisallowUnknownFields 级联**：`config.example.json` 删 deploy_monitor 块；`deploy-status.sh`/`deploy-agnes.sh` 的 `removed_blocks` 追加 `deploy_monitor`（向后兼容已部署 config）。
-- **死代码清理**：`lib-common.sh` 删 run_mode()；`env.example` 删 LARK_RUN_MODE 块；`smoke.sh` 删 run_mode/guard_pro_mode 段（断言 38→30）；Makefile 删 build-deploy-monitor/deploy-monitor 目标（5→4 二进制）；.gitignore 删 /deploy-monitor。
-- **权限修复**（deploy.sh）：① install_files 给 miniagent CLI 兜底 `chmod 0755`（保 other-x）；② write_units 条件注入 `Environment=HOME=$STATE_DIR`（**仅 RUN_USER != INVOKER_USER** 时——dev 下 no-op，保留 ~/.miniagent）；③ deploy/README.md 新增「WORKSPACE_ROOT 属主前提」小节。
-- **文档**：README/ARCHITECTURE/CODING_STANDARDS 清零 deploy-monitor 引用（ARCHITECTURE §5.x/§8.x 重排号）。
-
-### 验证（全绿）
-go build/vet/test -race ./...、golangci-lint 0 issues、make deploy-smoke 30/30、shellcheck -S warning 清零、bash -n 全过。全仓 grep 仅余 2 处 `removed_blocks` 里的 deploy_monitor（向后兼容，预期）。
-
-### ⚠️ 工作树有先于本会话的未提交改动（非本任务）
-`internal/log/base_logger.go` 删除、`internal/usage/` 删除、`router/`(accessors/binding/router/persistence)、`lark/`(websocket/ws)、`cmdutil`、`bridgebase/interactive.go`、`eventmetrics` 等修改——compile/test/lint 全过、无引用，属前序重构遗留。提交时按需选择性 `git add`。
-
-## 活跃文件（本次核心）
-deploy/{deploy.sh,lib-common.sh,deploy-status.sh,deploy-agnes.sh,env.example,tests/smoke.sh,README.md}、config.example.json、Makefile、internal/{config,feishufront}/*、cmd/feishu-front/main.go、README.md/ARCHITECTURE.md/CODING_STANDARDS.md、.gitignore。
-
-## 决策与理由
-- 用户拍板：RUN_USER 保持 dev；**彻底移除 deploy-monitor**（非 pro 开关）；落地**三项零风险权限修复**。
-- 飞书 /deploy 与 RUN_USER 解耦本质冲突：monitor 以服务用户 uid exec make deploy → 内嵌 sudo 要求服务用户自身有 sudo → 与「运行用户无需 sudo」矛盾。移除即消解。
-- 修复2 用条件式（RUN_USER != INVOKER_USER）而非无条件：CLI 总拿显式 -config（配置不受 HOME 影响），但 /config 选择器扫 $HOME/.miniagent——无条件注入会迁走 dev 现有缓存，故 dev 下 no-op、仅专用账号生效。
-
-## 待续步骤
-- 用户确认后提交（L0#9）。注意与先序未提交改动区分 staging。
-- 开放项：合并脚本 M2（3 卫星脚本抽 deploy-svc.sh）。V1/V2 随 deploy-monitor 移除自然消失。
+## 前序：RUN_USER 解耦 + deploy 权限修复 + run_mode 死代码清理（已提交 `89e29e6`）
+- **RUN_USER** 从 `.env` 注入（systemd `User=`/chown），与部署调用者解耦；`deploy_sudo_check` 改校验真正执行内嵌 sudo的**调用者**（INVOKER_USER）免密 sudo，运行用户本身无需 sudo。
+- **三项零风险权限修复**（deploy.sh）：① install_files 给 miniagent CLI 兜底 `chmod 0755`；② write_units 条件注入 `Environment=HOME=$STATE_DIR`（**仅 RUN_USER != INVOKER_USER** 时，dev 下 no-op 保留 ~/.miniagent）；③ deploy/README.md 新增「WORKSPACE_ROOT 属主前提」小节。
+- **run_mode 死代码清理**：`lib-common.sh` 删 `run_mode()`；`env.example` 删 `LARK_RUN_MODE` 块；`smoke.sh` 删 run_mode/guard_pro_mode 段（断言 38→30）。
+- 详见 [tasks/run-user-env-injection.md](tasks/run-user-env-injection.md)。
+- 开放项：合并脚本 M2（3 卫星脚本抽 deploy-svc.sh）。

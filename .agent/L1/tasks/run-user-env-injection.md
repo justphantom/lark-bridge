@@ -32,6 +32,6 @@ updated: 2026-08-11T16:55:00+08:00
 
 ## 待续
 - **全部实施 + 验证通过，未提交**（待用户 commit；L0#9 已满足：编辑全完成 + build/vet/test -race/lint/smoke 全过）。
-- 用户已拍板并落地：RUN_USER 保持 dev；**彻底移除 deploy-monitor**（cmd/internal/deploy 脚本全删 + config/Makefile/docs 清零，飞书 /deploy 下线）；**三项零风险权限修复**（CLI chmod 0755 / 条件 HOME=$STATE_DIR / README WORKSPACE 属主小节）。
+- 用户已拍板并落地：RUN_USER 保持 dev；后端收敛（已移除后端的 cmd/internal/deploy 脚本全删 + config/Makefile/docs 清零）；**三项零风险权限修复**（CLI chmod 0755 / 条件 HOME=$STATE_DIR / README WORKSPACE 属主小节）。
 - ⚠️ 工作树含先于本会话的未提交改动（log/base_logger、usage、router/lark/cmdutil 等），提交时注意 staging 区分。
-- 开放项：合并脚本 M2（3 卫星脚本抽 deploy-svc.sh）。V1/V2 随 deploy-monitor 移除消失。
+- 开放项：合并脚本 M2（3 卫星脚本抽 deploy-svc.sh）。V1/V2 随后端收敛自然消失。

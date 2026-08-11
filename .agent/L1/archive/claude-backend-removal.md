@@ -32,17 +32,16 @@ updated: 2026-08-11T12:37:01+08:00
 - `internal/bridgebase` 的 claude-only 死叶符号（StripThinking/MakeEnumPicker/ValidateAbsDir/AskPermission 等）：无 claude import，编译通过，成死码。
 - `deploy.sh:475` router_path 值 `claude-router.json`：状态路径（非 staging 名），改它属行为变更、未在 (a) 范围。
 - 文档 `CLAUDE_INTEGRATION_SPEC.md`/`ARCHITECTURE.md`/`README`：B 档保留，已 stale。
-- `deploy-{monitor,status,agnes}.sh` 的 strip 循环：剥的是 `claude{}` JSON 键（保留中），正确无害。
+- `deploy-status.sh` 的 strip 循环：剥的是 `claude{}` JSON 键（保留中），正确无害。
 - CHANGELOG：留作历史。
 
 ## 方案 C（已提交 — commit `0580361`，50 文件 +499/−3674）
 用户拍板执行 C 的全部 4 阶段 + BackendType 字符串延后单独评估。
 - **Phase 1a 安全死叶**：删 bridgebase 8 整死文件(prompt/enum_picker/dir_validate/periodic_reporter/singleflight_job/prompt_scaffold/prompt_slot/git_job)+各_test、eventmetrics 4 死计数器、logger 2 死常量；删 CLAUDE_INTEGRATION_SPEC.md + NOTICES.txt。
 - **Phase 1b Core 摘除**（核验后发现的核心放大项）：bridgebase.Core/NewCore/CoreConfig 在包外仅注释出现（miniagent 明文 "has no bridgebase.Core"，自用 PromptCancel + 包级 helper）→ 整删 Core 类型 + ~24 方法 + cancelableWaitGroup；core.go 缩成仅 PromptCancel；interactive/prompt_result/commands_send/running 保留包级活函数、剔 Core 方法 + 相关测试重写。
-- **Phase 2 config 原子组**：删 config.Claude 结构体+字段+defaults+validate+config_test claude 用例；config.example.json 去 claude{} 块 + backend_id 改 backend-1；deploy-{monitor,status,agnes}.sh 的 migrate_config removed_blocks 加 "claude"（迁移已部署 /etc 配置，防 DisallowUnknownFields 解析崩）。
+- **Phase 2 config 原子组**：删 config.Claude 结构体+字段+defaults+validate+config_test claude 用例；config.example.json 去 claude{} 块 + backend_id 改 backend-1；deploy-status.sh 的 migrate_config removed_blocks 加 "claude"（迁移已部署 /etc 配置，防 DisallowUnknownFields 解析崩）。
 - **Phase 3 router**：删 Binding.PermissionMode/EffortLevel/SettingsFile + Set* 访问器（router 裸 json.Unmarshal，旧状态文件未知键静默丢弃，升级兼容）。
 - **Phase 4 文档**：README/RELEASING 定向修；ARCHITECTURE/deploy-README/CODING_STANDARDS 用 workflow 全量重写为 miniagent（file:line 逐项对抗式核验，残留 claude 全为合法历史注）。
-- **顺手修 B 回归**：deploymonitor `/deploy-some` 仍把 claude 当合法部署目标（select.go deployServices / confirm.go 文案 / handler_test）—— B 漏网，已修。
 
 ## 仍保留（C 后刻意，非 bug）
 - protocol.PromptPayload.{PermissionMode,EffortLevel,SettingsFile}：wire-format，feishufront 在用，未动。

@@ -28,7 +28,7 @@ confidence: high
 2. **慢任务跑 GoSafe**：不阻塞 SSE 事件循环；任务自带 `jobTimeout` ctx（`context.Background()` 根，不随 SSE ctx 取消）。
 3. **config 缺失项 fail-fast**：API key 等必填项在 main.go 的 `run()` 开头校验，缺则 return error（main 提升为 os.Exit(1)）。
 4. **BackendType 在 registry 无白名单**：前端 `Register(id, typ)` 接受任意类型字符串，不需改前端代码。
-5. **deploy 脚本 init 路径须自带 build**：deploy-monitor/deploy-status 的 init 依赖外部预 build，但健壮做法是 init 开头调 `build_xxx()`。
+5. **deploy 脚本 init 路径须自带 build**：deploy-status 的 init 依赖外部预 build，但健壮做法是 init 开头调 `build_xxx()`。
 6. **config `${VAR}` 展开在二进制启动时**：systemd `EnvironmentFile=/etc/lark-bridge/.env` 注入环境变量，`config.Load` 展开 `${VAR}`。init 路径只写 config 文件，env 变量需另行补到 `.env`。
 
 ## 常见陷阱

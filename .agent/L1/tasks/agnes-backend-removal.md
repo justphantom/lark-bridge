@@ -9,11 +9,11 @@ updated: 2026-08-12T00:13:00+08:00
 # 彻底移除 agnes-back（C 档·全量清零）
 
 ## 目标
-移除 agnes-back（Agnes AI 图片/视频生成后端），项目后端收敛到 miniagent + status-monitor。继 claude-back（B+C）、deploy-monitor 之后第三个移除的后端。
+移除 agnes-back（Agnes AI 图片/视频生成后端），项目后端收敛到 miniagent + status-monitor。继 claude-back（B+C）之后第二个移除的后端。
 
 ## 用户拍板
 - **彻底移除**（非保留/非内部清理）：接受永久丢失图片/视频生成能力（agnes 是唯一媒体后端，无法迁移）。
-- **C 档·全量清零**（与 claude/deploy-monitor 一致）。
+- **C 档·全量清零**（与 claude 一致）。
 
 ## 前置评估
 `.claude/wf-agnes-removal-eval.js`（76 agent 对抗式核验，65 confirmed / 6 blocker / 5 high）。结论：Go 层零风险（最干净的后端边界，仅 `cmd/agnes-back/main.go` 引用 `internal/agnesback`，无死共享抽象，异于 claude 的 bridgebase.Core）；功能丢失是产品门（用户已接受）。所有 edit site 已对当前工作树逐行复核。

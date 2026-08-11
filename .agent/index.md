@@ -16,7 +16,7 @@ updated: 2026-08-11T23:38:38+08:00
 - [archive/agnes-model-command.md](L1/archive/agnes-model-command.md) — agnes-back /model 指令：单卡三问弹卡 + 配置化模型列表（已完成）
 - [archive/send-picker-ellipsis-fix.md](L1/archive/send-picker-ellipsis-fix.md) — /send 弹卡省略号修复：按钮卡启发式纵向单列布局（已完成）
 - [archive/claude-backend-removal.md](L1/archive/claude-backend-removal.md) — 清理 Claude 对接：方案 B(已提交 d13898a) + C 全量清零（B+C 完成）
-- [L1/active/session.md](L1/active/session.md) — 会话状态（当前：miniagent CLI workdir 契约钉死；前序：agnes 移除/config-dir/deploy 三件套，均未提交）
+- [L1/active/session.md](L1/active/session.md) — 会话状态（当前：激进清零某已移除后端残留引用；前序：miniagent workdir/agnes/config-dir/RUN_USER，均已提交）
 - [L1/tasks/miniagent-workdir-pin.md](L1/tasks/miniagent-workdir-pin.md) — 钉死 miniagent CLI workdir：非空+绝对+只认 -workdir（跨仓 miniagent，已完成未提交）
 - [L1/tasks/config-dir-env-injection.md](L1/tasks/config-dir-env-injection.md) — /config 扫描路径可配置 MINIAGENT_CONFIG_DIR（进行中，待提交）
 - [L1/tasks/run-user-env-injection.md](L1/tasks/run-user-env-injection.md) — 运行用户 .env 注入（进行中，待提交）
