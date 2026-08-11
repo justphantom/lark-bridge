@@ -106,6 +106,19 @@ cp config.example.json base-config.json
 # feishu/miniagent 各自再复制一份（或直接共用 base-config.json）
 ```
 
+### 服务运行用户（RUN_USER）
+
+systemd 服务默认以**部署调用者**（执行 deploy 的账号）运行。若希望以专用账号运行
+（与部署者解耦），在 `.env` 里设 `RUN_USER=<账号>`：
+
+- 优先级：环境变量 `RUN_USER` > repo 根 `.env` > 部署调用者（`SUDO_USER`/`whoami`）。
+  留空 = 默认沿用调用者；**禁止 `root`**（服务不得以 root 运行）。
+- 运行用户决定 systemd `User=` 与 `deploy/config/state` 目录属主（部署时自动
+  `chown`），运行用户本身**无需 sudo**。
+- 部署调用者必须具有**免密 sudo**（步骤 0 `deploy_sudo_check` 校验：远程 `/deploy`
+  与 `make deploy-bg` 无 tty，首个 sudo 无 NOPASSWD 会静默挂起）。
+- 生效值在部署时回写回 repo 根 `.env`（与 `IPC_ADDR`/`STATE_DIR` 同源策略）。
+
 ## 3. 创建 state 目录
 
 ```bash

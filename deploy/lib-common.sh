@@ -7,8 +7,9 @@
 #
 #   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
 #
-# Owns: path constants, polling timeouts, colors + info/warn/fail, RUN_USER
-# resolution, .env helpers (env_get / update_env_key), systemd wait helpers
+# Owns: path constants, polling timeouts, colors + info/warn/fail,
+# INVOKER_USER/RUN_USER resolution (RUN_USER injected from .env), .env helpers
+# (env_get / update_env_key), systemd wait helpers
 # (wait_active / wait_listen), and the service short-name mapping table
 # (svc_unit / svc_config / svc_depends / svc_privileged / svc_cli) with its
 # SELECTED/SERVICES sync helpers. Entry scripts keep their own arg parsing,
@@ -40,25 +41,49 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
-# -- Run user (scripts use embedded sudo; running as root is forbidden) ---------
+# -- Invoker user (the account running this script; needs passwordless sudo) ---
 # Direct sudo would make whoami return root and the services would run as root.
-# Restore the real caller from SUDO_USER; bail out if absent.
+# Restore the real caller from SUDO_USER; bail out if absent. INVOKER_USER is
+# who actually executes the embedded sudo commands in this flow; it may differ
+# from the service run user RUN_USER (see below).
 if [[ "$EUID" -eq 0 ]]; then
-    RUN_USER="${SUDO_USER:-}"
-    [[ -n "$RUN_USER" ]] || fail "Do not run this script as root directly; it sudo's internally when needed. If you must, use 'sudo -E' so SUDO_USER is preserved."
+    INVOKER_USER="${SUDO_USER:-}"
+    [[ -n "$INVOKER_USER" ]] || fail "Do not run this script as root directly; it sudo's internally when needed. If you must, use 'sudo -E' so SUDO_USER is preserved."
 else
-    RUN_USER="$(whoami)"
+    INVOKER_USER="$(whoami)"
 fi
 
-# env_get reads KEY=VALUE from the repo-root .env; returns empty if the file is
-# missing or the key absent. First-time deploy (.env not generated yet) returns
-# empty and the caller's default kicks in.
+# -- Run user (the account the systemd services run as) -------------------------
+# Injected from .env: precedence env var RUN_USER > repo-root .env RUN_USER >
+# the invoking user (INVOKER_USER). Decoupled from INVOKER_USER so an admin can
+# deploy on behalf of a dedicated service account; the deploy scripts chown
+# deploy/config/state dirs and write systemd User= with this value. root is
+# forbidden -- the services must never run as root. deploy.sh syncs the
+# effective value back into repo-root .env so it stays the single source of
+# truth across re-deploys and the deploy-monitor (/deploy) path.
+# resolve_run_user is defined before env_get below, but the assignment is placed
+# AFTER env_get's definition: top-level statements execute as they are read, so
+# calling a not-yet-defined env_get here would fail at source time.
+# shellcheck disable=SC2120  # $1 env file is optional (used by smoke tests)
+resolve_run_user() {
+    local envf="${1:-$PROJECT_ROOT/.env}"
+    local u="${RUN_USER:-$(env_get RUN_USER "$envf")}"
+    echo "${u:-$INVOKER_USER}"
+}
+
+# env_get reads KEY=VALUE from the repo-root .env (or $2 if given); returns
+# empty if the file is missing or the key absent. First-time deploy (.env not
+# generated yet) returns empty and the caller's default kicks in.
 # `|| true` guards: under pipefail a grep with no match returns 1 and would
 # otherwise abort the command substitution under set -e.
 env_get() {
-    local key="$1"
-    grep -E "^${key}=" "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- || true
+    local key="$1" file="${2:-$PROJECT_ROOT/.env}"
+    grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2- || true
 }
+
+RUN_USER="$(resolve_run_user)"
+[[ -n "$RUN_USER" ]] || fail "RUN_USER could not be resolved (set RUN_USER in .env)"
+[[ "$RUN_USER" == "root" ]] && fail "RUN_USER must not be 'root' (services must not run as root)"
 
 # run_mode returns the effective LARK_RUN_MODE value: env var > repo-root .env >
 # default "dev". Used by deploy-monitor.sh to decide whether deploy-monitor

@@ -76,6 +76,24 @@ rm -rf "$PROJECT_ROOT"
 PROJECT_ROOT="$_proj_root_bak"
 if [[ -n "$_saved_run_mode" ]]; then export LARK_RUN_MODE="$_saved_run_mode"; else unset LARK_RUN_MODE 2>/dev/null || true; fi
 
+# -- RUN_USER: env var > .env > invoking user; root forbidden -----------------
+# resolve_run_user takes an optional env file so the .env precedence is tested
+# against a temp file (the repo-root .env is not touched).
+_run_env="$(mktemp)"
+trap 'rm -f "$tmp" "$_run_env"' EXIT
+_saved_run_user="${RUN_USER:-}"
+check "run_user defaults to invoker" "$(RUN_USER='' resolve_run_user "$_run_env")" "$(whoami)"
+echo "RUN_USER=svc-user" > "$_run_env"
+check "run_user reads .env" "$(RUN_USER='' resolve_run_user "$_run_env")" "svc-user"
+check "run_user env overrides .env" "$(RUN_USER=env-user resolve_run_user "$_run_env")" "env-user"
+# Root guard: sourcing lib-common.sh with RUN_USER=root must fail.
+if (RUN_USER=root bash -c 'source "$1/lib-common.sh" >/dev/null 2>&1' -- "$DEPLOY_DIR_SRC"); then
+    bad "run_user root should fail"
+else
+    ok "run_user root fails"
+fi
+if [[ -n "$_saved_run_user" ]]; then RUN_USER="$_saved_run_user"; else unset RUN_USER 2>/dev/null || true; fi
+
 # -- guard_pro_mode: dev passes, pro skips, invalid fails ----------------------
 # Source deploy-monitor.sh (source guard prevents auto-execution) and call the
 # guard directly. Stub systemctl so the pro-mode disable branch is exercised.

@@ -22,8 +22,9 @@
 #
 set -euo pipefail
 
-# Shared helpers: paths, timeouts, colors, RUN_USER, env/systemd helpers, and
-# the service mapping table. See lib-common.sh's header for the split rules.
+# Shared helpers: paths, timeouts, colors, INVOKER_USER/RUN_USER, env/systemd
+# helpers, and the service mapping table. See lib-common.sh's header for the
+# split rules.
 # shellcheck source=deploy/lib-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
 
@@ -112,17 +113,20 @@ preflight_toolchain() {
     fi
 }
 
-# Health check: does RUN_USER have passwordless sudo? A remote /deploy (this
-# script triggered by deploy-monitor) and a backgrounded manual deploy
+# Health check: does the INVOKER_USER (the account running this script and its
+# embedded sudo commands) have passwordless sudo? A remote /deploy (this script
+# triggered by deploy-monitor) and a backgrounded manual deploy
 # (`make deploy-bg`) both run without a tty; without NOPASSWD the first sudo
 # hangs silently until the monitor times out or the operator abandons it.
 # Hard-fail here (step 0) so the operator sees the fix immediately instead of a
 # hanging/abandoned deploy that may have already stopped services.
+# RUN_USER (the service account, injected from .env) may differ from INVOKER_USER
+# and needs no sudo itself -- only INVOKER_USER executes the embedded sudo calls.
 deploy_sudo_check() {
-    if sudo -u "$RUN_USER" sudo -n systemctl is-active "$(svc_unit feishu)" >/dev/null 2>&1; then
-        info "$RUN_USER has passwordless sudo"
+    if sudo -n true >/dev/null 2>&1; then
+        info "$INVOKER_USER has passwordless sudo"
     else
-        fail "$RUN_USER lacks passwordless sudo (NOPASSWD required). Without a tty the first sudo (stop_services) hangs silently — remote /deploy and 'make deploy-bg' are both affected. Fix: add '$RUN_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl' under /etc/sudoers.d/lark-bridge. Least-privilege: grant NOPASSWD on systemctl only — NOT on sed/tee/rm/mv, which with arbitrary args are root-equivalent (read/write/delete any file)."
+        fail "$INVOKER_USER lacks passwordless sudo (NOPASSWD required). Without a tty the first sudo (stop_services) hangs silently — remote /deploy and 'make deploy-bg' are both affected. The deploy runs sudo for systemctl/cp/mv/mkdir/chown/chmod/sed/tee/rm/journalctl, so grant NOPASSWD covering those — e.g. '$INVOKER_USER ALL=(ALL) NOPASSWD: ALL' under /etc/sudoers.d/lark-bridge."
     fi
 }
 
@@ -669,6 +673,11 @@ sync_env() {
     update_env_key IPC_ADDR "$IPC_ADDR" "$PROJECT_ROOT/.env"
     update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
     update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
+    # RUN_USER: sync the effective service-run user back so repo-root .env stays
+    # the single source of truth (mirrors IPC_ADDR/STATE_DIR). Keeps the
+    # deploy-monitor path (its unit runs `make deploy` as RUN_USER) on the same
+    # run user across re-deploys.
+    update_env_key RUN_USER "$RUN_USER" "$PROJECT_ROOT/.env"
     # LOG_LEVEL: default to info if absent (config's ${LOG_LEVEL} errors on
     # unset/empty); existing value is preserved so operators toggling to debug
     # survive a re-deploy.
