@@ -26,27 +26,27 @@ source "$DEPLOY_DIR_SRC/lib-common.sh"
 
 # -- service mapping table ----------------------------------------------------
 check "svc_unit feishu"      "$(svc_unit feishu)"      "lark-feishu-front"
-check "svc_unit claude"      "$(svc_unit claude)"      "lark-claude-back"
 check "svc_unit miniagent"   "$(svc_unit miniagent)"   "lark-miniagent-back"
 check "svc_config feishu"    "$(svc_config feishu)"    "feishu-config.json"
 check "svc_depends feishu"   "$(svc_depends feishu)"   ""
-check "svc_depends claude"   "$(svc_depends claude)"   "lark-feishu-front"
+check "svc_depends miniagent" "$(svc_depends miniagent)" "lark-feishu-front"
 check "svc_privileged feishu" "$(svc_privileged feishu)" "false"
-check "svc_privileged claude" "$(svc_privileged claude)" "true"
+check "svc_privileged miniagent" "$(svc_privileged miniagent)" "true"
 check "svc_cli feishu"       "$(svc_cli feishu)"       ""
-check "svc_cli claude"       "$(svc_cli claude)"       "claude"
+check "svc_cli miniagent"    "$(svc_cli miniagent)"    "miniagent"
 if svc_unit bogus >/dev/null 2>&1; then bad "svc_unit bogus should fail"; else ok "svc_unit bogus fails"; fi
-# opencode/omp are no longer valid services: svc_unit must reject them.
+# opencode/omp/claude are no longer valid services: svc_unit must reject them.
 if svc_unit opencode >/dev/null 2>&1; then bad "svc_unit opencode should fail"; else ok "svc_unit opencode fails"; fi
 if svc_unit omp >/dev/null 2>&1; then bad "svc_unit omp should fail"; else ok "svc_unit omp fails"; fi
+if svc_unit claude >/dev/null 2>&1; then bad "svc_unit claude should fail"; else ok "svc_unit claude fails"; fi
 
 # -- SELECTED/SERVICES sync ----------------------------------------------------
-SELECTED=(feishu claude miniagent)
+SELECTED=(feishu miniagent)
 rebuild_services
-check "rebuild_services"     "${SERVICES[*]}"          "lark-feishu-front lark-claude-back lark-miniagent-back"
-drop_service claude
-check "drop_service SELECTED" "${SELECTED[*]}"         "feishu miniagent"
-check "drop_service SERVICES" "${SERVICES[*]}"         "lark-feishu-front lark-miniagent-back"
+check "rebuild_services"     "${SERVICES[*]}"          "lark-feishu-front lark-miniagent-back"
+drop_service miniagent
+check "drop_service SELECTED" "${SELECTED[*]}"         "feishu"
+check "drop_service SERVICES" "${SERVICES[*]}"         "lark-feishu-front"
 
 # -- update_env_key: sed-metacharacter escaping --------------------------------
 tmp="$(mktemp)"
@@ -132,16 +132,16 @@ check "deploy-agnes.sh sourceable: init fn" "$(head -1 <<<"$agnes_out")" "functi
 check "deploy-agnes.sh sourceable: main fn" "$(tail -1 <<<"$agnes_out")" "function"
 
 # -- select_services: --services csv parsing (drives /deploy-some's ARGS) -----
-# Validates the comma-split deploy.sh applies to ARGS=--services=feishu,claude
+# Validates the comma-split deploy.sh applies to ARGS=--services=feishu,miniagent
 # arriving from /deploy-some. SERVICES_ARG must be set AFTER `source` because
 # deploy.sh's top level resets SERVICES_ARG="" (deploy.sh:50).
 csv_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
     source deploy/deploy.sh
-    SERVICES_ARG="feishu,claude"
+    SERVICES_ARG="feishu,miniagent"
     select_services >/dev/null
     echo "${SELECTED[*]}"
 ' 2>/dev/null)"
-check "select_services csv split" "$csv_out" "feishu claude"
+check "select_services csv split" "$csv_out" "feishu miniagent"
 
 if (cd "$DEPLOY_DIR_SRC/.." && bash -c '
     source deploy/deploy.sh
@@ -156,18 +156,18 @@ fi
 # -- parse_args: --services=csv equals form (the exact shape /deploy-some emits)
 eq_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
     source deploy/deploy.sh
-    parse_args --services=feishu,claude
+    parse_args --services=feishu,miniagent
     select_services >/dev/null
     echo "${SELECTED[*]}"
 ' 2>/dev/null)"
-check "parse_args --services=csv" "$eq_out" "feishu claude"
+check "parse_args --services=csv" "$eq_out" "feishu miniagent"
 
 eq_out="$(cd "$DEPLOY_DIR_SRC/.." && bash -c '
     source deploy/deploy.sh
-    parse_args --binaries=/tmp/bins --services=claude
+    parse_args --binaries=/tmp/bins --services=miniagent
     echo "$BINARIES_SRC $SERVICES_ARG"
 ' 2>/dev/null)"
-check "parse_args --binaries= equals form" "$eq_out" "/tmp/bins claude"
+check "parse_args --binaries= equals form" "$eq_out" "/tmp/bins miniagent"
 
 echo
 echo "passed=$pass failed=$fail"

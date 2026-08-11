@@ -123,14 +123,14 @@ wait_listen() {
 # -- Service short-name mapping table -------------------------------------------
 # Add a new backend here in four spots and --services picks it up; no other
 # deploy-flow touch-points need changing.
-svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; claude) echo lark-claude-back;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
-svc_config(){ case "$1" in feishu) echo feishu-config.json;; claude) echo claude-config.json;; miniagent) echo miniagent-config.json;; esac; }
+svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
+svc_config(){ case "$1" in feishu) echo feishu-config.json;; miniagent) echo miniagent-config.json;; esac; }
 # Backends depend on the front-end listening and need privileged mode
 # (passthrough of external CLIs); feishu-front has neither.
 svc_depends(){ [[ "$1" == "feishu" ]] && echo "" || echo "lark-feishu-front"; }
 svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
 # CLI binary name (for probe_cli); feishu has no CLI.
-svc_cli(){ case "$1" in claude) echo "claude";; miniagent) echo "miniagent";; *) echo "";; esac; }
+svc_cli(){ case "$1" in miniagent) echo "miniagent";; *) echo "";; esac; }
 
 # SELECTED -> SERVICES: rebuild unit names from short names. Must be called
 # after any SELECTED mutation, else stop/enable/start/verify (which use

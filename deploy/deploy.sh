@@ -10,10 +10,10 @@
 #                                # skip make build; deploy from pre-built artifacts (no Go/repo needed on target host).
 #                                # <tar>: tarball produced by `make pack`, top-level binaries extracted.
 #                                # <dir>: already-extracted directory containing lark-* binaries.
-#   ./deploy/deploy.sh --services claude,miniagent
-#                                # deploy only the given service subset (comma-separated; one of: feishu claude
+#   ./deploy/deploy.sh --services feishu,miniagent
+#                                # deploy only the given service subset (comma-separated; one of: feishu
 #                                # miniagent). Default is all. For multi-host deployments each host
-#                                # uses its own subset: front-end host --services feishu, back-end host --services claude,...
+#                                # uses its own subset: front-end host --services feishu, back-end host --services miniagent,...
 #
 # Optional environment variables:
 #   IPC_ADDR   IPC listen address. Precedence: env var > repo-root .env > localhost:6060
@@ -93,11 +93,11 @@ select_services() {
         local s
         IFS=',' read -ra _parts <<< "$SERVICES_ARG"
         for s in "${_parts[@]}"; do
-            svc_unit "$s" >/dev/null || fail "Unknown service: $s (valid: feishu claude miniagent)"
+            svc_unit "$s" >/dev/null || fail "Unknown service: $s (valid: feishu miniagent)"
             SELECTED+=("$s")
         done
     else
-        SELECTED=(feishu claude miniagent)
+        SELECTED=(feishu miniagent)
     fi
     rebuild_services
 }
@@ -212,7 +212,7 @@ preflight_inflight_check_legacy() {
     info "No in-flight sessions; safe to deploy"
 }
 
-# Probe whether the external CLI (claude/miniagent) binary exists
+# Probe whether the external CLI (miniagent) binary exists
 # and is executable. We deliberately do NOT run `<cli> --version` here: some
 # CLIs can hang or fail without credentials, which would silently
 # drop the backend from this deploy run. Real CLI health is checked by each
@@ -294,7 +294,6 @@ ensure_binaries() {
 
 verify_artifacts() {
     [[ -x "$BIN_DIR/lark-feishu-front" ]]         || fail "Build artifact missing: lark-feishu-front"
-    [[ -x "$BIN_DIR/lark-claude-back" ]]          || fail "Build artifact missing: lark-claude-back"
     [[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "Build artifact missing: lark-miniagent-back"
     # NOTE: the miniagent binary (github.com/justphantom/miniagent) is a separate
     # project; deploy it to /usr/local/bin/miniagent via its own Makefile. Not
@@ -314,8 +313,7 @@ check_env_placeholder() {
 
 # Per-service deploy readiness, based on placeholder values in repo-root .env
 # (placeholder = not ready). feishu needs real Feishu credentials; miniagent
-# needs a non-placeholder MINIAGENT_API_KEY; claude needs no user
-# key -> always ready (its CLI auths via ~/.claude).
+# needs a non-placeholder MINIAGENT_API_KEY.
 svc_env_ready() {
     local envf="$PROJECT_ROOT/.env"
     case "$1" in
@@ -402,8 +400,8 @@ filter_env_ready() {
 }
 
 # Generate per-backend configs in a staging dir (no repo-source mutation).
-# Each of the three business backends gets its own config:
-# claude/miniagent/feishu-config.json. All derived from the same base
+# Each of the business backends gets its own config:
+# miniagent/feishu-config.json. All derived from the same base
 # (each process reads only the fields it needs; extras are inert).
 # Each backend must use a distinct router_path (except feishu-front), otherwise
 # they overwrite each other's chat bindings.
@@ -432,14 +430,14 @@ stage_configs() {
 
     # Base config source of truth: repo example > tarball-extracted example
     # (--binaries target host may have no repo source, only tarball + deploy.sh).
-    # Do NOT use repo-root claude-config.json -- it is not in git (git ls-files is
-    # empty), its schema can drift, and it once broke business backends via
-    # DisallowUnknownFields (a memory_enabled field removed upstream was still
-    # present locally).
+    # Do NOT use any repo-root staging config (e.g. a stale claude-config.json) --
+    # it is not in git (git ls-files is empty), its schema can drift, and it once
+    # broke business backends via DisallowUnknownFields (a memory_enabled field
+    # removed upstream was still present locally).
     if [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
-        cp "$PROJECT_ROOT/config.example.json" "$STAGE/claude-config.json"
+        cp "$PROJECT_ROOT/config.example.json" "$STAGE/base-config.json"
     elif [[ -f "$BIN_DIR/config.example.json" ]]; then
-        cp "$BIN_DIR/config.example.json" "$STAGE/claude-config.json"
+        cp "$BIN_DIR/config.example.json" "$STAGE/base-config.json"
     else
         fail "Base config not found (config.example.json)"
     fi
@@ -453,12 +451,12 @@ stage_configs() {
     # Single quotes prevent shell expansion of ${LOG_LEVEL} (left for Go
     # config.Load); SC2016 on this line is expected, disabled inline.
     # shellcheck disable=SC2016
-    sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/claude-config.json"
+    sed -i 's|"log_level"[[:space:]]*:[[:space:]]*"[^"]*"|"log_level":            "${LOG_LEVEL}"|' "$STAGE/base-config.json"
     # shellcheck disable=SC2016
     # Verify the log_level placeholder took effect. Use a regex so the assertion
     # is robust to whitespace alignment changes in the sed substitution above.
-    grep -Eq '"log_level"[[:space:]]*:[[:space:]]*"\$\{LOG_LEVEL\}"' "$STAGE/claude-config.json" \
-        || fail "log_level placeholder injection failed: $STAGE/claude-config.json has no log_level field (injection anchor missing)"
+    grep -Eq '"log_level"[[:space:]]*:[[:space:]]*"\$\{LOG_LEVEL\}"' "$STAGE/base-config.json" \
+        || fail "log_level placeholder injection failed: $STAGE/base-config.json has no log_level field (injection anchor missing)"
 
     # state_dir / ipc_addr / frontend_url are already ${STATE_DIR} / ${IPC_ADDR}
     # placeholders in the config template, expanded by each process's config.Load
@@ -468,10 +466,10 @@ stage_configs() {
     # the metacharacter-escape traps of literal substitution and the silent-fail
     # risk of sed that would split state.
 
-    inject_router_path "$STAGE/claude-config.json" "$STATE_DIR/claude-router.json"
+    inject_router_path "$STAGE/base-config.json" "$STATE_DIR/claude-router.json"
 
     # miniagent-back: distinct backend_id + distinct router_path
-    cp "$STAGE/claude-config.json" "$STAGE/miniagent-config.json"
+    cp "$STAGE/base-config.json" "$STAGE/miniagent-config.json"
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
 
     # miniagent CLI 自己的配置（v3.1+ config-only 模式所必需）：端点 + 已删 flag
@@ -504,26 +502,24 @@ stage_configs() {
 }
 EOF
 
-    # feishu-front: derived from claude-config (same base). Note: every backend
-    # shares internal/config.Config struct + DisallowUnknownFields, so "extra
-    # fields are inert" is NOT true -- the struct must recognise every key in the
-    # config or parse fails. Today it is safe only because the struct is a
-    # superset of the example fields; a schema drift would break all of them.
-    cp "$STAGE/claude-config.json" "$STAGE/feishu-config.json"
+    # feishu-front: derived from the same base. Note: every backend shares
+    # internal/config.Config struct + DisallowUnknownFields, so "extra fields are
+    # inert" is NOT true -- the struct must recognise every key in the config or
+    # parse fails. Today it is safe only because the struct is a superset of the
+    # example fields; a schema drift would break all of them.
+    cp "$STAGE/base-config.json" "$STAGE/feishu-config.json"
 
-    info "Generated claude-config / miniagent-config / feishu-config"
+    info "Generated base-config / miniagent-config / feishu-config"
 }
 
-# Each backend (claude/miniagent) gets its own router_path injected.
-# They share one state_dir, so defaulting to the same router.v5.json would
-# overwrite each other's chat bindings. The deploy script explicitly splits
-# them into claude/miniagent-router.json (filename convention of
-# this script only; differs from the config default router.v5.json; the router_path
-# field is configurable).
+# Each backend gets its own router_path injected. They share one state_dir, so
+# defaulting to the same router.v5.json would overwrite each other's chat
+# bindings. The deploy script explicitly splits them into per-backend
+# <backend>-router.json files (filename convention of this script only; differs
+# from the config default router.v5.json; the router_path field is configurable).
 #
 # Optional 3rd parameter backend_id: when non-empty, also rewrite backend_id
-# (miniagent derived from claude-config needs it); empty preserves the
-# base (claude/feishu).
+# (miniagent derived from the base needs it); empty preserves the base (feishu).
 # router_path injection uses sed `/\"backend_id\"/a\...`: anchored on the
 # backend_id line, appended after it. If a user-customised config lacks
 # backend_id, sed silently skips and the unit would fall back to the same
@@ -533,7 +529,7 @@ inject_router_path() {
     local file="$1" path="$2" backend_id="${3:-}"
     # Delete any old router_path and append the new one after backend_id in a
     # single sed -i (one fsync); backend_id rewrite runs conditionally
-    # (empty for claude/feishu derivation, skipped).
+    # (empty for the feishu/base derivation, skipped).
     sed -i -e '/"router_path"/d' \
            -e '/"backend_id"/a\  "router_path":  "'"$path"'",' "$file"
     [[ -n "$backend_id" ]] && sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "'"$backend_id"'",|' "$file"
@@ -541,14 +537,17 @@ inject_router_path() {
         || fail "router_path injection failed: $file has no backend_id field (injection anchor missing); backends would share a default router file and overwrite each other"
 }
 
-# Legacy cleanup: removed backends (opencode-serve-back earlier; opencode-back
-# and omp-back now). On every deploy we detect and remove any leftover unit +
-# state files, so the machine does not carry "ghost services" that crash-loop.
-# Forced even when --services does not list them -- the upgrade path must
-# converge to "no such unit".
+# Legacy cleanup: removed backends (opencode-serve-back earlier; opencode-back,
+# omp-back, and claude-back now). On every deploy we detect and remove any
+# leftover unit + state files, so the machine does not carry "ghost services"
+# that crash-loop. Forced even when --services does not list them -- the upgrade
+# path must converge to "no such unit".
+# NOTE: STATE_DIR/claude/ (the claude backend's former default_directory +
+# per-chat working dirs) is intentionally NOT removed here -- it may hold user
+# data. Clean it manually if desired: rm -rf "$STATE_DIR/claude".
 cleanup_legacy() {
     local legacy_unit
-    for legacy_unit in lark-opencode-serve-back lark-opencode-back lark-omp-back; do
+    for legacy_unit in lark-opencode-serve-back lark-opencode-back lark-omp-back lark-claude-back; do
         if sudo systemctl list-unit-files 2>/dev/null | grep -q "^${legacy_unit}\.service"; then
             warn "Detected legacy unit ${legacy_unit}.service (backend was removed); stopping and disabling..."
             sudo systemctl disable --now "$legacy_unit" 2>/dev/null || true
@@ -565,7 +564,9 @@ cleanup_legacy() {
         "$STATE_DIR/opencode-router.json" \
         "$STATE_DIR/usage-opencode.json" \
         "$STATE_DIR/omp-router.json" \
-        "$STATE_DIR/usage-omp.json"; do
+        "$STATE_DIR/usage-omp.json" \
+        "$STATE_DIR/claude-router.json" \
+        "$STATE_DIR/usage-claude.json"; do
         if [[ -e "$legacy_state" ]]; then
             sudo rm -f "$legacy_state"
             info "Removed legacy state file: $legacy_state"
@@ -576,7 +577,8 @@ cleanup_legacy() {
     for legacy_cfg in \
         "$CONFIG_DIR/opencode-serve-config.json" \
         "$CONFIG_DIR/opencode-config.json" \
-        "$CONFIG_DIR/omp-config.json"; do
+        "$CONFIG_DIR/omp-config.json" \
+        "$CONFIG_DIR/claude-config.json"; do
         if [[ -e "$legacy_cfg" ]]; then
             sudo rm -f "$legacy_cfg"
             info "Removed legacy config: $legacy_cfg"
@@ -584,8 +586,8 @@ cleanup_legacy() {
     done
 }
 
-# CLI binary readiness is a hard precondition for each of
-# claude/miniagent: a missing CLI -> backend crashes on startup
+# CLI binary readiness is a hard precondition for miniagent:
+# a missing CLI -> backend crashes on startup
 # (IsReady runs `<cli> --version`), systemd retrying every 5s. We probe up
 # front, stop+disable+drop the service so the noise stays down. Runs before
 # stop_services: stop+disable ahead of this run's service restarts.
@@ -603,7 +605,6 @@ filter_cli_ready() {
         u="$(svc_unit "$s")"
         warn "$s-back not deploy-ready ($cli CLI not ready); stopping and disabling $u (skipped this run)"
         case "$s" in
-            claude)    warn "  Install the Claude Code CLI and re-deploy to include it: https://github.com/anthropics/claude-code" ;;
             miniagent) warn "  Install the miniagent CLI and re-deploy to include it: https://github.com/justphantom/miniagent" ;;
         esac
         sudo systemctl disable --now "$u" 2>/dev/null || true
@@ -613,11 +614,9 @@ filter_cli_ready() {
 }
 
 # Create directories, stop services, and copy binaries/configs into place.
-# STATE_DIR/claude is the claude backend's default_directory;
-# per-chat working dirs are auto-created under it at runtime via MkdirAll.
 install_files() {
     info "Creating system directories..."
-    sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR/claude"
+    sudo mkdir -p "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
 
     # Services must be stopped before binary overwrite, otherwise ETXTBSY.
     stop_services
@@ -718,7 +717,7 @@ write_unit() {
     # privileged=true drops the sandbox block entirely: units that need sudo
     # (deploy-monitor running `make deploy` -> systemctl/cp to /etc). The
     # sandbox's NoNewPrivileges would block sudo's setuid step, so privileged
-    # units must skip it. claude/miniagent backends also use
+    # units must skip it. miniagent backends also use
     # privileged=true: they spawn arbitrary external CLIs
     # (git/node/npm/bash and their children); a conservative sandbox
     # (NoNewPrivileges/RestrictSUIDSGID blocking setuid helpers,
@@ -730,7 +729,7 @@ write_unit() {
 # break backend fork/exec of CLIs):
 #   NoNewPrivileges      no setuid escalation (backends do not need it)
 #   ProtectSystem=full   /usr /boot read-only; /var/lib (state_dir) and /home stay writable
-#                        (not strict: claude writes ~/.claude)
+#                        (not strict: miniagent writes ~/.miniagent)
 #   ProtectHome not set: backends depend on user-home CLI config and caches
 #   PrivateTmp           private /tmp namespace, not shared with system tmp
 #   ProtectKernel*       forbid changing kernel runtime/modules/logs/cgroup
