@@ -8,7 +8,7 @@ updated: 2026-08-11T12:37:01+08:00
 
 # 清理 Claude 对接（项目聚焦 miniagent）
 
-> B 已提交（commit `d13898a`）；C 已完成未提交。
+> B 已提交（commit `d13898a`）；C 已提交（commit `0580361`）。
 
 ## 目标
 移除 claude-back 对接，项目聚焦 miniagent。
@@ -35,7 +35,7 @@ updated: 2026-08-11T12:37:01+08:00
 - `deploy-{monitor,status,agnes}.sh` 的 strip 循环：剥的是 `claude{}` JSON 键（保留中），正确无害。
 - CHANGELOG：留作历史。
 
-## 方案 C（已完成 — 全量清零，未提交，49 文件 +460/−4002）
+## 方案 C（已提交 — commit `0580361`，50 文件 +499/−3674）
 用户拍板执行 C 的全部 4 阶段 + BackendType 字符串延后单独评估。
 - **Phase 1a 安全死叶**：删 bridgebase 8 整死文件(prompt/enum_picker/dir_validate/periodic_reporter/singleflight_job/prompt_scaffold/prompt_slot/git_job)+各_test、eventmetrics 4 死计数器、logger 2 死常量；删 CLAUDE_INTEGRATION_SPEC.md + NOTICES.txt。
 - **Phase 1b Core 摘除**（核验后发现的核心放大项）：bridgebase.Core/NewCore/CoreConfig 在包外仅注释出现（miniagent 明文 "has no bridgebase.Core"，自用 PromptCancel + 包级 helper）→ 整删 Core 类型 + ~24 方法 + cancelableWaitGroup；core.go 缩成仅 PromptCancel；interactive/prompt_result/commands_send/running 保留包级活函数、剔 Core 方法 + 相关测试重写。
