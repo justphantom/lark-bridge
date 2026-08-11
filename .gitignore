@@ -8,7 +8,6 @@
 claude.log
 opencode.log
 /miniagent-back
-/deploy-monitor
 
 # AI tool working artifacts (agent definitions shipped via .claude/agents;
 # the rest are local skill caches/lock files that vary per tool run).

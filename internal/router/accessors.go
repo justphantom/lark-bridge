@@ -1,21 +1,5 @@
 package router
 
-import (
-	"github.com/justphantom/lark-bridge/internal/log"
-)
-
-// AllBindings returns a snapshot of every chat→Binding mapping the router
-// knows about. The returned map is owned by the caller.
-func (r *Router) AllBindings() map[string]Binding {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make(map[string]Binding, len(r.bindings))
-	for k, v := range r.bindings {
-		out[k] = v
-	}
-	return out
-}
-
 // Lookup returns the binding currently bound to chatID. The ok result is
 // false when no binding exists.
 func (r *Router) Lookup(chatID string) (Binding, bool) {
@@ -23,16 +7,6 @@ func (r *Router) Lookup(chatID string) (Binding, bool) {
 	defer r.mu.RUnlock()
 	binding, ok := r.bindings[chatID]
 	return binding, ok
-}
-
-// TitleOf returns the title bound to chatID, or "".
-func (r *Router) TitleOf(chatID string) string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if b, ok := r.bindings[chatID]; ok {
-		return b.Title
-	}
-	return ""
 }
 
 // mutate loads the binding for chatID, lets fn patch it in place, and
@@ -69,49 +43,6 @@ func (r *Router) SetModelSpec(chatID, modelSpec string) {
 // -provider/-model as a matched pair, so the model picker sets both together.
 func (r *Router) SetProvider(chatID, provider string) {
 	r.mutate(chatID, func(b *Binding) { b.Provider = provider })
-}
-
-// SetAgent replaces the pinned agent on the binding for chatID and persists
-// the change. No-op when the binding does not exist. Pass "" to clear.
-func (r *Router) SetAgent(chatID, agent string) {
-	r.mutate(chatID, func(b *Binding) { b.Agent = agent })
-}
-
-// SetSessionIDIfGeneration replaces the session id on the binding for chatID,
-// but only if the binding exists and its Generation matches the one observed by
-// the caller. This prevents a turn that started on one binding from clobbering
-// a binding that was deleted and recreated (/session-del followed by a new
-// prompt) while the turn was in flight. Returns whether the session id was
-// written.
-func (r *Router) SetSessionIDIfGeneration(chatID, sessionID string, generation uint64) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	binding, ok := r.bindings[chatID]
-	if !ok || binding.Generation != generation {
-		return false
-	}
-	if binding.SessionID == sessionID {
-		return false
-	}
-	binding.SessionID = sessionID
-	r.bindings[chatID] = binding
-	r.saveAsync()
-	r.logger.Info("binding session id updated",
-		log.FieldChatID, chatID,
-		log.FieldSessionID, sessionID)
-	return true
-}
-
-// SetSessionID replaces the session id on the binding for chatID and persists
-// the change. The Claude backend learns its session id lazily from the first
-// run's system/init event; this method lets the stream loop back-fill it once
-// observed. No-op when no binding exists or the id is unchanged.
-func (r *Router) SetSessionID(chatID, sessionID string) {
-	if r.mutate(chatID, func(b *Binding) { b.SessionID = sessionID }) {
-		r.logger.Info("binding session id updated",
-			log.FieldChatID, chatID,
-			log.FieldSessionID, sessionID)
-	}
 }
 
 // SetDirectory replaces the working directory on the binding for chatID and

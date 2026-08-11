@@ -9,8 +9,8 @@ confidence: high
 # 新后端搭建标准骨架
 
 适用于「调外部 API、不 fork 子进程、SSE 注册 + POST 发 Control」的轻量后端
-（参考 agnes-back / deploy-monitor / status-monitor）。CLI 子进程型后端
-（claude / miniagent）骨架不同，不在此列。
+（参考 status-monitor）。CLI 子进程型后端
+（miniagent）骨架不同，不在此列。
 
 ## 五层结构（自下而上）
 
@@ -35,9 +35,8 @@ confidence: high
 
 - **`.env` 注释行**：systemd EnvironmentFile 不容忍 `#` 注释行混在 `KEY=VALUE` 之间（会导致解析异常）。实测注释行在文件开头/末尾 OK。
 - **wait_active 冷启动窗口**：systemd restart 后服务可能 crash-loop（RestartSec=5），`wait_active`（15s 轮询）可能误判。首次 `--init` 后手动 restart 一次可绕过。
-- **文档与实际 API 差异**：实测验证优于文档信任。agnes video url 文档写 `metadata.url`，实际在顶层 `url` 字段。
+- **文档与实际 API 差异**：实测验证优于文档信任（历史案例：agnes video url 文档写 `metadata.url`，实际在顶层 `url` 字段）。
 
 ## 参考
-- 完整实现：agnes-back（`cmd/agnes-back/`、`internal/agnesback/`、`deploy/deploy-agnes.sh`）
-- 轻量后端模板：`cmd/status-monitor/main.go`（最薄）、`cmd/deploy-monitor/main.go`（含单飞 + 确认）
-- 提交：`08e3033`
+- 完整实现（轻量 HTTP 后端范式）：status-monitor（`cmd/status-monitor/`、`internal/statusmonitor/`、`deploy/deploy-status.sh`）
+- 轻量后端模板：`cmd/status-monitor/main.go`（最薄）

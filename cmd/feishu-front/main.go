@@ -187,10 +187,7 @@ func run(cfgPath, addr string) error {
 	ipc.SetOnOffline(dispatcher.OnBackendOffline)
 	ipc.SetOnOnline(dispatcher.OnBackendOnline)
 	// /v1/status reports in-flight turn count so deploy.sh can avoid cutting
-	// off a live conversation when restarting the frontend. Wire the type
-	// resolver so InFlight can exclude deploy-monitor's own /deploy turn
-	// (which otherwise self-blocks: make deploy → /v1/status → inflight>0).
-	turns.SetTypeResolver(registry.BackendType)
+	// off a live conversation when restarting the frontend.
 	ipc.SetInFlightTurns(turns.InFlight)
 	ipc.SetInFlightDetail(turns.InFlightTurns)
 

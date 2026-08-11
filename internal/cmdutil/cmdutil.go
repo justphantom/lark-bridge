@@ -1,9 +1,8 @@
 // Package cmdutil holds the slash-command infrastructure shared by the
-// claude and opencode bridges: parsing, the timeout cap, and the pure
-// helpers (error-result pairing, setting-change logging, help rendering)
-// that both bridges used to duplicate verbatim.
+// backends: parsing, the timeout cap, and the pure helpers (error-result
+// pairing, help rendering) that backends used to duplicate verbatim.
 //
-// What stays in each bridge: the dispatcher (it binds the bridge's own
+// What stays in each backend: the dispatcher (it binds the backend's own
 // *Handler for emit/logger), the per-backend command registry, and the
 // per-backend handler implementations.
 package cmdutil
@@ -13,23 +12,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/justphantom/lark-bridge/internal/log"
 )
 
 // Timeout caps how long any single slash command may take. Commands run in
 // a goroutine, so without a bound a slow path would leak.
 const Timeout = 15 * time.Second
-
-// MaxArgPromptBytes is the ceiling on a prompt passed to a backend CLI as a
-// positional argv element (opencode/omp; claude reads stdin and is unaffected).
-// Linux bounds a single argv string at MAX_ARG_STRLEN = 128 KiB; beyond that
-// execve fails with E2BIG ("argument list too long"), an opaque error that does
-// not point back to the prompt. 100 KiB stays safely under the kernel hard
-// limit while leaving headroom for the other argv slots. A guard here also
-// caps how much of a pasted prompt is world-readable via /proc/<pid>/cmdline
-// for the subprocess's lifetime.
-const MaxArgPromptBytes = 100 << 10 // 100 KiB
 
 // Result is the body a slash command returns. The dispatcher wraps it in a
 // TypeNotice Control; a non-nil error is converted into an error-level
@@ -96,18 +83,6 @@ func ErrorResult(format string, args ...any) (Result, error) {
 // value (first-time set); the renderer then omits the strikethrough half.
 func ChangeResult(field, before, after, body string) Result {
 	return Result{Body: body, Field: field, Before: before, After: after}
-}
-
-// LogSettingChange records a setting change at info level. An empty value
-// logs "<field> cleared"; otherwise "<field> set" plus the field=value pair.
-func LogSettingChange(logger *log.Logger, chatID, field, value string) {
-	if value == "" {
-		logger.Info(fmt.Sprintf("%s cleared", field), log.FieldChatID, chatID)
-	} else {
-		logger.Info(fmt.Sprintf("%s set", field),
-			log.FieldChatID, chatID,
-			field, value)
-	}
 }
 
 // RenderHelp renders the /help body from a list of specs, one line each:

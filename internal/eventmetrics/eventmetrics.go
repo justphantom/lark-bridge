@@ -54,13 +54,6 @@ var MiniAgentTurnIncomplete Counter
 // sustained growth signals IPC instability (SSE blips, frontend congestion).
 var TerminalEmitRetries Counter
 
-// TerminalEmitLost counts terminal controls whose delivery was never
-// confirmed (all retries exhausted / no ACK within the wait budget). Each
-// increment is a turn whose final reply card the user never saw — the
-// highest-severity observability signal in this package. Backends emit a
-// fallback notice when this fires so the turn is not silently stranded.
-var TerminalEmitLost Counter
-
 // ---- UnknownEvent dimension ----
 
 // unknownStore holds per-(backend,event_type) counters, created lazily.
@@ -89,7 +82,6 @@ func LineTruncated(backend string) *Counter {
 // ResetAll resets every pre-defined counter. Intended for tests.
 func ResetAll() {
 	TerminalEmitRetries.Reset()
-	TerminalEmitLost.Reset()
 	globalUnknownStore.reset()
 	globalTruncatedStore.reset()
 }

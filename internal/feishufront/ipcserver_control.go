@@ -142,11 +142,7 @@ func (s *IPCServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// still sees an honest count during rolling upgrades.
 	if useRegistry {
 		for _, t := range running {
-			// Preserve the deploy-monitor exclusion: a /deploy prompt itself
-			// calls /v1/status, and counting its own turn would deadlock deploy.
-			if s.registry.BackendType(t.BackendID) != "deploy-monitor" {
-				inflight++
-			}
+			inflight++
 			turns = append(turns, turnStatus{
 				PromptID:  t.PromptID,
 				ChatID:    t.ChatID,

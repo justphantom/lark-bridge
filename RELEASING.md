@@ -61,7 +61,7 @@ vX.Y.Z: <主线一句话（逗号分隔的主题列表）>
 
 ## 5. 发版顺序
 
-**先 feishu-front，后各 backend**（miniagent / agnes）。
+**先 feishu-front，后各 backend**（miniagent）。
 `deploy.sh` 的服务部署顺序天然满足该约束；前端先升级可保证新协议字段（Event/Control）
 对旧后端向后兼容，后端后升级再启用新能力。
 

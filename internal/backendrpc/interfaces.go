@@ -6,15 +6,15 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// ControlSender is the subset of *Client the deploymonitor / statusmonitor /
+// ControlSender is the subset of *Client the statusmonitor /
 // miniagent handlers need to POST a Control. Lifted from per-package private
-// copies so a test fake in one binary can be shared across all three.
+// copies so a test fake in one binary can be shared across both.
 // *Client satisfies this interface via its SendControl method.
 type ControlSender interface {
 	SendControl(ctx context.Context, ctrl *protocol.Control) error
 }
 
-// StatusQuerier is the subset of *Client the deploymonitor / statusmonitor
+// StatusQuerier is the subset of *Client the statusmonitor
 // handlers need to read the frontend's in-flight turn snapshot via
 // GET /v1/status. *Client satisfies this interface via its Status method.
 type StatusQuerier interface {

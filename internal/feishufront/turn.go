@@ -40,10 +40,9 @@ type InteractiveBinding struct {
 // TurnManager tracks promptID → Turn (progress card) plus requestID →
 // interactive-card binding. All access is goroutine-safe.
 type TurnManager struct {
-	mu           sync.RWMutex
-	turns        map[string]*Turn
-	interactive  map[string]interactiveEntry // requestID → interactive card binding
-	typeResolver func(backendID string) string
+	mu          sync.RWMutex
+	turns       map[string]*Turn
+	interactive map[string]interactiveEntry // requestID → interactive card binding
 }
 
 // NewTurnManager builds an empty manager.
@@ -52,17 +51,6 @@ func NewTurnManager() *TurnManager {
 		turns:       make(map[string]*Turn),
 		interactive: make(map[string]interactiveEntry),
 	}
-}
-
-// SetTypeResolver wires a backendID→backendType lookup (typically
-// *BackendRegistry.BackendType). When set, InFlight excludes turns whose
-// backendType is "deploy-monitor": a /deploy turns into `make deploy`, which
-// itself calls /v1/status — counting the monitor's own turn would deadlock
-// the deploy (deploy.sh refuses while inflight>0). Safe to call once at startup.
-func (m *TurnManager) SetTypeResolver(fn func(backendID string) string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.typeResolver = fn
 }
 
 // Start records the progress card for one prompt. cardID is the CardKit
@@ -114,23 +102,6 @@ func (m *TurnManager) Finish(promptID string) {
 	delete(m.turns, promptID)
 }
 
-// TurnsByBackend returns the promptIDs of in-flight turns owned by backendID,
-// for abort/diagnostic paths that need to target one backend's turns. A turn
-// ends on a terminal control or when ReclaimBackend reaps it after the backend
-// stays offline past the notice-debounce window; it is NOT released by a brief
-// offline blip (OnBackendOnline cancels the reclaim before it fires).
-func (m *TurnManager) TurnsByBackend(backendID string) []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var ids []string
-	for promptID, t := range m.turns {
-		if t.BackendID == backendID {
-			ids = append(ids, promptID)
-		}
-	}
-	return ids
-}
-
 // ReclaimBackend finishes every in-flight turn owned by backendID and returns
 // the reclaimed turns. Called once a backend has been confirmed offline for the
 // whole offline-notice debounce window (fireOfflineNotice): a backend that
@@ -156,32 +127,16 @@ func (m *TurnManager) ReclaimBackend(backendID string) []Turn {
 // started but not yet reached their terminal control). Used by the deploy-time
 // status endpoint to let an operator avoid restarting the frontend while a
 // conversation is mid-flight.
-//
-// Turns owned by a "deploy-monitor" backend are excluded: a /deploy prompt
-// triggers `make deploy`, which queries this endpoint — counting the monitor's
-// own turn would block every deploy (deploy.sh refuses while inflight>0).
 func (m *TurnManager) InFlight() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	resolve := m.typeResolver
-	if resolve == nil {
-		return len(m.turns)
-	}
-	n := 0
-	for _, t := range m.turns {
-		if resolve(t.BackendID) == "deploy-monitor" {
-			continue
-		}
-		n++
-	}
-	return n
+	return len(m.turns)
 }
 
-// InFlightTurns returns a snapshot of every currently in-flight turn. Unlike
-// InFlight it does NOT exclude deploy-monitor backends: the per-turn detail
-// (promptID/chatID/backendID) is what lets an operator see a turn stranded by
-// a crashed backend — the count alone hides it. Returns value-copies so the
-// caller may read fields without a lock.
+// InFlightTurns returns a snapshot of every currently in-flight turn. The
+// per-turn detail (promptID/chatID/backendID) is what lets an operator see a
+// turn stranded by a crashed backend — the count alone hides it. Returns
+// value-copies so the caller may read fields without a lock.
 func (m *TurnManager) InFlightTurns() []Turn {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -220,21 +175,6 @@ func (m *TurnManager) InteractiveMessageID(requestID string) (string, bool) {
 	return e.messageID, ok
 }
 
-// InteractiveByPromptID returns every still-pending interactive card linked to
-// promptID. Used by sendResult to finalise those cards once the turn they
-// belong to completes.
-func (m *TurnManager) InteractiveByPromptID(promptID string) []InteractiveBinding {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var out []InteractiveBinding
-	for rid, e := range m.interactive {
-		if e.promptID == promptID {
-			out = append(out, InteractiveBinding{RequestID: rid, MessageID: e.messageID, CardID: e.cardID})
-		}
-	}
-	return out
-}
-
 // InteractiveCardIDByMessageID returns the CardKit entity id of the first
 // interactive binding pointing at messageID, or "" under the legacy engine.
 // Used by the /send multi-round refresh, which knows only the messageID.
@@ -247,23 +187,6 @@ func (m *TurnManager) InteractiveCardIDByMessageID(messageID string) string {
 		}
 	}
 	return ""
-}
-
-// RequestIDsByMessageID returns the requestIDs of every interactive binding
-// currently pointing at messageID. Used when a multi-round picker (the /send
-// directory browser) refreshes one card in place: the prior round's
-// requestID→messageID binding must be dropped so the new round's requestID
-// owns the card (and its TTL/cache do not leak).
-func (m *TurnManager) RequestIDsByMessageID(messageID string) []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var out []string
-	for rid, e := range m.interactive {
-		if e.messageID == messageID {
-			out = append(out, rid)
-		}
-	}
-	return out
 }
 
 // UnbindInteractive removes the interactive card binding for requestID. Called

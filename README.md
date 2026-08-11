@@ -7,15 +7,13 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-        ┌──────────┬──────────┬────────────────┬──────────────┐
-  miniagent-back  agnes-back  deploy-monitor  status-monitor
-  (LLM API 直调) (图片/视频)  (make deploy)   (状态总览)
+        ┌──────────┬──────────────┐
+  miniagent-back  status-monitor
+  (LLM API 直调)  (状态总览)
 ```
 
 - `feishu-front`：持有飞书 WebSocket 机器人，IPC 服务（SSE + Control POST），chatID→后端路由，分发器（消息→Prompt 事件，Control→卡片）。
 - `miniagent-back`：每个 prompt fork 一次 miniagent 二进制（自带 ReAct 循环与 LLM 调用）。
-- `agnes-back`：调用 Agnes AI REST API 生成图片/视频并把产物以文件消息发回群。
-- `deploy-monitor`：收到 `/deploy`、`/pull`、`/push` 在项目根执行 `make`，单飞（single-flight），结果回执。**独立部署**，避免「部署脚本管自己的触发者」循环依赖。
 - `status-monitor`：每 N 秒（`status_monitor.interval`，默认 60s）向绑定的每个群推送一张总览卡（在线后端 + 运行中会话数与时长），有则 PATCH、被删则重发。**独立部署**，push-only。
 
 ## 协议（internal/protocol）
@@ -28,13 +26,12 @@
 
 - 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
 - miniagent-back：`/current` `/model` `/cd` `/new` `/send` `/pull` `/push` `/running` `/abort` `/mode` `/effort` `/help`。
-- deploy-monitor：`/deploy` `/deploy-force` `/deploy-some` `/pull` `/push` `/running`。
 - status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。
 
 ## 构建
 
 ```bash
-make build      # 产物在 bin/：5 个二进制，git 版本号注入
+make build      # 产物在 bin/：4 个二进制，git 版本号注入
 make test       # build-check + vet + go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -s -w .
@@ -66,15 +63,11 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 make deploy                              # 构建 + 安装 2 个业务服务（feishu + miniagent）
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services miniagent   # 单独部署某服务子集（逗号分隔）
-make deploy-all                          # 全量：业务→agnes→status→monitor（操作员手动一键）
-make deploy-agnes                        # 单独升级 agnes-back
-make deploy-monitor                      # 单独升级 deploy-monitor（~2s 离线）
-make deploy-monitor ARGS=--init
 make deploy-status                       # 单独升级 status-monitor（~2s 离线）
 make deploy-status ARGS=--init
 ```
 
-> **升级注意**：`claude-back`、`opencode-back`、`omp-back` 均已移除（后端对接收敛到 miniagent + agnes）。`make deploy` 会自动检测并清理遗留的 `lark-claude-back` / `lark-opencode-back` / `lark-omp-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与 config 模板；已部署 config 里残留的 `claude` / `opencode` / `omp` 块也会被 deploy-monitor / deploy-status / deploy-agnes 迁移剥离。
+> **升级注意**：`claude-back`、`opencode-back`、`omp-back`、`agnes-back` 均已移除（后端对接收敛到 miniagent）。`make deploy` 会自动检测并清理遗留的 `lark-claude-back` / `lark-opencode-back` / `lark-omp-back` / `lark-agnes-back`（及更早的 `lark-opencode-serve-back`）systemd 单元、router/usage state 文件与 config 模板；已部署 config 里残留的 `claude` / `opencode` / `omp` / `agnes` 块也会被 deploy-status 迁移剥离。
 
 systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](deploy/README.md)。
 
@@ -86,7 +79,7 @@ systemd unit 示例、健康检查、验证步骤详见 [`deploy/README.md`](dep
 
 ## 目录约定
 
-- `cmd/`：5 个二进制的入口（feishu-front、miniagent-back、agnes-back、deploy-monitor、status-monitor）。
-- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `miniagent` `miniclient` `agnesback` `deploymonitor` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
+- `cmd/`：3 个二进制的入口（feishu-front、miniagent-back、status-monitor）。
+- `internal/`：`protocol` `router` `config` `log` `feishu` `feishufront` `miniagent` `miniclient` `backendrpc` `bridgebase` `streamarchive` `usage` `cmdutil` `atomicwrite` `strutil` 等。
 - `bin/`：编译产物（gitignore）。
 - `deploy/`：部署脚本与配置模板。

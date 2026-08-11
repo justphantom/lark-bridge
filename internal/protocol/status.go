@@ -2,7 +2,7 @@ package protocol
 
 // StatusSnapshot is the JSON body returned by the frontend's GET /v1/status —
 // the single source of truth for "which turns are in flight right now". A
-// backend (e.g. deploy-monitor's /running) consumes it to render the live turn
+// backend (e.g. status-monitor's /running) consumes it to render the live turn
 // list instead of guessing from its own partial view. Field tags match the
 // frontend's response exactly.
 type StatusSnapshot struct {

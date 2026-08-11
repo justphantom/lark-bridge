@@ -95,7 +95,6 @@ func TestClosePersistsLastMutation(t *testing.T) {
 	r1, _ := New(path, log.Nop())
 	r1.Bind("c1", "s1", "/d", "updated-title", "m", "a")
 	r1.SetModelSpec("c1", "updated-model")
-	r1.SetAgent("c1", "build")
 	r1.Close()
 
 	r2, _ := New(path, log.Nop())
@@ -106,7 +105,7 @@ func TestClosePersistsLastMutation(t *testing.T) {
 	}
 	if got.SessionID != "s1" || got.Directory != "/d" ||
 		got.ModelSpec != "updated-model" || got.Title != "updated-title" ||
-		got.Agent != "build" {
+		got.Agent != "a" {
 		t.Fatalf("unexpected binding after reload: %+v", got)
 	}
 }

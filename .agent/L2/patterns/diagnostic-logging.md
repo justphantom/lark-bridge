@@ -9,4 +9,4 @@ confidence: high
 # 全链路诊断日志的铺设模式
 
 ## 背景
-排查 /backend 卡片回调和 agnes notice 未到达的问题时…[args omitted]
+排查 /backend 卡片回调和（已移除的）agnes notice 未到达的问题时…[args omitted]

@@ -395,9 +395,8 @@ func (d *Dispatcher) sendNoticeControl(ctx context.Context, ctrl *protocol.Contr
 		if err == nil {
 			// A direct card patch IS this prompt's terminal frame (the
 			// promptID dedup above already consumed it): release the
-			// turn/progress slots so a live turn — e.g. /pull on
-			// deploy-monitor, where the frontend never restarted —
-			// does not leak into /running.
+			// turn/progress slots so a live turn whose frontend never
+			// restarted does not leak into /running.
 			d.turns.Finish(ctrl.PromptID)
 			d.cleanupProgress(ctrl.PromptID, n.UpdateMessageID)
 			// Release any interactive-card binding (cached bytes + TTL

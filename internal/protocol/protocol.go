@@ -55,9 +55,9 @@ type PromptPayload struct {
 	Skill     bool   `json:"skill,omitempty"` // true: bypass backend slash-command dispatch
 	// CardMessageID is the frontend's progress-card message_id for this
 	// prompt. Informational, NOT an override (HasFrontendOverride ignores
-	// it): a backend whose job outlives the frontend process
-	// (deploy-monitor's `make deploy` restarts feishu-front, wiping the
-	// in-memory turn map) echoes it back as NoticePayload.UpdateMessageID
+	// it): a backend whose job outlives the frontend process (a frontend
+	// restart wipes the in-memory turn map) echoes it back as
+	// NoticePayload.UpdateMessageID
 	// so the terminal notice patches the original progress card by raw
 	// message_id — which survives the restart — instead of falling back to
 	// a fresh standalone card.

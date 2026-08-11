@@ -13,20 +13,16 @@ const (
 // Header keys used by the lark WS frame protocol. The headers field is an
 // array of {Key,Value} pairs (not a map); lookups are linear.
 const (
-	HeaderTimestamp  = "timestamp"   // message time, ms
-	HeaderType       = "type"        // event | card | ping | pong
-	HeaderMessageID  = "message_id"  // chunk-group id, inherited after split
-	HeaderSum        = "sum"         // chunk count (1 = unsplit)
-	HeaderSeq        = "seq"         // chunk ordinal (0 = unsplit)
-	HeaderTraceID    = "trace_id"    // tracing id
-	HeaderInstanceID = "instance_id" // server machine instance
-	HeaderBizRt      = "biz_rt"      // business processing time, ms
+	HeaderType      = "type"       // event | card | ping | pong
+	HeaderMessageID = "message_id" // chunk-group id, inherited after split
+	HeaderSum       = "sum"        // chunk count (1 = unsplit)
+	HeaderSeq       = "seq"        // chunk ordinal (0 = unsplit)
+	HeaderBizRt     = "biz_rt"     // business processing time, ms
 )
 
 // FrameType (the "type" header) for data frames.
 const (
 	TypeEvent = "event" // im.message.receive_v1, card.action.trigger, …
-	TypeCard  = "card"  // legacy card channel (unused by this app)
 	TypePing  = "ping"  // control frame payload type
 	TypePong  = "pong"  // control frame payload type
 )

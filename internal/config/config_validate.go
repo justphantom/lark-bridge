@@ -64,10 +64,8 @@ func validate(cfg *Config) error {
 		"feishu":         cfg.ComponentLogLevels.Feishu,
 		"bridge":         cfg.ComponentLogLevels.Bridge,
 		"dedup":          cfg.ComponentLogLevels.Dedup,
-		"deploy_monitor": cfg.ComponentLogLevels.DeployMonitor,
 		"miniagent":      cfg.ComponentLogLevels.MiniAgent,
 		"status_monitor": cfg.ComponentLogLevels.StatusMonitor,
-		"agnes":          cfg.ComponentLogLevels.Agnes,
 	} {
 		if level == "" || level == "debug" || level == "info" || level == "warn" || level == "error" {
 			continue

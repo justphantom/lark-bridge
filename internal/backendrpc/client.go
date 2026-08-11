@@ -623,7 +623,7 @@ func (c *Client) PushMetrics(ctx context.Context, report *protocol.MetricsReport
 
 // Status GETs /v1/status from the frontend, returning the in-flight turn
 // snapshot. Used by backends that must observe frontend-owned turn state (e.g.
-// deploy-monitor's /running). When ctx has no deadline it is bounded by
+// status-monitor's /running). When ctx has no deadline it is bounded by
 // statusQueryTimeout so a stalled frontend cannot block the caller.
 func (c *Client) Status(ctx context.Context) (*protocol.StatusSnapshot, error) {
 	if _, ok := ctx.Deadline(); !ok {

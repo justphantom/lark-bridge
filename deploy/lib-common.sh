@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # vars are consumed by the sourcing entry scripts
 #
 # lib-common.sh — shared helpers for the lark-bridge deploy scripts
-# (deploy.sh / deploy-monitor.sh / deploy-status.sh). Source, do not
+# (deploy.sh / deploy-status.sh). Source, do not
 # execute:
 #
 #   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-common.sh"
@@ -60,7 +60,7 @@ fi
 # deploy/config/state dirs and write systemd User= with this value. root is
 # forbidden -- the services must never run as root. deploy.sh syncs the
 # effective value back into repo-root .env so it stays the single source of
-# truth across re-deploys and the deploy-monitor (/deploy) path.
+# truth across re-deploys.
 # resolve_run_user is defined before env_get below, but the assignment is placed
 # AFTER env_get's definition: top-level statements execute as they are read, so
 # calling a not-yet-defined env_get here would fail at source time.
@@ -84,14 +84,6 @@ env_get() {
 RUN_USER="$(resolve_run_user)"
 [[ -n "$RUN_USER" ]] || fail "RUN_USER could not be resolved (set RUN_USER in .env)"
 [[ "$RUN_USER" == "root" ]] && fail "RUN_USER must not be 'root' (services must not run as root)"
-
-# run_mode returns the effective LARK_RUN_MODE value: env var > repo-root .env >
-# default "dev". Used by deploy-monitor.sh to decide whether deploy-monitor
-# should be installed/started. Invalid values are rejected by the caller.
-run_mode() {
-    local mode="${LARK_RUN_MODE:-$(env_get LARK_RUN_MODE)}"
-    echo "${mode:-dev}"
-}
 
 # update_env_key idempotently updates one key: in-place sed if present, append
 # otherwise.

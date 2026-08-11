@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-11T16:55:00+08:00
+updated: 2026-08-11T23:38:38+08:00
 ---
 
 # .agent 记忆索引
@@ -16,8 +16,10 @@ updated: 2026-08-11T16:55:00+08:00
 - [archive/agnes-model-command.md](L1/archive/agnes-model-command.md) — agnes-back /model 指令：单卡三问弹卡 + 配置化模型列表（已完成）
 - [archive/send-picker-ellipsis-fix.md](L1/archive/send-picker-ellipsis-fix.md) — /send 弹卡省略号修复：按钮卡启发式纵向单列布局（已完成）
 - [archive/claude-backend-removal.md](L1/archive/claude-backend-removal.md) — 清理 Claude 对接：方案 B(已提交 d13898a) + C 全量清零（B+C 完成）
-- [L1/active/session.md](L1/active/session.md) — deploy RUN_USER 运行用户 .env 注入（已完成，未提交）
+- [L1/active/session.md](L1/active/session.md) — 会话状态（当前：config-dir 注入；前序：deploy 三件套，均未提交）
+- [L1/tasks/config-dir-env-injection.md](L1/tasks/config-dir-env-injection.md) — /config 扫描路径可配置 MINIAGENT_CONFIG_DIR（进行中，待提交）
 - [L1/tasks/run-user-env-injection.md](L1/tasks/run-user-env-injection.md) — 运行用户 .env 注入（进行中，待提交）
+- [L1/tasks/agnes-backend-removal.md](L1/tasks/agnes-backend-removal.md) — 彻底移除 agnes-back（C 档全量清零）（已完成，未提交）
 
 ## L2 经验教训
 - [incidents/feishu-card-bounce-back.md](L2/incidents/feishu-card-bounce-back.md) — `/send` 文件卡片回弹事故

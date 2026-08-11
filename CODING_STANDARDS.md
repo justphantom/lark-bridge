@@ -16,7 +16,7 @@
 | Lint 工具 | **golangci-lint v2**（`version: "2"`），采用社区 "golden config"（maratori/golangci-lint-config） | `.golangci.yml:1-10` |
 | Formatter | **goimports**（含 `local-prefixes` 分组） | `.golangci.yml:16-24` |
 | 构建工具 | Make（默认目标 `build`），ldflags 注入 git 版本号 | `Makefile` |
-| 部署形态 | 5 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
+| 部署形态 | 4 个二进制 + systemd 单元（`deploy/`） | `cmd/`、`Makefile:43-50` |
 | 平台约束 | `//go:build linux || darwin`（平台相关系统调用包） | `internal/atomicwrite/*`、`internal/cmdutil/*` |
 
 设计哲学（从配置文件中明示）：
@@ -60,11 +60,9 @@ golangci-lint run   # 风格检查（手动）
 
 ```
 lark-bridge/
-├── cmd/                         # 5 个二进制入口，每个一个子目录
+├── cmd/                         # 3 个二进制入口，每个一个子目录
 │   ├── feishu-front/            #   main.go (+ main_test.go)
 │   ├── miniagent-back/          #   miniagent CLI 后端（每轮 fork 子进程）
-│   ├── agnes-back/              #   Agnes AI 图片/视频 REST 后端
-│   ├── deploy-monitor/
 │   └── status-monitor/
 ├── internal/                    # 禁止跨项目引用
 │   ├── atomicwrite/             # 单一职责小包
@@ -72,7 +70,6 @@ lark-bridge/
 │   ├── bridgebase/              # CLI 后端共享脊柱（命令/answer broker/git runner 等包级辅助）
 │   ├── cmdutil/                 # 斜杠命令基础设施 + 子进程平台封装
 │   ├── config/                  # JSON 配置 load+validate+defaults
-│   ├── deploymonitor/
 │   ├── feishu/                  # 业务封装层
 │   ├── feishufront/             # 含子包 cardkit/、renderer/
 │   ├── lark/                    # 自实现飞书客户端（含 doc.go）
@@ -107,7 +104,7 @@ lark-bridge/
 ### 3.1 包命名
 全小写、单词型，**无下划线/驼峰**：
 - 单词：`log`、`config`、`router`、`protocol`、`usage`、`strutil`
-- 复合（仍全小写连写）：`atomicwrite`、`bridgebase`、`cmdutil`、`backendrpc`、`streamarchive`、`deploymonitor`、`miniclient`、`feishufront`、`miniagent`
+- 复合（仍全小写连写）：`atomicwrite`、`bridgebase`、`cmdutil`、`backendrpc`、`streamarchive`、`miniclient`、`feishufront`、`miniagent`
 
 依据：`internal/` 下全部 22 个目录。
 
@@ -132,10 +129,6 @@ type httpDoer interface { Do(*http.Request) (*http.Response, error) }
 type frameWriter interface { ... }
 // internal/bridgebase/git_runner.go:28
 type GitCommander interface { Run(ctx, dir, name string, args ...string) ([]byte, error) }
-// internal/deploymonitor/handler.go:33,40,48
-type controlSender interface { ... }
-type statusQuerier  interface { ... }
-type Commander      interface { ... }
 // internal/lark/types.go:64、internal/feishufront/dispatcher.go:55
 type Handler     interface { ... }
 type ChatRouter  interface { ... }
@@ -518,15 +511,14 @@ func TestControlRoundTrip(t *testing.T) {
 
 | 目标 | 作用 |
 |---|---|
-| `build`（默认） | 编译 5 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
-| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 5 个 cmd） |
+| `build`（默认） | 编译 4 个二进制到 `bin/`，注入 `main.version`（`git describe --tags --always --dirty`），`-s -w` strip |
+| `build-check` | `go build ./...`，提前发现 internal 包编译错误（不只编 4 个 cmd） |
 | `vet` | `go vet ./...` |
 | `fmt` | `gofmt -s -w .`（simplify） |
 | `test` | `build-check` → `vet` → `go test -race ./...`（CGO 默认开，启用 race） |
 | `clean` | `rm -rf bin/` |
-| `pack` | 交叉编译 5 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
+| `pack` | 交叉编译 4 个二进制 + `VERSION` + 配置示例 → `bin/lark-bridge-<ver>-<goos>-<goarch>.tar.gz`（命令行 `GOOS=/GOARCH=` 覆盖） |
 | `deploy` | 调 `./deploy/deploy.sh $(ARGS)` 构建 + 安装 2 个业务 systemd 服务（feishu / miniagent） |
-| `deploy-monitor` | 单独构建并重启 `lark-deploy-monitor`（独立于 deploy.sh，避免循环依赖） |
 
 ### 9.2 开发流程（推荐顺序）
 ```
@@ -541,7 +533,6 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 make deploy                  # 构建 + 2 个业务服务（feishu / miniagent）systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services miniagent   # 子集部署（可选值：feishu / miniagent）
-make deploy-monitor         # ~2s 离线升级 deploy-monitor
 ```
 环境变量：`IPC_ADDR`、`STATE_DIR` 可命令行覆盖（`Makefile:19-21`）。
 

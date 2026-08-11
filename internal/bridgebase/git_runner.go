@@ -22,9 +22,8 @@ const (
 )
 
 // GitCommander runs a command (name with args) inside dir. The production
-// implementation is ExecCommander; tests inject a fake. Structurally
-// identical to deploymonitor.Commander — kept local so this package does
-// not import a sibling backend package.
+// implementation is ExecCommander; tests inject a fake. Kept local so this
+// package does not import a sibling backend package.
 type GitCommander interface {
 	Run(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 }
@@ -99,7 +98,7 @@ func (r *GitRunner) AcquireAndRun(chatID, dir string, args []string, label strin
 
 // runJob is the goroutine body: bounded ctx, run git, emit terminal notice.
 // context.Background (not the dispatcher's ctx) so the job outlives the
-// triggering request — mirrors deploymonitor.runJob.
+// triggering request.
 func (r *GitRunner) runJob(chatID, dir string, args []string, label string, notice GitNotice) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
@@ -142,8 +141,8 @@ func tailGitOutput(out []byte) string {
 
 // tailRunes returns the last ~maxRunes runes of s (TrimSpace'd), advanced to
 // the next line boundary so the excerpt never opens on a half-line fragment.
-// maxRunes<=0 disables truncation. Shared shape with deploymonitor.tailOutput;
-// duplicated rather than shared so neither package imports the other.
+// maxRunes<=0 disables truncation. Duplicated rather than shared so this
+// package does not import a sibling backend package.
 func tailRunes(s string, maxRunes int) string {
 	s = strings.TrimSpace(s)
 	if maxRunes <= 0 {

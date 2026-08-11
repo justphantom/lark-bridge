@@ -9,13 +9,11 @@ import (
 	"time"
 )
 
-// newPreflightServer builds an IPCServer with a shared secret, a
-// deploy-monitor backend registered (so BackendType resolves), and a canned
+// newPreflightServer builds an IPCServer with a shared secret and a canned
 // in-flight turn list.
 func newPreflightServer(t *testing.T, turns []Turn) *httptest.Server {
 	t.Helper()
 	reg := NewBackendRegistry()
-	reg.Register("deploy-monitor-1", "deploy-monitor")
 	srv := NewIPCServer(reg, "s3cret")
 	srv.SetInFlightDetail(func() []Turn { return turns })
 	ts := httptest.NewServer(srv.Routes())
@@ -51,7 +49,7 @@ func TestDeployPreflight(t *testing.T) {
 	turns := []Turn{
 		{PromptID: "p1", ChatID: "c1", BackendID: "claude-1", StartedAt: time.Now()},
 		{PromptID: "p2", ChatID: "c2", BackendID: "opencode-1", StartedAt: time.Now()},
-		{PromptID: "p3", ChatID: "c3", BackendID: "deploy-monitor-1", StartedAt: time.Now()}, // excluded
+		{PromptID: "p3", ChatID: "c3", BackendID: "agnes-1", StartedAt: time.Now()},
 	}
 	ts := newPreflightServer(t, turns)
 
@@ -62,10 +60,10 @@ func TestDeployPreflight(t *testing.T) {
 		wantInflight int
 		wantAffected []string
 	}{
-		{"non-target backend only", "miniagent", http.StatusOK, 2, []string{}},
-		{"target backend conflict", "claude", http.StatusConflict, 2, []string{"claude-1"}},
-		{"feishu disrupts all", "feishu", http.StatusConflict, 2, []string{"claude-1", "opencode-1"}},
-		{"subset mixed", "claude,miniagent", http.StatusConflict, 2, []string{"claude-1"}},
+		{"non-target backend only", "miniagent", http.StatusOK, 3, []string{}},
+		{"target backend conflict", "claude", http.StatusConflict, 3, []string{"claude-1"}},
+		{"feishu disrupts all", "feishu", http.StatusConflict, 3, []string{"agnes-1", "claude-1", "opencode-1"}},
+		{"subset mixed", "claude,miniagent", http.StatusConflict, 3, []string{"claude-1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,7 +72,7 @@ func TestDeployPreflight(t *testing.T) {
 				t.Errorf("code = %d, want %d", code, tc.wantCode)
 			}
 			if out.InFlight != tc.wantInflight {
-				t.Errorf("inflight = %d, want %d (deploy-monitor excluded)", out.InFlight, tc.wantInflight)
+				t.Errorf("inflight = %d, want %d", out.InFlight, tc.wantInflight)
 			}
 			if fmt.Sprint(out.Affected) != fmt.Sprint(tc.wantAffected) {
 				t.Errorf("affected = %v, want %v", out.Affected, tc.wantAffected)
@@ -104,13 +102,12 @@ func TestDeployPreflight_IdleAndGuards(t *testing.T) {
 
 func TestStripInstanceSuffix(t *testing.T) {
 	cases := map[string]string{
-		"claude-1":         "claude",
-		"opencode-12":      "opencode",
-		"deploy-monitor-1": "deploy-monitor",
-		"status-monitor":   "status-monitor",
-		"claude":           "claude",
-		"claude-":          "claude-",
-		"-1":               "-1",
+		"claude-1":       "claude",
+		"opencode-12":    "opencode",
+		"status-monitor": "status-monitor",
+		"claude":         "claude",
+		"claude-":        "claude-",
+		"-1":             "-1",
 	}
 	for in, want := range cases {
 		if got := stripInstanceSuffix(in); got != want {

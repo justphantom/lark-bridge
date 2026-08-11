@@ -130,11 +130,10 @@ func TestStatus_UsesBackendRunningTurns(t *testing.T) {
 	if err := reg.StartTurn("b1", protocol.TurnInfo{PromptID: "p1", ChatID: "c1", ElapsedS: 12}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
-	// Register a deploy-monitor turn: it must be excluded from the inflight
-	// count (mimicking the legacy deploy-monitor exclusion).
-	reg.Register("deploy", "deploy-monitor")
-	if err := reg.StartTurn("deploy", protocol.TurnInfo{PromptID: "p2", ChatID: "c2", ElapsedS: 3}); err != nil {
-		t.Fatalf("StartTurn deploy: %v", err)
+	// A second backend's turn is also counted as in-flight.
+	reg.Register("b2", "agnes")
+	if err := reg.StartTurn("b2", protocol.TurnInfo{PromptID: "p2", ChatID: "c2", ElapsedS: 3}); err != nil {
+		t.Fatalf("StartTurn b2: %v", err)
 	}
 
 	srv := NewIPCServer(reg, "topsecret")
@@ -154,23 +153,21 @@ func TestStatus_UsesBackendRunningTurns(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.InFlight != 1 {
-		t.Errorf("InFlight = %d, want 1 (registry view overrides legacy counter)", got.InFlight)
+	if got.InFlight != 2 {
+		t.Errorf("InFlight = %d, want 2 (registry view overrides legacy counter)", got.InFlight)
 	}
 	if len(got.Turns) != 2 {
 		t.Fatalf("Turns = %d, want 2", len(got.Turns))
 	}
-	foundDeploy := false
+	found := map[string]bool{}
 	for _, turn := range got.Turns {
-		if turn.BackendID == "deploy" {
-			foundDeploy = true
-		}
+		found[turn.BackendID] = true
 		if turn.PromptID == "p1" && turn.ElapsedS != 12 {
 			t.Errorf("p1 ElapsedS = %d, want 12", turn.ElapsedS)
 		}
 	}
-	if !foundDeploy {
-		t.Error("deploy-monitor turn missing from Turns list")
+	if !found["b1"] || !found["b2"] {
+		t.Errorf("Turns list missing a backend: %v", found)
 	}
 }
 

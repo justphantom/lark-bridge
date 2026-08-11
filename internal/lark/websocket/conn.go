@@ -24,13 +24,9 @@ const (
 
 // CloseGoingAway is a generic close status used when the peer did not send one.
 const (
-	StatusNormalClosure   = 1000
-	StatusGoingAway       = 1001
-	StatusProtocolError   = 1002
-	StatusUnsupportedData = 1003
-	StatusInvalidData     = 1007
-	StatusPolicyViolation = 1008
-	StatusInternalError   = 1011
+	StatusNormalClosure = 1000
+	StatusGoingAway     = 1001
+	StatusInvalidData   = 1007
 )
 
 // maxControlPayload caps a control-frame body (RFC 6455 Section 5.5: ≤ 125).
@@ -89,19 +85,10 @@ func newConn(nc net.Conn, br *bufio.Reader, isTLS bool) *Conn {
 	return &Conn{nc: nc, br: br, isTLS: isTLS}
 }
 
-// Underlying exposes the raw connection so callers can hook keepalive or
-// statistics; lark-bridge uses it for nothing in production.
-func (c *Conn) Underlying() net.Conn { return c.nc }
-
 // SetReadDeadline sets the deadline for future ReadMessage calls. A zero time
 // clears it. The lark WS client uses this to bound idle reads.
 func (c *Conn) SetReadDeadline(t time.Time) error {
 	return c.nc.SetReadDeadline(t)
-}
-
-// SetWriteDeadline sets the deadline for future WriteMessage calls.
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	return c.nc.SetWriteDeadline(t)
 }
 
 // ReadMessage reads one full data message. Fragmented data messages are
@@ -359,13 +346,6 @@ func (c *Conn) Close() error {
 	}
 	c.closeMu.Unlock()
 	return c.nc.Close()
-}
-
-// WritePing sends a ping frame with optional payload. The lark client sends
-// its own protobuf ping frame via WriteMessage(binary), so this helper is here
-// for protocol completeness/tests.
-func (c *Conn) WritePing(payload []byte) error {
-	return c.writeControl(OpcodePing, payload)
 }
 
 // isControlFrame reports whether op is a control frame (≥ 8).

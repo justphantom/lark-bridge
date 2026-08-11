@@ -57,10 +57,8 @@ type Config struct {
 	RouterPath           string `json:"router_path,omitempty"` // router 持久化文件路径（前后端共用）
 
 	// —— 后端运行时：各后端按需 ——
-	DeployMonitor DeployMonitor `json:"deploy_monitor,omitempty"` // deploy-monitor 用
 	StatusMonitor StatusMonitor `json:"status_monitor,omitempty"` // status-monitor 用
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
-	AgnesBack     AgnesBack     `json:"agnes,omitempty"`          // agnes-back 用
 
 	// —— 日志：共用 ——
 	LogLevel           string            `json:"log_level"`
@@ -94,16 +92,6 @@ type Config struct {
 	// —— 文件上传：feishu-front 用，后端忽略 ——
 	// 仅有该段时才放开 file-type 消息；未配置 → 文件消息照旧被拒。
 	FileConvert FileConvert `json:"file_convert,omitempty"`
-}
-
-// DeployMonitor holds settings for the lark-deploy-monitor backend, which
-// receives /deploy prompts and runs `make <DeployTarget>` in ProjectRoot.
-type DeployMonitor struct {
-	// ProjectRoot is the repo root where `make` runs. Empty → working dir
-	// of the monitor process (set in config; systemd sets WorkingDirectory).
-	ProjectRoot string `json:"project_root,omitempty"`
-	// DeployTarget is the make target invoked (default "deploy").
-	DeployTarget string `json:"deploy_target,omitempty"`
 }
 
 // StatusMonitor holds settings for the lark-status-monitor backend, which
@@ -186,55 +174,14 @@ type MiniAgent struct {
 	ConfigPath string `json:"config_path,omitempty"`
 }
 
-// AgnesBack configures the lark-agnes-back backend (cmd/agnes-back). Unlike the
-// CLI backend (miniagent), it does NOT fork a subprocess: it calls the
-// Agnes AI REST API directly over net/http for image/video prompt generation,
-// image generation, and video generation. All three model names are operator-
-// configurable so a new model revision (e.g. agnes-image-2.2-flash) needs no
-// code change — just edit the config and restart.
-type AgnesBack struct {
-	// APIKey authenticates to the Agnes API (Bearer). Use ${AGNES_API_KEY} so
-	// the key is pulled from the environment, not committed in the config.
-	APIKey string `json:"api_key,omitempty"`
-	// BaseURL is the Agnes API origin without a trailing slash. Defaults to
-	// "https://api.agnes-ai.cn" (applyDefaults).
-	BaseURL string `json:"base_url,omitempty"`
-	// ChatModel is the model name used by /image-prompt and /video-prompt to
-	// expand a rough description into a full prompt via Chat Completions.
-	// Defaults to "agnes-2.5-flash" (applyDefaults).
-	ChatModel string `json:"chat_model,omitempty"`
-	// ImageModel is the model name used by /image to generate an image.
-	// Defaults to "agnes-image-2.1-flash" (applyDefaults).
-	ImageModel string `json:"image_model,omitempty"`
-	// VideoModel is the model name used by /video to generate a video.
-	// Defaults to "agnes-video-v2.0" (applyDefaults).
-	VideoModel string `json:"video_model,omitempty"`
-	// ChatModels / ImageModels / VideoModels list the selectable models the
-	// /model picker card offers per slot. Empty falls back to the single
-	// configured model (applyDefaults), so a default deployment still gets a
-	// one-option card. Models not in the list remain reachable via the direct
-	// form /model <slot> <model>.
-	ChatModels  []string `json:"chat_models,omitempty"`
-	ImageModels []string `json:"image_models,omitempty"`
-	VideoModels []string `json:"video_models,omitempty"`
-	// ImageSize is the size tier for /image ("1K"/"2K"/"3K"/"4K").
-	// Defaults to "2K" (applyDefaults).
-	ImageSize string `json:"image_size,omitempty"`
-	// ImageRatio is the aspect ratio paired with ImageSize for /image.
-	// Defaults to "16:9" (applyDefaults).
-	ImageRatio string `json:"image_ratio,omitempty"`
-}
-
 // ComponentLogLevel configures per-component log level overrides.
 type ComponentLogLevel struct {
 	Router        string `json:"router,omitempty"`
 	Feishu        string `json:"feishu,omitempty"`
 	Bridge        string `json:"bridge,omitempty"`
 	Dedup         string `json:"dedup,omitempty"`
-	DeployMonitor string `json:"deploy_monitor,omitempty"`
 	MiniAgent     string `json:"miniagent,omitempty"`
 	StatusMonitor string `json:"status_monitor,omitempty"`
-	Agnes         string `json:"agnes,omitempty"`
 }
 
 // Duration is a time.Duration that JSON-encodes as a Go duration

@@ -21,7 +21,7 @@ import (
 )
 
 // controlSender / statusQuerier are lifted to internal/backendrpc (shared
-// with deploymonitor and miniagent). Local type aliases keep the call sites
+// with miniagent). Local type aliases keep the call sites
 // readable.
 type controlSender = backendrpc.ControlSender
 type statusQuerier = backendrpc.StatusQuerier
@@ -130,7 +130,7 @@ func (h *Handler) tick(ctx context.Context) {
 // bound to the status backend can probe on demand:
 //   - /status, /refresh → push one StatusReport now (refreshes the standing
 //     card) and finalise the command's own card.
-//   - /running  → list in-flight turns (same shape as deploy-monitor's).
+//   - /running  → list in-flight turns.
 //   - /backends → list online backends.
 //   - /help, "", or any unknown text → enumerate the commands.
 //
@@ -193,8 +193,7 @@ func (h *Handler) handleStatusRefresh(ctx context.Context, chatID, promptID, car
 }
 
 // handleRunningQuery renders the in-flight turn snapshot as a notice bound to
-// promptID. Mirrors deploy-monitor's /running so users see the same shape from
-// either backend.
+// promptID. The turn list matches the shape /v1/status reports.
 func (h *Handler) handleRunningQuery(ctx context.Context, chatID, promptID, cardMsgID string) error {
 	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

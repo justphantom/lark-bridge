@@ -23,26 +23,8 @@
     "config_dir":      ""
   },
 
-  "deploy_monitor": {
-    "project_root":  "${PROJECT_ROOT}",
-    "deploy_target": "deploy"
-  },
-
   "status_monitor": {
     "interval": "60s"
-  },
-
-  "agnes": {
-    "api_key":      "${AGNES_API_KEY}",
-    "base_url":     "${AGNES_BASE_URL}",
-    "chat_model":   "${AGNES_CHAT_MODEL}",
-    "image_model":  "${AGNES_IMAGE_MODEL}",
-    "video_model":  "${AGNES_VIDEO_MODEL}",
-    "chat_models":  ["agnes-2.5-flash"],
-    "image_models": ["agnes-image-2.1-flash"],
-    "video_models": ["agnes-video-v2.0"],
-    "image_size":   "2K",
-    "image_ratio":  "16:9"
   },
 
   "log_level":            "info",

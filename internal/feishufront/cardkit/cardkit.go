@@ -56,7 +56,7 @@ func truncateRunes(s string, maxRunes int) string {
 // HeaderInfo describes a card header: backendType prefixes the title,
 // template sets the colour band.
 type HeaderInfo struct {
-	BackendType string // "miniagent" | "agnes"
+	BackendType string // e.g. "miniagent"
 	Title       string
 	Template    string // blue | green | orange | red | grey
 }
@@ -92,8 +92,8 @@ func Card(header HeaderInfo, footer FooterInfo, elements []Element, actions []Ac
 
 // CardWithColumns is like Card but limits each button row to maxCols columns.
 // maxCols <= 0 defaults to the package maxActionColumns (5). Use maxCols=1 or
-// 2 for picker cards whose button labels are long (e.g. "deploy-monitor-1
-// （deploy-monitor）" would be truncated at 5-per-row).
+// 2 for picker cards whose button labels are long (e.g. a long "backend-id
+// （backend）" label would be truncated at 5-per-row).
 func CardWithColumns(header HeaderInfo, footer FooterInfo, elements []Element, actions []Action, maxCols int) ([]byte, error) {
 	if elements == nil {
 		elements = []Element{}

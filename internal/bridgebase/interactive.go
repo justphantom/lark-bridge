@@ -42,11 +42,6 @@ const (
 // control to an in-flight turn (empty for a standalone picker card).
 type EmitFunc func(ctx context.Context, promptID string, ctrl *protocol.Control) error
 
-// ErrPickerInFlight is returned by AskAndWait when a picker is already
-// open in the same chat. The caller surfaces err.Error() as a notice, so the
-// message is user-facing.
-var ErrPickerInFlight = errors.New("本群已有一个选择进行中，请先完成或等待其失效")
-
 // StaticOptions adapts a fixed option list to AskAndWait's listFn form, for
 // backends whose picker values come from static config rather than a CLI
 // subcommand.
@@ -181,46 +176,6 @@ func newRequestID() (string, error) {
 		return "", err
 	}
 	return "q-" + hex.EncodeToString(b[:]), nil
-}
-
-// EmitNotice sends a Notice control on the picker's own lifecycle. Interactive
-// pickers return Handled=true and bypass the dispatcher, so they cannot reuse
-// the dispatcher's ctx (which expired during the wait). Deriving a fresh ctx
-// from appCtx lets a confirmation or error Notice land after a multi-minute
-// wait.
-func EmitNotice(appCtx context.Context, emit EmitFunc, chatID, level, title, body string, extra ...string) error {
-	return EmitCardUpdate(appCtx, emit, chatID, "", level, title, body, extra...)
-}
-
-// EmitCardUpdate sends a Notice control that patches an existing card
-// (identified by updateMessageID) instead of posting a new standalone notice.
-// An empty updateMessageID falls back to sending a new card, matching
-// EmitNotice behaviour.
-func EmitCardUpdate(appCtx context.Context, emit EmitFunc, chatID, updateMessageID, level, title, body string, extra ...string) error {
-	ctx, cancel := context.WithTimeout(appCtx, emitNoticeTimeout)
-	defer cancel()
-	np := &protocol.NoticePayload{
-		Level:           level,
-		Title:           title,
-		Message:         body,
-		UpdateMessageID: updateMessageID,
-	}
-	// extra carries optional Field/Before/After in that order, matching the
-	// ChangeResult shape the renderer expects for a before→after block.
-	if len(extra) > 0 {
-		np.Field = extra[0]
-	}
-	if len(extra) > 1 {
-		np.Before = extra[1]
-	}
-	if len(extra) > 2 {
-		np.After = extra[2]
-	}
-	return emit(ctx, "", &protocol.Control{
-		Type:   protocol.TypeNotice,
-		ChatID: chatID,
-		Notice: np,
-	})
 }
 
 // AskCardUpdate refreshes an existing picker card in place for the next round

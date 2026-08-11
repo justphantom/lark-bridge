@@ -5,15 +5,12 @@
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-   ┌──────────────┬──────────────────┐
- miniagent-back        deploy-monitor
- (LLM API 直调)        (make deploy)
-                     ↑ 独立部署
+                               miniagent-back
+                               (LLM API 直调)
 ```
 
 前端 feishu-front + 一个 agent 后端（miniagent）由 `make deploy`
-管理（默认 2 个 systemd 服务）。deploy-monitor 是部署触发者，**独立管理**
-（`make deploy-monitor`），避免「部署脚本管自己的触发者」循环依赖。
+管理（默认 2 个 systemd 服务）。
 
 ## 前置条件
 
@@ -82,9 +79,9 @@ prompt 模板。**可选**：留空时 post 消息降级为纯 Markdown 文本�
 
 ```bash
 make build
-# 产物（5 个二进制）：
-#   bin/lark-feishu-front, bin/lark-miniagent-back, bin/lark-agnes-back,
-#   bin/lark-deploy-monitor, bin/lark-status-monitor.
+# 产物（3 个二进制）：
+#   bin/lark-feishu-front, bin/lark-miniagent-back,
+#   bin/lark-status-monitor.
 # miniagent 是 miniagent-back fork 的子进程（独立项目 github.com/justphantom/miniagent，
 # 经其自身 Makefile 部署到 /usr/local/bin/miniagent，不在本仓库 make build 范围内）：
 # 每个 prompt fork 一次，跑完退出。
@@ -118,6 +115,21 @@ systemd 服务默认以**部署调用者**（执行 deploy 的账号）运行。
 - 部署调用者必须具有**免密 sudo**（步骤 0 `deploy_sudo_check` 校验：远程 `/deploy`
   与 `make deploy-bg` 无 tty，首个 sudo 无 NOPASSWD 会静默挂起）。
 - 生效值在部署时回写回 repo 根 `.env`（与 `IPC_ADDR`/`STATE_DIR` 同源策略）。
+
+### WORKSPACE_ROOT 属主前提
+
+`WORKSPACE_ROOT`（`.env`，默认 `PROJECT_ROOT` 的父目录，即 `/opt/code`）是
+miniagent 后端 fork 子进程时的工作区根，`RUN_USER` 必须对它以及任何用作 per-chat
+workdir 的子树拥有 **rwx** 权限——否则子进程无法 `getcwd`/写文件，表现为
+"permission denied" 类崩溃。
+
+部署脚本**不会** `chown` `/opt/code`（或任何 `WORKSPACE_ROOT`）：`install_files`
+只 `chown` `DEPLOY_DIR` / `CONFIG_DIR` / `STATE_DIR` 三个 deploy 自管目录。因此
+`WORKSPACE_ROOT` 的属主/权限由操作员提前备好：
+
+- `RUN_USER` = 部署调用者（默认）：通常已满足（开发者自己的目录树）。
+- `RUN_USER` = 专用服务账号：必须手动授权，例如
+  `sudo setfacl -R -m u:<run_user>:rwx /opt/code`。
 
 ## 3. 创建 state 目录
 
@@ -176,6 +188,7 @@ set -a; source .env; set +a
 | `miniagent.stream_history` | `50` |
 | `miniagent.mode` | `default` |
 | `miniagent.thinking` | `off` |
+| `miniagent.config_dir` | `~/.miniagent`（`.env` 的 `MINIAGENT_CONFIG_DIR` 覆盖；部署时注入字面量到配置，不走 `${}` 展开） |
 | `timeouts.backend_health` | `90s` |
 | `timeouts.prompt_timeout` | `0`（禁用） |
 | `component_log_levels` | `{}` |
@@ -247,40 +260,11 @@ setsid ./deploy/deploy.sh [--force|--services claude,miniagent] \
 `setsid` 起新会话、脱离控制终端，同时挡住断线 SIGHUP 和旧终端的 Ctrl-C（比 `nohup`
 更强，后者只忽略 SIGHUP）。查看进度 `tail -f deploy-*.log`，停止 `pkill -f deploy.sh`。
 
-> 仅手动路径需要。飞书 `/deploy` 走 deploy-monitor，已在 GoSafe goroutine +
-> `context.Background()` + `Setpgid` 中守护化，**不要** 改路由到 `deploy-bg`——
-> 那会让进度卡捕获空输出并提前释放 single-flight 槽。
-
-## 6.5. deploy-monitor 部署（独立）
-
-deploy-monitor 是「部署触发者」（收到飞书群 `/deploy` → `make deploy`），
-**不由 deploy.sh 管理**，避免循环依赖。它有自己的部署脚本：
-
-```bash
-# 首次安装（生成 config + unit + enable + start）
-make deploy-monitor ARGS=--init
-
-# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
-make deploy-monitor
-```
-
-运行模式 `LARK_RUN_MODE` 控制是否部署 deploy-monitor：
-
-| 模式 | 行为 |
-|------|------|
-| `dev`（默认） | 正常安装/升级 deploy-monitor |
-| `pro` | `make deploy-monitor` 为 no-op，不部署 deploy-monitor；若从 dev 切换而来，会停用已有的 unit |
-
-配置源优先级：环境变量 `LARK_RUN_MODE` > repo 根 `.env` > 默认 `dev`。
-
-升级时 monitor 短暂离线（systemd restart 期间无法响应 `/deploy`）。monitor 代码
-极少变更，这个代价可接受。
-
 ## 6.6. status-monitor 部署（独立）
 
 status-monitor 是「观察者」（每 `status_monitor.interval` 秒向绑定的群推送一张
 在线后端 + 运行中会话总览卡），无副作用、不需提权，**同样不由 deploy.sh 管理**，
-与 deploy-monitor 同模式独立部署：
+独立部署（不纳入 deploy.sh）：
 
 ```bash
 # 首次安装（生成 config + unit + enable + start）
@@ -294,44 +278,7 @@ make deploy-status
 卡片 PATCH 失败（被用户删除/撤回，飞书返回 `code:230011`）时自动重发，不叠加。
 升级时短暂离线（systemd restart），期间停推一帧，下个 tick 自动恢复。
 
-## 6.7. agnes-back 部署（独立）
-
-agnes-back 是 Agnes AI 图片/视频生成后端，把 Agnes 的 `agnes-2.5-flash`（文本）/
-`agnes-image-2.1-flash`（图片）/`agnes-video-v2.0`（视频）三个模型封装成 4 条飞书
-斜杠指令。HTTP 直调、无副作用、不需提权，**不由 deploy.sh 管理**，与 deploy-monitor
-/ status-monitor 同模式独立部署：
-
-```bash
-# 首次安装（生成 config + unit + enable + start）
-make deploy-agnes ARGS=--init
-
-# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
-make deploy-agnes
-```
-
-部署后在飞书群里 `/backend` 选择 `agnes` 后端绑定，即可使用以下指令：
-
-| 指令 | 作用 | 输出 |
-|------|------|------|
-| `/image-prompt <描述>` | 用文本模型把粗描述扩写成完整图片提示词 | 文本提示词 |
-| `/image <提示词>` | 调图片模型生成图片（默认 2K / 16:9） | 图片内联到群 |
-| `/video-prompt <描述>` | 用文本模型扩写成完整视频提示词 | 文本提示词 |
-| `/video <提示词>` | 调视频模型异步生成视频（默认 1152×768 @ 5s） | 视频 URL |
-
-所需环境变量（`.env`）：
-
-| 变量 | 说明 |
-|------|------|
-| `AGNES_API_KEY` | Agnes API 的 Bearer key（**必填**） |
-| `AGNES_BASE_URL` | API origin，默认 `https://api.agnes-ai.cn` |
-| `AGNES_CHAT_MODEL` | 文本模型，默认 `agnes-2.5-flash` |
-| `AGNES_IMAGE_MODEL` | 图片模型，默认 `agnes-image-2.1-flash` |
-| `AGNES_VIDEO_MODEL` | 视频模型，默认 `agnes-video-v2.0` |
-
-除 `AGNES_API_KEY` 外其余均可省略（走默认）。升级时短暂离线（systemd restart），
-期间 `/image` `/video` 指令不可达。
-
-## 6.8. 总览卡主机/进程监控（多机部署）
+## 6.7. 总览卡主机/进程监控（多机部署）
 
 总览卡新增两个 section：**主机**（load / 内存 / state_dir 所在磁盘）与**进程**
 （每个 backend 的版本号 + systemd cgroup 内存）。数据流：
@@ -396,7 +343,7 @@ deploy.sh 支持三种正交维度，组合使用：
 # 构建机（有 Go + repo）
 make pack                          # 本机平台
 make pack GOOS=linux GOARCH=arm64  # 交叉编译
-# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 5 个二进制 + VERSION
+# 产物：bin/lark-bridge-<ver>-<os>-<arch>.tar.gz，含 4 个二进制 + VERSION
 #       + config.example.json + env.example（供 --init 首次部署）
 
 # 分发到目标机

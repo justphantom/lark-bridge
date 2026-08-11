@@ -47,29 +47,6 @@ func TestBackendRegistry_RunningTurnsLifecycle(t *testing.T) {
 	}
 }
 
-// TestBackendRegistry_RunningTurnsExcludesDeployMonitor mirrors the
-// deploy-monitor exclusion: turns owned by a deploy-monitor backend do not
-// count as in-flight for /v1/status purposes.
-func TestBackendRegistry_RunningTurnsExcludesDeployMonitor(t *testing.T) {
-	r := NewBackendRegistry()
-
-	r.Register("mini", "miniagent")
-	r.Register("deploy", "deploy-monitor")
-
-	_ = r.StartTurn("mini", protocol.TurnInfo{PromptID: "p1", ChatID: "c1"})
-	_ = r.StartTurn("deploy", protocol.TurnInfo{PromptID: "p2", ChatID: "c2"})
-
-	var normal int
-	for _, turn := range r.RunningTurns() {
-		if r.BackendType(turn.BackendID) != "deploy-monitor" {
-			normal++
-		}
-	}
-	if normal != 1 {
-		t.Fatalf("non-deploy-monitor turns = %d, want 1", normal)
-	}
-}
-
 // TestBackendRegistry_StartTurnUnknownBackend rejects updates for unregistered
 // backends so a stale control cannot invent turns.
 func TestBackendRegistry_StartTurnUnknownBackend(t *testing.T) {

@@ -17,7 +17,7 @@ confidence: high
 前端表单解析（`feishufront/form.go` `parseQuestionFormValue`）按问题索引
 `q_0/q_1/...` 排序后拼接：`Choices[i]` 对应第 i 个问题的选择值。后端按索引
 逐项消费即可，无需 requestID 以外的关联信息。参考：
-`internal/agnesback/picker.go` runModelPicker 的三槽位应用循环。
+`internal/agnesback/picker.go`（agnes-back，已移除）runModelPicker 的三槽位应用循环——历史实例，抽象仍由 `protocol.TypeQuestion` 共享。
 
 ## Custom 是全局单串，多问题时不可用
 
@@ -38,4 +38,4 @@ confidence: high
 ## 参考
 - 解析逻辑：`internal/feishufront/form.go`
 - 渲染分支：`internal/feishufront/renderer/interactive.go`
-- 多问题实例：`internal/agnesback/picker.go`（/model 三槽位单卡）
+- 多问题实例（历史）：`internal/agnesback/picker.go`（agnes-back /model 三槽位单卡，已移除）

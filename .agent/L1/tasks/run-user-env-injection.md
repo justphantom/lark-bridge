@@ -31,5 +31,7 @@ updated: 2026-08-11T16:55:00+08:00
 - 实测：无 RUN_USER → 回退 invoker(dev)；`RUN_USER=svc` env 覆盖生效。
 
 ## 待续
-- 未提交（待用户决定 commit；L0#9：编辑全完成 + lint/smoke 通过后方可提交）。
-- 既有遗留：V1/V2（deploy-monitor 超时可配 + unit TimeoutStopSec）与合并脚本 M2 仍开放。
+- **全部实施 + 验证通过，未提交**（待用户 commit；L0#9 已满足：编辑全完成 + build/vet/test -race/lint/smoke 全过）。
+- 用户已拍板并落地：RUN_USER 保持 dev；**彻底移除 deploy-monitor**（cmd/internal/deploy 脚本全删 + config/Makefile/docs 清零，飞书 /deploy 下线）；**三项零风险权限修复**（CLI chmod 0755 / 条件 HOME=$STATE_DIR / README WORKSPACE 属主小节）。
+- ⚠️ 工作树含先于本会话的未提交改动（log/base_logger、usage、router/lark/cmdutil 等），提交时注意 staging 区分。
+- 开放项：合并脚本 M2（3 卫星脚本抽 deploy-svc.sh）。V1/V2 随 deploy-monitor 移除消失。

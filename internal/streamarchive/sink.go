@@ -53,8 +53,8 @@ const maxArchiveFileBytes = 100 << 20 // 100 MiB
 //
 // Returns (nil, nil) when archiving is disabled (history<=0 or stateDir==""),
 // or when setup fails — archiving is best-effort. The returned closer closes
-// the file; callers defer it. backend is the subdirectory name (e.g. "miniagent",
-// "agnes"); it is sanitized so an unexpected value cannot escape the
+// the file; callers defer it. backend is the subdirectory name (e.g. "miniagent");
+// it is sanitized so an unexpected value cannot escape the
 // streams root.
 func NewSink(logger *log.Logger, stateDir, backend, chatID, replyToID string, history int, redact bool) (io.Writer, func() error) {
 	if history <= 0 || stateDir == "" {

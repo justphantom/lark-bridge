@@ -30,33 +30,6 @@ func TestSetModelSpec_WritesAndPersists(t *testing.T) {
 	}
 }
 
-// TestSetAgent verifies the agent field round-trips.
-func TestSetAgent(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetAgent("c1", "build")
-	b, _ := r.Lookup("c1")
-	if b.Agent != "build" {
-		t.Errorf("Agent = %q, want build", b.Agent)
-	}
-}
-
-// TestSetSessionID verifies session id write + that a second write to the same
-// value is a no-op (mutate returns false, no log spam).
-func TestSetSessionID(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetSessionID("c1", "sess-1")
-	b, _ := r.Lookup("c1")
-	if b.SessionID != "sess-1" {
-		t.Errorf("SessionID = %q, want sess-1", b.SessionID)
-	}
-	// Overwrite with a different value.
-	r.SetSessionID("c1", "sess-2")
-	b, _ = r.Lookup("c1")
-	if b.SessionID != "sess-2" {
-		t.Errorf("SessionID = %q, want sess-2", b.SessionID)
-	}
-}
-
 // TestSetDirectory verifies the directory field.
 func TestSetDirectory(t *testing.T) {
 	r := newTestRouter(t, "c1")
@@ -162,8 +135,6 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	r := newTestRouter(t, "c1")
 	// Seed every field.
 	r.SetModelSpec("c1", "sonnet")
-	r.SetAgent("c1", "build")
-	r.SetSessionID("c1", "sess-1")
 	r.SetDirectory("c1", "/work")
 	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
@@ -175,8 +146,8 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	if b.ModelSpec != "opus" {
 		t.Errorf("ModelSpec = %q, want opus", b.ModelSpec)
 	}
-	if b.Agent != "build" || b.SessionID != "sess-1" || b.Directory != "/work" ||
-		b.Mode != "auto" || b.Thinking != "high" || b.MaxIterations != 30 {
+	if b.Directory != "/work" || b.Mode != "auto" ||
+		b.Thinking != "high" || b.MaxIterations != 30 {
 		t.Errorf("SetModelSpec corrupted other fields: %+v", b)
 	}
 }
@@ -190,42 +161,11 @@ func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
 	}
 	// None of these should panic.
 	r.SetModelSpec("ghost", "x")
-	r.SetAgent("ghost", "x")
-	r.SetSessionID("ghost", "x")
 	r.SetDirectory("ghost", "x")
 	r.SetMode("ghost", "x")
 	r.SetThinking("ghost", "x")
 	r.SetMaxIterations("ghost", 5)
 	if _, ok := r.Lookup("ghost"); ok {
 		t.Fatal("Set* on missing binding must not create one")
-	}
-}
-
-// TestAllBindings_IsSnapshot verifies the returned map is a copy: mutating it
-// does not affect the router's internal state.
-func TestAllBindings_IsSnapshot(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetModelSpec("c1", "sonnet")
-	snap := r.AllBindings()
-	snap["c1"] = Binding{ModelSpec: "tampered"}
-	// Internal state must be unaffected.
-	b, _ := r.Lookup("c1")
-	if b.ModelSpec != "sonnet" {
-		t.Errorf("AllBindings snapshot leaked mutation: ModelSpec = %q, want sonnet", b.ModelSpec)
-	}
-}
-
-// TestTitleOf verifies TitleOf returns the title or empty string.
-func TestTitleOf(t *testing.T) {
-	r, err := New("", log.Nop())
-	if err != nil {
-		t.Fatalf("router new: %v", err)
-	}
-	if title := r.TitleOf("absent"); title != "" {
-		t.Errorf("TitleOf(absent) = %q, want empty", title)
-	}
-	r.bindings["c1"] = Binding{Title: "my chat"}
-	if title := r.TitleOf("c1"); title != "my chat" {
-		t.Errorf("TitleOf = %q, want 'my chat'", title)
 	}
 }

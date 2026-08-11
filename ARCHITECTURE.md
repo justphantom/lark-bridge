@@ -26,7 +26,6 @@
 | agent CLI 子进程驱动 | `internal/miniclient/`（fork miniagent 二进制 + NDJSON 事件流） |
 | 流式进度卡 / 权限卡 / 问答卡 / 结果卡 | `internal/feishufront/renderer/` + `cardkit/` |
 | 斜杠命令体系 | 各后端 `commands*.go`（如 `internal/miniagent/commands*.go`）+ `internal/cmdutil/` |
-| 单飞部署触发 | `internal/deploymonitor/` |
 | systemd 部署 + 二进制 tarball | `deploy/deploy.sh`、`Makefile` |
 
 ### 1.3 规模
@@ -48,7 +47,7 @@
 | 配置 | JSON + `${VAR}` 环境变量展开 | `internal/config/config.go:435` |
 | HTTP/IPC | 标准库 `net/http`（SSE 长连接 + POST） | `internal/feishufront/ipcserver_sse.go:16` |
 | 构建工具 | GNU Make（git 版本号注入 `-X main.version`） | `Makefile:35`、build targets `Makefile:49-67` |
-| 部署 | systemd unit + shell 脚本 | `deploy/deploy.sh`、`deploy/deploy-monitor.sh` |
+| 部署 | systemd unit + shell 脚本 | `deploy/deploy.sh` |
 | 静态检查 | golangci-lint（`.golangci.yml`） | 根目录 |
 | 测试 | `go test -race ./...`，表驱动 + fake 注入 | `Makefile:109` |
 | CI 工具脚本 | `scripts/openapi_to_md.py`（拉取飞书 OpenAPI 生成参考文档） | `scripts/` |
@@ -61,11 +60,9 @@
 
 ```
 lark-bridge/
-├── cmd/                      # 5 个二进制入口
+├── cmd/                      # 3 个二进制入口
 │   ├── feishu-front/         # 前端：飞书 WS Bot + IPC server + 调度器
 │   ├── miniagent-back/       # miniagent (LLM 直调) 后端
-│   ├── agnes-back/           # Agnes AI 媒体生成后端（图片/视频，REST 直调）
-│   ├── deploy-monitor/       # /deploy /pull /push 触发器（独立部署）
 │   └── status-monitor/       # 周期性总览卡推送（独立部署，push-only）
 ├── internal/                 # 内部包（详见第 5 节）
 │   ├── protocol/             # Event/Control 协议（纯结构 + Validate）
@@ -83,9 +80,7 @@ lark-bridge/
 │   ├── bridgebase/           # ★ 后端通用脊梁（包级 helper：cancel/answers/commands/git/emit）
 │   ├── miniagent/            # miniagent-back 业务逻辑（handler + 命令）
 │   ├── miniclient/           # miniagent CLI 子进程封装（fork + NDJSON）
-│   ├── agnesback/            # agnes-back 业务逻辑（Agnes REST 图片/视频）
 │   ├── eventmetrics/         # 每 turn 计量（duration/tokens/incomplete）
-│   ├── deploymonitor/        # /deploy 单飞执行器
 │   ├── statusmonitor/        # 周期性总览卡数据组装（push-only）
 │   ├── hostmetrics/          # 主机 CPU/内存/磁盘采样
 │   ├── fileconvert/          # docx/xlsx/pptx → Markdown 提取
@@ -110,27 +105,25 @@ lark-bridge/
 
 | 目录 | 职责 | 备注 |
 |---|---|---|
-| `cmd/` | 5 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
+| `cmd/` | 3 个二进制的 `main.go`（每个含 `main_test.go` 覆盖错误路径） | 入口极薄，组装 internal |
 | `internal/` | 全部业务代码 | 不对外暴露 |
-| `deploy/` | `deploy.sh`（业务 2 服务：feishu/miniagent）、`deploy-monitor.sh`/`deploy-status.sh`/`deploy-agnes.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
+| `deploy/` | `deploy.sh`（业务 2 服务：feishu/miniagent）、`deploy-status.sh`（独立）、`*.json` 配置模板、`env.example`、`README.md` | 部署真源 |
 | `scripts/` | 单个 Python 脚本（拉取飞书 OpenAPI） | 工具，非运行时 |
-| `bin/` | `make build` 产物（5 个二进制） | gitignore |
+| `bin/` | `make build` 产物（3 个二进制） | gitignore |
 
 ---
 
 ## 4. `cmd/` 入口点
 
-5 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+3 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
 | **feishu-front** | `cmd/feishu-front/main.go:64` | `lark-feishu-front` | 持有飞书 WS Bot，提供 IPC server，分发消息与卡片回调 | `feishu.NewBotWithLogger` (:110) + `feishufront.NewLayer1Router` (:124) + `NewBackendRegistry` (:130) + `NewIPCServer` (:131) + `NewTurnManager` (:138) + `NewDispatcher` (:139) |
 | **miniagent-back** | `cmd/miniagent-back/main.go:39` | `lark-miniagent-back` | 每 prompt fork 一次 `miniagent` 二进制（独立项目） | `backendrpc.ValidateBackendConfig` (:70) + `router.MigrateLegacyBindings` (:116) + `router.New` (:117) + `miniclient.New` (:141) + `client.IsReady` 健康门 (:157) + `backendrpc.Connect` (:177) + `miniagent.New` (:189) + `backendrpc.StartMetricsLoop` (:201) + `backendrpc.RunWithClient` (:226) |
-| **agnes-back** | `cmd/agnes-back/main.go` | `lark-agnes-back` | Agnes AI 图片/视频生成（REST 直调，无子进程） | `agnesback.New` + `backendrpc.Run`（独立部署） |
-| **deploy-monitor** | `cmd/deploy-monitor/main.go` | `lark-deploy-monitor` | 收 `/deploy` `/pull` `/push` 执行 `make`/git，单飞 | `deploymonitor.New` + `backendrpc.Run` + 优雅 drain（10min+30s，`main.go:141`） |
 | **status-monitor** | `cmd/status-monitor/main.go` | `lark-status-monitor` | 按 `status_monitor.interval` 轮询 `GET /v1/status`，向绑定群推送常驻总览卡（PATCH/重发）；push-only | `statusmonitor.New` + `backendrpc.Run`（独立部署） |
 
-> **注意**：`cmd/` 下共 5 个二进制。其中 `deploy-monitor`、`status-monitor` 与 `agnes-back` 因分别触发部署 / 需独立刷新 / 为独立媒体生成后端，分别由 `deploy-monitor.sh` / `deploy-status.sh` / `deploy-agnes.sh` 管理，不纳入 `deploy.sh` 的 2 个业务服务（feishu / miniagent）。
+> **注意**：`cmd/` 下共 3 个二进制。其中 `status-monitor` 需独立刷新，由 `deploy-status.sh` 管理，不纳入 `deploy.sh` 的 2 个业务服务（feishu / miniagent）。
 
 `version` 变量由 Makefile 的 `-ldflags "-X main.version=$(VERSION)"` 注入（`Makefile:35`，miniagent-back 的 `version` 声明在 `cmd/miniagent-back/main.go:37`），`git describe --tags --always --dirty`。
 
@@ -233,11 +226,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 | `event.go` | **`Event`**（:40）+ 事件 kind 常量（:9-28：`tool_use`/`tool_result`/`text_delta`/`reasoning_delta`/`result`/`error`/`session`）+ `parseEvent`（:119，NDJSON 行解码，未知 type 不中断 pump） |
 | `models.go` | `ModelRef`（:36）+ `ListModels`（:60）：跑 `miniagent -list-models`，按行解析 `{"type":"model","provider","model"}`，返回 provider/model 配对 |
 
-### 5.6 `agnesback/`——Agnes 媒体后端业务
-
-agnes-back 的业务逻辑。与 CLI 后端不同：**不 fork 子进程**，直接通过 `net/http` 调 Agnes AI 的图片/视频 REST API（项目零外部依赖）。注册为 backendType `"agnes"`，暴露四个斜杠命令：`/image-prompt`（用 chat 模型扩写提示词）、`/image`（生成图片，以 `TypeFile` 内联投递）、`/video-prompt`、`/video`（异步任务 + 轮询，成品以 Notice 投递）。配置走 `agnes{}` 段，独立部署。
-
-### 5.7 `feishu/`——飞书业务封装层
+### 5.6 `feishu/`——飞书业务封装层
 
 `lark/`（协议层）与 `feishufront`（前端业务）之间的适配层。
 - `bot.go`：**`Bot`**（:97）封装 `*lark.Client`，对外签名稳定（`NewBotWithLogger`/`Start`/`Stop`/`SendCard`/`UpdateCard`/`OnIncoming`/`OnCardAction`）。`ShouldExitUnhealthy`（:301）看门狗判定。`feishuClient` interface（:18）便于测试注入 fake。
@@ -245,7 +234,7 @@ agnes-back 的业务逻辑。与 CLI 后端不同：**不 fork 子进程**，直
 - `bot_send.go`：`SendCard`/`SendText`/`UpdateCard`，`isCardContentRejected` 错误识别。
 - `mention.go`：`Mention` 类型 + `StripMentionPlaceholders`。
 
-### 5.8 `backendrpc/`——后端 IPC 客户端
+### 5.7 `backendrpc/`——后端 IPC 客户端
 
 | 文件 | 职责 |
 |---|---|
@@ -253,22 +242,15 @@ agnes-back 的业务逻辑。与 CLI 后端不同：**不 fork 子进程**，直
 | `reconnect.go` | **`Run`**（:58）/ `RunWithClient`（:84）：带指数退避 + 抖动的重连循环，`ErrGiveUpReconnect`（:47）连续失败放弃 |
 | `config_validate.go` | `ValidateBackendConfig`：IPC 三件套校验 |
 
-### 5.9 `config/`
+### 5.8 `config/`
 
 | 文件 | 职责 |
 |---|---|
-| `config.go` | **`Config`** 顶层结构（:32）+ 各后端子结构（DeployMonitor/StatusMonitor/MiniAgent/AgnesBack，无 Claude 字段）+ `Load`（:468）/ `LoadWithWarnings`（:477）+ `expandEnvVars`（:435，5 步 pipeline 见 :10 注释） |
+| `config.go` | **`Config`** 顶层结构（:32）+ 各后端子结构（StatusMonitor/MiniAgent，无 Claude/Agnes 字段）+ `Load`（:468）/ `LoadWithWarnings`（:477）+ `expandEnvVars`（:435，5 步 pipeline 见 :10 注释） |
 | `config_defaults.go` | `applyDefaults`（:14）：所有零值字段的默认值 |
 | `config_validate.go` | `validate`（:37）：跨字段一致性校验 |
 
-### 5.10 `deploymonitor/`
-
-`/deploy` `/deploy-force` `/pull` `/push` 处理。
-- `handler.go`：**`Handler`**（:69）单飞（`running bool`），`Commander` interface（:54）便于测试。
-- `confirm.go`：`/deploy-force` 二次确认门（复用 `bridgebase.AnswerBroker`）。
-- `render.go`：结果格式化（独立成文件以守住行数上限）。
-
-### 5.11 `protocol/`——双向协议
+### 5.9 `protocol/`——双向协议
 
 **纯结构 + Validate，无业务逻辑**。
 - `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ payload（Prompt/Answer/Abort/Ping/TurnStarted/TurnFinished）。`PromptPayload.HasFrontendOverride`（:79）是安全护栏。
@@ -276,13 +258,13 @@ agnes-back 的业务逻辑。与 CLI 后端不同：**不 fork 子进程**，直
 - `protocol_validate.go`：enum 校验（todo.status/priority、notice.level 等）。
 - `status.go`：`StatusSnapshot`（/v1/status 响应）。
 
-### 5.12 `router/`——chatID 绑定持久化
+### 5.10 `router/`——chatID 绑定持久化
 
 - `router.go`：**`Router`**（:47）+ **`Binding`**（:26，SessionID/Directory/ModelSpec/Provider/Mode/Thinking/MaxIterations/ConfigFile 的并集）。
 - `persistence.go`：单 worker save 合并器（`saveLoop` :164，`saveAsync` :149，`save` :98；load/save 走 atomicwrite）。
 - `accessors.go`/`binding.go`：Get/Set/Lookup。`Router.Close`（`router.go:120`）关 saveLoop 后同步 save 一次防丢失。
 
-### 5.13 其余工具包
+### 5.11 其余工具包
 
 | 包 | 职责 |
 |---|---|
@@ -439,11 +421,10 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ### 6.6 关键并发与生命周期
 
-- **TurnManager**（`feishufront/turn.go`）：每 promptID 一个 Turn 状态，`/v1/status` 数据源，`InFlight` 排除 deploy-monitor 自身的 /deploy（`main.go:194`）防自阻塞。
+- **TurnManager**（`feishufront/turn.go`）：每 promptID 一个 Turn 状态，`/v1/status` 数据源。
 - **cancelBy**（`miniagent/handler.go:63`）：chatID → `*bridgebase.PromptCancel` 映射，miniagent 自管；busy-then-drop 由 `startTurn`（handler_lifecycle.go:44）把关。
 - **Close 顺序**（`miniagent/handler_lifecycle.go:126`）：`appCancel` → 置 `closed` → 遍历 cancelBy 取消所有 in-flight turn → `Answers.Drain` → `wg.Wait`（5s grace），幂等 via `sync.Once`。
 - **router.Close**（`router/router.go:120`）：关 saveLoop → 同步 save 一次（防丢失）。
-- **deploy-monitor drain**（`cmd/deploy-monitor/main.go:141`）：SIGTERM 后等 make 跑完（10min+30s），避免半构建。
 
 ---
 
@@ -467,11 +448,9 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `router_path` | 共用 | router 持久化文件路径 |
 | `miniagent{}` | miniagent-back | api_key/model/provider/max_iterations/stream_history/workspace_root/stream/mode/thinking/key_file/config_path/config_dir |
-| `agnes{}` | agnes-back | api_key/base_url/chat_model/image_model/video_model/chat_models/image_models/video_models/image_size/image_ratio |
-| `deploy_monitor{}` | deploy-monitor | project_root/deploy_target |
 | `status_monitor{}` | status-monitor | interval |
 | `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |
-| `component_log_levels{}` | 共用 | 分组件级别（router/feishu/dedup/deploy_monitor/miniagent/status_monitor 等） |
+| `component_log_levels{}` | 共用 | 分组件级别（router/feishu/dedup/miniagent/status_monitor 等） |
 | `state_dir` | 共用 | 持久化根目录 |
 | `timeouts{}` | 共用 | backend_health/idle_timeout/usage_session_ttl |
 | `dedup{}` | feishu-front | stale_window/event_ttl/event_max_entries |
@@ -489,39 +468,33 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ### 8.1 运行形态：**1 个长驻前端 + N 个长驻后端 + 独立部署/状态监控**
 
-不是 CLI 工具，而是 **2 个业务长驻 systemd 服务**（feishu / miniagent，由 `deploy.sh` 管理）+ 独立的 deploy-monitor / status-monitor / agnes-back（各自独立脚本管理）。
+不是 CLI 工具，而是 **2 个业务长驻 systemd 服务**（feishu / miniagent，由 `deploy.sh` 管理）+ 独立的 status-monitor（独立脚本管理）。
 
 ```
 飞书用户 ←→ 飞书开放平台 ←→ feishu-front (WS Bot + IPC SSE)
                                     ↕ SSE/POST (Bearer 鉴权)
-   ┌──────────────┬─────────────────┬──────────────────┐
-miniagent-back  agnes-back      deploy-monitor       status-monitor
-(fork miniagent)(Agnes REST)   (make deploy)        (周期总览卡 push)
-                 ↑独立部署        ↑独立部署            ↑独立部署
+   ┌──────────────┬──────────────────┐
+miniagent-back  status-monitor
+(fork miniagent)(周期总览卡 push)
+                 ↑独立部署
 ```
 
 ### 8.2 部署矩阵
 
 | 命令 | 作用 | 范围 |
 |---|---|---|
-| `make build` | 编译 5 二进制到 `bin/`，注入 git 版本号 | 本机 |
+| `make build` | 编译 3 二进制到 `bin/`，注入 git 版本号 | 本机 |
 | `make pack [GOOS= GOARCH=]` | 交叉编译 + 打 tarball（`bin/lark-bridge-<ver>-<os>-<arch>.tar.gz`） | 分发 |
 | `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **2 个业务服务**（feishu / miniagent） | systemd |
 | `make deploy ARGS=--init` | 首次：从示例生成 config.json + .env | systemd |
 | `make deploy ARGS=--services miniagent` | 只部署子集（合法值：`feishu miniagent`） | systemd |
 | `make deploy ARGS=--binaries <tar>` | 从 tarball 部署（目标机免 Go） | systemd |
-| `make deploy-monitor [ARGS=--init]` | 单独升级 deploy-monitor（~2s 离线） | systemd |
-| `make deploy-agnes` | 单独升级 agnes-back | systemd |
 
-### 8.3 循环依赖规避
-
-deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deploy-monitor 自己**，会形成"部署脚本管自己的触发者"。解法：deploy-monitor 由独立的 `deploy-monitor.sh` 管理，deploy.sh 仅管 2 个业务服务（feishu / miniagent，`deploy.sh` 的 `SELECTED=(feishu miniagent)`）。
-
-### 8.4 分布式部署
+### 8.3 分布式部署
 
 `ipc_addr` 监听非 loopback + `frontend_url` 指前端机即可前后端分机（`--services feishu` / `--services miniagent` 各占一机）。IPC 为明文 HTTP，跨机限可信内网；跨不可信网络走 TLS（`ipc_tls_*`）或 SSH 隧道/wireguard。
 
-### 8.5 健康检查
+### 8.4 健康检查
 
 - 前端：`curl localhost:6060/v1/events` 应返回 401（鉴权拦截）。
 - 后端：启动时 `client.IsReady` fail-fast——跑 `miniagent --version` 并校验最低版本（`cmd/miniagent-back/main.go:157`，`miniclient/client.go:250`）；缺失或过旧直接退出，不注册前端。
@@ -541,7 +514,7 @@ deploy-monitor 收 `/deploy` 触发 `make deploy`，**若 deploy.sh 能管 deplo
    ↑↓
 路由层 (router / feishufront.routing)                chatID ↔ backend 绑定
    ↑↓
-业务层 (feishufront.dispatcher / miniagent / agnesback)  卡片渲染 + agent 驱动
+业务层 (feishufront.dispatcher / miniagent)  卡片渲染 + agent 驱动
    ↑↓
 适配层 (miniclient)                         miniagent CLI 子进程封装
 ```
@@ -570,7 +543,7 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 - **并发安全**：router/usage 双锁、backendrpc 原子重连、子进程组 SIGKILL（`cmdutil/spawn_group.go` 的 `ApplyGroupCancel`）。
 - **资源边界**：`wasOffline` 上限 64 触发全量重置（`maxWasOffline` ipcserver.go:425）、authFailures 上限 256、miniclient 信号量 `defaultMaxConcurrent=4`（client.go:35）、stdout 单行 8MiB 上限（`maxLineLen` client.go:24）、卡片元素 50 上限、SSE 帧 1MiB 上限。
 - **去重三件套**：eventIDs（5min TTL+1000 LRU）/actionIDs（5min TTL）/terminals（10min TTL），防重放与终态重复。
-- **优雅停机**：所有 Close 幂等（`sync.Once`），deploy-monitor 等 make 跑完。
+- **优雅停机**：所有 Close 幂等（`sync.Once`）。
 - **recover 防 panic 蔓延**：control pump goroutine（`GoSafe`）与各 turn goroutine。
 - **原子写**：`atomicwrite`（tmp+fsync+rename+dirfsync），崩溃不留截断文件。
 
@@ -588,7 +561,7 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 
 - **module**：`github.com/justphantom/lark-bridge`（go.mod:1）
 - **Go 版本**：1.25.0（go.mod:3）
-- **二进制数**：5（cmd/ 下 5 子目录）
+- **二进制数**：4（cmd/ 下 4 子目录）
 - **internal 包数**：22（顶层）/ 27（含嵌套）
 - **Go 文件**：249 个，约 56,275 行（生产代码约 29,593 行，测试代码约 26,682 行，约 47.4%）
 - **外部依赖**：0（无 go.sum）

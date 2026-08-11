@@ -30,9 +30,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.IPCAddr == "" {
 		cfg.IPCAddr = "localhost:6060"
 	}
-	if cfg.DeployMonitor.DeployTarget == "" {
-		cfg.DeployMonitor.DeployTarget = "deploy"
-	}
 	if cfg.StatusMonitor.Interval == 0 {
 		cfg.StatusMonitor.Interval = Duration(60 * time.Second)
 	}
@@ -101,39 +98,6 @@ func applyDefaults(cfg *Config, cfgPath string) {
 		if cfg.FileConvert.XlsxFormulaMode == "" {
 			cfg.FileConvert.XlsxFormulaMode = "value"
 		}
-	}
-	// AgnesBack defaults: only fill BaseURL/model names/ratio when unset. APIKey
-	// is required and left empty so an absent key surfaces as a startup error
-	// (binary-specific required, enforced in cmd/agnes-back/main.go) instead of
-	// silently sending anonymous requests that fail with a 401 on the first turn.
-	if cfg.AgnesBack.BaseURL == "" {
-		cfg.AgnesBack.BaseURL = "https://api.agnes-ai.cn"
-	}
-	if cfg.AgnesBack.ChatModel == "" {
-		cfg.AgnesBack.ChatModel = "agnes-2.5-flash"
-	}
-	if cfg.AgnesBack.ImageModel == "" {
-		cfg.AgnesBack.ImageModel = "agnes-image-2.1-flash"
-	}
-	if cfg.AgnesBack.VideoModel == "" {
-		cfg.AgnesBack.VideoModel = "agnes-video-v2.0"
-	}
-	if cfg.AgnesBack.ImageSize == "" {
-		cfg.AgnesBack.ImageSize = "2K"
-	}
-	if cfg.AgnesBack.ImageRatio == "" {
-		cfg.AgnesBack.ImageRatio = "16:9"
-	}
-	// Picker lists fall back to the single configured model so the /model
-	// card always has at least one option per slot.
-	if len(cfg.AgnesBack.ChatModels) == 0 {
-		cfg.AgnesBack.ChatModels = []string{cfg.AgnesBack.ChatModel}
-	}
-	if len(cfg.AgnesBack.ImageModels) == 0 {
-		cfg.AgnesBack.ImageModels = []string{cfg.AgnesBack.ImageModel}
-	}
-	if len(cfg.AgnesBack.VideoModels) == 0 {
-		cfg.AgnesBack.VideoModels = []string{cfg.AgnesBack.VideoModel}
 	}
 }
 

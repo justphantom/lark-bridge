@@ -114,10 +114,9 @@ preflight_toolchain() {
 }
 
 # Health check: does the INVOKER_USER (the account running this script and its
-# embedded sudo commands) have passwordless sudo? A remote /deploy (this script
-# triggered by deploy-monitor) and a backgrounded manual deploy
-# (`make deploy-bg`) both run without a tty; without NOPASSWD the first sudo
-# hangs silently until the monitor times out or the operator abandons it.
+# embedded sudo commands) have passwordless sudo? A backgrounded manual deploy
+# (`make deploy-bg`) runs without a tty; without NOPASSWD the first sudo
+# hangs silently until the operator abandons it.
 # Hard-fail here (step 0) so the operator sees the fix immediately instead of a
 # hanging/abandoned deploy that may have already stopped services.
 # RUN_USER (the service account, injected from .env) may differ from INVOKER_USER
@@ -126,7 +125,7 @@ deploy_sudo_check() {
     if sudo -n true >/dev/null 2>&1; then
         info "$INVOKER_USER has passwordless sudo"
     else
-        fail "$INVOKER_USER lacks passwordless sudo (NOPASSWD required). Without a tty the first sudo (stop_services) hangs silently — remote /deploy and 'make deploy-bg' are both affected. The deploy runs sudo for systemctl/cp/mv/mkdir/chown/chmod/sed/tee/rm/journalctl, so grant NOPASSWD covering those — e.g. '$INVOKER_USER ALL=(ALL) NOPASSWD: ALL' under /etc/sudoers.d/lark-bridge."
+        fail "$INVOKER_USER lacks passwordless sudo (NOPASSWD required). Without a tty the first sudo (stop_services) hangs silently — 'make deploy-bg' is affected. The deploy runs sudo for systemctl/cp/mv/mkdir/chown/chmod/sed/tee/rm/journalctl, so grant NOPASSWD covering those — e.g. '$INVOKER_USER ALL=(ALL) NOPASSWD: ALL' under /etc/sudoers.d/lark-bridge."
     fi
 }
 
@@ -251,8 +250,7 @@ stop_services() {
 
     # Survivors: SIGKILL along with everything in the cgroup. systemd's cgroup
     # kill already reaches all children of the unit, so no pgrep fallback is
-    # needed -- that could even kill deploy-monitor (it may be forking this
-    # very `make deploy` process tree).
+    # needed.
     for svc in "${SERVICES[@]}"; do
         local pid
         pid="$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)"
@@ -301,10 +299,7 @@ verify_artifacts() {
     [[ -x "$BIN_DIR/lark-miniagent-back" ]]       || fail "Build artifact missing: lark-miniagent-back"
     # NOTE: the miniagent binary (github.com/justphantom/miniagent) is a separate
     # project; deploy it to /usr/local/bin/miniagent via its own Makefile. Not
-    # managed by this script. Same for lark-deploy-monitor: shipped in this
-    # tarball but deployed independently by deploy-monitor.sh; leaving the binary
-    # in BIN_DIR is harmless -- the cp below moves it to DEPLOY_DIR for
-    # deploy-monitor.sh to overwrite.
+    # managed by this script.
 }
 
 # Warn if .env still contains placeholder values (a common first-deploy oversight)
@@ -409,7 +404,6 @@ filter_env_ready() {
 # (each process reads only the fields it needs; extras are inert).
 # Each backend must use a distinct router_path (except feishu-front), otherwise
 # they overwrite each other's chat bindings.
-# deploy-monitor's config/unit is managed by deploy-monitor.sh and not in this flow.
 #
 # All sed runs operate on the staging copy; repo source configs stay untouched
 # (git tree does not go dirty).
@@ -475,6 +469,17 @@ stage_configs() {
     # miniagent-back: distinct backend_id + distinct router_path
     cp "$STAGE/base-config.json" "$STAGE/miniagent-config.json"
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"
+    # /config 选择器扫描目录：仅当 .env 显式设了 MINIAGENT_CONFIG_DIR 才注入
+    # 字面量；未设保持 "" → ResolveConfigDir 回退 $HOME/.miniagent（dev 不变）。
+    # 注意 config_dir 不能用 ${} 占位符：expandEnvVars 对空值 fatal，而该字段
+    # 本就该允许空（可选），故由 bash 在此注入字面量而非走 Go 运行时展开。
+    local _config_dir
+    _config_dir="$(env_get MINIAGENT_CONFIG_DIR)"
+    # 用 if 而非 [[ -n ]] && ...：后者在 _config_dir 为空时整条返回 1，set -e
+    # 语境下（尤其作为函数尾语句）可能误退出。if 无 else 恒返回 0，无歧义。
+    if [[ -n "$_config_dir" ]]; then
+        inject_config_dir "$STAGE/miniagent-config.json" "$_config_dir"
+    fi
 
     # miniagent CLI 自己的配置（v3.1+ config-only 模式所必需）：端点 + 已删 flag
     # 对应的 run 参数（shell_timeout 等）从这里来，不再走 CLI flag。
@@ -541,8 +546,31 @@ inject_router_path() {
         || fail "router_path injection failed: $file has no backend_id field (injection anchor missing); backends would share a default router file and overwrite each other"
 }
 
+# inject_config_dir 把操作员的 MINIAGENT_CONFIG_DIR 字面量写入 miniagent 配置的
+# config_dir 字段（/config 选择器扫描目录）。空值由调用方跳过，保持 "" →
+# ResolveConfigDir 回退 $HOME/.miniagent。路径原样注入（不预解 ~）：专用
+# RUN_USER 下服务运行时 HOME 被指向 $STATE_DIR（write_units），部署期预解会
+# 烤进部署者家目录；ResolveConfigDir 按服务运行时 HOME 展开 ~ 才正确。
+#
+# 转义双层且顺序敏感（\ 必须先）：值要穿过 sed replacement 再落地为合法 JSON。
+#   \  → \\\\  （sed replacement 里 \\ 写一个 \，故需 \\\\ 才在文件里落 \\ = JSON 的 \）
+#   "  → \\"   （sed 里 \" 只写 "、丢 \，故需 \\" 才落 \" = JSON 的 "）
+#   &  → \&    （sed replacement 里 & = 整个匹配）
+#   |  → \|    （| 是分隔符）
+# 漏掉任一会写出非法 JSON 让后端 crash-loop。
+inject_config_dir() {
+    local file="$1" val="$2"
+    local esc="${val//\\/\\\\\\\\}"
+    esc="${esc//\"/\\\\\"}"
+    esc="${esc//&/\\&}"
+    esc="${esc//|/\\|}"
+    sed -i 's|"config_dir"[[:space:]]*:[[:space:]]*"[^"]*"|"config_dir": "'"${esc}"'"|' "$file"
+    grep -q '"config_dir"' "$file" \
+        || fail "config_dir injection failed: $file has no config_dir field (injection anchor missing); /config picker would scan the wrong directory"
+}
+
 # Legacy cleanup: removed backends (opencode-serve-back earlier; opencode-back,
-# omp-back, and claude-back now). On every deploy we detect and remove any
+# omp-back, claude-back, and agnes-back now). On every deploy we detect and remove any
 # leftover unit + state files, so the machine does not carry "ghost services"
 # that crash-loop. Forced even when --services does not list them -- the upgrade
 # path must converge to "no such unit".
@@ -551,7 +579,7 @@ inject_router_path() {
 # data. Clean it manually if desired: rm -rf "$STATE_DIR/claude".
 cleanup_legacy() {
     local legacy_unit
-    for legacy_unit in lark-opencode-serve-back lark-opencode-back lark-omp-back lark-claude-back; do
+    for legacy_unit in lark-opencode-serve-back lark-opencode-back lark-omp-back lark-claude-back lark-agnes-back; do
         if sudo systemctl list-unit-files 2>/dev/null | grep -q "^${legacy_unit}\.service"; then
             warn "Detected legacy unit ${legacy_unit}.service (backend was removed); stopping and disabling..."
             sudo systemctl disable --now "$legacy_unit" 2>/dev/null || true
@@ -582,7 +610,8 @@ cleanup_legacy() {
         "$CONFIG_DIR/opencode-serve-config.json" \
         "$CONFIG_DIR/opencode-config.json" \
         "$CONFIG_DIR/omp-config.json" \
-        "$CONFIG_DIR/claude-config.json"; do
+        "$CONFIG_DIR/claude-config.json" \
+        "$CONFIG_DIR/agnes-back-config.json"; do
         if [[ -e "$legacy_cfg" ]]; then
             sudo rm -f "$legacy_cfg"
             info "Removed legacy config: $legacy_cfg"
@@ -633,8 +662,6 @@ install_files() {
     # file lives in the same $DEPLOY_DIR so mv is a same-filesystem rename
     # (atomic, no cross-device copy). Business services are already stopped in
     # stop_services, so the rename is also safe.
-    # Note: deploy-monitor's binary is not in this flow -- deploy-monitor.sh
-    # manages it independently.
     local s u
     for s in "${SELECTED[@]}"; do
         u="$(svc_unit "$s")"
@@ -659,6 +686,23 @@ install_files() {
 
     info "Fixing directory and file permissions -> owner=$RUN_USER"
     sudo chown -R "$RUN_USER:$RUN_USER" "$DEPLOY_DIR" "$CONFIG_DIR" "$STATE_DIR"
+
+    # External miniagent CLI (github.com/justphantom/miniagent) is deployed to
+    # /usr/local/bin by its own Makefile, NOT managed by this script, so the
+    # chown above does not reach it. Ensure it is world-executable (0755) so an
+    # arbitrary RUN_USER (e.g. a dedicated service account != the installer) can
+    # exec it -- exec needs the x bit, not ownership. Reuses probe_cli's PATH
+    # resolution (command -v), which converges with main.go's runtime fallback
+    # /usr/local/bin/miniagent in the default install. Guarded: only when
+    # miniagent is in this deploy (probe_cli already passed in filter_cli_ready).
+    if [[ " ${SELECTED[*]} " == *" miniagent "* ]]; then
+        local _cli_path
+        _cli_path="$(command -v miniagent 2>/dev/null || true)"
+        if [[ -n "$_cli_path" && -f "$_cli_path" ]]; then
+            sudo chmod 0755 "$_cli_path"
+            info "Ensured miniagent CLI exec bit for RUN_USER: $_cli_path"
+        fi
+    fi
 }
 
 # The repo-root .env is the single source of truth: each deploy first syncs
@@ -674,8 +718,7 @@ sync_env() {
     update_env_key STATE_DIR "$STATE_DIR" "$PROJECT_ROOT/.env"
     update_env_key PROJECT_ROOT "$PROJECT_ROOT" "$PROJECT_ROOT/.env"
     # RUN_USER: sync the effective service-run user back so repo-root .env stays
-    # the single source of truth (mirrors IPC_ADDR/STATE_DIR). Keeps the
-    # deploy-monitor path (its unit runs `make deploy` as RUN_USER) on the same
+    # the single source of truth (mirrors IPC_ADDR/STATE_DIR), keeping the same
     # run user across re-deploys.
     update_env_key RUN_USER "$RUN_USER" "$PROJECT_ROOT/.env"
     # LOG_LEVEL: default to info if absent (config's ${LOG_LEVEL} errors on
@@ -723,11 +766,10 @@ write_unit() {
     # in the heredoc; empty leaves it as-is.
     local env_block=""
     [[ -n "$extra_env" ]] && env_block="$extra_env"$'\n'
-    # privileged=true drops the sandbox block entirely: units that need sudo
-    # (deploy-monitor running `make deploy` -> systemctl/cp to /etc). The
-    # sandbox's NoNewPrivileges would block sudo's setuid step, so privileged
-    # units must skip it. miniagent backends also use
-    # privileged=true: they spawn arbitrary external CLIs
+    # privileged=true drops the sandbox block entirely. The sandbox's
+    # NoNewPrivileges would block sudo's setuid step, so units that fork
+    # external CLIs must skip it. miniagent backends use privileged=true:
+    # they spawn arbitrary external CLIs
     # (git/node/npm/bash and their children); a conservative sandbox
     # (NoNewPrivileges/RestrictSUIDSGID blocking setuid helpers,
     # ProtectSystem=full blocking writes to /usr) would break them, so they
@@ -790,10 +832,21 @@ EOF
 
 write_units() {
     info "Generating systemd unit files (User=$RUN_USER)..."
-    local s u
+    local s u extra_env
     for s in "${SELECTED[@]}"; do
         u="$(svc_unit "$s")"
-        write_unit "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "" "$(svc_privileged "$s")"
+        # miniagent forks an external CLI that uses $HOME for its cache and
+        # /config scan. When RUN_USER != INVOKER_USER (a dedicated service
+        # account), point HOME at the managed STATE_DIR so the CLI writes into a
+        # chowned dir instead of a possibly-absent/unwritable system home. Under
+        # the default RUN_USER == INVOKER_USER (e.g. dev) this is a no-op: the
+        # real $HOME is kept so existing ~/.miniagent content is preserved.
+        if [[ "$s" == "miniagent" && "$RUN_USER" != "$INVOKER_USER" ]]; then
+            extra_env="Environment=HOME=$STATE_DIR"
+        else
+            extra_env=""
+        fi
+        write_unit "$u" "$(svc_config "$s")" "$(svc_depends "$s")" "$extra_env" "$(svc_privileged "$s")"
     done
 }
 

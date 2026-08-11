@@ -23,10 +23,8 @@ type preflightResponse struct {
 // in-flight turns: 200 when safe, 409 with the affected backends when not.
 // The decision lives here — not in deploy.sh's sed/grep JSON parsing — so it
 // is unit-testable and the bash side collapses to one curl + status code.
-// Deploy-monitor turns are excluded (a /deploy's own turn must not
-// self-block), mirroring TurnManager.InFlight. Frontends older than this
-// endpoint answer 404; deploy.sh falls back to the conservative
-// inflight>0 check there.
+// Frontends older than this endpoint answer 404; deploy.sh falls back to the
+// conservative inflight>0 check there.
 func (s *IPCServer) handleDeployPreflight(w http.ResponseWriter, r *http.Request) {
 	if !s.authOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -47,23 +45,16 @@ func (s *IPCServer) handleDeployPreflight(w http.ResponseWriter, r *http.Request
 	if fn := s.inFlightDetail.Load(); fn != nil {
 		turns = (*fn)()
 	}
-	considered := make([]Turn, 0, len(turns))
-	for _, t := range turns {
-		if s.registry.BackendType(t.BackendID) == "deploy-monitor" {
-			continue
-		}
-		considered = append(considered, t)
-	}
 
 	affectedSet := map[string]bool{}
 	if selected["feishu"] {
 		// Restarting feishu-front severs every backend's IPC connection, so
 		// every in-flight turn is disrupted regardless of backend.
-		for _, t := range considered {
+		for _, t := range turns {
 			affectedSet[t.BackendID] = true
 		}
 	} else {
-		for _, t := range considered {
+		for _, t := range turns {
 			if selected[stripInstanceSuffix(t.BackendID)] {
 				affectedSet[t.BackendID] = true
 			}
@@ -75,7 +66,7 @@ func (s *IPCServer) handleDeployPreflight(w http.ResponseWriter, r *http.Request
 	}
 	sort.Strings(affected)
 
-	resp := preflightResponse{InFlight: len(considered), Affected: affected}
+	resp := preflightResponse{InFlight: len(turns), Affected: affected}
 	w.Header().Set("Content-Type", "application/json")
 	if len(affected) > 0 {
 		resp.Reason = fmt.Sprintf("deploy would disrupt %d in-flight session(s) on backend(s): %s",

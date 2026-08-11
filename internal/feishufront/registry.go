@@ -220,7 +220,7 @@ func (r *BackendRegistry) Get(id string) (*BackendConn, bool) {
 	return conn, ok
 }
 
-// BackendType returns the registered type ("miniagent"/"agnes") for id, used
+// BackendType returns the registered type string (e.g. "miniagent") for id, used
 // by the dispatcher to render the card header. Returns "" when id is unknown.
 func (r *BackendRegistry) BackendType(id string) string {
 	r.mu.RLock()

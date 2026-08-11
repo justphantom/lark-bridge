@@ -646,9 +646,8 @@ func TestSendNoticeUpdateMessageID(t *testing.T) {
 
 // TestSendNoticeUpdateMessageID_FinalizesLiveTurn verifies the
 // UpdateMessageID fast path also releases the prompt's turn: a backend that
-// echoes CardMessageID for EVERY terminal notice (deploy-monitor) would
-// otherwise leak the turn into /running whenever the frontend never
-// restarted (e.g. /pull).
+// echoes CardMessageID for EVERY terminal notice would otherwise leak the
+// turn into /running whenever the frontend never restarted.
 func TestSendNoticeUpdateMessageID_FinalizesLiveTurn(t *testing.T) {
 	sink := &fakeSink{}
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
@@ -689,7 +688,7 @@ func TestSendNoticeUpdateMessageID_CardGoneFallsBack(t *testing.T) {
 	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
 
 	err := d.DispatchControl(context.Background(), RoutedControl{
-		BackendID: "deploy-monitor",
+		BackendID: "agnes-1",
 		Control: &protocol.Control{
 			Type:     protocol.TypeNotice,
 			PromptID: "om_deploy",
