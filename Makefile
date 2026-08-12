@@ -25,7 +25,7 @@
 #   IPC_ADDR   IPC listen address (default localhost:6060)
 #   STATE_DIR  persistence dir (default /var/lib/lark-bridge)
 
-.PHONY: build build-services build-feishu-front build-miniagent-back build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-bg deploy-status pack
+.PHONY: build build-feishu-front build-miniagent-back build-status-monitor build-check test vet fmt lint prerelease clean deploy deploy-bg pack
 
 # Default to `build` so a bare `make` produces the three binaries.
 .DEFAULT_GOAL := build
@@ -45,9 +45,8 @@ GOARCH ?= $(shell go env GOARCH)
 build-check:
 	go build ./...
 
-# Per-binary targets compile a single binary into bin/; deploy scripts call
-# only the target(s) they need (deploy.sh → build-services, deploy-status.sh →
-# build-status-monitor), avoiding wasted cross-binary builds.
+# Per-binary targets compile a single binary into bin/. deploy.sh calls `build`
+# (all 3); individual targets exist for selective compilation.
 build-feishu-front:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-feishu-front ./cmd/feishu-front
@@ -59,10 +58,6 @@ build-miniagent-back:
 build-status-monitor:
 	mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/lark-status-monitor ./cmd/status-monitor
-
-# build-services compiles only the 2 business services that deploy.sh manages;
-# status-monitor is deployed independently by deploy-status.sh.
-build-services: build-feishu-front build-miniagent-back
 
 # build compiles all three binaries (version-stamped).
 build: build-feishu-front build-miniagent-back build-status-monitor
@@ -140,8 +135,3 @@ deploy-bg:
 	echo "[deploy-bg] watch: tail -f $$log   |   stop: pkill -f deploy.sh"; \
 	setsid ./deploy/deploy.sh $(ARGS) >"$$log" 2>&1 </dev/null &
 
-# deploy-status builds and restarts ONLY lark-status-monitor (the periodic
-# overview-card pusher), decoupled from deploy.sh for the same reason monitor
-# is. Use --init for first-time install (creates config + unit).
-deploy-status:
-	./deploy/deploy-status.sh $(ARGS)

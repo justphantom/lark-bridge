@@ -263,16 +263,8 @@ setsid ./deploy/deploy.sh [--force|--services claude,miniagent] \
 ## 6.6. status-monitor 部署（独立）
 
 status-monitor 是「观察者」（每 `status_monitor.interval` 秒向绑定的群推送一张
-在线后端 + 运行中会话总览卡），无副作用、不需提权，**同样不由 deploy.sh 管理**，
-独立部署（不纳入 deploy.sh）：
-
-```bash
-# 首次安装（生成 config + unit + enable + start）
-make deploy-status ARGS=--init
-
-# 后续升级（构建 + 替换二进制 + restart，~2s 离线）
-make deploy-status
-```
+在线后端 + 运行中会话总览卡），无副作用。**与 feishu-front + miniagent-back 一起
+由 `make deploy` 统一部署**（不再独立部署）。
 
 部署后在飞书群里 `/backend` 选择 `status-monitor` 绑定，下个 tick 起开始收卡。
 卡片 PATCH 失败（被用户删除/撤回，飞书返回 `code:230011`）时自动重发，不叠加。
