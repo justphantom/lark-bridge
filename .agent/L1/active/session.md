@@ -1,19 +1,22 @@
 ---
-updated: 2026-08-12T11:30:00+08:00
+updated: 2026-08-12T13:20:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
-**删 `backendrpc.Run` + 清 `ackTerminal` 孤儿**（最后两个小尾巴，未提交）：
-- `backendrpc.Run`：零生产调用的 Connect+run() 薄封装；5 个 `TestRun_*` 转 `RunWithClient`（保留 run-loop 重连/放弃/重置覆盖），`TestRun_InitialConnectFails`→`TestConnect_UnreachableFails`，删 Run + 文档，sed 统一注释/文案 `Run`→`RunWithClient`。
-- `ackTerminal` 孤儿：quick-wins 删 AckRegistry 后，前端发送方无消费者。**整链清除**——`ackTerminal` 函数 + 2 调用点 + protocol `TypeAck`/`AckPayload`/`Event.Ack` 字段 + `allowedEventTypes` 条目 + 注释 + `dispatcher_ack_test.go`(整删) + 3 个 protocol_test 表项。
-- 验证全绿：build/vet/test -race/golangci-lint 0 issue。**8 文件未提交**（含 .agent），净 **−165 LOC**。
+**deploy 脚本简化**（对抗式分析 workflow：4 reviewer + 5 verify，22 机会 / 3 verified-safe / 2 rejected）。已执行 + 验证全绿（bash -n / shellcheck / deploy-smoke 34/0 / migrate_config python 实测），**3 文件未提交**（deploy.sh / deploy-status.sh / lib-common.sh）：
+- **migrate_config 统一**（deploy-status.sh）：sed-范围删块（缩进脆弱）+ 行正则删叶子（多行块留残骸）双机制 → **单次 python3 pass**（json.load → 删顶层 blocks 任意形态 + 递归删 keys → 仅变更时 dump）。形态无关，且 **json.load 对损坏 config fail-fast**。⚠️ **解锁 `ComponentLogLevels`**：原先因迁移形式依赖（空 `{}` vs 多行块）保留 dormant，现 migrate_config 形态无关，可安全删（加 `"component_log_levels"` 到 removed_blocks 即可）。
+- **cleanup_legacy 精简**（deploy.sh）：5 次 `systemctl list-unit-files` → 1 次（捕获后 per-unit grep）；daemon-reload 从每匹配 1 次 → 任意匹配后 1 次；state+config 两个 rm 循环 → 扁平 `rm -f`。
+- **杂项**：svc_* 表注释更正（去掉虚假「零接触扩展」承诺）；init_status 删死掉的 `claude` 块迭代（只剩 miniagent）；3 处过期注释（3→2 服务、OPENCODE_SERVER_PASSWORD→MINIAGENT_CHAT_URL、claude-config.json→泛化）。
+- 验证：migrate_config 实测剥多行块 + 空 `{}` 块 + 嵌套叶子全过；deploy-smoke 34/0。净 −6 LOC（migrate_config 是健壮性收益非 LOC，cleanup_legacy 缩）。
+- **2 项对抗式否决**（不做）：删 preflight_inflight_check_legacy（404 旧前端守卫，正是过渡部署需要的）、HOME/PATH 移入 svc_* 表 hooks（load-bearing + 无测试网）。
+- **未做**（剩余）：~15 项低收益清理（helper 抽取 atomic_install/install_env_file、注释瘦身等）。
+- **ComponentLogLevels 删除**（deploy 简化的直接收益）：migrate_config 形态无关后，把 `"component_log_levels"` 加进 removed_blocks 即安全。删 Go struct+field+validation+example+test。**零 dormant config 字段剩余**——后端收敛以来的 config 清零完成。
+- **SERVICES 影子数组移除**（3rd verified-safe win）：删 `SERVICES` 全局 + `rebuild_services`；6 个读取点改为就地 `SELECTED` + `svc_unit` 派生；`drop_service` 简化为纯 SELECTED 过滤（不再 re-sync）。smoke.sh 同步更新（34→33 断言）。deploy-smoke 33/0。
 
-### 简化系列收尾状态
-后端收敛以来的简化系列**完成**：deploy-monitor 清零 / quick wins / SubagentSummary / Tier-2 sweep / 结构化重构(GoSafe+Commands) / dormant Timeouts / backendrpc.Run + ackTerminal。累计清出 **~2.7K+ LOC** + 消除多拷贝、单消费者泛型、subagent 渲染机械、死 ACK 协议等过度抽象。
-- **唯一按设计保留**：`ComponentLogLevels`（~15 LOC 全惰性；迁移有形式依赖——空 `{}` 单行 vs 操作员多行块，需更健壮的 block stripper 才能安全删）。
-- 无其他遗留孤儿。
+## 前序：删 backendrpc.Run + 清 ackTerminal 死协议（已提交）
+`backendrpc.Run` 薄封装删（5 测试转 RunWithClient）；`ackTerminal`→`TypeAck`/`AckPayload`/`Event.Ack` 整链清。净 −165 LOC。
 
 ## 前序：dormant config 迁移（已提交 `0021ca1`）
 删 3 个 Timeouts 死字段（`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL`，净 −119 LOC）。`deploy.sh` 全量重生成 feishu/miniagent config → 无需迁移；`deploy-status.sh` `removed_keys` 加三叶字段剥离已部署 status-monitor config。`ComponentLogLevels` 按设计保留 dormant（迁移形式依赖）。

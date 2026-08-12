@@ -40,13 +40,11 @@ if svc_unit opencode >/dev/null 2>&1; then bad "svc_unit opencode should fail"; 
 if svc_unit omp >/dev/null 2>&1; then bad "svc_unit omp should fail"; else ok "svc_unit omp fails"; fi
 if svc_unit claude >/dev/null 2>&1; then bad "svc_unit claude should fail"; else ok "svc_unit claude fails"; fi
 
-# -- SELECTED/SERVICES sync ----------------------------------------------------
+# -- SELECTED/drop_service ----------------------------------------------------
 SELECTED=(feishu miniagent)
-rebuild_services
-check "rebuild_services"     "${SERVICES[*]}"          "lark-feishu-front lark-miniagent-back"
+check "SELECTED initial"      "${SELECTED[*]}"          "feishu miniagent"
 drop_service miniagent
-check "drop_service SELECTED" "${SELECTED[*]}"         "feishu"
-check "drop_service SERVICES" "${SERVICES[*]}"         "lark-feishu-front"
+check "drop_service SELECTED" "${SELECTED[*]}"          "feishu"
 
 # -- update_env_key: sed-metacharacter escaping --------------------------------
 tmp="$(mktemp)"

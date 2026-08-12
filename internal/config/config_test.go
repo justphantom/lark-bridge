@@ -224,7 +224,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{"bad log output", `{"log_output":"file"}`, "log_output"},
 		{"bad log format", `{"log_format":"yaml"}`, "log_format"},
 		{"bad feishu log level", `{"feishu_log_level":"trace"}`, "feishu_log_level"},
-		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
 		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
 		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
 		{"dedup stale_window too short", `{"dedup":{"stale_window":"100ms"}}`, "dedup.stale_window"},

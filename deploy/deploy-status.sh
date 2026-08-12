@@ -43,14 +43,12 @@ init_status() {
     cp "$PROJECT_ROOT/config.example.json" "$stage/$CONFIG_NAME"
     sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "status-monitor-1",|' "$stage/$CONFIG_NAME"
     sed -i '/"router_path"/d' "$stage/$CONFIG_NAME"
-    # 删 status-monitor 不消费的业务子块。要求 base 2 空格缩进、
-    # 块闭合行 ^  }, 独占——config.example.json 满足。删后显式校验，防 base 格式
-    # 漂移时 sed 静默失败。
-    for block in claude miniagent; do
-        sed -i '/^  "'"$block"'":/,/^  },/d' "$stage/$CONFIG_NAME"
-        grep -q "\"$block\":" "$stage/$CONFIG_NAME" \
-            && fail "清理 $block 块失败：检查 base 是否 2 空格缩进"
-    done
+    # 删 status-monitor 不消费的 miniagent 业务子块（claude 块已随后端移除，不再
+    # 存在于 base）。要求 base 2 空格缩进、块闭合行 ^  }, 独占——config.example.json
+    # 满足。删后显式校验，防 base 格式漂移时 sed 静默失败。
+    sed -i '/^  "miniagent":/,/^  },/d' "$stage/$CONFIG_NAME"
+    grep -q '"miniagent":' "$stage/$CONFIG_NAME" \
+        && fail "清理 miniagent 块失败：检查 base 是否 2 空格缩进"
     # status_monitor 块必须存活（它是本后端唯一的业务配置）。base 里该块是多行
     # 格式（key 与 interval 不在同一行），因此用双 token 校验：key 与 interval
     # 都在即视为块存活。
@@ -113,42 +111,47 @@ migrate_config() {
     local cfg="$CONFIG_DIR/$CONFIG_NAME"
     [[ -f "$cfg" ]] || return 0
 
-    local removed_blocks=("opencode_serve" "opencode" "omp" "claude" "agnes")
-    for block in "${removed_blocks[@]}"; do
-        sudo grep -q "^  \"$block\":" "$cfg" || continue
-        info "迁移：删除残留字段 $block"
-        sudo sed -i '/^  "'"$block"'":/,/^  },/d' "$cfg"
-        if sudo grep -q "\"$block\":" "$cfg"; then
-            fail "清理 $block 失败：$cfg 缩进可能不符 2 空格约定，请手工编辑后重跑"
-        fi
-    done
-
-    # 块内叶子字段：timeouts/card_patch_delay、根级 feishu_card_engine 等。
-    # 整块迁移只删 removed_blocks（完整 JSON 对象），但这些 key 是存活块
-    # （timeouts）内的单个叶子，不能用块删除的 sed 范围匹配。
-    # 用 python regex 删行 + 修复悬空尾逗号 + json.dump 美化，一步到位；
-    # 避免 sed 删行后 json.load 因悬空逗号失败（先有鸡还是先有蛋）。
+    local removed_blocks=("opencode_serve" "opencode" "omp" "claude" "agnes" "component_log_levels")
     local removed_keys=("card_patch_delay" "feishu_card_engine" "prompt_timeout" "idle_timeout" "usage_session_ttl")
-    local need_migrate=0
-    for key in "${removed_keys[@]}"; do
-        sudo grep -q "\"$key\"" "$cfg" && need_migrate=1
-    done
-    if [[ "$need_migrate" -eq 1 ]]; then
-        info "迁移：清理已移除的叶子字段"
-        sudo python3 -c '
-import re, json, sys
-p = sys.argv[1]
-raw = open(p).read()
-for key in sys.argv[2:]:
-    raw = re.sub(r"^[ \t]*\"" + key + r"\".*$\n?", "", raw, flags=re.MULTILINE)
-raw = re.sub(r",(\s*[}\]])", r"\1", raw)
-data = json.loads(raw)
-json.dump(data, open(p, "w"), indent=2, ensure_ascii=False)
-        ' "$cfg" "${removed_keys[@]}" || fail "config JSON 迁移失败：请手工编辑 $cfg"
-    fi
 
+    # 单次 python3 pass：json.load → 删顶层 removed_blocks（任意形态）+ 递归删
+    # removed_keys（任意嵌套层叶子）→ 仅变更时 json.dump。形态无关，取代原先
+    # sed-范围删块（缩进脆弱）+ 行正则删叶子（多行块留残骸）的双机制。json.load
+    # 对损坏 config fail-fast（迁移期暴露，而非运行期 crash）。
+    local out
+    out="$(sudo python3 -c '
+import json, sys
+p = sys.argv[1]
+n_blocks = int(sys.argv[2])
+blocks, keys = sys.argv[3:3+n_blocks], sys.argv[3+n_blocks:]
+cfg = json.load(open(p))
+def del_key(obj, k):
+    found = False
+    if isinstance(obj, dict):
+        if k in obj:
+            del obj[k]; found = True
+        for v in obj.values():
+            found = del_key(v, k) or found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = del_key(v, k) or found
+    return found
+removed = []
+for b in blocks:
+    if isinstance(cfg, dict) and b in cfg:
+        del cfg[b]; removed.append(b)
+for k in keys:
+    if del_key(cfg, k):
+        removed.append(k)
+if removed:
+    json.dump(cfg, open(p, "w"), indent=2, ensure_ascii=False)
+    print("迁移：删除残留字段 " + ", ".join(removed))
+' "$cfg" "${#removed_blocks[@]}" "${removed_blocks[@]}" "${removed_keys[@]}")" \
+        || fail "config JSON 迁移失败：$cfg 不是合法 JSON，请手工编辑后重跑"
+
+    [[ -n "$out" ]] && info "$out"
     sudo chmod 600 "$cfg"
-    sudo chown "$RUN_USER":"$RUN_USER" "$cfg"
+    sudo chown "$RUN_USER:$RUN_USER" "$cfg"
 }
 
 # ── 升级：替换二进制 + restart ────────────────────────

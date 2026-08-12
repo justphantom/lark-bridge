@@ -138,8 +138,10 @@ wait_listen() {
 }
 
 # -- Service short-name mapping table -------------------------------------------
-# Add a new backend here in four spots and --services picks it up; no other
-# deploy-flow touch-points need changing.
+# Name lookups for the 2 current services (feishu/miniagent). NOTE: this factors
+# out name mapping only -- adding a backend still requires deploy.sh edits
+# (miniagent is special-cased there for HOME/PATH, CLI chmod, config_dir, and
+# miniagent-cli.json), so it is NOT a zero-touch extension point.
 svc_unit()  { case "$1" in feishu) echo lark-feishu-front;; miniagent) echo lark-miniagent-back;; *) return 1;; esac; }
 svc_config(){ case "$1" in feishu) echo feishu-config.json;; miniagent) echo miniagent-config.json;; esac; }
 # Backends depend on the front-end listening and need privileged mode
@@ -149,21 +151,11 @@ svc_privileged(){ [[ "$1" == "feishu" ]] && echo "false" || echo "true"; }
 # CLI binary name (for probe_cli); feishu has no CLI.
 svc_cli(){ case "$1" in miniagent) echo "miniagent";; *) echo "";; esac; }
 
-# SELECTED -> SERVICES: rebuild unit names from short names. Must be called
-# after any SELECTED mutation, else stop/enable/start/verify (which use
-# SERVICES) drift.
-rebuild_services() {
-    SERVICES=()
-    local s
-    for s in "${SELECTED[@]}"; do SERVICES+=("$(svc_unit "$s")"); done
-}
-
 # Drop a short-name from SELECTED (used when probe/env placeholder says "not
-# ready") and re-sync SERVICES. Uses a _keep array to retain everything except
-# the target, avoiding splice-index arithmetic.
+# ready"). Unit-name derivation (svc_unit) happens at each call site in
+# deploy.sh, so no parallel SERVICES array to keep in sync.
 drop_service() {
-    local drop="$1" s
-    _keep=(); for s in "${SELECTED[@]}"; do [[ "$s" != "$drop" ]] && _keep+=("$s"); done
+    local drop="$1" s _keep=()
+    for s in "${SELECTED[@]}"; do [[ "$s" != "$drop" ]] && _keep+=("$s"); done
     SELECTED=("${_keep[@]}")
-    rebuild_services
 }

@@ -58,20 +58,6 @@ func validate(cfg *Config) error {
 	if err := validateIPCTLS(cfg); err != nil {
 		return err
 	}
-	// Validate component log levels.
-	for comp, level := range map[string]string{
-		"router":         cfg.ComponentLogLevels.Router,
-		"feishu":         cfg.ComponentLogLevels.Feishu,
-		"bridge":         cfg.ComponentLogLevels.Bridge,
-		"dedup":          cfg.ComponentLogLevels.Dedup,
-		"miniagent":      cfg.ComponentLogLevels.MiniAgent,
-		"status_monitor": cfg.ComponentLogLevels.StatusMonitor,
-	} {
-		if level == "" || level == "debug" || level == "info" || level == "warn" || level == "error" {
-			continue
-		}
-		return fmt.Errorf("component_log_levels.%s must be one of debug/info/warn/error, got %q", comp, level)
-	}
 
 	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
 	// reaching validate with "" means an explicit clear; the default values

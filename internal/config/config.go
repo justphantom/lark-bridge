@@ -61,11 +61,10 @@ type Config struct {
 	MiniAgent     MiniAgent     `json:"miniagent,omitempty"`      // miniagent-back 用
 
 	// —— 日志：共用 ——
-	LogLevel           string            `json:"log_level"`
-	LogOutput          string            `json:"log_output,omitempty"`
-	LogFormat          string            `json:"log_format,omitempty"`
-	ComponentLogLevels ComponentLogLevel `json:"component_log_levels,omitempty"` // opencode 源有
-	LogDebugRedact     bool              `json:"log_debug_redact,omitempty"`     // opencode 源有
+	LogLevel       string `json:"log_level"`
+	LogOutput      string `json:"log_output,omitempty"`
+	LogFormat      string `json:"log_format,omitempty"`
+	LogDebugRedact bool   `json:"log_debug_redact,omitempty"` // opencode 源有
 
 	StateDir string   `json:"state_dir,omitempty"`
 	Timeouts Timeouts `json:"timeouts,omitempty"` // 两源并集
@@ -172,16 +171,6 @@ type MiniAgent struct {
 	// generates /etc/lark-bridge/miniagent-cli.json for the default deployment
 	// path. The resolved absolute path is stored in ConfigPath after applyDefaults.
 	ConfigPath string `json:"config_path,omitempty"`
-}
-
-// ComponentLogLevel configures per-component log level overrides.
-type ComponentLogLevel struct {
-	Router        string `json:"router,omitempty"`
-	Feishu        string `json:"feishu,omitempty"`
-	Bridge        string `json:"bridge,omitempty"`
-	Dedup         string `json:"dedup,omitempty"`
-	MiniAgent     string `json:"miniagent,omitempty"`
-	StatusMonitor string `json:"status_monitor,omitempty"`
 }
 
 // Duration is a time.Duration that JSON-encodes as a Go duration

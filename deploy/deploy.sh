@@ -45,15 +45,14 @@ IPC_ADDR="${IPC_ADDR:-$(env_get IPC_ADDR)}"
 IPC_ADDR="${IPC_ADDR:-localhost:6060}"
 
 # -- Deploy-wide state -----------------------------------------------------------
-# Flags/inputs from parse_args; SELECTED/SERVICES are mutated by the env/CLI
-# readiness filters (drop_service) and consumed by stop/enable/start/verify.
+# Flags/inputs from parse_args; SELECTED is mutated by the env/CLI readiness
+# filters (drop_service) and consumed by stop/enable/start/verify.
 BINARIES_SRC=""
 SERVICES_ARG=""
 INIT=false
 FORCE=false
 DEBUG=false
 SELECTED=()
-SERVICES=()
 # STAGE holds the mktemp config staging dir; global so the EXIT trap set in
 # stage_configs can clean it.
 STAGE=""
@@ -100,7 +99,6 @@ select_services() {
     else
         SELECTED=(feishu miniagent)
     fi
-    rebuild_services
 }
 
 # Only source-build mode (no --binaries) requires Makefile/go/make locally;
@@ -245,13 +243,16 @@ probe_cli() {
 # stopping asynchronously and the SIGKILL loop below mops up.
 stop_services() {
     info "Stopping existing services (systemctl stop, ${STOP_TIMEOUT}s timeout)..."
-    timeout "$STOP_TIMEOUT" sudo systemctl stop "${SERVICES[@]}" 2>/dev/null || true
+    local s svc units=()
+    for s in "${SELECTED[@]}"; do units+=("$(svc_unit "$s")"); done
+    timeout "$STOP_TIMEOUT" sudo systemctl stop "${units[@]}" 2>/dev/null || true
     sleep 1
 
     # Survivors: SIGKILL along with everything in the cgroup. systemd's cgroup
     # kill already reaches all children of the unit, so no pgrep fallback is
     # needed.
-    for svc in "${SERVICES[@]}"; do
+    for s in "${SELECTED[@]}"; do
+        svc="$(svc_unit "$s")"
         local pid
         pid="$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)"
         if [[ -n "$pid" && "$pid" != "0" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -262,7 +263,8 @@ stop_services() {
     sleep 1
 
     # Final check: abort the deploy if any unit is still active.
-    for svc in "${SERVICES[@]}"; do
+    for s in "${SELECTED[@]}"; do
+        svc="$(svc_unit "$s")"
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             fail "$svc could not be stopped; aborting deploy to avoid overwriting a running binary"
         fi
@@ -270,7 +272,7 @@ stop_services() {
     info "All existing services stopped"
 }
 
-# Source mode: `make build-services` compiles the 3 business services locally.
+# Source mode: `make build-services` compiles the 2 business services locally.
 # --binaries mode: extract from
 # tarball or copy from a directory, decoupling build from deploy (target host
 # needs neither Go nor repo). Both modes drop artifacts into BIN_DIR; the
@@ -358,7 +360,7 @@ init_env() {
 # repo-root .env is appended with the example's default. Existing KEYs are
 # never touched (operator-set values are respected). Covers the upgrade case
 # where new variables were added that an old .env lacks (e.g. a missing
-# OPENCODE_SERVER_PASSWORD would make config.Load fail at process expand time).
+# MINIAGENT_CHAT_URL would make config.Load fail at process expand time).
 backfill_env() {
     if [[ -f "$PROJECT_ROOT/deploy/env.example" ]]; then
         local line key
@@ -395,7 +397,6 @@ filter_env_ready() {
     done
     [[ ${#READY[@]} -gt 0 ]] || fail "None of the selected services are ready to deploy"
     SELECTED=("${READY[@]}")
-    rebuild_services
 }
 
 # Generate per-backend configs in a staging dir (no repo-source mutation).
@@ -428,10 +429,10 @@ stage_configs() {
 
     # Base config source of truth: repo example > tarball-extracted example
     # (--binaries target host may have no repo source, only tarball + deploy.sh).
-    # Do NOT use any repo-root staging config (e.g. a stale claude-config.json) --
-    # it is not in git (git ls-files is empty), its schema can drift, and it once
-    # broke business backends via DisallowUnknownFields (a memory_enabled field
-    # removed upstream was still present locally).
+    # Do NOT use any repo-root staging config (a generated *-config.json) -- it
+    # is not in git, its schema can drift, and a stale one once broke business
+    # backends via DisallowUnknownFields (a field removed upstream was still
+    # present locally).
     if [[ -f "$PROJECT_ROOT/config.example.json" ]]; then
         cp "$PROJECT_ROOT/config.example.json" "$STAGE/base-config.json"
     elif [[ -f "$BIN_DIR/config.example.json" ]]; then
@@ -577,45 +578,34 @@ inject_config_dir() {
 # per-chat working dirs) is intentionally NOT removed here -- it may hold user
 # data. Clean it manually if desired: rm -rf "$STATE_DIR/claude".
 cleanup_legacy() {
-    local legacy_unit
+    # Removed backends (opencode/omp/claude/agnes): stop+disable any leftover
+    # unit, drop its unit file, then rm the state + config artifacts. Idempotent
+    # -- a converged host matches nothing. (STATE_DIR/claude/ former working
+    # dirs are NOT removed -- may hold user data; clean manually if desired.)
+    local legacy_unit matched=0 installed
+    # One list-unit-files scan (was N); per-unit grep against the capture.
+    installed="$(sudo systemctl list-unit-files 2>/dev/null)"
     for legacy_unit in lark-opencode-serve-back lark-opencode-back lark-omp-back lark-claude-back lark-agnes-back; do
-        if sudo systemctl list-unit-files 2>/dev/null | grep -q "^${legacy_unit}\.service"; then
+        if grep -q "^${legacy_unit}\.service" <<<"$installed"; then
             warn "Detected legacy unit ${legacy_unit}.service (backend was removed); stopping and disabling..."
             sudo systemctl disable --now "$legacy_unit" 2>/dev/null || true
             sudo rm -f "/etc/systemd/system/${legacy_unit}.service"
-            sudo systemctl daemon-reload
             info "Cleaned up ${legacy_unit}.service"
+            matched=1
         fi
     done
-    # Also clean up legacy state files (router persistence + usage stats)
-    local legacy_state
-    for legacy_state in \
-        "$STATE_DIR/opencode-serve-router.json" \
-        "$STATE_DIR/usage-opencode-serve.json" \
-        "$STATE_DIR/opencode-router.json" \
-        "$STATE_DIR/usage-opencode.json" \
-        "$STATE_DIR/omp-router.json" \
-        "$STATE_DIR/usage-omp.json" \
-        "$STATE_DIR/claude-router.json" \
-        "$STATE_DIR/usage-claude.json"; do
-        if [[ -e "$legacy_state" ]]; then
-            sudo rm -f "$legacy_state"
-            info "Removed legacy state file: $legacy_state"
-        fi
-    done
-    # Legacy config templates (derived files under CONFIG_DIR)
-    local legacy_cfg
-    for legacy_cfg in \
-        "$CONFIG_DIR/opencode-serve-config.json" \
-        "$CONFIG_DIR/opencode-config.json" \
-        "$CONFIG_DIR/omp-config.json" \
-        "$CONFIG_DIR/claude-config.json" \
-        "$CONFIG_DIR/agnes-back-config.json"; do
-        if [[ -e "$legacy_cfg" ]]; then
-            sudo rm -f "$legacy_cfg"
-            info "Removed legacy config: $legacy_cfg"
-        fi
-    done
+    # daemon-reload once if any unit file was removed (was per-match).
+    [[ "$matched" -eq 0 ]] || sudo systemctl daemon-reload
+    # Legacy state (router persistence + usage) + config templates: flat rm -f
+    # (idempotent; silent on a converged host).
+    sudo rm -f \
+        "$STATE_DIR/opencode-serve-router.json" "$STATE_DIR/usage-opencode-serve.json" \
+        "$STATE_DIR/opencode-router.json" "$STATE_DIR/usage-opencode.json" \
+        "$STATE_DIR/omp-router.json" "$STATE_DIR/usage-omp.json" \
+        "$STATE_DIR/claude-router.json" "$STATE_DIR/usage-claude.json" \
+        "$CONFIG_DIR/opencode-serve-config.json" "$CONFIG_DIR/opencode-config.json" \
+        "$CONFIG_DIR/omp-config.json" "$CONFIG_DIR/claude-config.json" \
+        "$CONFIG_DIR/agnes-back-config.json" 2>/dev/null || true
 }
 
 # CLI binary readiness is a hard precondition for miniagent:
@@ -862,7 +852,9 @@ start_services() {
     # failure means systemd itself is unwell (path conflict etc.) -- keep stderr
     # so set -e surfaces the cause immediately. Still `|| true`: some systemctl
     # versions return non-zero for already-enabled units, not a deploy failure.
-    sudo systemctl enable "${SERVICES[@]}" || true
+    local s enable_units=()
+    for s in "${SELECTED[@]}"; do enable_units+=("$(svc_unit "$s")"); done
+    sudo systemctl enable "${enable_units[@]}" || true
 
     # Start the front-end first (if part of this deploy) and wait for the IPC port
     # to listen, so backends do not crash-loop trying to connect.
@@ -898,8 +890,8 @@ fail_after_stop() {
 # units so the operator does not have to invoke journalctl by hand.
 verify_services() {
     info "Verifying..."
-    local all_ok=true svc
-    for svc in "${SERVICES[@]}"; do
+    local all_ok=true s svc
+    for s in "${SELECTED[@]}"; do svc="$(svc_unit "$s")"
         if wait_active "$svc"; then
             echo -e "  ${GREEN}OK${NC}   $svc  $(systemctl show -p MainPID --value "$svc")"
         else
@@ -930,7 +922,7 @@ verify_services() {
     if $all_ok; then
         info "Deploy complete"
     else
-        for svc in "${SERVICES[@]}"; do
+        for s in "${SELECTED[@]}"; do svc="$(svc_unit "$s")"
             systemctl is-active --quiet "$svc" 2>/dev/null && continue
             warn "Recent $svc logs (journalctl -u $svc -n 10):"
             sudo journalctl -u "$svc" -n 10 --no-pager 2>/dev/null | sed 's/^/    /' || true
