@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/config"
+	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniagent"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
@@ -197,7 +197,7 @@ func run(cfgPath string) error {
 	// not sampled separately (idle → "—" only when the file is unreadable).
 	// The running-sessions callback lets the frontend reconcile its view of
 	// in-flight turns even if TypeTurnStarted/Finished controls are dropped.
-	bridgebase.GoSafe(logger, "metrics-loop", func() {
+	gosafe.Go(logger, "metrics-loop", func() {
 		backendrpc.StartMetricsLoop(ctx, rpc, backendrpc.MetricsOptions{
 			Interval: time.Duration(cfg.StatusMonitor.Interval),
 			StateDir: cfg.StateDir,

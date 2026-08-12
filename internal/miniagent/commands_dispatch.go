@@ -1,4 +1,4 @@
-package bridgebase
+package miniagent
 
 import (
 	"context"
@@ -10,10 +10,14 @@ import (
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// CommandHandler runs one slash command bound to a bridge's handler type H.
-// ctx is bounded by cmdutil.Timeout and carries the triggering message's ID
-// (see ReplyToID).
-type CommandHandler[H any] func(h H, ctx context.Context, chatID string, args []string) (cmdutil.Result, error)
+// EmitFunc is the emit signature a command dispatcher uses to ship its reply
+// (and any picker cards) to the frontend: promptID scopes the control to an
+// in-flight turn (empty for a standalone card).
+type EmitFunc func(ctx context.Context, promptID string, ctrl *protocol.Control) error
+
+// CommandHandler runs one slash command bound to this handler. ctx is bounded
+// by cmdutil.Timeout and carries the triggering message's ID (see ReplyToID).
+type CommandHandler func(h *Handler, ctx context.Context, chatID string, args []string) (cmdutil.Result, error)
 
 // replyToIDKey is the ctx key under which Dispatch stamps the triggering
 // message's ID.
@@ -31,39 +35,36 @@ func ReplyToID(ctx context.Context) string {
 
 // CommandSpec is one slash command's metadata plus its handler. The display
 // metadata (Name/Summary/Args/Title/Level) is shared infrastructure from
-// cmdutil.Spec; the Handler binds the bridge's own handler type.
-type CommandSpec[H any] struct {
+// cmdutil.Spec; Handler binds this handler.
+type CommandSpec struct {
 	cmdutil.Spec
 
-	Handler CommandHandler[H]
+	Handler CommandHandler
 }
 
-// Commands is a bridge's slash-command table plus the dispatch machinery,
-// generic over the bridge's handler type so the logic lives here once.
-type Commands[H any] struct {
-	specs    []CommandSpec[H]
-	registry map[string]*CommandSpec[H]
+// Commands is the slash-command table plus the dispatch machinery.
+type Commands struct {
+	specs    []CommandSpec
+	registry map[string]*CommandSpec
 }
 
 // NewCommands builds the registry derived from specs.
-func NewCommands[H any](specs []CommandSpec[H]) *Commands[H] {
-	registry := make(map[string]*CommandSpec[H], len(specs))
+func NewCommands(specs []CommandSpec) *Commands {
+	registry := make(map[string]*CommandSpec, len(specs))
 	for i := range specs {
 		registry[specs[i].Name] = &specs[i]
 	}
-	return &Commands[H]{specs: specs, registry: registry}
+	return &Commands{specs: specs, registry: registry}
 }
 
-// Lookup returns the spec for a command name, if any. It lets backends with
-// custom dispatch paths (e.g. miniagent's per-chat turn-slot reservation)
-// reuse the command registry without giving up their own emit logic.
-func (c *Commands[H]) Lookup(name string) (*CommandSpec[H], bool) {
+// Lookup returns the spec for a command name, if any.
+func (c *Commands) Lookup(name string) (*CommandSpec, bool) {
 	spec, ok := c.registry[name]
 	return spec, ok
 }
 
 // RenderHelp is the source of /help's body.
-func (c *Commands[H]) RenderHelp() string {
+func (c *Commands) RenderHelp() string {
 	specs := make([]cmdutil.Spec, 0, len(c.specs))
 	for _, s := range c.specs {
 		specs = append(specs, s.Spec)
@@ -72,9 +73,9 @@ func (c *Commands[H]) RenderHelp() string {
 }
 
 // Dispatch runs one slash command and emits its reply as a TypeNotice
-// Control. It is invoked by the bridge's handlePromptEvent when the prompt
-// text starts with "/".
-func (c *Commands[H]) Dispatch(h H, emit EmitFunc, logger *log.Logger, parentCtx context.Context, chatID, prompt, replyToID string) {
+// Control. It is invoked by handleSessionCommand when the prompt text starts
+// with "/".
+func (c *Commands) Dispatch(h *Handler, emit EmitFunc, logger *log.Logger, parentCtx context.Context, chatID, prompt, replyToID string) {
 	ctx, cancel := context.WithTimeout(parentCtx, cmdutil.Timeout)
 	defer cancel()
 	ctx = context.WithValue(ctx, replyToIDKey{}, replyToID)

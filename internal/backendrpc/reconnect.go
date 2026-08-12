@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -105,7 +106,7 @@ func run(ctx context.Context, client *Client, opts ConnectOptions,
 	current.Store(client)
 	stop := make(chan struct{})
 	defer close(stop)
-	goSafe(nil, "sse-shutdown", func() {
+	gosafe.Go(nil, "sse-shutdown", func() {
 		select {
 		case <-ctx.Done():
 			if c := current.Load(); c != nil {

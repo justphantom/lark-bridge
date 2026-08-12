@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -146,7 +146,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// short ctx: pong is disposable and must not stall the loop on slow IPC.
 	// PromptID stays empty (pong is keyed by the URL-path BackendID).
 	if ev.Type == protocol.TypePing {
-		bridgebase.GoSafe(h.logger, "pong", func() {
+		gosafe.Go(h.logger, "pong", func() {
 			pctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := h.rpc.SendControl(pctx, &protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}}); err != nil {

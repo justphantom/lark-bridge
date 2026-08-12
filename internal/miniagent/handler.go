@@ -11,6 +11,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
+	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -166,7 +167,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// TypePing: the frontend's C2 app-level health probe. Answer on this
 	// dispatch loop itself — a wedged loop never pongs and gets evicted.
 	if ev.Type == protocol.TypePing {
-		bridgebase.GoSafe(h.logger, "pong", func() {
+		gosafe.Go(h.logger, "pong", func() {
 			h.sendCtrl(&protocol.Control{Type: protocol.TypePong, Pong: &protocol.PongPayload{}})
 		})
 		return nil
@@ -241,7 +242,7 @@ func (h *Handler) HandleEvent(ctx context.Context, ev *protocol.Event) error {
 	// GoSafe so a panic inside runTurn is recovered + logged instead of
 	// crashing the backend. endTurn is deferred inside fn so the per-chat turn
 	// slot is still released during the panic unwind before GoSafe's recover.
-	bridgebase.GoSafe(h.logger, "miniagent turn: "+chatID, func() {
+	gosafe.Go(h.logger, "miniagent turn: "+chatID, func() {
 		defer h.endTurn(chatID, mine)
 		h.runTurn(turnCtx, promptID, chatID, prompt)
 	})

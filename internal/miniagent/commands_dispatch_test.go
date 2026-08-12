@@ -1,4 +1,4 @@
-package bridgebase
+package miniagent
 
 import (
 	"context"
@@ -25,25 +25,26 @@ func capturingEmit(out *[]*protocol.Control, mu *sync.Mutex) EmitFunc {
 	}
 }
 
-// newCmdCommands builds a Commands table with the given specs, generic over
-// a trivial int handler type so the test does not need a real bridge.
-func newCmdCommands(specs []CommandSpec[int]) *Commands[int] {
-	return NewCommands[int](specs)
+// newCmdCommands builds a Commands table with the given specs. The dispatcher
+// only forwards the handler to spec.Handler, so a zero-value *Handler suffices
+// (the test handlers ignore it).
+func newCmdCommands(specs []CommandSpec) *Commands {
+	return NewCommands(specs)
 }
 
 // TestDispatch_HappyPath verifies a successful handler's Body/Title/Level
 // land in the emitted Notice.
 func TestDispatch_HappyPath(t *testing.T) {
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/ping", Title: "Ping", Level: "success"},
-		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "pong"}, nil
 		},
 	}}
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/ping", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/ping", "")
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1", len(got))
 	}
@@ -62,7 +63,7 @@ func TestDispatch_UnknownCommand(t *testing.T) {
 	cmds := newCmdCommands(nil)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/wat", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/wat", "")
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1", len(got))
 	}
@@ -78,16 +79,16 @@ func TestDispatch_UnknownCommand(t *testing.T) {
 // TestDispatch_HandlerError verifies a handler returning an error surfaces
 // it as an error-level notice with the message prefixed by ⚠️.
 func TestDispatch_HandlerError(t *testing.T) {
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/boom", Title: "Boom"},
-		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "ignored"}, errors.New("disk full")
 		},
 	}}
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/boom", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/boom", "")
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1", len(got))
 	}
@@ -105,9 +106,9 @@ func TestDispatch_HandlerError(t *testing.T) {
 // card the frontend opened for that message.
 func TestDispatch_StampsReplyToID(t *testing.T) {
 	var got string
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
-		Handler: func(_ int, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			got = ReplyToID(ctx)
 			return cmdutil.Result{Handled: true}, nil
 		},
@@ -115,7 +116,7 @@ func TestDispatch_StampsReplyToID(t *testing.T) {
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var controls []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&controls, &mu), log.Nop(), context.Background(), "C", "/pick", "om_user_msg")
+	cmds.Dispatch(&Handler{}, capturingEmit(&controls, &mu), log.Nop(), context.Background(), "C", "/pick", "om_user_msg")
 	if got != "om_user_msg" {
 		t.Errorf("ReplyToID = %q, want om_user_msg", got)
 	}
@@ -132,16 +133,16 @@ func TestReplyToID_OutsideDispatch(t *testing.T) {
 // (e.g. an interactive picker that emits its own card) does NOT get a
 // default TypeNotice — that would clobber the picker's card.
 func TestDispatch_HandledSkipsEmit(t *testing.T) {
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
-		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Body: "picker took over", Handled: true}, nil
 		},
 	}}
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/pick", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/pick", "")
 	if len(got) != 0 {
 		t.Errorf("Handled=true should suppress emit, got %d controls", len(got))
 	}
@@ -151,16 +152,16 @@ func TestDispatch_HandledSkipsEmit(t *testing.T) {
 // set, a returned error still triggers a notice — failures from a
 // self-handling command must not be silently swallowed.
 func TestDispatch_HandledWithErrorOverrides(t *testing.T) {
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/pick", Title: "Pick"},
-		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Handled: true}, errors.New("picker crashed")
 		},
 	}}
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/pick", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/pick", "")
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1 (error overrides Handled)", len(got))
 	}
@@ -177,9 +178,9 @@ func TestDispatch_Timeout(t *testing.T) {
 	if testing.Short() {
 		t.Skip("cmdutil.Timeout is 15s; skip under -short")
 	}
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/slow", Title: "Slow"},
-		Handler: func(_ int, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, ctx context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			// Block until the dispatcher's timeout ctx fires.
 			<-ctx.Done()
 			return cmdutil.Result{}, ctx.Err()
@@ -189,7 +190,7 @@ func TestDispatch_Timeout(t *testing.T) {
 	var mu sync.Mutex
 	var got []*protocol.Control
 	start := time.Now()
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/slow", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/slow", "")
 	elapsed := time.Since(start)
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1", len(got))
@@ -203,20 +204,20 @@ func TestDispatch_Timeout(t *testing.T) {
 	}
 }
 
-// TestDispatch_ChangeResultFields verifies a ChangeResult's Field/Before/After
+// TestDispatch_ChangeResultFields verifies a Result's Field/Before/After
 // are propagated into the NoticePayload so the renderer draws a before→after
 // block, not just the body.
 func TestDispatch_ChangeResultFields(t *testing.T) {
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/set", Title: "Set", Level: "success"},
-		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
 			return cmdutil.Result{Field: "模型", Before: "old", After: "new", Body: "下次生效"}, nil
 		},
 	}}
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/set", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/set", "")
 	if len(got) != 1 {
 		t.Fatalf("emits=%d, want 1", len(got))
 	}
@@ -234,9 +235,9 @@ func TestDispatch_ChangeResultFields(t *testing.T) {
 func TestDispatch_PassesArgs(t *testing.T) {
 	var seenArgs []string
 	var seenArgCount int64
-	specs := []CommandSpec[int]{{
+	specs := []CommandSpec{{
 		Spec: cmdutil.Spec{Name: "/echo", Title: "Echo"},
-		Handler: func(_ int, _ context.Context, _ string, args []string) (cmdutil.Result, error) {
+		Handler: func(_ *Handler, _ context.Context, _ string, args []string) (cmdutil.Result, error) {
 			seenArgs = args
 			atomic.AddInt64(&seenArgCount, 1)
 			return cmdutil.Result{Body: strings.Join(args, " ")}, nil
@@ -245,7 +246,7 @@ func TestDispatch_PassesArgs(t *testing.T) {
 	cmds := newCmdCommands(specs)
 	var mu sync.Mutex
 	var got []*protocol.Control
-	cmds.Dispatch(0, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/echo hello world", "")
+	cmds.Dispatch(&Handler{}, capturingEmit(&got, &mu), log.Nop(), context.Background(), "C", "/echo hello world", "")
 	if atomic.LoadInt64(&seenArgCount) != 1 {
 		t.Fatalf("handler not called once")
 	}
@@ -260,7 +261,7 @@ func TestDispatch_PassesArgs(t *testing.T) {
 // TestRenderHelp verifies the help body lists each spec on its own line
 // with name and summary.
 func TestRenderHelp(t *testing.T) {
-	specs := []CommandSpec[int]{
+	specs := []CommandSpec{
 		{Spec: cmdutil.Spec{Name: "/a", Summary: "alpha", Args: "[x]"}},
 		{Spec: cmdutil.Spec{Name: "/b", Summary: "beta"}},
 	}

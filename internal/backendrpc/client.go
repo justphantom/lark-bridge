@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -366,7 +367,7 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 		return nil, fmt.Errorf("sse handshake %d: %s", resp.StatusCode, body)
 	}
 	c.sseBody = resp.Body
-	goSafe(c.logger.Load(), "sse-reader", func() { c.readSSE(resp.Body) })
+	gosafe.Go(c.logger.Load(), "sse-reader", func() { c.readSSE(resp.Body) })
 	return c, nil
 }
 

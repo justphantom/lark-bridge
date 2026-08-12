@@ -1,14 +1,8 @@
 package bridgebase
 
 import (
-	"context"
-
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
-
-// EmitFunc matches the bridges' Handler.emit signature: promptID scopes the
-// control to an in-flight turn (empty for a standalone picker card).
-type EmitFunc func(ctx context.Context, promptID string, ctrl *protocol.Control) error
 
 // PickAnswerValue extracts the user's selection from an AnswerPayload. A
 // custom-typed value wins over a listed pick (the user explicitly overrode

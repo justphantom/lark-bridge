@@ -5,22 +5,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // commands is the single source of truth for slash-command metadata and
-// handlers. It mirrors claudebridge's command table and reuses the shared
-// bridgebase.Commands machinery for parsing, help rendering, and dispatch.
+// handlers. It uses the in-package Commands machinery (commands_dispatch.go)
+// for parsing, help rendering, and dispatch.
 //
 // /running and /abort are registered so /help lists them, but they are
 // dispatched earlier in HandleEvent (before startTurn) because they must not
 // occupy the per-chat turn slot.
-var commands *bridgebase.Commands[*Handler]
+var commands *Commands
 
 func init() {
-	commands = bridgebase.NewCommands([]bridgebase.CommandSpec[*Handler]{
+	commands = NewCommands([]CommandSpec{
 		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前模型/工作目录/权限/思考/会话",
 			Title: "当前状态", Level: "info"}, Handler: (*Handler).cmdCurrentBridge},
 		{Spec: cmdutil.Spec{Name: "/model", Summary: "切换模型；不带参数弹出选择；传 clear 清除",
@@ -74,7 +73,7 @@ func isSessionCommand(prompt string) bool {
 
 // handleSessionCommand reserves the per-chat turn slot (so a command cannot
 // race with an in-flight runTurn over the router binding), runs the command
-// through the shared bridgebase.Commands dispatch, and replies via a Notice.
+// through the Commands dispatch, and replies via a Notice.
 // A busy chat gets the same "处理中" notice a prompt would.
 func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, prompt string) error {
 	turnCtx, mine, ok := h.startTurn(ctx, chatID, promptID)
@@ -90,7 +89,7 @@ func (h *Handler) handleSessionCommand(ctx context.Context, chatID, promptID, pr
 	return nil
 }
 
-// emitNotice is the EmitFunc passed to bridgebase.Commands.Dispatch. It binds
+// emitNotice is the EmitFunc passed to Commands.Dispatch. It binds
 // the notice to the command's own promptID so the frontend patches the
 // progress card it opened for the triggering message, instead of leaving a
 // stale card and sending a new one.
