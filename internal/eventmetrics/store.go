@@ -3,16 +3,13 @@ package eventmetrics
 import "sync"
 
 // maxUnknownKeys bounds how many distinct keys a store tracks before folding
-// further unseen keys into a single overflow counter. UnknownEvent's
-// eventType comes straight from CLI-subprocess stdout; a buggy or hostile
-// backend emitting random type strings would otherwise grow items without
-// bound and wreck the metrics cardinality assumption. 256 is far above any
-// legitimate backend's event vocabulary. The LineTruncated store keys on
-// backend only (≤4 keys), so the cap never engages for it.
+// further unseen keys into a single overflow counter. The LineTruncated store
+// keys on backend only (a handful of keys), so the cap is a backstop against
+// unbounded growth rather than a routinely-engaged limit.
 const maxUnknownKeys = 256
 
-// unknownStore is a concurrent map of string → *Counter, used for
-// per-(backend,event_type) UnknownEvent counters.
+// unknownStore is a concurrent map of string → *Counter, used for per-backend
+// counters such as LineTruncated.
 type unknownStore struct {
 	mu       sync.RWMutex
 	items    map[string]*Counter
@@ -41,7 +38,7 @@ func (s *unknownStore) get(key string) *Counter {
 	}
 	// Cap reached: fold this and all further unseen keys into one shared
 	// overflow counter rather than growing the map without bound. Existing
-	// tracked keys keep their own counters; only newly-seen types overflow.
+	// tracked keys keep their own counters; only newly-seen keys overflow.
 	if len(s.items) >= maxUnknownKeys {
 		return s.overflow
 	}
@@ -49,12 +46,6 @@ func (s *unknownStore) get(key string) *Counter {
 	s.items[key] = c
 	return c
 }
-
-// Overflow returns the shared counter that keys past the cap fold into. Nil
-// before the store is constructed (it never is in practice); exposed so a
-// future metrics exporter can surface "how many unknown events were
-// collapsed" distinctly from the per-type breakdown.
-func (s *unknownStore) Overflow() *Counter { return s.overflow }
 
 func (s *unknownStore) reset() {
 	s.mu.Lock()

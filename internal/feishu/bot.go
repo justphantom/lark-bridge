@@ -132,8 +132,7 @@ type Bot struct {
 type BotOption func(*botConfig)
 
 type botConfig struct {
-	Domain   string
-	LogLevel string
+	Domain string
 	// clientFactory overrides *lark.Client for tests; nil in production.
 	// Wired in via withClientFactory (defined in bot_test.go).
 	clientFactory feishuClient
@@ -142,11 +141,6 @@ type botConfig struct {
 // WithDomain overrides the default Feishu API domain (e.g. for testing).
 func WithDomain(d string) BotOption {
 	return func(c *botConfig) { c.Domain = d }
-}
-
-// WithLogLevel overrides the client log level (defaults to "info").
-func WithLogLevel(l string) BotOption {
-	return func(c *botConfig) { c.LogLevel = l }
 }
 
 // NewBotWithLogger creates a Bot with a slog.Logger.
@@ -200,15 +194,12 @@ func larkOpts(cfg botConfig) []lark.Option {
 	if cfg.Domain != "" {
 		opts = append(opts, lark.WithDomain(cfg.Domain))
 	}
-	if cfg.LogLevel != "" {
-		opts = append(opts, lark.WithLogLevel(cfg.LogLevel))
-	}
 	return opts
 }
 
 // applyBotOpts folds the option chain onto a default botConfig.
 func applyBotOpts(opts []BotOption) botConfig {
-	cfg := botConfig{Domain: "feishu", LogLevel: "info"}
+	cfg := botConfig{Domain: "feishu"}
 	for _, o := range opts {
 		o(&cfg)
 	}

@@ -1,6 +1,6 @@
 // Package cmdutil holds the slash-command infrastructure shared by the
-// backends: parsing, the timeout cap, and the pure helpers (error-result
-// pairing, help rendering) that backends used to duplicate verbatim.
+// backends: parsing, the timeout cap, and the pure helpers (help rendering)
+// that backends used to duplicate verbatim.
 //
 // What stays in each backend: the dispatcher (it binds the backend's own
 // *Handler for emit/logger), the per-backend command registry, and the
@@ -8,8 +8,6 @@
 package cmdutil
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -66,23 +64,6 @@ func ParseCommand(prompt string) (cmd string, args []string) {
 		return "", nil
 	}
 	return head, strings.Fields(rest)
-}
-
-// ErrorResult returns both a Result and an error carrying the same message.
-// The message is formatted once so a percent sign in an argument cannot make
-// the body and error disagree, and the error avoids a non-constant
-// fmt.Errorf format string.
-func ErrorResult(format string, args ...any) (Result, error) {
-	msg := fmt.Sprintf(format, args...)
-	return Result{Body: msg}, errors.New(msg)
-}
-
-// ChangeResult builds a Result for a setting-change command (Field/Before/After
-// carry the structured change). body is the human confirmation line shown
-// below the before→after block. before may be empty when there was no prior
-// value (first-time set); the renderer then omits the strikethrough half.
-func ChangeResult(field, before, after, body string) Result {
-	return Result{Body: body, Field: field, Before: before, After: after}
 }
 
 // RenderHelp renders the /help body from a list of specs, one line each:

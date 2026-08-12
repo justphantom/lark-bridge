@@ -53,13 +53,6 @@ type Options struct {
 	// —— pptx (office-extract-design.md §2 / §4.1) ——
 	// PptxMaxSlides caps emitted slides; <=0 → unlimited (design default).
 	PptxMaxSlides int
-	// PptxExtractNotes reserves speaker-notes emission; v1 ignores it
-	// (slides only). Kept so future enablement is config-only.
-	PptxExtractNotes bool
-	// PptxTextOnly forces text-only extraction. v1 always behaves as
-	// text-only (images dropped per decision 3A); the switch is the forward
-	// hook for image extraction and currently has no behavioural effect.
-	PptxTextOnly bool
 
 	// —— xlsx (C paradigm: full data to disk, prompt carries metadata) ——
 	// XlsxMaxSheets caps emitted sheets; <=0 → unlimited (decision Q10).
@@ -80,13 +73,11 @@ type logger interface {
 // Safe for concurrent use: each Convert writes to a caller-supplied
 // destination path; no shared mutable state.
 type Converter struct {
-	timeout          time.Duration
-	log              logger
-	pptxMaxSlides    int
-	pptxExtractNotes bool
-	pptxTextOnly     bool
-	xlsxMaxSheets    int
-	xlsxFormulaMode  string
+	timeout         time.Duration
+	log             logger
+	pptxMaxSlides   int
+	xlsxMaxSheets   int
+	xlsxFormulaMode string
 }
 
 // New builds a Converter from opts.
@@ -100,13 +91,11 @@ func New(opts Options) *Converter {
 		formulaMode = "value" // decision 6A default
 	}
 	c := &Converter{
-		timeout:          timeout,
-		log:              opts.Logger,
-		pptxMaxSlides:    opts.PptxMaxSlides,
-		pptxExtractNotes: opts.PptxExtractNotes,
-		pptxTextOnly:     opts.PptxTextOnly,
-		xlsxMaxSheets:    opts.XlsxMaxSheets,
-		xlsxFormulaMode:  formulaMode,
+		timeout:         timeout,
+		log:             opts.Logger,
+		pptxMaxSlides:   opts.PptxMaxSlides,
+		xlsxMaxSheets:   opts.XlsxMaxSheets,
+		xlsxFormulaMode: formulaMode,
 	}
 	return c
 }

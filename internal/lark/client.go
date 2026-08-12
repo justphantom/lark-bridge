@@ -14,8 +14,7 @@ import (
 type Option func(*config)
 
 type config struct {
-	baseURL  string
-	logLevel string
+	baseURL string
 }
 
 // WithDomain overrides the Feishu API domain. Accepts the friendly names the
@@ -23,13 +22,6 @@ type config struct {
 // URL. Empty defaults to the production Feishu endpoint.
 func WithDomain(domain string) Option {
 	return func(c *config) { c.baseURL = resolveBaseURL(domain) }
-}
-
-// WithLogLevel keeps API parity with the SDK constructor the feishu wrapper
-// used to call; the new client does not itself log, so the value is currently
-// informational (reserved for a future debug hook).
-func WithLogLevel(level string) Option {
-	return func(c *config) { c.logLevel = level }
 }
 
 // resolveBaseURL maps a friendly/host/URL input to a full origin (scheme+host,

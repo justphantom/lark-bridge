@@ -108,7 +108,7 @@ func run(cfgPath, addr string) error {
 
 	// Feishu bot.
 	bot, err := feishu.NewBotWithLogger(cfg.FeishuAppID, cfg.FeishuAppSecret, logger,
-		feishu.WithDomain(cfg.FeishuDomain), feishu.WithLogLevel(cfg.FeishuLogLevel))
+		feishu.WithDomain(cfg.FeishuDomain))
 	if err != nil {
 		return fmt.Errorf("feishu bot: %w", err)
 	}
@@ -353,7 +353,6 @@ func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufro
 		Timeout:         time.Duration(cfg.FileConvert.ConvertTimeout),
 		Logger:          logger,
 		PptxMaxSlides:   cfg.FileConvert.PptxMaxSlides,
-		PptxTextOnly:    true, // v1 always text-only (decision 3A); config flag is a forward hook
 		XlsxMaxSheets:   cfg.FileConvert.XlsxMaxSheets,
 		XlsxFormulaMode: cfg.FileConvert.XlsxFormulaMode,
 	})

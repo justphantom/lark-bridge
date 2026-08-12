@@ -103,7 +103,7 @@ func TestSetMode_PersistsAcrossReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
-	r1.Bind("c1", "", "", "", "", "")
+	r1.Bind("c1", "", "", "", "")
 	r1.SetMode("c1", "auto")
 	r1.SetThinking("c1", "max")
 	r1.SetMaxIterations("c1", 42)

@@ -4,8 +4,7 @@
 // MetricsReport in the future.
 //
 // All counters are monotonically-increasing int64 values, safe for concurrent
-// use. The package defines pre-named counters for known observability points;
-// UnknownEvent creates per-(backend,event_type) counters lazily.
+// use. The package defines pre-named counters for known observability points.
 package eventmetrics
 
 import (
@@ -54,18 +53,6 @@ var MiniAgentTurnIncomplete Counter
 // sustained growth signals IPC instability (SSE blips, frontend congestion).
 var TerminalEmitRetries Counter
 
-// ---- UnknownEvent dimension ----
-
-// unknownStore holds per-(backend,event_type) counters, created lazily.
-var globalUnknownStore = newUnknownStore()
-
-// UnknownEvent returns the Counter for an unrecognised event type in a given
-// backend. Counters are created on first access and never removed.
-func UnknownEvent(backend, eventType string) *Counter {
-	key := backend + "\x00" + eventType
-	return globalUnknownStore.get(key)
-}
-
 // ---- LineTruncated dimension (F1) ----
 
 // truncatedStore holds per-backend counters for oversized stream lines that
@@ -82,6 +69,5 @@ func LineTruncated(backend string) *Counter {
 // ResetAll resets every pre-defined counter. Intended for tests.
 func ResetAll() {
 	TerminalEmitRetries.Reset()
-	globalUnknownStore.reset()
 	globalTruncatedStore.reset()
 }

@@ -28,7 +28,6 @@ type Binding struct {
 	Title         string `json:"title,omitempty"`
 	ModelSpec     string `json:"modelSpec,omitempty"`
 	Provider      string `json:"provider,omitempty"`      // miniagent (-provider; paired with ModelSpec → -model)
-	Agent         string `json:"agent,omitempty"`         // opencode
 	Mode          string `json:"mode,omitempty"`          // miniagent
 	Thinking      string `json:"thinking,omitempty"`      // miniagent
 	MaxIterations int    `json:"maxIterations,omitempty"` // miniagent (-max-iterations; 0 = unset)

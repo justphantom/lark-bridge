@@ -179,7 +179,6 @@ func newTLSHTTPClient(caFile, certFile, keyFile string) (*http.Client, error) {
 // Client is one backend's connection to the frontend.
 type Client struct {
 	backendID   string
-	backendType string
 	frontendURL string
 	secret      string // shared bearer token; sent on SSE and POST
 	// backendToken is the per-backend session token presented via
@@ -296,7 +295,6 @@ func connect(opts ConnectOptions, httpClient *http.Client, ownsTransport bool) (
 	}
 	c := &Client{
 		backendID:     opts.BackendID,
-		backendType:   opts.BackendType,
 		frontendURL:   strings.TrimSuffix(opts.FrontendURL, "/"),
 		secret:        opts.Secret,
 		httpClient:    httpClient,

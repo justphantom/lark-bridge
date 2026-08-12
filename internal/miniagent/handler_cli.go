@@ -449,7 +449,7 @@ func (h *Handler) ensureBinding(chatID string) {
 	if _, ok := h.router.Lookup(chatID); ok {
 		return
 	}
-	h.router.Bind(chatID, "", "", "", "", "")
+	h.router.Bind(chatID, "", "", "", "")
 }
 
 // sessionIDFile returns the path to chatID's session-id mapping file, or ""

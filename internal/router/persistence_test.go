@@ -28,7 +28,7 @@ func TestLoadMissingBindingsKey(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer r.Close()
-	r.Bind("c1", "s1", "/d", "", "", "")
+	r.Bind("c1", "s1", "/d", "", "")
 	if got, ok := r.Lookup("c1"); !ok || got.SessionID != "s1" {
 		t.Fatalf("expected c1 binding, got %+v ok=%v", got, ok)
 	}
@@ -44,7 +44,7 @@ func TestLoadExplicitNullBindings(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer r.Close()
-	r.Bind("c1", "s1", "", "", "", "")
+	r.Bind("c1", "s1", "", "", "")
 	if got, ok := r.Lookup("c1"); !ok || got.SessionID != "s1" {
 		t.Fatalf("expected c1 binding, got %+v ok=%v", got, ok)
 	}
@@ -93,7 +93,7 @@ func TestClosePersistsLastMutation(t *testing.T) {
 	path := filepath.Join(dir, "router.v5.json")
 
 	r1, _ := New(path, log.Nop())
-	r1.Bind("c1", "s1", "/d", "updated-title", "m", "a")
+	r1.Bind("c1", "s1", "/d", "updated-title", "m")
 	r1.SetModelSpec("c1", "updated-model")
 	r1.Close()
 
@@ -149,7 +149,7 @@ func TestCloseWithConcurrentBind(t *testing.T) {
 				case <-done:
 					return
 				default:
-					r.Bind("c1", "s1", "/d", "t", "m", "a")
+					r.Bind("c1", "s1", "/d", "t", "m")
 				}
 			}
 		}()

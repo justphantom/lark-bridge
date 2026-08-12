@@ -4,11 +4,10 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// Bind forcibly maps chatID to the given sessionID, directory, title,
-// modelSpec and agent, overwriting any prior binding for chatID. Used by
-// claude ensureBinding (with agent=""), /new and /use. The modelSpec /
-// agent fields are written verbatim; pass "" to clear.
-func (r *Router) Bind(chatID, sessionID, directory, title, modelSpec, agent string) {
+// Bind forcibly maps chatID to the given sessionID, directory, title and
+// modelSpec, overwriting any prior binding for chatID. Used by /new and /use.
+// The modelSpec field is written verbatim; pass "" to clear.
+func (r *Router) Bind(chatID, sessionID, directory, title, modelSpec string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bindings[chatID] = Binding{
@@ -16,15 +15,13 @@ func (r *Router) Bind(chatID, sessionID, directory, title, modelSpec, agent stri
 		Directory: directory,
 		Title:     title,
 		ModelSpec: modelSpec,
-		Agent:     agent,
 	}
 	r.saveAsync()
 	r.logger.Info("binding stored",
 		log.FieldChatID, chatID,
 		log.FieldSessionID, sessionID,
 		log.FieldDirectory, directory,
-		"model", modelSpec,
-		"agent", agent)
+		"model", modelSpec)
 }
 
 // Unbind removes the binding for chatID. Used by /session-del.

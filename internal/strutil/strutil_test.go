@@ -1,7 +1,6 @@
 package strutil
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -63,91 +62,4 @@ func TestExpandEnvVars(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestStringifyContent(t *testing.T) {
-	t.Run("plain string", func(t *testing.T) {
-		if got := StringifyContent(json.RawMessage(`"hello"`)); got != "hello" {
-			t.Errorf("string = %q", got)
-		}
-	})
-	t.Run("content-block array", func(t *testing.T) {
-		arr := json.RawMessage(`[{"type":"text","text":"a"},{"type":"text","text":"b"}]`)
-		if got := StringifyContent(arr); got != "ab" {
-			t.Errorf("array = %q", got)
-		}
-	})
-	t.Run("empty", func(t *testing.T) {
-		if got := StringifyContent(nil); got != "" {
-			t.Errorf("empty = %q", got)
-		}
-	})
-	t.Run("non-JSON fallback", func(t *testing.T) {
-		if got := StringifyContent(json.RawMessage(`plain text`)); got != "plain text" {
-			t.Errorf("fallback = %q", got)
-		}
-	})
-	t.Run("mixed type blocks", func(t *testing.T) {
-		arr := json.RawMessage(`[{"type":"text","text":"hello"},{"type":"image","text":"skip"},{"type":"text","text":" world"}]`)
-		if got := StringifyContent(arr); got != "hello world" {
-			t.Errorf("mixed = %q", got)
-		}
-	})
-}
-
-func TestStringifyContentEnvelope(t *testing.T) {
-	t.Run("envelope", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[{"type":"text","text":"hello"},{"type":"text","text":" world"}]}`)
-		if got := StringifyContentEnvelope(raw); got != "hello world" {
-			t.Errorf("envelope = %q", got)
-		}
-	})
-	t.Run("bare string fallback", func(t *testing.T) {
-		if got := StringifyContentEnvelope(json.RawMessage(`"hello"`)); got != "hello" {
-			t.Errorf("bare string = %q", got)
-		}
-	})
-	t.Run("bare block array fallback", func(t *testing.T) {
-		arr := json.RawMessage(`[{"type":"text","text":"a"},{"type":"text","text":"b"}]`)
-		if got := StringifyContentEnvelope(arr); got != "ab" {
-			t.Errorf("bare array = %q", got)
-		}
-	})
-	t.Run("empty", func(t *testing.T) {
-		if got := StringifyContentEnvelope(nil); got != "" {
-			t.Errorf("empty = %q", got)
-		}
-	})
-	t.Run("envelope with empty content falls back", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[]}`)
-		// Empty content array: envelope parsed, no text blocks extracted,
-		// falls through to StringifyContent which returns the raw JSON.
-		if got := StringifyContentEnvelope(raw); got != `{"content":[]}` {
-			t.Errorf("empty envelope = %q, want raw fallback", got)
-		}
-	})
-}
-
-func TestStringifyJSON(t *testing.T) {
-	t.Run("compacted JSON", func(t *testing.T) {
-		if got := StringifyJSON(json.RawMessage(`{"a": 1}`)); got != `{"a":1}` {
-			t.Errorf("compact = %q", got)
-		}
-	})
-	t.Run("empty", func(t *testing.T) {
-		if got := StringifyJSON(nil); got != "" {
-			t.Errorf("empty = %q", got)
-		}
-	})
-	t.Run("non-JSON fallback", func(t *testing.T) {
-		if got := StringifyJSON(json.RawMessage(`plain`)); got != "plain" {
-			t.Errorf("fallback = %q", got)
-		}
-	})
-	t.Run("preserves key order", func(t *testing.T) {
-		// json.Compact preserves the original bytes, so no reordering.
-		if got := StringifyJSON(json.RawMessage(`{"z":1,"a":2}`)); got != `{"z":1,"a":2}` {
-			t.Errorf("order = %q", got)
-		}
-	})
 }

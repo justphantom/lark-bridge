@@ -98,7 +98,6 @@ type rawEvent struct {
 
 	// tool_result fields (v2.0.0+). exit_code is omitempty upstream and emitted
 	// only for the shell tool, so a pointer preserves "absent" vs "zero".
-	CallID    string `json:"call_id,omitempty"`
 	Output    string `json:"output,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`

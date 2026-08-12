@@ -71,7 +71,7 @@ func TestCmdMode_BadValueRejected(t *testing.T) {
 // binding; clear must set the field to "" without dropping the binding itself.
 func TestCmdMode_Clear(t *testing.T) {
 	h, r := newSettingsHandler(t)
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 	r.SetMode("c1", "auto")
 
 	level, title, body := h.cmdMode(context.Background(), "c1", "clear")
@@ -147,7 +147,7 @@ func TestCmdEffort_BadValueRejected(t *testing.T) {
 // the global default.
 func TestCmdEffort_Clear(t *testing.T) {
 	h, r := newSettingsHandler(t)
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 	r.SetThinking("c1", "high")
 
 	level, _, body := h.cmdEffort(context.Background(), "c1", "clear")
@@ -215,7 +215,7 @@ func TestCmdMaxIter_BadValueRejected(t *testing.T) {
 // binding exists; clear must set the field to 0 without dropping the binding.
 func TestCmdMaxIter_Clear(t *testing.T) {
 	h, r := newSettingsHandler(t)
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 	r.SetMaxIterations("c1", 50)
 
 	level, _, body := h.cmdMaxIter(context.Background(), "c1", "clear")

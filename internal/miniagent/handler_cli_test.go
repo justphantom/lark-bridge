@@ -346,7 +346,7 @@ func TestActiveTurnConfig_BoundOverridesDefault(t *testing.T) {
 
 	// Set* are no-ops until a binding exists (mutate drops silently on miss),
 	// so mirror ensureBinding: Bind first, then mutate the fields.
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 	r.SetModelSpec("c1", "kimi")
 	r.SetDirectory("c1", "/proj")
 
@@ -377,7 +377,7 @@ func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
 		t.Fatalf("router.New: %v", err)
 	}
 	defer r.Close()
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 
 	h := New(&captureSender{}, log.Nop(), r, "/root", "m", "", nil, "", 0, "", false)
 
@@ -410,7 +410,7 @@ func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
 		t.Fatalf("router.New: %v", err)
 	}
 	defer r.Close()
-	r.Bind("c1", "", "", "", "", "")
+	r.Bind("c1", "", "", "", "")
 	h := New(&captureSender{}, log.Nop(), r, "/root", "m", "", nil, "", 0, "", false)
 
 	// No pin → client default (client nil → 0).

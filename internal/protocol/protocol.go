@@ -63,7 +63,6 @@ type PromptPayload struct {
 	// a fresh standalone card.
 	CardMessageID string `json:"cardMessageID,omitempty"`
 	ModelSpec     string `json:"modelSpec,omitempty"` // user model alias (e.g. "sonnet")
-	Agent         string `json:"agent,omitempty"`     // opencode
 	Permission    string `json:"permission,omitempty"`
 	Effort        string `json:"effort,omitempty"`
 	SettingsFile  string `json:"settingsFile,omitempty"`
@@ -82,8 +81,6 @@ func (p *PromptPayload) HasFrontendOverride() string {
 		return "directory"
 	case p.ModelSpec != "":
 		return "modelSpec"
-	case p.Agent != "":
-		return "agent"
 	case p.Permission != "":
 		return "permission"
 	case p.Effort != "":
