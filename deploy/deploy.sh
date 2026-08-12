@@ -546,9 +546,10 @@ inject_router_path() {
 
 # inject_config_dir 把操作员的 MINIAGENT_CONFIG_DIR 字面量写入 miniagent 配置的
 # config_dir 字段（/config 选择器扫描目录）。空值由调用方跳过，保持 "" →
-# ResolveConfigDir 回退 $HOME/.miniagent。路径原样注入（不预解 ~）：专用
-# RUN_USER 下服务运行时 HOME 被指向 $STATE_DIR（write_units），部署期预解会
-# 烤进部署者家目录；ResolveConfigDir 按服务运行时 HOME 展开 ~ 才正确。
+# ResolveConfigDir 回退 $HOME/.miniagent。路径原样注入（不预解 ~）：服务运行时
+# HOME 为 /home/$RUN_USER（write_units 注入），专用 RUN_USER 下与部署者家目录
+# 不同，部署期预解 ~ 会烤进部署者家目录；ResolveConfigDir 按服务运行时 HOME
+# 展开 ~ 才正确。
 #
 # 转义双层且顺序敏感（\ 必须先）：值要穿过 sed replacement 再落地为合法 JSON。
 #   \  → \\\\  （sed replacement 里 \\ 写一个 \，故需 \\\\ 才在文件里落 \\ = JSON 的 \）
@@ -833,14 +834,16 @@ write_units() {
     local s u extra_env
     for s in "${SELECTED[@]}"; do
         u="$(svc_unit "$s")"
-        # miniagent forks an external CLI that uses $HOME for its cache and
-        # /config scan. When RUN_USER != INVOKER_USER (a dedicated service
-        # account), point HOME at the managed STATE_DIR so the CLI writes into a
-        # chowned dir instead of a possibly-absent/unwritable system home. Under
-        # the default RUN_USER == INVOKER_USER (e.g. dev) this is a no-op: the
-        # real $HOME is kept so existing ~/.miniagent content is preserved.
-        if [[ "$s" == "miniagent" && "$RUN_USER" != "$INVOKER_USER" ]]; then
-            extra_env="Environment=HOME=$STATE_DIR"
+        # miniagent forks an external CLI (the miniagent binary, plus the
+        # git/node/shell tools it spawns) that needs a predictable HOME and
+        # PATH: HOME=/home/$RUN_USER so its cache/config (~/.miniagent,
+        # .gitconfig, …) land in a home the service account owns; PATH pinned to
+        # the standard tool locations so subprocess tool lookups don't depend on
+        # a login shell the service account lacks. (Previously HOME pointed at
+        # $STATE_DIR for dedicated accounts; /config's scan dir now follows HOME
+        # → /home/$RUN_USER/.miniagent unless MINIAGENT_CONFIG_DIR overrides it.)
+        if [[ "$s" == "miniagent" ]]; then
+            extra_env="Environment=HOME=/home/$RUN_USER"$'\n'"Environment=PATH=/usr/local/bin:/usr/bin:/bin"
         else
             extra_env=""
         fi
