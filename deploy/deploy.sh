@@ -464,8 +464,6 @@ stage_configs() {
     # the metacharacter-escape traps of literal substitution and the silent-fail
     # risk of sed that would split state.
 
-    inject_router_path "$STAGE/base-config.json" "$STATE_DIR/claude-router.json"
-
     # miniagent-back: distinct backend_id + distinct router_path
     cp "$STAGE/base-config.json" "$STAGE/miniagent-config.json"
     inject_router_path "$STAGE/miniagent-config.json" "$STATE_DIR/miniagent-router.json" "miniagent-1"

@@ -277,14 +277,13 @@ func (h *Handler) sendCtrl(ctrl *protocol.Control) {
 
 // sendTerminalCtrl emits a TERMINAL control (TypeResult / TypeError) through
 // bridgebase.EmitTerminalControl's retry path so a lost final reply is re-sent
-// instead of dropped on a single failed POST — parity with the 3 CLI bridges'
-// Core.EmitTerminal. miniagent has no AckRegistry, so the ACK wait is skipped
-// (pure retry-on-send-error: a successful POST is "delivered"); h.appCtx
-// cancels the backoff on Close. Non-terminal controls (notice / progress /
-// tool signals) stay on the single-shot sendCtrl — only the final reply and
-// error warrant the retry budget.
+// instead of dropped on a single failed POST (pure retry-on-send-error: a
+// successful POST is "delivered"); h.appCtx cancels the backoff on Close.
+// Non-terminal controls (notice / progress / tool signals) stay on the
+// single-shot sendCtrl — only the final reply and error warrant the retry
+// budget.
 func (h *Handler) sendTerminalCtrl(ctrl *protocol.Control) {
-	if err := bridgebase.EmitTerminalControl(h.logger, h.rpc, nil, h.appCtx, ctrl.PromptID, ctrl.ChatID, ctrl); err != nil {
+	if err := bridgebase.EmitTerminalControl(h.logger, h.rpc, h.appCtx, ctrl.PromptID, ctrl.ChatID, ctrl); err != nil {
 		h.logger.Warn("miniagent terminal emit failed",
 			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
 			log.FieldControlType, ctrl.Type, log.FieldError, err)
