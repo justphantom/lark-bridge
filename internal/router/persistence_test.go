@@ -104,8 +104,7 @@ func TestClosePersistsLastMutation(t *testing.T) {
 		t.Fatal("expected c1 binding after reload")
 	}
 	if got.SessionID != "s1" || got.Directory != "/d" ||
-		got.ModelSpec != "updated-model" || got.Title != "updated-title" ||
-		got.Agent != "a" {
+		got.ModelSpec != "updated-model" || got.Title != "updated-title" {
 		t.Fatalf("unexpected binding after reload: %+v", got)
 	}
 }
@@ -125,7 +124,7 @@ func TestLoadIgnoresCrossBackendFields(t *testing.T) {
 	if !ok {
 		t.Fatal("expected c1 binding")
 	}
-	if got.SessionID != "s1" || got.ModelSpec != "m" || got.Agent != "build" {
+	if got.SessionID != "s1" || got.ModelSpec != "m" {
 		t.Fatalf("cross-backend tolerance failed: %+v", got)
 	}
 }

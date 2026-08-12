@@ -33,9 +33,9 @@ func TestPromptEventRoundTrip(t *testing.T) {
 	got := roundTrip(t, &Event{
 		Type:     TypePrompt,
 		PromptID: "msg-1",
-		Prompt:   &PromptPayload{ChatID: "c1", Text: "hello", Agent: "build"},
+		Prompt:   &PromptPayload{ChatID: "c1", Text: "hello"},
 	})
-	if got.Type != TypePrompt || got.Prompt.Text != "hello" || got.Prompt.Agent != "build" {
+	if got.Type != TypePrompt || got.Prompt.Text != "hello" {
 		t.Fatalf("prompt round trip: %+v", got)
 	}
 }
@@ -208,7 +208,6 @@ func TestPromptPayloadHasFrontendOverride(t *testing.T) {
 	}{
 		{"directory", "directory", "/etc"},
 		{"modelSpec", "modelSpec", "sonnet"},
-		{"agent", "agent", "code"},
 		{"permission", "permission", "plan"},
 		{"effort", "effort", "high"},
 		{"settingsFile", "settingsFile", "/etc/foo.json"},
@@ -237,8 +236,6 @@ func setOverrideField(t *testing.T, p *PromptPayload, field, value string) {
 		p.Directory = value
 	case "modelSpec":
 		p.ModelSpec = value
-	case "agent":
-		p.Agent = value
 	case "permission":
 		p.Permission = value
 	case "effort":

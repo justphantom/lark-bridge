@@ -34,10 +34,9 @@ func TestReadSSE_StalledConsumerForcesReconnect(t *testing.T) {
 	// A bare client (no Connect / no IPC registration). readSSE runs on a
 	// pipe we control so the test is deterministic.
 	c := &Client{
-		backendID:   "b1",
-		backendType: "claude",
-		eventCh:     make(chan *protocol.Event, sseEventChanBuf),
-		closeCh:     make(chan struct{}),
+		backendID: "b1",
+		eventCh:   make(chan *protocol.Event, sseEventChanBuf),
+		closeCh:   make(chan struct{}),
 	}
 	c.logger.Store(log.Nop())
 

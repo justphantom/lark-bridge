@@ -1,14 +1,17 @@
 ---
-updated: 2026-08-12T08:25:00+08:00
+updated: 2026-08-12T09:10:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
-**移除 SubagentSummary 机制**（后端收敛评估的最大已核验 win，~1.1K 行）。protocol 层：`SubagentSummary` struct + `ToolUse/ResultPayload` 的 `IsSubagent`/`TaskID`/`Subagent` 字段 + 3 校验器 + 2 enum map。renderer 层：整删 `progress_subagent.go`(+test，658 行) + `progress.go`/`progress_category.go`/`progress_snapshot.go` 去 subagent 分支 + `AddToolUse/AddToolResult` 去 `isSubagent`/`taskID` 参（坍缩为 name+desc 去重）+ dispatcher 去 Subagent!=nil 路由与 `toRendererSubagent`。**净 −1077 LOC**（15 文件 +141/−1218）。
-- 背景：为 claude local_agent/local_bash + opencode/omp agent 委派而建；唯一存活 CLI 后端 miniagent 从不产生这些字段（零 producer）。protocol 走裸 `json.Decode`（非 DisallowUnknownFields）→ 删字段对已部署 wire payload 向后兼容。
-- 验证全绿：build/vet/test -race/golangci-lint 0 issue。**15 文件未提交**，待 commit。
+**Tier-2 dead-code 扫尾**（9 项跨 7 包，均已 grep 复核零生产调用）。主体已提交 `7f5c85c`；**4 个测试文件未提交**（`.Agent`/`ChangeResult`/`backendType`/`Bind` 尾参修复——`readSSE_stall_test`/`commands_test`/`protocol_test`/`persistence_test`），是让 HEAD 测试可编译的必要尾巴，工作树整体 build/vet/test -race/golangci-lint 全绿。
+- 删除：strutil `Stringify*` 三件、cmdutil `ErrorResult`/`ChangeResult`、eventmetrics `UnknownEvent`/`Overflow()`（`unknownStore` 留给 `LineTruncated`）、router `Binding.Agent`+`Bind(agent)` 参、protocol `PromptPayload.Agent`+override case、`WithLogLevel` 全链（lark `config.logLevel`+feishu `botConfig.LogLevel`+`larkOpts` 分支+main 调用；config 字段 `FeishuLogLevel` 按 DisallowUnknownFields 保留 dormant）、pptx `PptxExtractNotes`/`PptxTextOnly` Go Options/Converter 字段+main 赋值（config 字段保留）、backendrpc `Client.backendType`、miniclient `rawEvent.CallID`。
 - 残留孤儿（无害，单独清理）：前端 `dispatcher_control.go` 的 ackTerminal 发送方现无消费者。
+- 仍开放：`Commands[H]` 去泛型、`GoSafe` 三处去重（结构化重构，单独批次）；dormant config 字段（`Timeouts.*`/`ComponentLogLevels`，需配 `removed_blocks` 迁移）；`backendrpc.Run`（转 `RunWithClient` 后删）。
+
+## 前序：移除 SubagentSummary 机制（已提交 `7f8e172`）
+~1.1K 行（15 文件 +141/−1218，含整删 `progress_subagent.go`+test 658 行）。protocol 去 `SubagentSummary`+`IsSubagent`/`TaskID`/`Subagent` 字段+3 校验器；renderer 去 subagent zone + `AddToolUse/AddToolResult` 去 `isSubagent`/`taskID` 参；dispatcher 去 Subagent!=nil 路由。protocol 走裸 `json.Decode` → 删字段对已部署 wire payload 向后兼容。
 
 ## 前序：激进清零某已移除后端的残留引用（已提交 `ae071d1`）
 CHANGELOG 历史 + `.agent` 记忆 + `deploy-status.sh` 迁移数组全清零。⚠️ 运维后果：迁移数组删该项后，仍带该 config 块的已部署 `status-monitor-config.json` 下次升级不再自动剥离 → 严格解析崩，升级前需手动清理。

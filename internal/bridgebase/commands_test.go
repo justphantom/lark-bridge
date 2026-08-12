@@ -210,7 +210,7 @@ func TestDispatch_ChangeResultFields(t *testing.T) {
 	specs := []CommandSpec[int]{{
 		Spec: cmdutil.Spec{Name: "/set", Title: "Set", Level: "success"},
 		Handler: func(_ int, _ context.Context, _ string, _ []string) (cmdutil.Result, error) {
-			return cmdutil.ChangeResult("模型", "old", "new", "下次生效"), nil
+			return cmdutil.Result{Field: "模型", Before: "old", After: "new", Body: "下次生效"}, nil
 		},
 	}}
 	cmds := newCmdCommands(specs)
