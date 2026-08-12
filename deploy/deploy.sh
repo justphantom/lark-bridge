@@ -138,7 +138,9 @@ verify_artifacts() {
 # -- .env ----------------------------------------------------------------------
 check_env_placeholder() {
     local key="$1" pattern="$2" hint="$3"
-    grep -q "^${key}=${pattern}" "$PROJECT_ROOT/.env" 2>/dev/null && warn "$key is still placeholder; edit .env: $hint"
+    if grep -q "^${key}=${pattern}" "$PROJECT_ROOT/.env" 2>/dev/null; then
+        warn "$key is still placeholder; edit .env: $hint"
+    fi
 }
 
 init_env() {
@@ -293,7 +295,9 @@ stop_services() {
     done
     sleep 1
     for u in "${ALL_UNITS[@]}"; do
-        systemctl is-active --quiet "$u" 2>/dev/null && fail "$u could not be stopped"
+        if systemctl is-active --quiet "$u" 2>/dev/null; then
+            fail "$u could not be stopped"
+        fi
     done
     info "All services stopped"
 }
