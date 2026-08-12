@@ -1,15 +1,22 @@
 ---
-updated: 2026-08-12T10:20:00+08:00
+updated: 2026-08-12T11:30:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
-**dormant config 迁移：删 3 个 Timeouts 死字段**（`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL`——分别标注「consumed by claude/opencode/usage store」，三者皆随后端移除而死）。净 −119 LOC（6 文件 +4/−123）。
-- 迁移安全：`deploy.sh` 每次部署从 `config.example.json` 全量重生成 feishu/miniagent config（line 672「Configs are deploy artifacts; each run copies…」）→ 删 example 条目即安全，无需 deploy.sh 迁移。`deploy-status.sh` **保留**已部署 status-monitor config + 跑 `migrate_config` → `removed_keys` 加 `prompt_timeout`/`idle_timeout`/`usage_session_ttl` 三叶字段，升级时剥离。
-- 同步删：`config_defaults`（UsageSessionTTL 默认）、`config_validate`（PromptTimeout/UsageSessionTTL 下限）、`config.example.json`（idle_timeout/usage_session_ttl）、5 个测试函数 + 2 表项。`Timeouts` 仅留 `BackendHealth`（feishu-front live）。
-- ⚠️ **有意保留 dormant**：`ComponentLogLevels`——其迁移有形式依赖（空 `{}` 单行 vs 操作员多行块），`removed_blocks`(sed range) 与 `removed_keys`(line regex) 都不能同时干净处理两种形态；~15 LOC 全惰性（parsed+validated+never applied），按项目既有「保留 dormant」安全模式留下。
-- 验证全绿：build/vet/test -race/golangci-lint 0 issue、deploy-smoke 34/0、deploy-status.sh bash -n/shellcheck clean、config.example.json JSON 合法。**6 文件未提交**。
+**删 `backendrpc.Run` + 清 `ackTerminal` 孤儿**（最后两个小尾巴，未提交）：
+- `backendrpc.Run`：零生产调用的 Connect+run() 薄封装；5 个 `TestRun_*` 转 `RunWithClient`（保留 run-loop 重连/放弃/重置覆盖），`TestRun_InitialConnectFails`→`TestConnect_UnreachableFails`，删 Run + 文档，sed 统一注释/文案 `Run`→`RunWithClient`。
+- `ackTerminal` 孤儿：quick-wins 删 AckRegistry 后，前端发送方无消费者。**整链清除**——`ackTerminal` 函数 + 2 调用点 + protocol `TypeAck`/`AckPayload`/`Event.Ack` 字段 + `allowedEventTypes` 条目 + 注释 + `dispatcher_ack_test.go`(整删) + 3 个 protocol_test 表项。
+- 验证全绿：build/vet/test -race/golangci-lint 0 issue。**8 文件未提交**（含 .agent），净 **−165 LOC**。
+
+### 简化系列收尾状态
+后端收敛以来的简化系列**完成**：deploy-monitor 清零 / quick wins / SubagentSummary / Tier-2 sweep / 结构化重构(GoSafe+Commands) / dormant Timeouts / backendrpc.Run + ackTerminal。累计清出 **~2.7K+ LOC** + 消除多拷贝、单消费者泛型、subagent 渲染机械、死 ACK 协议等过度抽象。
+- **唯一按设计保留**：`ComponentLogLevels`（~15 LOC 全惰性；迁移有形式依赖——空 `{}` 单行 vs 操作员多行块，需更健壮的 block stripper 才能安全删）。
+- 无其他遗留孤儿。
+
+## 前序：dormant config 迁移（已提交 `0021ca1`）
+删 3 个 Timeouts 死字段（`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL`，净 −119 LOC）。`deploy.sh` 全量重生成 feishu/miniagent config → 无需迁移；`deploy-status.sh` `removed_keys` 加三叶字段剥离已部署 status-monitor config。`ComponentLogLevels` 按设计保留 dormant（迁移形式依赖）。
 - 仍开放：`backendrpc.Run`（转 `RunWithClient` 后删）；前端 `ackTerminal` 孤儿发送方；`ComponentLogLevels`（需更健壮的 block stripper 才能安全删）。
 
 ## 前序：结构化重构（已提交 `be5131f`）

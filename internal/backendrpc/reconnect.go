@@ -20,7 +20,7 @@ import (
 var (
 	reconnectBackoff    = 5 * time.Second
 	reconnectMaxBackoff = 60 * time.Second
-	// maxReconnectFailures caps consecutive reconnect failures before Run
+	// maxReconnectFailures caps consecutive reconnect failures before RunWithClient
 	// returns ErrGiveUpReconnect. With the defaults above the cap is
 	// reached after ~15-20min of total frontend outage — long enough to
 	// ride out blips, short enough that a permanently-broken frontend
@@ -38,7 +38,7 @@ const (
 	reconnectJitter = 0.5
 )
 
-// ErrGiveUpReconnect is returned by Run when Connect has failed
+// ErrGiveUpReconnect is returned by RunWithClient when Connect has failed
 // maxReconnectFailures times in a row without a single successful receive in
 // between. Callers MUST treat it as fatal: the process should exit so the
 // supervisor (e.g. systemd Restart=on-failure) can restart it from a clean
@@ -47,38 +47,15 @@ const (
 // retried in-process.
 var ErrGiveUpReconnect = errors.New("backendrpc: give up reconnecting after sustained failures")
 
-// Run connects to the frontend, drains Events via handle, and reconnects with
-// exponential backoff when the SSE stream ends for any reason other than ctx
-// cancellation. It blocks until ctx is cancelled or an initial Connect fails
-// (so a misconfigured frontend_url fails fast at startup).
-//
-// handle is invoked for every Event received on a live stream. Its error is
-// logged and does not terminate the loop — a handler bug should not take the
-// backend offline. The EventErr callback, when non-nil, is notified of every
-// connect/recv failure and successful reconnect (for observability).
-func Run(ctx context.Context, opts ConnectOptions,
-	handle func(context.Context, *protocol.Event) error,
-	eventErr func(err error)) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Initial connect must succeed; a bad config should fail fast.
-	client, err := Connect(opts)
-	if err != nil {
-		return err
-	}
-	return run(ctx, client, opts, handle, eventErr)
-}
-
-// RunWithClient is Run with the initial connection already established: the
-// caller's client becomes the loop's first stream instead of Run dialing a
-// second one. backendhost uses this so the SAME *Client serves both the SSE
-// receive loop and the ControlSender/metrics POST paths — two connections
-// would register under one backendID (the frontend kicks the first) and,
-// worse, the kicked first connection's session token would no longer match
-// the registered one, so every control/metrics POST would be rejected as an
-// impersonation attempt (M10-2). Reconnects after the first stream behave
-// exactly like Run.
+// RunWithClient runs the receive/reconnect loop with the initial connection
+// already established by the caller: client becomes the loop's first stream.
+// Both production entrypoints (miniagent-back, status-monitor) use this so the
+// SAME *Client serves both the SSE receive loop and the ControlSender/metrics
+// POST paths — two connections would register under one backendID (the
+// frontend kicks the first) and, worse, the kicked first connection's session
+// token would no longer match the registered one, so every control/metrics
+// POST would be rejected as an impersonation attempt (M10-2). Reconnects after
+// the first stream redial via Connect.
 //
 // Ownership: the loop closes client on shutdown/reconnect like any client it
 // dialed itself; the caller must not use it after RunWithClient returns.
@@ -94,7 +71,7 @@ func RunWithClient(ctx context.Context, client *Client, opts ConnectOptions,
 	return run(ctx, client, opts, handle, eventErr)
 }
 
-// run is the shared receive/reconnect loop of Run and RunWithClient.
+// run is the receive/reconnect loop that RunWithClient enters.
 func run(ctx context.Context, client *Client, opts ConnectOptions,
 	handle func(context.Context, *protocol.Event) error,
 	eventErr func(err error)) error {
@@ -170,7 +147,7 @@ func run(ctx context.Context, client *Client, opts ConnectOptions,
 // reconnect retries Connect with exponential backoff until success, ctx
 // cancellation, or maxReconnectFailures consecutive failures. *failures is
 // incremented on every attempt and is NOT reset here on Connect success —
-// only Run's receive-success path resets it, so a server that handshakes
+// only RunWithClient's receive-success path resets it, so a server that handshakes
 // then immediately drops the stream still drives the count toward the
 // give-up threshold. Returns ErrGiveUpReconnect (wrap-aware via errors.Is)
 // when the threshold is reached.
@@ -194,7 +171,7 @@ func reconnect(ctx context.Context, opts ConnectOptions,
 			// Do NOT reset backoff or failures here: a server that accepts
 			// the SSE handshake and then immediately closes the stream
 			// would pin both at the floor forever, producing a tight
-			// connect/drop storm that never gives up. Reset belongs in Run,
+			// connect/drop storm that never gives up. Reset belongs in RunWithClient,
 			// gated on a successful receive — the only proof the stream is
 			// actually healthy.
 			return c, nil

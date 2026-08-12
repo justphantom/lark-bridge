@@ -24,7 +24,6 @@ type Event struct {
 	Answer *AnswerPayload `json:"answer,omitempty"`
 	Abort  *AbortPayload  `json:"abort,omitempty"`
 	Ping   *PingPayload   `json:"ping,omitempty"` // non-business heartbeat placeholder
-	Ack    *AckPayload    `json:"ack,omitempty"`  // terminal-control delivery confirmation (frontend→backend)
 }
 
 // Event type values.
@@ -33,7 +32,6 @@ const (
 	TypeAnswer = "answer"
 	TypeAbort  = "abort"
 	TypePing   = "ping" // non-business heartbeat placeholder
-	TypeAck    = "ack"  // frontend→backend: terminal control (Result/Error/Notice) was rendered to the user
 )
 
 // PromptPayload carries a user prompt. Text has already been @-stripped.
@@ -112,13 +110,3 @@ type AbortPayload struct {
 
 // PingPayload is an empty heartbeat payload.
 type PingPayload struct{}
-
-// AckPayload confirms a terminal control (Result/Error/Notice) was received
-// and rendered by the frontend. The backend's EmitTerminal arms a one-shot
-// wait keyed by PromptID; this ACK resolves it so the turn is known-delivered.
-// ControlType echoes the terminal control's type (result/error/notice) for
-// diagnostics; it is not load-bearing for the wait resolution itself.
-// AckID mirrors the terminal control's PromptID (the wait key).
-type AckPayload struct {
-	ControlType string `json:"controlType,omitempty"`
-}
