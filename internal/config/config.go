@@ -217,27 +217,6 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 // Timeouts holds runtime-tunable durations.
 type Timeouts struct {
 	BackendHealth Duration `json:"backend_health,omitempty"` // feishu-front: 后端 lastSeen 超时阈值，超过则驱逐静默后端
-	// PromptTimeout is the per-prompt safety net for a stuck CLI subprocess.
-	// 0 (default) disables it — the CLI exits on its own when the turn is
-	// done. When set, a prompt exceeding this duration is cancelled (SIGKILL
-	// on the process group) and the user sees a "请求超时" notice. Consumed
-	// by claude-back and opencode-back.
-	PromptTimeout Duration `json:"prompt_timeout,omitempty"`
-	// IdleTimeout is the per-prompt idle watchdog: if the opencode CLI
-	// emits no stdout event for this duration, the subprocess is deemed
-	// stuck (hung on an upstream LLM call, internal deadlock, a tool
-	// waiting on stdin) and is SIGKILLed so the user is not left staring
-	// at a progress card that never resolves. 0 (default) disables it.
-	// Unlike PromptTimeout (total wall-clock), IdleTimeout resets on every
-	// received event, so a long but active turn is never cut short.
-	// Consumed by opencode-back.
-	IdleTimeout Duration `json:"idle_timeout,omitempty"`
-	// UsageSessionTTL bounds how long a per-session usage entry stays in
-	// memory (and on disk). Entries whose LastUpdate is older than this are
-	// pruned by a background sweep so the in-memory map and the persisted
-	// JSON cannot grow without bound over a long-running process.
-	// 0/absent → 7d. Consumed by every backend that wires a usage store.
-	UsageSessionTTL Duration `json:"usage_session_ttl,omitempty"`
 }
 
 // DedupConfig configures the frontend's application-layer replay guard.

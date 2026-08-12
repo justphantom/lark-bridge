@@ -1,14 +1,19 @@
 ---
-updated: 2026-08-12T09:50:00+08:00
+updated: 2026-08-12T10:20:00+08:00
 ---
 
 # 会话状态
 
 ## 当前任务
-**结构化重构**（2 项，LOC 中性、结构收益）：① `GoSafe` 去重——抽 leaf 包 `internal/gosafe.Go(logger,name,fn)`，删 bridgebase+backendrpc 两份相同副本，7 处调用方改指 leaf（feishufront 的 no-log 变体按设计保留——签名/行为不同，且已在包内 DRY）。② `Commands[H]` 去泛型——把命令调度机械（Commands/CommandSpec/CommandHandler/NewCommands/Dispatch/Lookup/RenderHelp/ReplyToID/EmitFunc）从 bridgebase 移到唯一消费者 miniagent（具体 `*Handler`，去 `[H]` 泛型）；测试随之搬迁+改写（dummy `int`→`&Handler{}`）。bridgebase 缩：去 commands.go(+test)+gosafe.go+interactive 的 EmitFunc。
-- 关键判断：bridgebase 不能就地具体化（会与 miniagent 成环），故采「移到消费者」；测试原用 dummy `int` 测调度逻辑，移后用零值 `&Handler{}`（Dispatch 只转发 h、handler 闭包忽略它）。
-- 验证全绿：build/vet/test -race/golangci-lint 0 issue。**未提交**（15 文件：12 改/删 + 3 新 `internal/gosafe/`、`miniagent/commands_dispatch.go`(+test)）。
-- 仍开放：dormant config 字段（`Timeouts.*`/`ComponentLogLevels`，需配 `removed_blocks` 迁移）；`backendrpc.Run`（转 `RunWithClient` 后删）；前端 `ackTerminal` 孤儿发送方。
+**dormant config 迁移：删 3 个 Timeouts 死字段**（`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL`——分别标注「consumed by claude/opencode/usage store」，三者皆随后端移除而死）。净 −119 LOC（6 文件 +4/−123）。
+- 迁移安全：`deploy.sh` 每次部署从 `config.example.json` 全量重生成 feishu/miniagent config（line 672「Configs are deploy artifacts; each run copies…」）→ 删 example 条目即安全，无需 deploy.sh 迁移。`deploy-status.sh` **保留**已部署 status-monitor config + 跑 `migrate_config` → `removed_keys` 加 `prompt_timeout`/`idle_timeout`/`usage_session_ttl` 三叶字段，升级时剥离。
+- 同步删：`config_defaults`（UsageSessionTTL 默认）、`config_validate`（PromptTimeout/UsageSessionTTL 下限）、`config.example.json`（idle_timeout/usage_session_ttl）、5 个测试函数 + 2 表项。`Timeouts` 仅留 `BackendHealth`（feishu-front live）。
+- ⚠️ **有意保留 dormant**：`ComponentLogLevels`——其迁移有形式依赖（空 `{}` 单行 vs 操作员多行块），`removed_blocks`(sed range) 与 `removed_keys`(line regex) 都不能同时干净处理两种形态；~15 LOC 全惰性（parsed+validated+never applied），按项目既有「保留 dormant」安全模式留下。
+- 验证全绿：build/vet/test -race/golangci-lint 0 issue、deploy-smoke 34/0、deploy-status.sh bash -n/shellcheck clean、config.example.json JSON 合法。**6 文件未提交**。
+- 仍开放：`backendrpc.Run`（转 `RunWithClient` 后删）；前端 `ackTerminal` 孤儿发送方；`ComponentLogLevels`（需更健壮的 block stripper 才能安全删）。
+
+## 前序：结构化重构（已提交 `be5131f`）
+`GoSafe` 抽 leaf `internal/gosafe.Go`（删 bridgebase+backendrpc 两副本，feishufront no-log 变体保留）；`Commands[H]` 去泛型——命令调度机械从 bridgebase 迁到唯一消费者 miniagent（具体 `*Handler`），测试随之搬迁（dummy `int`→`&Handler{}`）。LOC 中性、结构收益。
 
 ## 前序：Tier-2 dead-code 扫尾（已提交 `7f5c85c`+`477fdd9`）
 9 项跨 7 包：strutil `Stringify*`、cmdutil `ErrorResult`/`ChangeResult`、eventmetrics `UnknownEvent`/`Overflow()`、router `Binding.Agent`+`Bind(agent)` 参、protocol `PromptPayload.Agent`、`WithLogLevel` 全链、pptx Go 字段、backendrpc `Client.backendType`、miniclient `rawEvent.CallID`（config dormant 字段按 DisallowUnknownFields 保留）。

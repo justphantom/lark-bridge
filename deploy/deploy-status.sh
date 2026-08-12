@@ -128,7 +128,7 @@ migrate_config() {
     # （timeouts）内的单个叶子，不能用块删除的 sed 范围匹配。
     # 用 python regex 删行 + 修复悬空尾逗号 + json.dump 美化，一步到位；
     # 避免 sed 删行后 json.load 因悬空逗号失败（先有鸡还是先有蛋）。
-    local removed_keys=("card_patch_delay" "feishu_card_engine")
+    local removed_keys=("card_patch_delay" "feishu_card_engine" "prompt_timeout" "idle_timeout" "usage_session_ttl")
     local need_migrate=0
     for key in "${removed_keys[@]}"; do
         sudo grep -q "\"$key\"" "$cfg" && need_migrate=1

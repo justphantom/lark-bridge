@@ -227,8 +227,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{"bad component log level", `{"component_log_levels":{"router":"trace"}}`, "component_log_levels.router"},
 		{"state_dir missing", `{"state_dir":"` + stateDirMissing + `"}`, "state_dir"},
 		{"backend_health too short", `{"timeouts":{"backend_health":"100ms"}}`, "timeouts.backend_health"},
-		{"prompt_timeout too short", `{"timeouts":{"prompt_timeout":"100ms"}}`, "timeouts.prompt_timeout"},
-		{"usage_session_ttl under 1h", `{"timeouts":{"usage_session_ttl":"30m"}}`, "timeouts.usage_session_ttl"},
 		{"dedup stale_window too short", `{"dedup":{"stale_window":"100ms"}}`, "dedup.stale_window"},
 		{"dedup event_ttl too short", `{"dedup":{"event_ttl":"100ms"}}`, "dedup.event_ttl"},
 		{"dedup event_max_entries negative", `{"dedup":{"event_max_entries":-1}}`, "dedup.event_max_entries"},
@@ -280,15 +278,14 @@ func TestDurationUnmarshal(t *testing.T) {
 }
 
 // TestLoad_TimeoutsDefaults verifies that a config without a "timeouts"
-// section gets the BackendHealth and UsageSessionTTL defaults.
+// section gets the BackendHealth default.
 func TestLoad_TimeoutsDefaults(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `{}`))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	want := Timeouts{
-		BackendHealth:   Duration(90 * time.Second),
-		UsageSessionTTL: Duration(7 * 24 * time.Hour),
+		BackendHealth: Duration(90 * time.Second),
 	}
 	if cfg.Timeouts != want {
 		t.Fatalf("defaults = %+v, want %+v", cfg.Timeouts, want)
@@ -301,88 +298,6 @@ func TestLoad_BackendHealthMinDuration(t *testing.T) {
 	_, err := Load(writeConfig(t, `{"timeouts": {"backend_health": "1ns"}}`))
 	if err == nil || !strings.Contains(err.Error(), "backend_health must be >=") {
 		t.Fatalf("want err about backend_health floor, got %v", err)
-	}
-}
-
-// TestLoad_PromptTimeout verifies PromptTimeout is parsed from config and
-// defaults to 0 (disabled) when omitted.
-func TestLoad_PromptTimeout(t *testing.T) {
-	// Omitted → 0 (disabled).
-	cfg, err := Load(writeConfig(t, `{}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Timeouts.PromptTimeout != 0 {
-		t.Errorf("default prompt_timeout = %v, want 0 (disabled)", cfg.Timeouts.PromptTimeout)
-	}
-
-	// Explicit value is preserved.
-	cfg2, err := Load(writeConfig(t, `{"timeouts": {"prompt_timeout": "30m"}}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if want := Duration(30 * time.Minute); cfg2.Timeouts.PromptTimeout != want {
-		t.Errorf("prompt_timeout = %v, want %v", cfg2.Timeouts.PromptTimeout, want)
-	}
-}
-
-// TestLoad_IdleTimeout verifies IdleTimeout (the per-prompt idle watchdog)
-// is parsed from config and defaults to 0 (disabled) when omitted.
-func TestLoad_IdleTimeout(t *testing.T) {
-	// Omitted → 0 (disabled).
-	cfg, err := Load(writeConfig(t, `{}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Timeouts.IdleTimeout != 0 {
-		t.Errorf("default idle_timeout = %v, want 0 (disabled)", cfg.Timeouts.IdleTimeout)
-	}
-
-	// Explicit value is preserved.
-	cfg2, err := Load(writeConfig(t, `{"timeouts": {"idle_timeout": "120s"}}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if want := Duration(120 * time.Second); cfg2.Timeouts.IdleTimeout != want {
-		t.Errorf("idle_timeout = %v, want %v", cfg2.Timeouts.IdleTimeout, want)
-	}
-}
-
-// TestLoad_PromptTimeoutMinDuration verifies a sub-second prompt_timeout is
-// rejected so a misconfigured value cannot kill prompts instantly.
-func TestLoad_PromptTimeoutMinDuration(t *testing.T) {
-	_, err := Load(writeConfig(t, `{"timeouts": {"prompt_timeout": "1ns"}}`))
-	if err == nil || !strings.Contains(err.Error(), "prompt_timeout must be >=") {
-		t.Fatalf("want err about prompt_timeout floor, got %v", err)
-	}
-}
-
-// TestLoad_UsageSessionTTL verifies UsageSessionTTL defaults to 7d when
-// omitted and that an explicit value is preserved.
-func TestLoad_UsageSessionTTL(t *testing.T) {
-	cfg, err := Load(writeConfig(t, `{}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if want := Duration(7 * 24 * time.Hour); cfg.Timeouts.UsageSessionTTL != want {
-		t.Errorf("default usage_session_ttl = %v, want %v", cfg.Timeouts.UsageSessionTTL, want)
-	}
-
-	cfg2, err := Load(writeConfig(t, `{"timeouts": {"usage_session_ttl": "72h"}}`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if want := Duration(72 * time.Hour); cfg2.Timeouts.UsageSessionTTL != want {
-		t.Errorf("usage_session_ttl = %v, want %v", cfg2.Timeouts.UsageSessionTTL, want)
-	}
-}
-
-// TestLoad_UsageSessionTTLMinDuration verifies a sub-1h usage_session_ttl is
-// rejected so a misconfigured value cannot drop entries mid-conversation.
-func TestLoad_UsageSessionTTLMinDuration(t *testing.T) {
-	_, err := Load(writeConfig(t, `{"timeouts": {"usage_session_ttl": "30m"}}`))
-	if err == nil || !strings.Contains(err.Error(), "usage_session_ttl must be >= 1h") {
-		t.Fatalf("want err about usage_session_ttl floor, got %v", err)
 	}
 }
 
