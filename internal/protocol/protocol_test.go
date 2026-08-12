@@ -151,12 +151,7 @@ func TestControlValidate(t *testing.T) {
 		{"progress gate ok", &Control{Type: TypeProgress, Progress: &ProgressPayload{Gate: &GateInfo{State: "waiting", Kind: "permission", Summary: "Bash"}}}, false},
 		{"progress gate bad state", &Control{Type: TypeProgress, Progress: &ProgressPayload{Gate: &GateInfo{State: "paused"}}}, true},
 		{"tool_use nil subagent ok", &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{Name: "task"}}, false},
-		{"tool_use subagent running ok", &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{Name: "task", IsSubagent: true, TaskID: "t1", Subagent: &SubagentSummary{Status: "running", TaskType: "local_agent", Type: "general-purpose", Title: "explore"}}}, false},
-		{"tool_use subagent bad status", &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{Name: "task", Subagent: &SubagentSummary{Status: "paused"}}}, true},
 		{"tool_result nil subagent ok", &Control{Type: TypeToolResult, ToolResult: &ToolResultPayload{Name: "task", Output: "ok"}}, false},
-		{"tool_result subagent completed ok", &Control{Type: TypeToolResult, ToolResult: &ToolResultPayload{Name: "task", IsSubagent: true, TaskID: "t1", Subagent: &SubagentSummary{Status: "completed", Preview: "done", OutputBytes: 1024}}}, false},
-		{"tool_result subagent failed ok", &Control{Type: TypeToolResult, ToolResult: &ToolResultPayload{Name: "task", IsError: true, IsSubagent: true, Subagent: &SubagentSummary{Status: "failed"}}}, false},
-		{"tool_result subagent bad status", &Control{Type: TypeToolResult, ToolResult: &ToolResultPayload{Name: "task", Subagent: &SubagentSummary{Status: "ok"}}}, true},
 		{"unknown type", &Control{Type: "unknown"}, true},
 		// BackendID present but irrelevant to validation.
 		{"text with backendID ok", &Control{Type: TypeText, BackendID: "b", Text: &TextPayload{Delta: "x"}}, false},
@@ -198,61 +193,6 @@ func TestOmitemptyNoEmptyPayloadFields(t *testing.T) {
 		if contains(cs, key) {
 			t.Errorf("Control JSON contains nil payload field %q: %s", key, cs)
 		}
-	}
-}
-
-// TestSubagentRoundTrip locks in SubagentSummary's JSON shape: every backend
-// field round-trips, omitempty drops zero values (claude omits Model/Truncated,
-// opencode omits ToolUses/LastToolName), and the Subagent pointer threads
-// through both ToolUsePayload and ToolResultPayload.
-func TestSubagentRoundTrip(t *testing.T) {
-	full := &SubagentSummary{
-		Status:       "running",
-		TaskType:     "local_agent",
-		Type:         "general-purpose",
-		Title:        "调查飞书接口调用",
-		Description:  "Reading internal/lark/ws/frame.go",
-		ChildSession: "a31153be0cabb040a",
-		Model:        "glm-5.2",
-		DurationMs:   33203,
-		ToolUses:     14,
-		LastToolName: "Read",
-		TotalTokens:  0, // omitempty: dropped
-		Preview:      "",
-		OutputBytes:  0,     // omitempty: dropped
-		Truncated:    false, // omitempty: dropped
-	}
-	got := roundTrip(t, full)
-	if got.Status != "running" || got.TaskType != "local_agent" || got.Type != "general-purpose" {
-		t.Fatalf("core fields lost: %+v", got)
-	}
-	if got.Title != "调查飞书接口调用" || got.Description != "Reading internal/lark/ws/frame.go" {
-		t.Fatalf("text fields lost: %+v", got)
-	}
-	if got.DurationMs != 33203 || got.ToolUses != 14 || got.LastToolName != "Read" {
-		t.Fatalf("numeric/usage fields lost: %+v", got)
-	}
-	// omitempty zero values must round-trip as zero (absent in JSON, default on unmarshal).
-	if got.TotalTokens != 0 || got.OutputBytes != 0 || got.Truncated != false {
-		t.Fatalf("zero fields should stay zero: %+v", got)
-	}
-
-	// Threading through ToolUsePayload (running/progress phase).
-	tu := roundTrip(t, &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{
-		Name: "Agent", IsSubagent: true, TaskID: "t1", Subagent: full,
-	}})
-	if tu.ToolUse.Subagent == nil || tu.ToolUse.Subagent.Status != "running" {
-		t.Fatalf("ToolUse.Subagent lost: %+v", tu.ToolUse)
-	}
-
-	// Threading through ToolResultPayload (terminal phase).
-	tr := roundTrip(t, &Control{Type: TypeToolResult, ToolResult: &ToolResultPayload{
-		Name: "Agent", IsSubagent: true, TaskID: "t1",
-		Subagent: &SubagentSummary{Status: "completed", Preview: "done", OutputBytes: 2067},
-	}})
-	if tr.ToolResult.Subagent == nil || tr.ToolResult.Subagent.Status != "completed" ||
-		tr.ToolResult.Subagent.Preview != "done" || tr.ToolResult.Subagent.OutputBytes != 2067 {
-		t.Fatalf("ToolResult.Subagent lost: %+v", tr.ToolResult)
 	}
 }
 

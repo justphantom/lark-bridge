@@ -9,14 +9,14 @@ import "testing"
 // would race and produce inconsistent cards.
 func TestProgressStateCloneIsDeepCopy(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a", false, "")
+	s.AddToolUse("read", "/a")
 
 	cp := s.Clone()
 
 	// Mutate the original after cloning: a new tool and a repeat that folds
 	// into the existing row (count++).
-	s.AddToolUse("write", "/b", false, "")
-	s.AddToolUse("read", "/a", false, "")
+	s.AddToolUse("write", "/b")
+	s.AddToolUse("read", "/a")
 
 	if len(cp.tools) != 1 || cp.tools[0].count != 1 {
 		t.Errorf("clone tools = %+v, want exactly one read row with count 1 (deep copy)", cp.tools)

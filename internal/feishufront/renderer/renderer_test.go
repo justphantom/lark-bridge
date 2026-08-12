@@ -99,8 +99,8 @@ func collectButtons(node map[string]any, out *[]any) {
 
 func TestProgressRender(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "ls", false, "")
-	s.AddToolResult("bash", "", "file.txt", false, false, "")
+	s.AddToolUse("bash", "ls")
+	s.AddToolResult("bash", "", "file.txt", false)
 	s.AddProgress()
 	b, err := s.Render(hdr(), ftr())
 	card := parse(t, b, err)

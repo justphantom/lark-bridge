@@ -898,13 +898,13 @@ func TestSendResult_IncludesSummary(t *testing.T) {
 			t.Fatalf("DispatchControl: %v", err)
 		}
 	}
-	// Build a progress state: two reads + one subagent row.
+	// Build a progress state: two reads + one unclassified tool.
 	must(&protocol.Control{Type: protocol.TypeToolUse, PromptID: promptID, ToolUse: &protocol.ToolUsePayload{Name: "read", Input: "/a.go"}})
 	must(&protocol.Control{Type: protocol.TypeToolResult, PromptID: promptID, ToolResult: &protocol.ToolResultPayload{Name: "read", Output: "body"}})
 	must(&protocol.Control{Type: protocol.TypeToolUse, PromptID: promptID, ToolUse: &protocol.ToolUsePayload{Name: "read", Input: "/b.go"}})
 	must(&protocol.Control{Type: protocol.TypeToolResult, PromptID: promptID, ToolResult: &protocol.ToolResultPayload{Name: "read", Output: "body"}})
-	must(&protocol.Control{Type: protocol.TypeToolUse, PromptID: promptID, ToolUse: &protocol.ToolUsePayload{Name: "Explore Agent", Input: "explore", IsSubagent: true}})
-	must(&protocol.Control{Type: protocol.TypeToolResult, PromptID: promptID, ToolResult: &protocol.ToolResultPayload{Name: "Explore Agent", Output: "done", IsSubagent: true}})
+	must(&protocol.Control{Type: protocol.TypeToolUse, PromptID: promptID, ToolUse: &protocol.ToolUsePayload{Name: "Explore Agent", Input: "explore"}})
+	must(&protocol.Control{Type: protocol.TypeToolResult, PromptID: promptID, ToolResult: &protocol.ToolResultPayload{Name: "Explore Agent", Output: "done"}})
 	// Terminal result replaces the progress card in place.
 	must(&protocol.Control{Type: protocol.TypeResult, PromptID: promptID, ChatID: "oc_chat",
 		Result: &protocol.ResultPayload{Text: "done", Tokens: 10}})
@@ -913,7 +913,7 @@ func TestSendResult_IncludesSummary(t *testing.T) {
 		t.Fatalf("expected a SendCard for the result, got none")
 	}
 	got := string(sink.sends[len(sink.sends)-1].card)
-	for _, want := range []string{"读取 2", "子代理 1", "10 tokens"} {
+	for _, want := range []string{"读取 2", "10 tokens"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("result card missing %q: %s", want, got)
 		}

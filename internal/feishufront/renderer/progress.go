@@ -17,7 +17,7 @@ const maxCompletedTools = 3
 // maxRunningTools bounds how many running-tool rows are shown. When
 // exceeded, older running rows are collapsed into a "... 及 N 个运行中"
 // summary. In practice concurrent tools rarely exceed 3-4, but this
-// prevents a subagent storm from exploding the card height.
+// prevents a tool storm from exploding the card height.
 const maxRunningTools = 5
 
 // maxToolOutputLen caps the error excerpt shown for a failed tool row. 50
@@ -38,20 +38,17 @@ const maxToolDescLen = 50
 
 // toolRow tracks one tool invocation through its lifecycle.
 type toolRow struct {
-	name       string
-	desc       string // human-readable summary (file path, command, etc.)
-	status     string // running | completed | error
-	output     string // truncated error excerpt, shown only when status == error
-	count      int    // number of same name+desc calls collapsed into this row
-	isSubagent bool   // claude "<Type> Agent" row or opencode "task" tool
-	taskID     string // claude subagent identifier; empty for leaf tools/opencode
+	name   string
+	desc   string // human-readable summary (file path, command, etc.)
+	status string // running | completed | error
+	output string // truncated error excerpt, shown only when status == error
+	count  int    // number of same name+desc calls collapsed into this row
 }
 
 // ProgressState accumulates the streaming pieces of one prompt so each
 // progress update renders the whole card.
 type ProgressState struct {
 	tools     []toolRow
-	subagents []subagentRow
 	todos     []TodoItem
 	stepCount int
 	// loading is a transient grey banner (a picker's "loading…" notice),
@@ -127,77 +124,40 @@ func (s *ProgressState) SetMaxThinkingRunes(n int) {
 // name+desc collapses into the existing row (incrementing count) rather than
 // spawning a duplicate; this keeps consecutive identical calls (e.g. reading
 // the same file twice) visible as "Read: /x ×2" instead of two rows.
-// isSubagent is the backend's authoritative flag (not a name-based guess).
-// For subagents with a non-empty taskID (claude), matching is by taskID so the
-// row folds its started/progress/notification lifecycle into one entry even
-// though name/desc drift across it; leaf tools (and opencode subagents, which
-// carry no taskID) keep the legacy name+desc match.
-func (s *ProgressState) AddToolUse(name, desc string, isSubagent bool, taskID string) {
+func (s *ProgressState) AddToolUse(name, desc string) {
 	// Normalize tool name: first letter upper-case (or mcp:<tool>).
 	name = normalizeToolName(name)
-	if isSubagent && taskID != "" {
-		for i := range s.tools {
-			if s.tools[i].isSubagent && s.tools[i].taskID == taskID {
-				s.tools[i].status = "running"
-				s.tools[i].desc = desc
-				s.tools[i].count++
-				s.tools[i].name = name
-				return
-			}
-		}
-		s.tools = append(s.tools, toolRow{name: name, desc: desc, status: "running", count: 1, isSubagent: true, taskID: taskID})
-		return
-	}
 	for i := range s.tools {
 		if s.tools[i].name == name && s.tools[i].desc == desc {
 			s.tools[i].status = "running"
 			s.tools[i].count++
-			s.tools[i].isSubagent = isSubagent
 			return
 		}
 	}
-	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: "running", count: 1, isSubagent: isSubagent})
+	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: "running", count: 1})
 }
 
 // AddToolResult records a tool completion. desc carries the input summary so a
-// result-only event (no prior ToolUse, e.g. opencode's single completed line)
-// still renders "Read: /path" when it appends a fresh row. When it matches an
+// result-only event (no prior ToolUse, e.g. a single completed line) still
+// renders "Read: /path" when it appends a fresh row. When it matches an
 // existing running row, that row keeps its own desc. Matching prefers the most
-// recent running row of the same name. For subagents with a non-empty taskID
-// (claude), the row is closed by taskID so the notification reaches the exact
-// subagent that started — not merely the most-recent same-name running row
-// (which under concurrency closes the wrong one). If that row was already
-// collapsed out by maxRunningTools the result is accepted as an orphan
-// completed entry rather than retroactively resizing the card.
-func (s *ProgressState) AddToolResult(name, desc, output string, isError, isSubagent bool, taskID string) {
+// recent running row of the same name. If that row was already collapsed out
+// by maxRunningTools the result is accepted as an orphan completed entry
+// rather than retroactively resizing the card.
+func (s *ProgressState) AddToolResult(name, desc, output string, isError bool) {
 	name = normalizeToolName(name)
 	status := "completed"
 	if isError {
 		status = "error"
 	}
 	preview := truncateOutput(output)
-	if isSubagent && taskID != "" {
-		for i := range s.tools {
-			if s.tools[i].isSubagent && s.tools[i].taskID == taskID {
-				s.tools[i].status = status
-				s.tools[i].output = preview
-				if desc != "" && desc != s.tools[i].desc {
-					s.tools[i].desc = desc
-				}
-				return
-			}
-		}
-		s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1, isSubagent: true, taskID: taskID})
-		return
-	}
 	for i := len(s.tools) - 1; i >= 0; i-- {
 		if s.tools[i].name == name && s.tools[i].status == "running" {
 			s.tools[i].status = status
 			s.tools[i].output = preview
-			s.tools[i].isSubagent = isSubagent
-			// A terminal description (e.g. a subagent's notification summary
-			// with cumulative usage) supersedes the live progress description
-			// the row was showing while running.
+			// A terminal description (e.g. a richer cumulative summary)
+			// supersedes the live progress description the row was showing
+			// while running.
 			if desc != "" && desc != s.tools[i].desc {
 				s.tools[i].desc = desc
 			}
@@ -206,7 +166,7 @@ func (s *ProgressState) AddToolResult(name, desc, output string, isError, isSuba
 	}
 	// No matching running tool — append as completed, using the input
 	// summary as the row's description.
-	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1, isSubagent: isSubagent})
+	s.tools = append(s.tools, toolRow{name: name, desc: desc, status: status, output: preview, count: 1})
 }
 
 // AddProgress counts a step.
@@ -300,17 +260,6 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	}
 	if len(runningLines) > 0 {
 		zones = append(zones, cardkit.MarkdownElement(strings.Join(runningLines, "\n")))
-	}
-
-	// Zone 2.5: subagent delegations. Sits between leaf-running and
-	// leaf-completed because a subagent is heavier than a single tool call
-	// (it is a self-contained sub-turn) but newer than this turn's settled
-	// leaf actions. Only local_agent / opencode task subagents land here
-	// (claude local_bash stays in the leaf zones via IsSubagent). When no
-	// subagents exist, the zone is omitted entirely rather than rendering
-	// an empty header.
-	if body := renderSubagentZone(s.subagents); body != "" {
-		zones = append(zones, cardkit.MarkdownElement(body))
 	}
 
 	// Zone 3: completed. Show only the last N detail rows; group-summarise

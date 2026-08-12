@@ -107,16 +107,11 @@ type controlRule struct {
 // comment and the validator in one place. Empty Priority is valid (omitempty
 // field), so it is checked as "either empty or in the set" rather than in.
 var (
-	validTodoStatuses     = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
-	validTodoPriorities   = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
-	validNoticeLevels     = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
-	validGateStates       = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
-	validGateKinds        = map[string]struct{}{"permission": {}, "question": {}}
-	validSubagentStatuses = map[string]struct{}{"running": {}, "completed": {}, "failed": {}}
-	// validTaskTypes covers claude's local_agent/local_bash and the "agent"
-	// kind opencode/omp emit. Empty TaskType is valid (omitempty), so it is
-	// checked as "either empty or in the set".
-	validTaskTypes = map[string]struct{}{"local_agent": {}, "local_bash": {}, "agent": {}}
+	validTodoStatuses   = map[string]struct{}{"pending": {}, "in_progress": {}, "completed": {}, "cancelled": {}}
+	validTodoPriorities = map[string]struct{}{"high": {}, "medium": {}, "low": {}}
+	validNoticeLevels   = map[string]struct{}{"info": {}, "success": {}, "warning": {}, "error": {}}
+	validGateStates     = map[string]struct{}{"waiting": {}, "answered": {}, "denied": {}}
+	validGateKinds      = map[string]struct{}{"permission": {}, "question": {}}
 )
 
 // validateTodo enumerates each Todo's Status and Priority against the enum
@@ -198,36 +193,6 @@ func validateProgress(c *Control) error {
 	return nil
 }
 
-// validateSubagentStatus pins SubagentSummary.Status (on either ToolUse or
-// ToolResult) to the renderer's known set. The renderer's zone logic keys on
-// this value to pick the row icon and the folded-summary counter bucket, so a
-// typo here would mis-bucket the row rather than fail visibly. Nil Subagent
-// (legacy leaf-tool row) is always valid.
-func validateSubagentStatus(s *SubagentSummary) error {
-	if s == nil {
-		return nil
-	}
-	if _, ok := validSubagentStatuses[s.Status]; !ok {
-		return fmt.Errorf("subagent.status %q must be one of running/completed/failed", s.Status)
-	}
-	if tt := s.TaskType; tt != "" {
-		if _, ok := validTaskTypes[tt]; !ok {
-			return fmt.Errorf("subagent.taskType %q must be one of local_agent/local_bash/agent", tt)
-		}
-	}
-	return nil
-}
-
-// validateToolUseSubagent wires validateSubagentStatus into the ToolUse rule.
-func validateToolUseSubagent(c *Control) error {
-	return validateSubagentStatus(c.ToolUse.Subagent)
-}
-
-// validateToolResultSubagent wires validateSubagentStatus into the ToolResult rule.
-func validateToolResultSubagent(c *Control) error {
-	return validateSubagentStatus(c.ToolResult.Subagent)
-}
-
 // validateFile requires a non-empty FileName and base64 Content. ChatID is
 // covered by the rule's needsChatID on the envelope field. The Content cap
 // (30 MiB raw → ~40 MiB base64) is enforced at the producer (bridgebase) before
@@ -250,8 +215,8 @@ var controlRules = map[string]controlRule{
 	TypeSessionInit:  {payloadIsNil: func(c *Control) bool { return c.SessionInit == nil }, payloadName: "sessionInit"},
 	TypeText:         {payloadIsNil: func(c *Control) bool { return c.Text == nil }, payloadName: "text"},
 	TypeThinking:     {payloadIsNil: func(c *Control) bool { return c.Thinking == nil }, payloadName: "thinking"},
-	TypeToolUse:      {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse", extraCheck: validateToolUseSubagent},
-	TypeToolResult:   {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult", extraCheck: validateToolResultSubagent},
+	TypeToolUse:      {payloadIsNil: func(c *Control) bool { return c.ToolUse == nil }, payloadName: "toolUse"},
+	TypeToolResult:   {payloadIsNil: func(c *Control) bool { return c.ToolResult == nil }, payloadName: "toolResult"},
 	TypeResult:       {payloadIsNil: func(c *Control) bool { return c.Result == nil }, payloadName: "result"},
 	TypeError:        {payloadIsNil: func(c *Control) bool { return c.Error == nil }, payloadName: "error"},
 	TypeProgress:     {payloadIsNil: func(c *Control) bool { return c.Progress == nil }, payloadName: "progress", extraCheck: validateProgress},

@@ -44,13 +44,3 @@ func TestToolCategory_NormalisedNames(t *testing.T) {
 		}
 	}
 }
-
-// TestToolCategory_SubagentShellPrecedence verifies a subagent row named "Shell"
-// (claude renders some subagents as "Shell") counts as "sub", NOT "exec": the
-// isSubagent check at the top of toolCategory wins over the Shell→exec case.
-func TestToolCategory_SubagentShellPrecedence(t *testing.T) {
-	got := toolCategory(toolRow{name: "Shell", isSubagent: true})
-	if got != "sub" {
-		t.Errorf("subagent Shell category = %q, want \"sub\"", got)
-	}
-}

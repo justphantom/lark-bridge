@@ -104,19 +104,6 @@ func TestValidateEnums(t *testing.T) {
 		t.Error("gate.kind banana should fail")
 	}
 
-	okSub := &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{
-		Name: "Task", Subagent: &SubagentSummary{Status: "running", TaskType: "local_agent"},
-	}}
-	if err := okSub.Validate(); err != nil {
-		t.Errorf("valid subagent: %v", err)
-	}
-	badSub := &Control{Type: TypeToolUse, ToolUse: &ToolUsePayload{
-		Name: "Task", Subagent: &SubagentSummary{Status: "running", TaskType: "warp_drive"},
-	}}
-	if err := badSub.Validate(); err == nil {
-		t.Error("taskType warp_drive should fail")
-	}
-
 	if err := (&Control{Type: TypePong}).Validate(); err == nil {
 		t.Error("TypePong without payload should fail")
 	}

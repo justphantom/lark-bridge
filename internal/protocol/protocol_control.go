@@ -76,124 +76,20 @@ type ThinkingPayload struct {
 }
 
 // ToolUsePayload carries a tool invocation. Input may be a streamed delta or
-// the full input for coarse-grained backends. IsSubagent is true when the
-// backend knows this row is a subagent/agent delegation rather than a leaf
-// tool (claude task_* events; opencode "task" tool), so the frontend can
-// summarize subagent counts without guessing from the name. TaskID carries
-// the stable subagent identifier (claude only); when set, the frontend
-// correlates started/progress/notification of the same subagent by TaskID
-// instead of by name (which drifts) or desc (which changes every tick).
-//
-// Subagent, when non-nil, drives the dedicated subagent zone on the progress
-// card (claude local_agent task_started/task_progress; opencode has no
-// running-phase event so it only fills ToolResultPayload.Subagent). When
-// Subagent is nil the renderer falls back to the legacy leaf-tool row — the
-// IsSubagent flag still marks it for category counting.
+// the full input for coarse-grained backends.
 type ToolUsePayload struct {
-	Name       string           `json:"name"`
-	Input      string           `json:"input,omitempty"`
-	IsSubagent bool             `json:"isSubagent,omitempty"`
-	TaskID     string           `json:"taskId,omitempty"`
-	Subagent   *SubagentSummary `json:"subagent,omitempty"`
+	Name  string `json:"name"`
+	Input string `json:"input,omitempty"`
 }
 
 // ToolResultPayload carries a tool result. Input carries the human-readable
 // summary of the invocation (file path, command, etc.) so a result-only
-// backend (opencode emits one completed event per call) can still render the
-// "Read: /path" prefix on the tool row. IsSubagent mirrors ToolUsePayload;
-// TaskID lets a subagent notification close the exact running row opened by
-// the matching task_started, even under concurrency.
-//
-// Subagent, when non-nil, carries the terminal summary (preview, output size,
-// final status) that the subagent zone renders on completion. Nil Subagent
-// keeps the legacy leaf-tool row.
+// backend can still render the "Read: /path" prefix on the tool row.
 type ToolResultPayload struct {
-	Name       string           `json:"name"`
-	Input      string           `json:"input,omitempty"`
-	Output     string           `json:"output,omitempty"`
-	IsError    bool             `json:"isError,omitempty"`
-	IsSubagent bool             `json:"isSubagent,omitempty"`
-	TaskID     string           `json:"taskId,omitempty"`
-	Subagent   *SubagentSummary `json:"subagent,omitempty"`
-}
-
-// SubagentSummary is the structured metadata for a subagent delegation,
-// surfaced through ToolUsePayload.Subagent (running/progress) and
-// ToolResultPayload.Subagent (terminal). It lifts a subagent out of the
-// leaf-tool-row rendering into a dedicated zone on the progress card.
-//
-// Field sourcing differs per backend: opencode inlines all of this in its single completed task
-// event; claude local_agent distributes it across task_started (Type/Title/
-// TaskType/ChildSession) + task_progress (Description/ToolUses/DurationMs/
-// LastToolName/TotalTokens) + task_notification (Preview/OutputBytes/Status).
-// claude local_bash carries no Subagent at all (renderer keeps it as a leaf
-// Bash row), so the Subagent == nil fallback path stays exercised.
-//
-// All optional fields use omitempty so a backend that lacks one (e.g. claude
-// never sets Model/Truncated; opencode never sets ToolUses/LastToolName)
-// produces a compact JSON and the renderer omits the corresponding line.
-type SubagentSummary struct {
-	// Status drives the row state. "running" (opened, optional progress
-	// updates from claude task_progress), "completed", or "failed".
-	// ToolUse always carries running; ToolResult carries completed/failed.
-	Status string `json:"status"`
-
-	// TaskType discriminates the delegation kind. claude: "local_agent"
-	// (true AI subagent, rendered in the dedicated zone) or "local_bash"
-	// (background shell, rendered as leaf Bash row — Subagent stays nil
-	// then); opencode: "agent" (its only kind).
-	TaskType string `json:"taskType,omitempty"`
-
-	// Type is the subagent_type (claude "general-purpose"; opencode
-	// "explore"/"general"/...). Rendered as the zone's leading label.
-	Type string `json:"type,omitempty"`
-
-	// Title is the task's short description (task_started.description /
-	// state.title / state.input.description). Stable across the lifecycle.
-	Title string `json:"title,omitempty"`
-
-	// Description is the live action text (claude task_progress only,
-	// e.g. "Reading internal/lark/ws/frame.go"). Updates every progress.
-	Description string `json:"description,omitempty"`
-
-	// ChildSession is the stable subagent identifier: claude task_id
-	// (resolvable to the subagent's own jsonl via output_file symlink) or
-	// opencode metadata.sessionId.
-	ChildSession string `json:"childSession,omitempty"`
-
-	// Model is the subagent's model id. opencode metadata.model.modelID;
-	// claude local_agent does not carry it (the renderer omits the line).
-	Model string `json:"model,omitempty"`
-
-	// DurationMs is the cumulative wall time. claude usage.duration_ms
-	// (updated every task_progress); opencode time.end - time.start.
-	DurationMs int64 `json:"durationMs,omitempty"`
-
-	// ToolUses is the cumulative tool-call count inside the subagent
-	// (claude usage.tool_uses). opencode has no equivalent (single event).
-	ToolUses int `json:"toolUses,omitempty"`
-
-	// LastToolName is the most recent tool the subagent ran (claude
-	// usage.last_tool_name). Drives the "正在 Read" running hint.
-	LastToolName string `json:"lastToolName,omitempty"`
-
-	// TotalTokens is the cumulative token count (claude usage.total_tokens).
-	// Often 0 when the provider does not report tokens; the renderer hides
-	// the segment when 0 to avoid a misleading "0 tokens" line.
-	TotalTokens int `json:"totalTokens,omitempty"`
-
-	// Preview is the first ~200 runes of the terminal output, capped by
-	// the backend (claude strips task_notification.summary; opencode
-	// strips the <task>...<task_result> XML wrapper). Terminal-only.
-	Preview string `json:"preview,omitempty"`
-
-	// OutputBytes is the full output length in bytes, giving a "产出 NKB"
-	// hint without inlining the whole output. Terminal-only.
-	OutputBytes int `json:"outputBytes,omitempty"`
-
-	// Truncated reports whether the subagent's output was truncated by the
-	// upstream (opencode metadata.truncated). claude does not report it.
-	Truncated bool `json:"truncated,omitempty"`
+	Name    string `json:"name"`
+	Input   string `json:"input,omitempty"`
+	Output  string `json:"output,omitempty"`
+	IsError bool   `json:"isError,omitempty"`
 }
 
 // ResultPayload is the terminal reply for a prompt.

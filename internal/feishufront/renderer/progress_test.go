@@ -33,9 +33,9 @@ func TestNormalizeToolName_MCP(t *testing.T) {
 // rises, instead of spawning duplicate rows.
 func TestAddToolUse_DedupCounts(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/x.go", false, "")
-	s.AddToolUse("read", "/x.go", false, "")
-	s.AddToolUse("read", "/x.go", false, "")
+	s.AddToolUse("read", "/x.go")
+	s.AddToolUse("read", "/x.go")
+	s.AddToolUse("read", "/x.go")
 	if n := len(s.tools); n != 1 {
 		t.Fatalf("want 1 collapsed row, got %d", n)
 	}
@@ -51,8 +51,8 @@ func TestAddToolUse_DedupCounts(t *testing.T) {
 // stay as distinct rows (not collapsed), each count 1, no ×N suffix.
 func TestAddToolUse_DifferentDescSeparates(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolUse("read", "/b.go", false, "")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolUse("read", "/b.go")
 	if n := len(s.tools); n != 2 {
 		t.Fatalf("want 2 rows, got %d", n)
 	}
@@ -70,9 +70,9 @@ func TestAddToolUse_DifferentDescSeparates(t *testing.T) {
 // with two running reads, the result closes the most recent one ("b.go").
 func TestAddToolResult_MatchesMostRecentRunning(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolUse("read", "/b.go", false, "")
-	s.AddToolResult("read", "", "done", false, false, "")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolUse("read", "/b.go")
+	s.AddToolResult("read", "", "done", false)
 	if s.tools[0].status != "running" {
 		t.Errorf("first row (/a.go) should stay running, got %q", s.tools[0].status)
 	}
@@ -89,7 +89,7 @@ func TestAddToolResult_MatchesMostRecentRunning(t *testing.T) {
 // as its description. This is the opencode path (one completed event, no use).
 func TestAddToolResult_NoRunningAppendsDesc(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolResult("read", "/opt/README.md", "file contents", false, false, "")
+	s.AddToolResult("read", "/opt/README.md", "file contents", false)
 	if n := len(s.tools); n != 1 {
 		t.Fatalf("want 1 appended row, got %d", n)
 	}
@@ -111,15 +111,15 @@ func TestAddToolResult_NoRunningAppendsDesc(t *testing.T) {
 // with a richer summary (TestAddToolResult_UpdatesDescOnNotification) updates it.
 func TestAddToolResult_PreservesExistingDesc(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "make test", false, "")
+	s.AddToolUse("bash", "make test")
 	// Same desc as the use → no change.
-	s.AddToolResult("bash", "make test", "PASS", false, false, "")
+	s.AddToolResult("bash", "make test", "PASS", false)
 	if s.tools[0].desc != "make test" {
 		t.Errorf("desc = %q, want make test (same desc must not change it)", s.tools[0].desc)
 	}
 	// Empty desc (claude tool_result carries no input summary) → no change.
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolResult("read", "", "body", false, false, "")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolResult("read", "", "body", false)
 	if s.tools[1].desc != "/a.go" {
 		t.Errorf("desc = %q, want /a.go (empty result desc must not clear it)", s.tools[1].desc)
 	}
@@ -129,8 +129,8 @@ func TestAddToolResult_PreservesExistingDesc(t *testing.T) {
 // renders the ❌ icon.
 func TestAddToolResult_ErrorFlagsStatus(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "git push", false, "")
-	s.AddToolResult("bash", "", "requires approval", true, false, "")
+	s.AddToolUse("bash", "git push")
+	s.AddToolResult("bash", "", "requires approval", true)
 	if s.tools[0].status != "error" {
 		t.Errorf("status = %q, want error", s.tools[0].status)
 	}
@@ -143,8 +143,8 @@ func TestAddToolResult_ErrorFlagsStatus(t *testing.T) {
 // not rendered — the progress card shows actions, not their output.
 func TestFormatToolLine_CompletedHidesOutput(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolResult("read", "", "the full file contents", false, false, "")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolResult("read", "", "the full file contents", false)
 	got := formatToolLine(s.tools[0])
 	if strings.Contains(got, "the full file contents") {
 		t.Errorf("completed output should be hidden, got %q", got)
@@ -158,8 +158,8 @@ func TestFormatToolLine_CompletedHidesOutput(t *testing.T) {
 // as a short excerpt so the user can see why it failed.
 func TestFormatToolLine_ErrorShowsExcerpt(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "git push", false, "")
-	s.AddToolResult("bash", "", "exit 1: permission denied", true, false, "")
+	s.AddToolUse("bash", "git push")
+	s.AddToolResult("bash", "", "exit 1: permission denied", true)
 	got := formatToolLine(s.tools[0])
 	if !strings.Contains(got, "exit 1: permission denied") {
 		t.Errorf("error excerpt should be shown, got %q", got)
@@ -172,7 +172,7 @@ func TestFormatToolLine_ErrorShowsExcerpt(t *testing.T) {
 func TestFormatToolLine_LongDescTruncated(t *testing.T) {
 	s := NewProgressState()
 	longDesc := strings.Repeat("x", maxToolDescLen+20)
-	s.AddToolUse("bash", longDesc, false, "")
+	s.AddToolUse("bash", longDesc)
 	got := formatToolLine(s.tools[0])
 	if strings.Contains(got, strings.Repeat("x", maxToolDescLen+1)) {
 		t.Errorf("desc should be capped at %d runes: %s", maxToolDescLen, got)
@@ -187,7 +187,7 @@ func TestFormatToolLine_LongDescTruncated(t *testing.T) {
 func TestFormatToolLine_LongNameTruncated(t *testing.T) {
 	s := NewProgressState()
 	longName := strings.Repeat("n", maxToolNameLen+15)
-	s.AddToolUse(longName, "summary", false, "")
+	s.AddToolUse(longName, "summary")
 	got := formatToolLine(s.tools[0])
 	// normalizeToolName upper-cases the first rune; the truncation cap still
 	// applies and the (cap+1)'th original rune must not survive.
@@ -208,7 +208,7 @@ func TestFormatToolLine_CountOutsideBudget(t *testing.T) {
 	s := NewProgressState()
 	exactDesc := strings.Repeat("d", maxToolDescLen)
 	for range 99 {
-		s.AddToolUse("read", exactDesc, false, "")
+		s.AddToolUse("read", exactDesc)
 	}
 	got := formatToolLine(s.tools[0])
 	if !strings.Contains(got, "×99") {
@@ -224,13 +224,13 @@ func TestFormatToolLine_CountOutsideBudget(t *testing.T) {
 }
 
 // TestAddToolResult_UpdatesDescOnNotification verifies a terminal description
-// (a subagent notification summary with cumulative usage) supersedes the live
-// progress description the row held while running.
+// (e.g. a richer cumulative summary) supersedes the live progress description
+// the row held while running.
 func TestAddToolResult_UpdatesDescOnNotification(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("Explore Agent", "Explore codebase architecture", true, "")
+	s.AddToolUse("Explore Agent", "Explore codebase architecture")
 	// Notification closes the row with a richer terminal description.
-	s.AddToolResult("Explore Agent", "Explore codebase architecture · 66步 · 107k tokens", "", false, true, "")
+	s.AddToolResult("Explore Agent", "Explore codebase architecture · 66步 · 107k tokens", "", false)
 	if !strings.Contains(s.tools[0].desc, "66步") || !strings.Contains(s.tools[0].desc, "107k tokens") {
 		t.Errorf("desc = %q, want terminal summary with cumulative usage", s.tools[0].desc)
 	}
@@ -249,7 +249,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 	// most recent.
 	total := maxRunningTools + 2
 	for i := range total {
-		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go", false, "")
+		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go")
 	}
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
@@ -279,7 +279,7 @@ func TestRender_RunningToolsCapped(t *testing.T) {
 func TestRender_RunningToolsUnderCap(t *testing.T) {
 	s := NewProgressState()
 	for i := range maxRunningTools {
-		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go", false, "")
+		s.AddToolUse("Read", "/file"+strconv.Itoa(i)+".go")
 	}
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
@@ -303,8 +303,8 @@ func TestRender_RunningToolsUnderCap(t *testing.T) {
 func TestProgressRender_HrBetweenSections(t *testing.T) {
 	// one running + one completed → 1 divider between 2 zones.
 	s := NewProgressState()
-	s.AddToolUse("bash", "ls", false, "")
-	s.AddToolResult("read", "/a", "out", false, false, "")
+	s.AddToolUse("bash", "ls")
+	s.AddToolResult("read", "/a", "out", false)
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -315,7 +315,7 @@ func TestProgressRender_HrBetweenSections(t *testing.T) {
 
 	// Single zone → no divider.
 	s2 := NewProgressState()
-	s2.AddToolUse("bash", "ls", false, "")
+	s2.AddToolUse("bash", "ls")
 	b2, err := s2.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -332,22 +332,24 @@ func TestProgressRender_HrBetweenSections(t *testing.T) {
 func TestSummary_CountsByCategory(t *testing.T) {
 	s := NewProgressState()
 	// claude shape: repeated reads fold into one row with count.
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolResult("read", "", "done", false, false, "") // closes most-recent /a.go
-	s.AddToolUse("bash", "make test", false, "")
-	s.AddToolResult("bash", "", "PASS", false, false, "")
-	s.AddToolUse("Explore Agent", "explore", true, "")
-	s.AddToolResult("Explore Agent", "explore · 66步", "", false, true, "")
-	if got := s.Summary(); got != "📎 读取 2 · 执行 1 · 子代理 1" {
-		t.Errorf("claude summary = %q", got)
+	s.AddToolUse("read", "/a.go")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolResult("read", "", "done", false) // closes most-recent /a.go
+	s.AddToolUse("bash", "make test")
+	s.AddToolResult("bash", "", "PASS", false)
+	// "Explore Agent" is unclassified (not read/exec/edit/write/mcp) and
+	// omitted from the digest.
+	s.AddToolUse("Explore Agent", "explore")
+	s.AddToolResult("Explore Agent", "explore · 66步", "", false)
+	if got := s.Summary(); got != "📎 读取 2 · 执行 1" {
+		t.Errorf("claude summary = %q, want \"📎 读取 2 · 执行 1\"", got)
 	}
 
-	// opencode shape: task subagent arrives result-only (no prior AddToolUse).
+	// opencode shape: the "task" tool is unclassified → empty digest.
 	s2 := NewProgressState()
-	s2.AddToolResult("task", "研究前端", "<report>", false, true, "")
-	if got := s2.Summary(); got != "📎 子代理 1" {
-		t.Errorf("opencode summary = %q", got)
+	s2.AddToolResult("task", "研究前端", "<report>", false)
+	if got := s2.Summary(); got != "" {
+		t.Errorf("opencode summary = %q, want empty (task unclassified)", got)
 	}
 
 	// No tools → empty summary (pure chat reply).
@@ -364,15 +366,15 @@ func TestRender_GroupedSummaryBeyondCap(t *testing.T) {
 	s := NewProgressState()
 	// 7 reads of distinct files (> maxCompletedTools=3) + 2 edits + 1 mcp.
 	for i := range 7 {
-		s.AddToolUse("read", "/f"+strconv.Itoa(i)+".go", false, "")
-		s.AddToolResult("read", "", "ok", false, false, "")
+		s.AddToolUse("read", "/f"+strconv.Itoa(i)+".go")
+		s.AddToolResult("read", "", "ok", false)
 	}
-	s.AddToolUse("edit", "/a.go", false, "")
-	s.AddToolResult("edit", "/a.go", "ok", false, false, "")
-	s.AddToolUse("edit", "/b.go", false, "")
-	s.AddToolResult("edit", "/b.go", "ok", false, false, "")
-	s.AddToolUse("mcp__codebase-memory-mcp__search_graph", "query", false, "")
-	s.AddToolResult("mcp__codebase-memory-mcp__search_graph", "query", "ok", false, false, "")
+	s.AddToolUse("edit", "/a.go")
+	s.AddToolResult("edit", "/a.go", "ok", false)
+	s.AddToolUse("edit", "/b.go")
+	s.AddToolResult("edit", "/b.go", "ok", false)
+	s.AddToolUse("mcp__codebase-memory-mcp__search_graph", "query")
+	s.AddToolResult("mcp__codebase-memory-mcp__search_graph", "query", "ok", false)
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -404,16 +406,16 @@ func TestRender_GroupedSummaryBeyondCap(t *testing.T) {
 // code-editing turn reports what was edited alongside reads/execs.
 func TestSummary_IncludesEditAndMCP(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolResult("read", "", "ok", false, false, "")
-	s.AddToolUse("read", "/a.go", false, "")
-	s.AddToolResult("read", "", "ok", false, false, "")
-	s.AddToolUse("edit", "/a.go", false, "")
-	s.AddToolResult("edit", "/a.go", "ok", false, false, "")
-	s.AddToolUse("mcp__codebase-memory-mcp__search_code", "pattern", false, "")
-	s.AddToolResult("mcp__codebase-memory-mcp__search_code", "pattern", "ok", false, false, "")
-	s.AddToolUse("write", "/new.go", false, "")
-	s.AddToolResult("write", "/new.go", "ok", false, false, "")
+	s.AddToolUse("read", "/a.go")
+	s.AddToolResult("read", "", "ok", false)
+	s.AddToolUse("read", "/a.go")
+	s.AddToolResult("read", "", "ok", false)
+	s.AddToolUse("edit", "/a.go")
+	s.AddToolResult("edit", "/a.go", "ok", false)
+	s.AddToolUse("mcp__codebase-memory-mcp__search_code", "pattern")
+	s.AddToolResult("mcp__codebase-memory-mcp__search_code", "pattern", "ok", false)
+	s.AddToolUse("write", "/new.go")
+	s.AddToolResult("write", "/new.go", "ok", false)
 	got := s.Summary()
 	want := "📎 读取 2 · 编辑 1 · 写入 1 · mcp 1"
 	if got != want {
@@ -421,106 +423,13 @@ func TestSummary_IncludesEditAndMCP(t *testing.T) {
 	}
 }
 
-// subagent's started/progress/notification carry the same taskID but their
-// descriptions drift each tick. Matching by taskID folds the whole lifecycle
-// into one row (count rises, desc updates in place) instead of spawning a new
-// row per progress tick.
-func TestAddToolUse_SubagentFoldsByTaskID(t *testing.T) {
-	s := NewProgressState()
-	s.AddToolUse("Explore Agent", "Explore codebase", true, "t1")
-	// Progress ticks change the description (实测 023537: 51 ticks, 50 unique descs).
-	s.AddToolUse("Explore Agent", "Reading handler_prompt.go", true, "t1")
-	s.AddToolUse("Explore Agent", "Reading stream_loop.go", true, "t1")
-	// Notification closes by taskID.
-	s.AddToolResult("Agent", "Explore codebase · 66步", "", false, true, "t1")
-	if n := len(s.tools); n != 1 {
-		t.Fatalf("want 1 folded row (lifecycle by taskID), got %d rows", n)
-	}
-	if s.tools[0].count != 3 {
-		t.Errorf("count = %d, want 3 (started + 2 progress folded)", s.tools[0].count)
-	}
-	if s.tools[0].status != "completed" {
-		t.Errorf("status = %q, want completed (notification closed by taskID)", s.tools[0].status)
-	}
-	if !strings.Contains(s.tools[0].desc, "66步") {
-		t.Errorf("desc = %q, want terminal summary", s.tools[0].desc)
-	}
-}
-
-// TestAddToolResult_ConcurrentSubagentsCloseByTaskID reproduces the concurrency
-// bug (实测 159865/022265): two subagents run interleaved with drifting names
-// (notification subagent_type is empty → "Agent"). The result must close the
-// row whose taskID matches, NOT the most-recent same-name running row.
-func TestAddToolResult_ConcurrentSubagentsCloseByTaskID(t *testing.T) {
-	s := NewProgressState()
-	// A (Explore) starts, then B (local_bash, name degrades to "Shell") starts.
-	s.AddToolUse("Explore Agent", "Count links", true, "A")
-	s.AddToolUse("Shell", "Fetch page", true, "B")
-	// B finishes first — its notification must close B, leaving A running.
-	s.AddToolResult("Agent", "Fetch page · done", "", false, true, "B")
-	// B's row (index 1) closed, A's row (index 0) still running.
-	if s.tools[0].status != "running" || s.tools[0].taskID != "A" {
-		t.Errorf("A should still be running, got status=%q taskID=%q", s.tools[0].status, s.tools[0].taskID)
-	}
-	if s.tools[1].status != "completed" || s.tools[1].taskID != "B" {
-		t.Errorf("B should be completed, got status=%q taskID=%q", s.tools[1].status, s.tools[1].taskID)
-	}
-	// Now A finishes.
-	s.AddToolResult("Agent", "Count links · done", "", false, true, "A")
-	if s.tools[0].status != "completed" {
-		t.Errorf("A should be completed after its notification, got %q", s.tools[0].status)
-	}
-}
-
-// TestAddToolResult_SubagentFailureFlagsError verifies a subagent that ended
-// with a non-completed status (实测 159865/022265/506910: status="stopped") is
-// flagged error so the row renders ❌, and the error excerpt is kept.
-func TestAddToolResult_SubagentFailureFlagsError(t *testing.T) {
-	s := NewProgressState()
-	s.AddToolUse("Shell", "Try wget fallback", true, "F")
-	// stream_loop maps status!="completed" → IsError=true; the result closes
-	// by taskID and marks the row error.
-	s.AddToolResult("Agent", "Try wget fallback", "exit 1: timeout", true, true, "F")
-	if s.tools[0].status != "error" {
-		t.Errorf("status = %q, want error for failed subagent", s.tools[0].status)
-	}
-	got := formatToolLine(s.tools[0])
-	if !strings.Contains(got, "❌") {
-		t.Errorf("failed subagent should render ❌, got %q", got)
-	}
-	if !strings.Contains(got, "timeout") {
-		t.Errorf("error excerpt should be kept, got %q", got)
-	}
-}
-
-// TestAddToolResult_SubagentFoldedThenNotificationNoPanic covers the accepted
-// residual: when a subagent's running row was collapsed out by maxRunningTools,
-// a later notification (carrying the same taskID) cannot retroactively reopen
-// the card. It must not panic and must not drive any count negative; the
-// notification lands as an orphan completed row (documented residual).
-func TestAddToolResult_SubagentFoldedThenNotificationNoPanic(t *testing.T) {
-	s := NewProgressState()
-	// Spawn more running subagents than maxRunningTools so the oldest collapse.
-	total := maxRunningTools + 2
-	for i := range total {
-		s.AddToolUse("Explore Agent", "task "+strconv.Itoa(i), true, "T"+strconv.Itoa(i))
-	}
-	// Notification for the first (oldest, collapsed) subagent.
-	s.AddToolResult("Agent", "task 0 · done", "", false, true, "T0")
-	// No panic; tool count is non-negative and at least the original total
-	// (the orphan completed row is appended, not subtracted).
-	if n := len(s.tools); n < total {
-		t.Errorf("tools = %d, want >= %d (no negative collapse)", n, total)
-	}
-}
-
 // TestRender_ErrorExcerptCapped pins maxToolOutputLen: a long error output is
 // truncated to 50 runes so a verbose stack trace cannot crowd the error zone.
 func TestRender_ErrorExcerptCapped(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "make test", false, "")
+	s.AddToolUse("bash", "make test")
 	long := strings.Repeat("x", maxToolOutputLen+20)
-	s.AddToolResult("bash", "", long, true, false, "")
+	s.AddToolResult("bash", "", long, true)
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -542,10 +451,10 @@ func TestRender_ErrorExcerptCapped(t *testing.T) {
 func TestRender_ErrorZoneExcludesCompleted(t *testing.T) {
 	s := NewProgressState()
 	// 1 success + 1 failure of the same name (Read).
-	s.AddToolUse("read", "/ok.go", false, "")
-	s.AddToolResult("read", "", "body", false, false, "")
-	s.AddToolUse("read", "/fail.go", false, "")
-	s.AddToolResult("read", "", "permission denied", true, false, "")
+	s.AddToolUse("read", "/ok.go")
+	s.AddToolResult("read", "", "body", false)
+	s.AddToolUse("read", "/fail.go")
+	s.AddToolResult("read", "", "permission denied", true)
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -582,13 +491,13 @@ func TestRender_ErrorZoneExcludesCompleted(t *testing.T) {
 func TestRender_ThreeZoneOrder(t *testing.T) {
 	s := NewProgressState()
 	// Zone 1: executing (one still running).
-	s.AddToolUse("read", "/running.go", false, "")
+	s.AddToolUse("read", "/running.go")
 	// Zone 2: completed.
-	s.AddToolUse("bash", "make build", false, "")
-	s.AddToolResult("bash", "", "ok", false, false, "")
+	s.AddToolUse("bash", "make build")
+	s.AddToolResult("bash", "", "ok", false)
 	// Zone 3: error.
-	s.AddToolUse("bash", "git push", false, "")
-	s.AddToolResult("bash", "", "denied", true, false, "")
+	s.AddToolUse("bash", "git push")
+	s.AddToolResult("bash", "", "denied", true)
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -615,7 +524,7 @@ func TestRender_ThreeZoneOrder(t *testing.T) {
 // button — the button was removed; users stop via /abort text command.
 func TestRender_NoAbortButton(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("bash", "ls", false, "") // running
+	s.AddToolUse("bash", "ls") // running
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -646,11 +555,11 @@ func TestAddTodo_Overwrites(t *testing.T) {
 // has its own zone.
 func TestRender_TitleCountsCompletedOnly(t *testing.T) {
 	s := NewProgressState()
-	s.AddToolUse("read", "/a.go", false, "")            // running
-	s.AddToolUse("bash", "make", false, "")             // running
-	s.AddToolResult("bash", "", "ok", false, false, "") // 1 completed
-	s.AddToolUse("bash", "fail", false, "")
-	s.AddToolResult("bash", "", "err", true, false, "") // 1 errored
+	s.AddToolUse("read", "/a.go")            // running
+	s.AddToolUse("bash", "make")             // running
+	s.AddToolResult("bash", "", "ok", false) // 1 completed
+	s.AddToolUse("bash", "fail")
+	s.AddToolResult("bash", "", "err", true) // 1 errored
 	b, err := s.Render(hdr(), ftr())
 	if err != nil {
 		t.Fatalf("render: %v", err)

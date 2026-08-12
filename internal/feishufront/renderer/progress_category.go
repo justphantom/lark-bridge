@@ -5,13 +5,10 @@ import (
 	"strings"
 )
 
-// toolCategory labels a tool row for the grouped summary. The order matters:
-// subagent is checked first (claude renders subagents as "<Type> Agent" /
-// "Shell"; a subagent whose name coincidentally starts with "Read" must not be
-// miscounted as a read), then read/exec/edit/write/mcp by normalised name.
-// Unclassified tools (WebSearch/Cron/Worktree/MultiEdit/…) return "" and are
-// omitted from the summary rather than reserved — they appear in the
-// recent-rows window.
+// toolCategory labels a tool row for the grouped summary, classifying by
+// normalised name into read/exec/edit/write/mcp. Unclassified tools
+// (WebSearch/Cron/Worktree/MultiEdit/…) return "" and are omitted from the
+// summary rather than reserved — they appear in the recent-rows window.
 //
 // miniagent v3.2.0 removed the standalone `multi_edit` tool (merged into
 // `edit`'s `edits` array, edd6ba5/S3), so a `Multi_edit` row from miniagent is
@@ -19,15 +16,11 @@ import (
 // (distinct PascalCase name) was never classified and stays in the unclassified
 // bucket — this is not a regression, just an explicit pin.
 func toolCategory(t toolRow) string {
-	if t.isSubagent {
-		return "sub"
-	}
 	switch {
 	case isReadTool(t.name):
 		return "read"
 	// Bash is claude/opencode/omp's shell tool; Shell (normalised from
-	// miniagent's lowercase "shell") is the same category. A subagent named
-	// "Shell" never reaches here — isSubagent is checked above.
+	// miniagent's lowercase "shell") is the same category.
 	case t.name == "Bash" || t.name == "Shell":
 		return "exec"
 	case t.name == "Edit":
@@ -58,8 +51,6 @@ func categoryLabel(cat string, count int) string {
 		label = "写入"
 	case "mcp":
 		label = "mcp"
-	case "sub":
-		label = "子代理"
 	default:
 		return ""
 	}
@@ -68,9 +59,9 @@ func categoryLabel(cat string, count int) string {
 
 // categoryTotals sums each tool row's folded count by category. Shared between
 // the progress card's grouped summary and the result card's Summary() so the
-// two stay in sync. Counts each row's count (folded same name+desc / taskID
-// calls), so 127 reads of distinct files still total 127 even though they span
-// 127 distinct rows.
+// two stay in sync. Counts each row's count (folded same name+desc calls), so
+// 127 reads of distinct files still total 127 even though they span 127
+// distinct rows.
 func categoryTotals(tools []toolRow) map[string]int {
 	totals := map[string]int{}
 	for _, t := range tools {
@@ -86,7 +77,7 @@ func categoryTotals(tools []toolRow) map[string]int {
 // map iteration. Returns "" when no category has a count.
 func groupedSummary(totals map[string]int) string {
 	var parts []string
-	for _, cat := range []string{"read", "exec", "edit", "write", "mcp", "sub"} {
+	for _, cat := range []string{"read", "exec", "edit", "write", "mcp"} {
 		if lbl := categoryLabel(cat, totals[cat]); lbl != "" {
 			parts = append(parts, lbl)
 		}
@@ -98,24 +89,16 @@ func groupedSummary(totals map[string]int) string {
 }
 
 // Summary builds a one-line execution digest for the result card from the
-// accumulated tool rows, e.g. "📎 读取 77 · 执行 12 · 编辑 15 · mcp 32 · 子代理 1".
+// accumulated tool rows, e.g. "📎 读取 77 · 执行 12 · 编辑 15 · mcp 32".
 // Returns "" when no tools ran. Shares categoryTotals with the progress card's
 // grouped summary so the in-flight digest and the final digest agree, and the
 // category set covers the high-frequency tools observed in real streams
-// (Read/Bash/Edit/Write/MCP/subagent); low-frequency tools (WebSearch/Cron/…)
-// are omitted rather than reserved.
-//
-// "子代理 N" counts BOTH leaf subagents (claude local_bash rendered as a tool
-// row, counted via categoryTotals) AND dedicated-zone subagents (claude
-// local_agent + opencode task, counted via len(s.subagents)) so the digest
-// reflects every delegation regardless of which zone rendered it.
+// (Read/Bash/Edit/Write/MCP); low-frequency tools (WebSearch/Cron/…) are
+// omitted rather than reserved.
 func (s *ProgressState) Summary() string {
 	totals := categoryTotals(s.tools)
-	if n := len(s.subagents); n > 0 {
-		totals["sub"] += n
-	}
 	var parts []string
-	for _, cat := range []string{"read", "exec", "edit", "write", "mcp", "sub"} {
+	for _, cat := range []string{"read", "exec", "edit", "write", "mcp"} {
 		if lbl := categoryLabel(cat, totals[cat]); lbl != "" {
 			parts = append(parts, lbl)
 		}
