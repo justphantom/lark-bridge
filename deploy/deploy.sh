@@ -232,9 +232,13 @@ stage_configs() {
 }
 EOF
 
-    # feishu + status-monitor: plain copies of base (each reads only its fields).
+    # feishu: plain copy of base (frontend uses backend_id only for self-report).
     cp "$STAGE/base-config.json" "$STAGE/feishu-config.json"
+
+    # status-monitor: needs a UNIQUE backend_id (the default "backend-1" would
+    # collide / not be recognized as status-monitor by the frontend's registry).
     cp "$STAGE/base-config.json" "$STAGE/status-monitor-config.json"
+    sed -i 's|"backend_id"[[:space:]]*:.*|"backend_id":   "status-monitor-1",|' "$STAGE/status-monitor-config.json"
 
     info "Generated 3 service configs from config.example.json"
 }
