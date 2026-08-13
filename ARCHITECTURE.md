@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 调查日期：2026-08-10 | 当前版本：v1.14.0
+> 最近核对：2026-08-13 | 基线：v1.14.0（HEAD = v1.14.0-32-gd396df7）
 
 ---
 
@@ -30,8 +30,8 @@
 
 ### 1.3 规模
 
-- **249 个 Go 文件，约 56,275 行**，其中生产代码 **约 29,593 行**，测试代码 **约 26,682 行（约 47.4%）**
-- `internal/` 下 **22 个子包**（`go list` 计 27 个含嵌套）
+- **222 个 Go 文件，约 47,917 行**，其中生产代码 **约 24,928 行**，测试代码 **约 22,989 行（约 48.0%）**
+- `internal/` 下 **19 个顶层子包**（`go list` 计 24 个含嵌套）
 - `go.mod` **零外部依赖**（无 `go.sum`），仅用 Go 标准库
 
 ---
@@ -84,6 +84,7 @@ lark-bridge/
 │   ├── statusmonitor/        # 周期性总览卡数据组装（push-only）
 │   ├── hostmetrics/          # 主机 CPU/内存/磁盘采样
 │   ├── fileconvert/          # docx/xlsx/pptx → Markdown 提取
+│   ├── gosafe/               # panic-recovered goroutine 启动器（统一 GoSafe 模式）
 │   ├── usage/                # 每 session token/cost 累计
 │   ├── streamarchive/        # 每轮 CLI stdout 原文落盘（带保留期）
 │   ├── cmdutil/              # 斜杠命令公共框架 + 子进程组取消
@@ -180,7 +181,7 @@ miniagent-back 的业务逻辑。Handler 复用 `bridgebase` 的包级 helper（
 
 | 文件 | 职责 |
 |---|---|
-| `handler.go` | **`Handler`**（:45）+ `New`（:84）+ `HandleEvent` 派发（:145，Prompt/Answer/Abort/Ping）。`sendCtrl`（:268）/ `sendTerminalCtrl`（:286，走 `bridgebase.EmitTerminalControl` 终态重试） |
+| `handler.go` | **`Handler`**（:46）+ `New`（:85）+ `HandleEvent` 派发（:146，Prompt/Answer/Abort/Ping，ping 回 Pong 走 `gosafe.Go` :170）。`sendCtrl`（:269）/ `sendTerminalCtrl`（:286，走 `bridgebase.EmitTerminalControl` 终态重试） |
 | `handler_cli.go` | **`runViaCLI`**（:26）：单 turn 核心——fork miniagent、流式收 NDJSON 事件、emit 终态 Control。`emitCLIEvent`（:112）把 `miniclient.Event` 翻译成 `protocol.Control`；`activeTurnConfig`（:317）解析 per-chat binding |
 | `handler_lifecycle.go` | **turn 生命周期**：`startTurn`/`endTurn`（:44/:70，busy-then-drop）、`Close`（:126，幂等 `sync.Once` + 5s grace）、`abortChat`（:153）、`RunningSessions`（:26）、`sendTurnStarted/Finished`（:86/:106） |
 | `handler_todo.go` | 每 turn todo 累加器（miniagent 的 todo 工具单条输出 → 卡片 todo 区快照） |
@@ -202,19 +203,17 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 | 文件 | 职责 |
 |---|---|
 | `core.go` | **`PromptCancel`**（:11）：cancel 条目（CancelFunc/StartTime/ChatID/PromptID），各后端自管 chatID→PromptCancel 映射 |
-| `ack_registry.go` | `AckRegistry`（:33）/ `NewAckRegistry`（:52）：终态 Control ACK 跟踪（miniagent 无状态时不启用） |
-| `prompt_result.go` | **`EmitTerminalControl`**（:47）：终态 Control 的 send-error 重试路径（无 AckRegistry 时退化为纯重试） |
+| `prompt_result.go` | **`EmitTerminalControl`**（:33）：终态 Control 的 send-error 重试路径（miniagent 无状态，已删 AckRegistry，纯重试） |
 | `answer.go` | **`AnswerBroker`**（:20）/ `NewAnswerBroker`（:26）：问答/权限卡的 RequestID → chan 请求-应答配对 |
-| `interactive.go` | `AskAndWait`（:72）/ `PickAnswerValue`（:162）/ `EmitNotice`（:191）/ `EmitCardUpdate`（:199）/ `AskCardUpdate`（:238）/ `EmitFunc`（:43）：picker/notice 共享逻辑 |
-| `commands.go` | 泛型斜杠命令 dispatcher：`Commands`（:43）/ `CommandSpec`（:35）/ `NewCommands`（:49）/ `CommandHandler`（:16） |
+| `interactive.go` | `PickAnswerValue`（:10）：picker 应答取值（`AskAndWait`/`EmitNotice` 等交互发送逻辑已迁至 `miniagent/commands_send.go`/`commands_picker.go`） |
 | `commands_send.go` | `/send` 文件工具：`SafeJoin`/`BuildSendOptions`/`ParseSendOption`/`ReadFilePayload` |
-| `dir_cache.go` | `DirCache`（:20）/ `NewDirCache`（:29）：`/cd` 工作目录扫描缓存 |
-| `git_runner.go` | `GitRunner` / `AcquireAndRun`：`/pull` `/push` 每 chat 单飞 |
-| `gosafe.go` | **`GoSafe`**（:24）：panic-recovered goroutine 启动器 |
+| `dir_cache.go` | `DirCache`（:29）/ `NewDirCache`：`/cd` 工作目录扫描缓存 |
+| `git_runner.go` | `GitRunner` / `AcquireAndRun`：`/pull` `/push` 每 chat 单飞（内部 goroutine 走 `gosafe.Go` :93） |
 | `running.go` | `FormatDuration`（:10） |
 | `toolinput.go` | `SummarizeToolInput`（:19）：工具输入摘要（提取 command/file_path 等） |
-| `util.go` | `ResolveModel`/`ParseTodoItems`/`NonEmpty` 等纯 helper |
 | `linereader/` | 有上限的行读取器（miniclient pump 用于 NDJSON stdout） |
+
+> 注：历史 `ack_registry.go`（终态 ACK 跟踪）、`commands.go`（泛型 dispatcher）、`gosafe.go`、`util.go` 已删——ACK 机制整体移除（`ad84f98`）、命令 dispatch 迁至 `miniagent/commands_dispatch.go`、goroutine 启动统一走顶层 `internal/gosafe/`、`ResolveModel`/`ParseTodoItems` 等 helper 随用随并。
 
 ### 5.5 `miniclient/`——CLI 驱动层
 
@@ -342,14 +341,16 @@ feishu.Bot.handleMessageReceive .................. internal/feishu/bot_dispatch.
 feishu.Bot.onIncoming.Load() → Dispatcher.DispatchIncoming  internal/feishufront/dispatcher.go:371
    ├─ isStale(msg.CreateTimeMs) 丢弃过期 ........... :375
    ├─ eventIDs.Add(msg.EventID) 去重 ............... :378
-   ├─ MsgType != "text" 拒绝非文本 ................. :381
+   ├─ MsgType != "text" → handleTextMessage ........ :433
    ├─ StripMentionPlaceholders ..................... :434
-   ├─ /backend 命令 → handleBackendCommand ......... :443
-   ├─ router.Resolve(chatID) → backendID ........... :469   ← Layer-1 路由
-   ├─ registry.BackendType(backendID) 检查在线 ...... :473
-   ├─ renderer.NewProgressState + Render ........... :486  ← 占位进度卡
-   ├─ bot.SendCard(chatID, card, replyTo) .......... :496  ← 发卡片到飞书群
-   └─ registry.SendEvent(backendID, Event{Prompt}) ..       ← 推入 BackendConn.eventCh
+   ├─ /backend 命令 → handleBackendCommand ......... :442
+   ├─ /skill 前缀剥离（skill=true） ................. :449
+   └─ dispatchPrompt ............................... :465
+        ├─ router.Resolve(chatID) → backendID ...... :469   ← Layer-1 路由
+        ├─ registry.BackendType(backendID) 检查在线 . :473
+        ├─ renderer.NewProgressState + Render ...... :486  ← 占位进度卡
+        ├─ bot.SendCard(chatID, card, replyTo) .....        ← 发卡片到飞书群
+        └─ registry.SendEvent(backendID, Event{Prompt})     ← 推入 BackendConn.eventCh
         ▼
         IPCServer.handleSSE 从 BackendConn.eventCh 读 ... internal/feishufront/ipcserver_sse.go:16
         │ 按 `data: <json>\n\n` 帧写给 SSE 长连接
@@ -371,23 +372,23 @@ handle(ctx, *Event) = h.HandleEvent ................... cmd/miniagent-back/main.
 miniagent.Handler.HandleEvent ........................ internal/miniagent/handler.go:145
    ├─ Prompt → 校验
    │     ├─ HasFrontendOverride 拒绝前端覆写字段 .... protocol.go:79（安全护栏）
-   │     ├─ /running /abort 前置派发（不占 turn 槽）. handler.go:206/:216
-   │     ├─ 斜杠命令 → handleSessionCommand ........ :227
+   │     ├─ /running /abort 前置派发（不占 turn 槽）. handler.go:207/:217
+   │     ├─ 斜杠命令 → handleSessionCommand ........ :228
    │     ├─ busy-then-drop 并发检查 ................. handler_lifecycle.go:44 (startTurn)
    │     └─ GoSafe → runTurn ....................... handler.go:244
    │          └─ runViaCLI ........................ handler_cli.go:26
    │               ├─ activeTurnConfig 取 model/provider/workdir/mode/thinking/config :28
-   │               ├─ streamarchive.NewSink 落盘 NDJSON :39
+   │               ├─ streamarchive.NewSink 落盘 NDJSON :40
    │               ├─ client.Run(ctx, RunOptions{...}) :55 → fork miniagent 子进程
    │               │    └─ miniclient/client.go:300（信号量限并发，ctx 取消 SIGKILL 进程组）
-   │               ├─ for ev := range events: emitCLIEvent :89/:112
+   │               ├─ for ev := range events: emitCLIEvent :89/:93
    │               │    └─ 转 protocol.Control{ToolUse/ToolResult/Thinking/Todo/Result/Error}
    │               │       ├─ sendCtrl（非终态）.............. handler.go:268 → rpc.SendControl POST
    │               │       └─ sendTerminalCtrl（终态 Result/Error）handler.go:286
    │               │            └─ bridgebase.EmitTerminalControl .. bridgebase/prompt_result.go:47
    │               │                 └─ rpc.SendControl POST ........ backendrpc/client.go:480
-   │               └─ ctx 取消且无终态事件 → "已中止" Notice :98
-   ├─ Answer → Answers.Deliver（权限/问答回调）...... handler.go:162
+   │               └─ ctx 取消且无终态事件 → "已中止" Notice :105
+   ├─ Answer → Answers.Deliver（权限/问答回调）...... handler.go:163
    ├─ Abort → abortChat → cancel turn ctx ........... handler_lifecycle.go:153
    └─ Ping → sendCtrl(TypePong) 在派发循环内回 ...... handler.go:169
 ```
@@ -408,11 +409,11 @@ IPCServer.handleControl ........................... internal/feishufront/ipcserv
    ▼
 Dispatcher.DispatchControl(ctx, rc) ............... dispatcher_control.go:20
    ├─ TypeSessionInit/ToolUse/ToolResult/Progress/Todo/Thinking
-   │     → updateProgress → renderer 渲染 → updateCard（经 debouncer）:130
-   ├─ TypeResult → sendResult ..................... :287
-   ├─ TypeError/TypeNotice → sendNoticeControl .... :56
+   │     → updateProgress → renderer 渲染 → updateCard（经 debouncer）:119
+   ├─ TypeResult → sendResult ..................... :214
+   ├─ TypeError/TypeNotice → sendNoticeControl .... :297
    │     （terminals 去重，PromptID 维度）.......... :45
-   └─ TypeQuestion/TypePermission → sendInteractive  :95
+   └─ TypeQuestion/TypePermission → sendInteractive  dispatcher_interactive.go:23
         ▼
 bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
    ↓
@@ -422,9 +423,9 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 ### 6.6 关键并发与生命周期
 
 - **TurnManager**（`feishufront/turn.go`）：每 promptID 一个 Turn 状态，`/v1/status` 数据源。
-- **cancelBy**（`miniagent/handler.go:63`）：chatID → `*bridgebase.PromptCancel` 映射，miniagent 自管；busy-then-drop 由 `startTurn`（handler_lifecycle.go:44）把关。
+- **cancelBy**（`miniagent/handler.go:64`）：chatID → `*bridgebase.PromptCancel` 映射，miniagent 自管；busy-then-drop 由 `startTurn`（handler_lifecycle.go:44）把关。
 - **Close 顺序**（`miniagent/handler_lifecycle.go:126`）：`appCancel` → 置 `closed` → 遍历 cancelBy 取消所有 in-flight turn → `Answers.Drain` → `wg.Wait`（5s grace），幂等 via `sync.Once`。
-- **router.Close**（`router/router.go:120`）：关 saveLoop → 同步 save 一次（防丢失）。
+- **router.Close**（`router/router.go:106`）：关 saveLoop → 同步 save 一次（防丢失）。
 
 ---
 
@@ -452,7 +453,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |
 | `component_log_levels{}` | 共用 | 分组件级别（router/feishu/dedup/miniagent/status_monitor 等） |
 | `state_dir` | 共用 | 持久化根目录 |
-| `timeouts{}` | 共用 | backend_health/idle_timeout/usage_session_ttl |
+| `timeouts{}` | 共用 | backend_health（其余历史字段已随死代码清理移除） |
 | `dedup{}` | feishu-front | stale_window/event_ttl/event_max_entries |
 
 ### 7.3 配置特点
@@ -563,7 +564,7 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 - **Go 版本**：1.25.0（go.mod:3）
 - **二进制数**：4（cmd/ 下 4 子目录）
 - **internal 包数**：22（顶层）/ 27（含嵌套）
-- **Go 文件**：249 个，约 56,275 行（生产代码约 29,593 行，测试代码约 26,682 行，约 47.4%）
+- **Go 文件**：222 个，约 47,917 行（生产代码约 24,928 行，测试代码约 22,989 行，约 48.0%）
 - **外部依赖**：0（无 go.sum）
 - **版本**：v1.14.0
 - **License**：MIT（LICENSE）
