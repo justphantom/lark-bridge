@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [miniagent, integration, config-only, version-check, eventmetrics, stream-archive]
+tags: [miniagent, config-only, version-check, eventmetrics, stream-archive]
 created: 2026-08-09
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # Miniagent 对接模式与常见缺口

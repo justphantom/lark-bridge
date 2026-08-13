@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [lark-bridge, feishu-front, claude-back, miniagent-back, turn, consistency, race-condition]
+tags: [miniagent, race-condition, inflight-turn]
 created: 2026-08-09
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # 前后端运行中 Turn 的一致性模型
@@ -32,12 +34,12 @@ confidence: high
 | 后端无限重试 | terminal ACK（前端回 `TypeAck`） |
 | 后端 crash 后 turn 永不结束 | `reclaimStrandedTurns`：离线超 30s 回收 |
 | 后端 flapping 刷屏 | offline notice debounce 30s |
-| binding 被替换导致旧 session ID 回写串台 | `SetSessionIDIfGeneration`（generation incarnation token） |
+| binding 被替换导致旧 session ID 回写串台 | 历史用 `SetSessionIDIfGeneration`（generation incarnation token）；router 重构后该机制已移除，当前依赖 miniagent 独立 `.id` 文件隔离 |
 | 持久化文件截断/损坏 | 原子写、version 校验、corrupt 备份 |
 
 ## 残余风险与建议
 
-> 状态核实于 2026-08-09（对照当前代码）。
+> 状态核实于 2026-08-13（对照当前代码：HEAD `b965415`）。
 
 1. **SSE 重连后短暂漏计** — `[ ] 未实现`
    - 后端 SSE 断开后重连会新建 conn，`runningTurns` 为空，需等 MetricsReport 自愈。

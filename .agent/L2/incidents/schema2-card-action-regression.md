@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: incident
-tags: [feishu, cardkit, schema-2.0, card-action, callback, behaviors, regression]
+tags: [feishu, cardkit, schema-2.0, card-callback, regression]
 created: 2026-08-10
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # schema 2.0 全量切换后交互卡片回调全部失效

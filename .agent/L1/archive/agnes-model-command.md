@@ -1,7 +1,10 @@
 ---
-task: agnes-model-command
-status: completed
+layer: L1
+type: task
+status: done
+created: 2026-08-10
 updated: 2026-08-10T12:20:00+08:00
+task: agnes-model-command
 ---
 
 # agnes-back /model 指令

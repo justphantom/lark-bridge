@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [backend, new-backend, deploy, config, http-backend, skeleton]
+tags: [deploy, new-backend, config, disallowunknownfields]
 created: 2026-08-10
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # 新后端搭建标准骨架
@@ -28,7 +30,7 @@ confidence: high
 2. **慢任务跑 GoSafe**：不阻塞 SSE 事件循环；任务自带 `jobTimeout` ctx（`context.Background()` 根，不随 SSE ctx 取消）。
 3. **config 缺失项 fail-fast**：API key 等必填项在 main.go 的 `run()` 开头校验，缺则 return error（main 提升为 os.Exit(1)）。
 4. **BackendType 在 registry 无白名单**：前端 `Register(id, typ)` 接受任意类型字符串，不需改前端代码。
-5. **deploy 脚本 init 路径须自带 build**：deploy-status 的 init 依赖外部预 build，但健壮做法是 init 开头调 `build_xxx()`。
+5. **deploy 脚本 init 路径须自带 build**：deploy.sh 的 init 应不依赖外部预 build，init 开头调 `build_xxx()` 最健壮。
 6. **config `${VAR}` 展开在二进制启动时**：systemd `EnvironmentFile=/etc/lark-bridge/.env` 注入环境变量，`config.Load` 展开 `${VAR}`。init 路径只写 config 文件，env 变量需另行补到 `.env`。
 
 ## 常见陷阱
@@ -38,5 +40,5 @@ confidence: high
 - **文档与实际 API 差异**：实测验证优于文档信任（历史案例：agnes video url 文档写 `metadata.url`，实际在顶层 `url` 字段）。
 
 ## 参考
-- 完整实现（轻量 HTTP 后端范式）：status-monitor（`cmd/status-monitor/`、`internal/statusmonitor/`、`deploy/deploy-status.sh`）
+- 完整实现（轻量 HTTP 后端范式）：status-monitor（`cmd/status-monitor/`、`internal/statusmonitor/`、`deploy/deploy.sh`）
 - 轻量后端模板：`cmd/status-monitor/main.go`（最薄）

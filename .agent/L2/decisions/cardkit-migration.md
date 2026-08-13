@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: decision
-tags: [feishu, cardkit, card, migration, schema-v2, sequence, poc]
+tags: [feishu, cardkit, schema-2.0, card-update, migration, sequence, poc]
 created: 2026-08-09
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # 卡片更新链路迁移到 CardKit 实体 API

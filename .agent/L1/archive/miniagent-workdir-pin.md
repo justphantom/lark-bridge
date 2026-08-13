@@ -29,8 +29,8 @@ repo: /opt/code/miniagent  # 跨仓改动：miniagent CLI（独立 Go module）
 go build / vet / test -race ./...、golangci-lint 0 issue。smoke：auto+default 无 workdir→`required`；
 相对路径→`must be absolute`；绝对路径→放行至 API key 校验；`--version`/`-replay` 旁路不受影响。
 
-## 待续 / 注意
-- **未提交**（miniagent 独立仓，待用户 commit）。
-- **部署未生效**：在线 `/usr/local/bin/miniagent` 仍是 v4.4.0；需 `make build` 重装 CLI 后 miniagent-back 才用上新契约。
+## 已交付
+- **已提交**（miniagent 仓代码 + lark-bridge 仓 agent 元数据 `0494eed`）。
+- ⚠️ **部署未生效**：在线 `/usr/local/bin/miniagent` 仍是 v4.4.0；需 `make build` 重装 CLI 后 miniagent-back 才用上新契约。
 - bridge 侧零改动（恒传绝对 `-workdir`，本就合规）。
-- 关联：本次"漂移"根因是 conflation，见 [[miniagent-integration]] 新增缺口 6。
+- 关联：本次"漂移"根因是 conflation，见 [[miniagent-integration]] 缺口 6。

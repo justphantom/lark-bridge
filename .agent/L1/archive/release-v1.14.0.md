@@ -2,7 +2,7 @@
 layer: L1
 type: task
 created: 2026-08-10T11:30:00+08:00
-status: completed
+status: done
 archived: 2026-08-10
 ---
 

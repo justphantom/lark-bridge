@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [miniagent, session, jsonl, sidecar, history, usage]
+tags: [miniagent, session, jsonl, sidecar, usage]
 created: 2026-08-09
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # Miniagent 会话 JSONL 解析与清理

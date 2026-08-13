@@ -22,7 +22,7 @@
 设计哲学（从配置文件中明示）：
 - **显式允许名单制**：`.golangci.yml` 用 `default: none` + 显式 `enable:`，**不**用 `default: all`，并把每个**未启用**的 linter 都附上理由注释（`.golangci.yml:76-148`）——「这份文件就是项目的风格契约」。
 - **零第三方依赖是硬约束**：飞书 WebSocket（RFC 6455）、REST、protobuf 帧编解码全部 `internal/` 自实现（v1.3.0 起，`internal/lark/`）。
-- **注释写"为什么"，不写"是什么"**：`.golangci.yml:144-145` 明确禁用 `godoclint/godot/godox`，理由即「AGENTS.md: comments only for non-obvious why」。
+- **注释写"为什么"，不写"是什么"**：`.golangci.yml:144-145` 明确禁用 `godoclint/godot/godox`，理由即「`.agent/L0/constraints.md`: comments only for non-obvious why」。
 
 ---
 
@@ -380,7 +380,7 @@ type Handler struct { ... }
 
 ### 7.1 函数长度
 - **无硬性上限**：`funlen/cyclop/gocyclo/gocognit/nestif/maintidx` 全部禁用（`.golangci.yml:124-128`），理由「最大的函数是事件分发 switch（`miniagent.emitCLIEvent`，`internal/miniagent/handler_cli.go:112`），拆分反而降低可读性」。
-- **软目标**：单文件 ≤300 行（项目惯例，源自历史 AGENTS.md/CLAUDE.md）。当前最大的 `internal/lark/ws/frame.go` 422 行被 review 标为「建议触及时拆分」。
+- **软目标**：单文件 ≤300 行（项目惯例，源自历史 `.agent/L0/` 约束）。当前最大的 `internal/lark/ws/frame.go` 422 行被 review 标为「建议触及时拆分」。
 
 ### 7.2 函数顺序
 **按语义关注点分组**（生命周期 / emit / state），**不**按可见性。`.golangci.yml:135-139` 禁用 `funcorder`，理由「按可见性重排会把相关方法打散」。

@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [feishu, cardkit, interactive-card, callback, inline-vs-entity, card-action-trigger]
+tags: [feishu, cardkit, schema-2.0, card-callback, inline-vs-entity]
 created: 2026-08-10
 confidence: high
+verified_at: 2026-08-13
+applies_to: b965415
 ---
 
 # 飞书卡片交互回调的正确实践
@@ -21,18 +23,23 @@ confidence: high
 
 ## 卡片类型 vs 发送方式决策表
 
-| 卡片用途 | 需要按钮回调 | 需要流式 PUT 更新 | 发送方式 |
+> `b214834`（schema 2.0 全量切换）后，延迟 PATCH / 终态守卫（`cardPatchDelay`/
+> `markCardTerminal`/`scheduleSubmitFallback`）已整体删除。交互卡片的更新走
+> `UpdateCard` 同步直发——`cardID==""` 时 fallback 到 im PATCH，否则走 CardKit PUT。
+> 以下"更新"列不再标注"延迟 PATCH"。
+
+| 卡片用途 | 需要按钮回调 | 需要更新 | 发送方式 |
 |---|---|---|---|
-| /backend picker | ✅ | ✅（点击后 PATCH） | `SendCardInline` + `UpdateCard`(im PATCH) |
-| permission/question | ✅ | ✅（刷新/失效） | `SendCardInline` + `UpdateCard`(im PATCH) |
+| /backend picker | ✅ | ✅（点击后同步） | `SendCardInline` + `UpdateCard` |
+| permission/question | ✅ | ✅（刷新/失效） | `SendCardInline` + `UpdateCard` |
 | 通知/结果/notice | ❌ | ❌ | `SendCard`（CardKit 实体） |
 | 进度卡（流式更新） | ❌ | ✅ | `SendCard`（CardKit 实体）+ `UpdateCard`(PUT) |
 | status-monitor 总览 | ❌ | ✅ | `SendCard`（CardKit 实体）+ `UpdateCard`(PUT) |
 
 ## 实现锚点
 
-- **发送**：`feishu/bot_send.go` — `SendCard`（CardKit 实体）vs `SendCardInline`（inline JSON）
-- **更新**：`feishu/bot_send.go` — `UpdateCard`：`cardID!=""` 走 CardKit PUT，`cardID==""` 走 im PATCH
+- **发送**：`internal/feishu/bot_send.go` — `SendCard`（CardKit 实体）vs `SendCardInline`（inline JSON）
+- **更新**：`internal/feishu/bot_send.go` — `UpdateCard`：`cardID!=""` 走 CardKit PUT，`cardID==""` 走 im PATCH
 - **接口**：`feishufront/dispatcher.go` — `CardSink` 含 `SendCard` + `SendCardInline` + `UpdateCard`
 - **按钮**：`cardkit/elements.go` — `ButtonAction` / `SubmitButtonAction` **不带** behaviors
 

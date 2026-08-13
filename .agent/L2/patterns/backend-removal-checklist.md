@@ -1,9 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [deploy, removal, backend, disallowunknownfields, ghost-unit, smoke]
+tags: [deploy, backend-removal, disallowunknownfields, smoke]
 created: 2026-08-11
 confidence: high
+verified_at: 2026-08-13
+applies_to: 89e29e6
 ---
 
 # 从 lark-bridge 移除一个后端的清单

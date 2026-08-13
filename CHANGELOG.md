@@ -4,6 +4,31 @@
 遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 ## [Unreleased]
 
+### Removed
+- **移除 agnes-back 后端**（`89e29e6`，**breaking**）：Agnes AI 图片/视频生成后端整目录删除（`cmd/agnes-back` + `internal/agnesback`，8 文件 / 2494 行），接受永久丢失媒体生成能力。config/Makefile/deploy 脚本全量清零；`deploy-status.sh` removed_blocks 加 `"agnes"` 迁移。
+- **移除 deploy-monitor 独立服务**（`89e29e6`）：状态监控逻辑合并回 `deploy.sh`，`cmd/deploy-monitor` + `deploy/deploy-monitor.sh` 删除。
+- **移除 config Timeouts 废弃字段**（`0021ca1`）：`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL` 删除。
+- **移除 bridgebase 死代码**（`f8a7239`）：`ack_registry`/`interactive`/`util` 清理。
+- **移除 strutil / eventmetrics 死代码**（`7f5c85c`）。
+- **移除 protocol subagent 委派区**（`7f8e172`）：`ToolUse`/`ToolResult` payload 简化。
+
+### Changed
+- **backendrpc 移除 Ack 机制**（`ad84f98`）：`Run` 重命名为 `RunWithClient`。
+- **goSafe 独立为 internal/gosafe 包**（`be5131f`）：`commands_dispatch` 从 bridgebase 迁至 miniagent。
+- **deploy.sh 不再编译**（`d396df7`）：`make build` 和 `make deploy` 成为独立步骤。
+- **deploy 脚本简化**（`520a11c`/`7cd9996`）：移除 `ComponentLogLevels` + `SERVICES` 影子数组，合并 per-service 分支。
+- **miniagent 服务 HOME 统一**（`df3fb94`）：指向 `/home/$RUN_USER`，注入固定 PATH。
+- **renderer 错误行聚合**（`5b91a10`）：旧错误行折叠为按名称聚合的摘要。
+
+### Fixed
+- **status-monitor backend_id 冲突**（`6d5c9af`）：独立 backend_id 避免注册碰撞。
+- **deploy shell 逻辑修复**（`6edf3f1`）：grep/systemctl 包裹在 if 块中以修正退出状态。
+- **smoke.sh / lib-common.sh 权限修复**（`e76a153`/`8814850`）。
+
+### Developer Experience
+- **ARCHITECTURE.md 全量刷新**（`b965415`）：gosafe 拆分、bridgebase 瘦身、deploy/build 分离。
+- **miniagent CLI workdir 契约钉死**（`0494eed`）：非空 + 绝对路径 + 只认 `-workdir` flag。
+
 ## [1.14.0] - 2026-08-10
 
 主线：**agnes-back 新后端**（Agnes AI 图片/视频生成接入飞书）+ **卡片链路全量切换 schema 2.0**（删除 legacy 1.0 双路灰度，**breaking**）+ **心跳 / 重试 / 诊断日志加固**（三后端补 Pong 应答、SendControl 瞬态重试、ws 看门狗放宽）。含新增功能与 breaking change，升 minor。发版顺序：先 feishu-front，后各 backend。

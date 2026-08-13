@@ -1,7 +1,7 @@
 ---
 layer: L1
 type: task
-status: in_progress
+status: done
 created: 2026-08-11
 updated: 2026-08-11T23:38:38+08:00
 ---
@@ -47,7 +47,5 @@ updated: 2026-08-11T23:38:38+08:00
 - `bash -n` 全过；`shellcheck -S warning` 清零；`make deploy-smoke` **36/36**（原 30 +6）；
   `make test` Go 全绿（无 Go 改动）。
 
-## 待续
-- **全部实施 + 验证通过，未提交**（待用户 commit；L0#9 已满足）。
-- 手动端到端（smoke 只测 helper 单元，不走 stage_configs）：`./deploy/deploy.sh --services miniagent`
-  设 `MINIAGENT_CONFIG_DIR=...` 后查 `/etc/lark-bridge/miniagent-config.json` 的 `config_dir`。
+## 已交付
+- 已提交（含于 `89e29e6`）。L0#9 全绿：bash -n / shellcheck / smoke 36/36 / Go 测试全绿。

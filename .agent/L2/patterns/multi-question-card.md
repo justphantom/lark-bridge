@@ -1,8 +1,10 @@
 ---
 layer: L2
 type: pattern
-tags: [question-card, multi-question, picker, custom-input, choices-mapping]
+tags: [feishu, cardkit, question-card, picker, choices-mapping]
 created: 2026-08-10
+verified_at: 2026-08-13
+applies_to: b965415
 confidence: high
 ---
 

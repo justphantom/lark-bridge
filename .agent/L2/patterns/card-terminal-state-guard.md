@@ -1,12 +1,21 @@
 ---
 layer: L2
 type: pattern
-tags: [feishu, card, patch, race-condition, terminal-state, delayed-write, ttl, guard]
+tags: [feishu, cardkit, card-update, race-condition, terminal-state]
 created: 2026-08-09
+verified_at: 2026-08-13
+applies_to: pre-b214834
+status: historical
 confidence: high
 ---
 
 # 卡片终态守卫模式：终态标记 + 落地前自弃
+
+> ⚠️ **历史模式**：CardKit 实体 API 全量切换（`b214834`）后，PUT 无回弹，
+> `cardPatchDelay`/`scheduleSubmitFallback`/`skipSubmitFlip` 等延迟 PATCH 防御
+> **全部删除**，本模式随之移除。`markCardTerminal`/`isCardTerminal`/
+> `terminalCards` 符号、`dispatcher_terminal_guard_test.go` 均已删除。
+> 以下保留作历史参考——若未来重新引入延迟/兜底写者，可复用此模式。
 
 ## 问题原型
 一张卡片存在多个异步写者（立即结果帧、延迟刷新 PATCH、TTL 失效帧、兜底

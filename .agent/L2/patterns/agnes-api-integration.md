@@ -1,12 +1,18 @@
 ---
 layer: L2
 type: pattern
-tags: [agnes-ai, api, image-generation, video-generation, prompt-engineering, async-polling]
+tags: [agnes-ai, image-generation, video-generation, prompt-engineering, async-polling]
 created: 2026-08-10
+verified_at: 2026-08-12
+applies_to: pre-89e29e6
+status: historical
 confidence: high
 ---
 
 # Agnes AI API 对接经验
+
+> ⚠️ **历史参考**：agnes-back 已于 `89e29e6` 彻底移除（C 档全量清零）。以下为
+> 再对接资产保留。引用的代码路径 `internal/agnesback/` 已删除。
 
 对接 Agnes AI 三个模型（agnes-2.5-flash / agnes-image-2.1-flash /
 agnes-video-v2.0）的实操经验，含 API 细节差异与踩坑记录。参考实现：

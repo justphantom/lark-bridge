@@ -1,12 +1,18 @@
 ---
 layer: L2
 type: pattern
-tags: [agnes-back, override, handler-state, apiclient-interface, testability]
+tags: [agnes-ai, override, handler-state, testability]
 created: 2026-08-10
+verified_at: 2026-08-12
+applies_to: pre-89e29e6
+status: historical
 confidence: high
 ---
 
 # agnes-back 运行时覆盖状态放 Handler 层（而非 Client）
+
+> ⚠️ **历史参考**：agnes-back 已于 `89e29e6` 彻底移除。以下为
+> handler-state 范式的一般性参考。引用的代码路径 `internal/agnesback/` 已删除。
 
 agnes-back 的 `/model` 运行时覆盖（override）状态保存在 `Handler` 的
 `modelMu + chat/image/video` 字段中，而不是放进 `Client`。原因与适用条件
