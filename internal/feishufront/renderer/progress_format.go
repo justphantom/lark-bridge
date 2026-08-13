@@ -58,9 +58,46 @@ func normalizeToolName(name string) string {
 	return string(r)
 }
 
-// truncateOutput caps a failed tool's error excerpt to maxToolOutputLen runes.
+// truncateOutput caps a failed tool's error excerpt to maxToolOutputLen
+// runes. Whitespace runs (incl. newlines) collapse to single spaces first so
+// a multi-line stack trace stays a single card row — otherwise the "50 runes"
+// cap would still let one failure eat many card lines, defeating the error
+// zone's fold.
 func truncateOutput(s string) string {
-	return truncateRunes(s, maxToolOutputLen)
+	return truncateRunes(strings.Join(strings.Fields(s), " "), maxToolOutputLen)
+}
+
+// errorFoldSummary renders the "… 另有 N 个失败（Bash ×3 · mcp:xxx ×2）" line
+// for error rows beyond maxErrorTools. N sums each folded row's count so it
+// matches the ×N call-count convention of the rows it replaces (a row deduped from
+// 5 identical failures counts 5, not 1 — same convention as categoryTotals).
+// Segments are aggregated by tool name in first-appearance order — locating
+// which tool keeps failing beats a coarse category count — and each name is
+// truncated to maxToolNameLen like a regular row. Returns "" for no rows.
+func errorFoldSummary(rows []toolRow) string {
+	var names []string
+	totals := map[string]int{}
+	for _, r := range rows {
+		if _, seen := totals[r.name]; !seen {
+			names = append(names, r.name)
+		}
+		totals[r.name] += r.count
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	total := 0
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		c := totals[name]
+		total += c
+		part := truncateRunes(name, maxToolNameLen)
+		if c > 1 {
+			part += " ×" + strconv.Itoa(c)
+		}
+		parts = append(parts, part)
+	}
+	return "… 另有 " + strconv.Itoa(total) + " 个失败（" + strings.Join(parts, " · ") + "）"
 }
 
 // truncateRunes caps s to maxRunes runes, appending "…" if truncated.

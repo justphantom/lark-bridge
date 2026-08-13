@@ -534,6 +534,97 @@ func TestRender_NoAbortButton(t *testing.T) {
 	}
 }
 
+// failOne records one failed tool call with distinct desc/output.
+func failOne(s *ProgressState, name, desc string) {
+	s.AddToolUse(name, desc)
+	s.AddToolResult(name, "", "err-"+desc, true)
+}
+
+// TestRender_ErrorZoneFolded pins the fold beyond maxErrorTools: older
+// failures collapse into the aggregated summary while the most recent
+// maxErrorTools stay verbatim with their excerpts.
+func TestRender_ErrorZoneFolded(t *testing.T) {
+	s := NewProgressState()
+	descs := []string{"f1", "f2", "f3", "f4", "f5"}
+	for _, d := range descs {
+		failOne(s, "bash", d)
+	}
+	b, err := s.Render(hdr(), ftr())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := string(b)
+	if !strings.Contains(body, "… 另有 2 个失败（Bash ×2）") {
+		t.Errorf("fold summary missing: %s", body)
+	}
+	// Folded rows' excerpts must not leak.
+	for _, d := range descs[:2] {
+		if strings.Contains(body, "err-"+d) {
+			t.Errorf("folded row %q excerpt leaked: %s", d, body)
+		}
+	}
+	// The most recent maxErrorTools rows stay verbatim.
+	for _, d := range descs[2:] {
+		if !strings.Contains(body, "err-"+d) {
+			t.Errorf("recent row %q excerpt missing: %s", d, body)
+		}
+	}
+}
+
+// TestRender_ErrorZoneNotFoldedBelowCap: at exactly maxErrorTools errors no
+// fold summary appears and every row stays verbatim.
+func TestRender_ErrorZoneNotFoldedBelowCap(t *testing.T) {
+	s := NewProgressState()
+	for _, d := range []string{"f1", "f2", "f3"} {
+		failOne(s, "bash", d)
+	}
+	b, err := s.Render(hdr(), ftr())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := string(b)
+	if strings.Contains(body, "个失败") {
+		t.Errorf("no fold expected at %d errors: %s", maxErrorTools, body)
+	}
+	for _, d := range []string{"f1", "f2", "f3"} {
+		if !strings.Contains(body, "err-"+d) {
+			t.Errorf("row %q excerpt missing: %s", d, body)
+		}
+	}
+}
+
+// TestErrorFoldSummary_AggregatesByNameAndCount pins aggregation: segments
+// group by tool name in first-appearance order, each segment count sums the
+// folded rows' ×N counts, and the headline N equals that total — the same
+// convention as categoryTotals (a row deduped from 5 identical failures
+// counts 5, not 1).
+func TestErrorFoldSummary_AggregatesByNameAndCount(t *testing.T) {
+	rows := []toolRow{
+		{name: "Bash", status: "error", count: 5},
+		{name: "mcp:svc", status: "error", count: 2},
+		{name: "Bash", status: "error", count: 1}, // distinct row, same name
+	}
+	got := errorFoldSummary(rows)
+	want := "… 另有 8 个失败（Bash ×6 · mcp:svc ×2）"
+	if got != want {
+		t.Errorf("errorFoldSummary = %q, want %q", got, want)
+	}
+}
+
+// TestTruncateOutput_MultiLineCollapsed pins the whitespace collapse: a
+// multi-line stack trace folds to one line so a failed row occupies a single
+// card line regardless of how many lines the excerpt originally spanned.
+func TestTruncateOutput_MultiLineCollapsed(t *testing.T) {
+	got := truncateOutput("line one\n  line two\n\tline three")
+	want := "line one line two line three"
+	if got != want {
+		t.Errorf("truncateOutput = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("newline survived collapse: %q", got)
+	}
+}
+
 // TestAddTodo_Overwrites pins the full-replace semantics: the backend sends
 // the complete list on every todo_updated, so a second AddTodo must leave only
 // the second batch (not append). Without overwrite the card would accumulate

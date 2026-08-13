@@ -20,6 +20,15 @@ const maxCompletedTools = 3
 // prevents a tool storm from exploding the card height.
 const maxRunningTools = 5
 
+// maxErrorTools bounds how many error rows are listed verbatim. Older
+// failures fold into a name-aggregated summary ("… 另有 N 个失败（Bash ×3 …）")
+// so a retry storm or a flapping MCP server cannot crowd the card. Unlike
+// completed rows — which fold to a pure category count because a success
+// carries no detail worth keeping — the window keeps the most recent
+// failures with their excerpts: the *reason* for a failure is the one thing
+// the user must see. 3 mirrors maxCompletedTools (the recent-actions window).
+const maxErrorTools = 3
+
 // maxToolOutputLen caps the error excerpt shown for a failed tool row. 50
 // runes is enough to convey the failure reason (permission denied, exit 1,
 // timeout) without letting a verbose stack trace crowd the error zone.
@@ -233,7 +242,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 	// error zone can list failures verbatim with their excerpts.
 	completed := 0
 	var running, done, errored []string
-	var doneRows []toolRow
+	var doneRows, errorRows []toolRow
 	for _, t := range s.tools {
 		line := formatToolLine(t)
 		switch t.status {
@@ -241,6 +250,7 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 			running = append(running, line)
 		case "error":
 			errored = append(errored, line)
+			errorRows = append(errorRows, t)
 		default:
 			done = append(done, line)
 			doneRows = append(doneRows, t)
@@ -287,10 +297,24 @@ func (s *ProgressState) Render(header cardkit.HeaderInfo, footer cardkit.FooterI
 		zones = append(zones, cardkit.MarkdownElement(renderTodoZone(s.todos)))
 	}
 
-	// Zone 4: errors. Each failure is listed verbatim with its excerpt; no
-	// collapsing — failures are rare and each one's reason matters.
-	if len(errored) > 0 {
-		zones = append(zones, cardkit.MarkdownElement(strings.Join(errored, "\n")))
+	// Zone 4: errors. Keep the most recent maxErrorTools rows verbatim (with
+	// excerpts — the failure reason is the detail that matters); fold older
+	// ones into a name-aggregated summary so a failure storm (retry loop,
+	// flapping MCP server) cannot explode the card height. Mirrors the
+	// completed zone's window, but aggregates by tool name rather than
+	// category: locating *which* tool keeps failing beats a coarse count.
+	var errorLines []string
+	skipErr := len(errored) - maxErrorTools
+	if skipErr > 0 {
+		if summary := errorFoldSummary(errorRows[:skipErr]); summary != "" {
+			errorLines = append(errorLines, summary)
+		}
+		errorLines = append(errorLines, errored[skipErr:]...)
+	} else {
+		errorLines = append(errorLines, errored...)
+	}
+	if len(errorLines) > 0 {
+		zones = append(zones, cardkit.MarkdownElement(strings.Join(errorLines, "\n")))
 	}
 
 	return cardkit.Card(header, footer, appendZones(zones), nil)
