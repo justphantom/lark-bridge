@@ -16,7 +16,7 @@
 
 | 组件 | 要求 |
 |------|------|
-| Go | 1.25+ |
+| Go | 1.25+（仅构建期；部署目标机可免 Go，走 §8 `--binaries` 预编译产物） |
 | miniagent 二进制 | `miniagent` 在 PATH 中（仅 miniagent-back；独立项目 github.com/justphantom/miniagent，经其自身 Makefile 部署到 /usr/local/bin/miniagent） |
 | miniagent | OpenAI 兼容 endpoint 的 API key（stateless，无 sessions/memory；见 .env） |
 | 飞书应用 | 自建应用，开启机器人能力，添加 IM 权限 |
@@ -85,6 +85,7 @@ make build
 # miniagent 是 miniagent-back fork 的子进程（独立项目 github.com/justphantom/miniagent，
 # 经其自身 Makefile 部署到 /usr/local/bin/miniagent，不在本仓库 make build 范围内）：
 # 每个 prompt fork 一次，跑完退出。
+# 注：make deploy / deploy.sh 不再兜底编译——请先 make build，缺 bin/ 产物会直接报错。
 ```
 
 ## 2. 准备配置

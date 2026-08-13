@@ -32,6 +32,7 @@
 
 ```bash
 make build      # 产物在 bin/：4 个二进制，git 版本号注入
+make deploy     # 只装机：把 bin/ 的已有产物装成 systemd 服务（不再触发编译）
 make test       # build-check + vet + go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -s -w .
@@ -60,7 +61,8 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 ## 部署
 
 ```bash
-make deploy                              # 构建 + 安装 2 个业务服务（feishu + miniagent）
+make build                             # 先构建产物到 bin/（deploy 不再代为编译）
+make deploy                            # 安装 2 个业务服务（feishu + miniagent）
 make deploy ARGS=--init                  # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services miniagent   # 单独部署某服务子集（逗号分隔）
 make deploy-status                       # 单独升级 status-monitor（~2s 离线）

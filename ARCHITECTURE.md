@@ -485,7 +485,7 @@ miniagent-back  status-monitor
 |---|---|---|
 | `make build` | 编译 3 二进制到 `bin/`，注入 git 版本号 | 本机 |
 | `make pack [GOOS= GOARCH=]` | 交叉编译 + 打 tarball（`bin/lark-bridge-<ver>-<os>-<arch>.tar.gz`） | 分发 |
-| `make deploy` | 调 `deploy/deploy.sh`，构建 + 装 **2 个业务服务**（feishu / miniagent） | systemd |
+| `make deploy` | 调 `deploy/deploy.sh`，只装机：把 `bin/` 已有产物装成 **2 个业务服务**（feishu / miniagent）；不再触发编译，缺产物会提示先 `make build` | systemd |
 | `make deploy ARGS=--init` | 首次：从示例生成 config.json + .env | systemd |
 | `make deploy ARGS=--services miniagent` | 只部署子集（合法值：`feishu miniagent`） | systemd |
 | `make deploy ARGS=--binaries <tar>` | 从 tarball 部署（目标机免 Go） | systemd |
@@ -567,6 +567,7 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 - **外部依赖**：0（无 go.sum）
 - **版本**：v1.14.0
 - **License**：MIT（LICENSE）
-- **构建**：`make build` / `make test` / `make deploy`
+- **构建**：`make build` / `make test`
+- **部署**：`make build && make deploy`（deploy 只装机，不再代为编译）
 - **入口**：`cmd/<binary>/main.go:main()`
 - **配置**：`config.example.json` + `${VAR}` 环境变量

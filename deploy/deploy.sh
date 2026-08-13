@@ -7,7 +7,11 @@
 #   ./deploy/deploy.sh            # deploy all 3 services
 #   ./deploy/deploy.sh --init     # first-time: auto-generate .env from example
 #   ./deploy/deploy.sh --force    # skip in-flight session check
-#   ./deploy/deploy.sh --binaries <tar|dir>  # skip make build; use pre-built
+#   ./deploy/deploy.sh --binaries <tar|dir>  # use pre-built tarball/dir
+#
+# Build is a separate concern: run `make build` first. Without --binaries,
+# deploy.sh expects the 3 binaries to already exist under bin/ and fails
+# fast otherwise (it never compiles).
 #
 set -euo pipefail
 
@@ -108,12 +112,16 @@ preflight_inflight_check_legacy() {
     info "No in-flight sessions; safe to deploy"
 }
 
-# -- Build ---------------------------------------------------------------------
+# -- Binaries -------------------------------------------------------------------
+# ensure_binaries never compiles — building is `make build`'s job. Without
+# --binaries it only asserts the bin/ artifacts already exist; with --binaries
+# it unpacks the pre-built tarball/dir into bin/. verify_artifacts then guards
+# the full unit set either way.
 ensure_binaries() {
     mkdir -p "$BIN_DIR"
     if [[ -z "$BINARIES_SRC" ]]; then
-        info "Building binaries (source compile)..."
-        make -C "$PROJECT_ROOT" build
+        info "Using existing binaries in $BIN_DIR (build via 'make build' if stale)"
+        verify_artifacts
         return
     fi
     if [[ -f "$BINARIES_SRC" ]]; then
@@ -129,10 +137,13 @@ ensure_binaries() {
 }
 
 verify_artifacts() {
-    local u
+    local u missing=()
     for u in "${ALL_UNITS[@]}"; do
-        [[ -x "$BIN_DIR/$u" ]] || fail "Build artifact missing: $u"
+        [[ -x "$BIN_DIR/$u" ]] || missing+=("$u")
     done
+    if ((${#missing[@]})); then
+        fail "Binary artifact(s) missing: ${missing[*]}. Run 'make build' first (or pass --binaries <tar|dir>)."
+    fi
 }
 
 # -- .env ----------------------------------------------------------------------
@@ -476,7 +487,8 @@ main() {
     parse_args "$@"
     $DEBUG && set -x
 
-    preflight_toolchain
+    # No toolchain preflight: deploy never compiles; missing binaries fail fast
+    # in ensure_binaries with a "run make build" hint.
     deploy_sudo_check
     if $FORCE; then
         warn "--force: skipping in-flight check"

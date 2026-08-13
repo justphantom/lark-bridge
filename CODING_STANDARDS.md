@@ -530,7 +530,8 @@ make fmt  →  golangci-lint run  →  make build-check  →  make test  →  ma
 
 ### 9.3 部署流程
 ```
-make deploy                  # 构建 + 2 个业务服务（feishu / miniagent）systemd 装机
+make build                   # 先编译产物到 bin/（deploy 不再代为编译）
+make deploy                  # 只装机：2 个业务服务（feishu / miniagent）systemd 装机
 make deploy ARGS=--init      # 首次：从示例生成 config.json + .env
 make deploy ARGS=--services miniagent   # 子集部署（可选值：feishu / miniagent）
 ```
