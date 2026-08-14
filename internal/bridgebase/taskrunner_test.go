@@ -47,7 +47,7 @@ func (c *recordingCommander) callCount() int {
 	return c.calls
 }
 
-// noticeCapture collects the (level,title,body) triples handed to GitNotice.
+// noticeCapture collects the (level,title,body) triples handed to NoticeFn.
 type noticeCapture struct {
 	mu      sync.Mutex
 	notices []noticeEntry
@@ -102,10 +102,10 @@ func waitForCount(t *testing.T, c *recordingCommander, want int) {
 // bound dir, and the terminal "完成" notice carries git's output.
 func TestAcquireAndRun_Success(t *testing.T) {
 	cmd := &recordingCommander{out: []byte("Already up to date.\n")}
-	r := NewGitRunner(cmd, log.Nop(), 0)
+	r := NewTaskRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	if accepted := r.AcquireAndRun("chat-A", "/repo/proj", []string{"pull", "--ff-only"}, "拉取", notices.fn); !accepted {
+	if accepted := r.AcquireAndRun("chat-A", "/repo/proj", "git", []string{"pull", "--ff-only"}, "拉取", notices.fn); !accepted {
 		t.Fatalf("AcquireAndRun returned false on a free slot")
 	}
 	if got := cmd.callCount(); got != 0 {
@@ -152,10 +152,10 @@ func TestAcquireAndRun_Failure(t *testing.T) {
 		out: []byte("error: failed to push some refs\ngit pull first"),
 		err: errors.New("exit status 1"),
 	}
-	r := NewGitRunner(cmd, log.Nop(), 0)
+	r := NewTaskRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	r.AcquireAndRun("chat-B", "/repo", []string{"push"}, "推送", notices.fn)
+	r.AcquireAndRun("chat-B", "/repo", "git", []string{"push"}, "推送", notices.fn)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -179,15 +179,15 @@ func TestAcquireAndRun_Failure(t *testing.T) {
 // runs unhindered.
 func TestAcquireAndRun_PerChatSingleFlight(t *testing.T) {
 	cmd := &recordingCommander{release: make(chan struct{})}
-	r := NewGitRunner(cmd, log.Nop(), 0)
+	r := NewTaskRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	r.AcquireAndRun("chat-X", "/r", []string{"push"}, "推送", notices.fn)
+	r.AcquireAndRun("chat-X", "/r", "git", []string{"push"}, "推送", notices.fn)
 	waitForCount(t, cmd, 1) // first job is now blocked inside Run
 
 	// Second fire on the SAME chat must be rejected synchronously (returns
 	// false + a 进行中 notice, zero new goroutine).
-	if accepted := r.AcquireAndRun("chat-X", "/r", []string{"push"}, "推送", notices.fn); accepted {
+	if accepted := r.AcquireAndRun("chat-X", "/r", "git", []string{"push"}, "推送", notices.fn); accepted {
 		t.Error("second AcquireAndRun on a busy chat should return false")
 	}
 	if n, ok := notices.findNotice("推送进行中"); !ok {
@@ -200,7 +200,7 @@ func TestAcquireAndRun_PerChatSingleFlight(t *testing.T) {
 	// runner no longer emits "triggered"; the caller would emit the banner,
 	// so here we only assert the job actually starts.
 	noticesY := &noticeCapture{}
-	r.AcquireAndRun("chat-Y", "/r", []string{"push"}, "推送", noticesY.fn)
+	r.AcquireAndRun("chat-Y", "/r", "git", []string{"push"}, "推送", noticesY.fn)
 	waitForCount(t, cmd, 2)
 
 	// Release both jobs so goroutines exit and the test does not leak.
@@ -213,10 +213,10 @@ func TestAcquireAndRun_PerChatSingleFlight(t *testing.T) {
 func TestAcquireAndRun_TailOutputTruncation(t *testing.T) {
 	big := strings.Repeat("x", gitTailRunes*3)
 	cmd := &recordingCommander{out: []byte(big)}
-	r := NewGitRunner(cmd, log.Nop(), 0)
+	r := NewTaskRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	r.AcquireAndRun("chat-T", "/r", []string{"pull"}, "拉取", notices.fn)
+	r.AcquireAndRun("chat-T", "/r", "git", []string{"pull"}, "拉取", notices.fn)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -272,10 +272,10 @@ func TestTailGitOutput_RuneAndLineAware(t *testing.T) {
 // accepted rather than rejected as busy.
 func TestAcquireAndRun_SlotReleasedAfterJob(t *testing.T) {
 	cmd := &recordingCommander{out: []byte("ok")}
-	r := NewGitRunner(cmd, log.Nop(), 0)
+	r := NewTaskRunner(cmd, log.Nop(), 0)
 	notices := &noticeCapture{}
 
-	r.AcquireAndRun("chat-R", "/r", []string{"pull"}, "拉取", notices.fn)
+	r.AcquireAndRun("chat-R", "/r", "git", []string{"pull"}, "拉取", notices.fn)
 	waitForCount(t, cmd, 1)
 
 	// Wait for the terminal notice so the goroutine has returned and
@@ -290,7 +290,7 @@ func TestAcquireAndRun_SlotReleasedAfterJob(t *testing.T) {
 
 	// Second fire must NOT be rejected: returns true and starts a new job.
 	notices2 := &noticeCapture{}
-	if accepted := r.AcquireAndRun("chat-R", "/r", []string{"pull"}, "拉取", notices2.fn); !accepted {
+	if accepted := r.AcquireAndRun("chat-R", "/r", "git", []string{"pull"}, "拉取", notices2.fn); !accepted {
 		t.Errorf("second fire after completion should be accepted; got rejected")
 	}
 	waitForCount(t, cmd, 2)
@@ -299,12 +299,12 @@ func TestAcquireAndRun_SlotReleasedAfterJob(t *testing.T) {
 	}
 }
 
-// TestNewGitRunner_Defaults verifies timeout<=0 falls back to the default
+// TestNewTaskRunner_Defaults verifies timeout<=0 falls back to the default
 // and a nil logger does not panic on the rejection path.
-func TestNewGitRunner_Defaults(t *testing.T) {
-	r := NewGitRunner(&recordingCommander{}, nil, 0)
-	if r.timeout != defaultGitTimeout {
-		t.Errorf("timeout = %v, want default %v", r.timeout, defaultGitTimeout)
+func TestNewTaskRunner_Defaults(t *testing.T) {
+	r := NewTaskRunner(&recordingCommander{}, nil, 0)
+	if r.timeout != defaultTaskTimeout {
+		t.Errorf("timeout = %v, want default %v", r.timeout, defaultTaskTimeout)
 	}
 	if r.logger == nil {
 		t.Error("nil logger should be replaced with no-op")
@@ -314,8 +314,8 @@ func TestNewGitRunner_Defaults(t *testing.T) {
 	blockCmd := &recordingCommander{release: make(chan struct{})}
 	r.cmd = blockCmd
 	notices := &noticeCapture{}
-	r.AcquireAndRun("c", "/r", []string{"push"}, "推送", notices.fn)
+	r.AcquireAndRun("c", "/r", "git", []string{"push"}, "推送", notices.fn)
 	waitForCount(t, blockCmd, 1)
-	r.AcquireAndRun("c", "/r", []string{"push"}, "推送", notices.fn) // logs "rejected"
+	r.AcquireAndRun("c", "/r", "git", []string{"push"}, "推送", notices.fn) // logs "rejected"
 	close(blockCmd.release)
 }

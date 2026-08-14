@@ -11,8 +11,8 @@ import (
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
-// gitFakeCommander records the last Run invocation without shelling out.
-type gitFakeCommander struct {
+// fakeCommander records the last Run invocation without shelling out.
+type fakeCommander struct {
 	mu     sync.Mutex
 	called bool
 	dir    string
@@ -20,7 +20,7 @@ type gitFakeCommander struct {
 	args   []string
 }
 
-func (f *gitFakeCommander) Run(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+func (f *fakeCommander) Run(_ context.Context, dir, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.called = true
@@ -30,20 +30,20 @@ func (f *gitFakeCommander) Run(_ context.Context, dir, name string, args ...stri
 	return []byte("ok"), nil
 }
 
-func (f *gitFakeCommander) snapshot() (called bool, dir, name string, args []string) {
+func (f *fakeCommander) snapshot() (called bool, dir, name string, args []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.called, f.dir, f.name, append([]string{}, f.args...)
 }
 
-func newMiniGitHandler(t *testing.T, cmd *gitFakeCommander, workspaceRoot string) *Handler {
+func newMiniTaskHandler(t *testing.T, cmd *fakeCommander, workspaceRoot string) *Handler {
 	t.Helper()
 	h := New(&captureSender{}, log.Nop(), nil, workspaceRoot, "test-model", "", nil, "", 0, "", false)
-	h.git = bridgebase.NewGitRunner(cmd, nil, 0)
+	h.runner = bridgebase.NewTaskRunner(cmd, nil, 0)
 	return h
 }
 
-func waitForGitCalled(t *testing.T, c *gitFakeCommander) {
+func waitForTaskCalled(t *testing.T, c *fakeCommander) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -58,8 +58,8 @@ func waitForGitCalled(t *testing.T, c *gitFakeCommander) {
 // TestCmdPull_NoWorkspace verifies /pull surfaces a warning when no
 // workspace_root is configured (the operator never set WORKSPACE_ROOT).
 func TestCmdPull_NoWorkspace(t *testing.T) {
-	cmd := &gitFakeCommander{}
-	h := newMiniGitHandler(t, cmd, "")
+	cmd := &fakeCommander{}
+	h := newMiniTaskHandler(t, cmd, "")
 
 	level, _, body := h.cmdPull(context.Background(), "chat-empty", "")
 	if level != "warning" {
@@ -77,14 +77,14 @@ func TestCmdPull_NoWorkspace(t *testing.T) {
 // workspace_root fallback directory and returns the async sentinel so the
 // dispatcher does not double-emit a notice.
 func TestCmdPull_WithWorkspace(t *testing.T) {
-	cmd := &gitFakeCommander{}
-	h := newMiniGitHandler(t, cmd, "/repo/ws")
+	cmd := &fakeCommander{}
+	h := newMiniTaskHandler(t, cmd, "/repo/ws")
 
 	level, _, _ := h.cmdPull(context.Background(), "chat-1", "")
 	if level != "async" {
 		t.Errorf("level = %q, want async sentinel", level)
 	}
-	waitForGitCalled(t, cmd)
+	waitForTaskCalled(t, cmd)
 
 	called, dir, name, args := cmd.snapshot()
 	if !called {
@@ -100,14 +100,28 @@ func TestCmdPull_WithWorkspace(t *testing.T) {
 
 // TestCmdPush_WithWorkspace verifies /push forwards `git push`.
 func TestCmdPush_WithWorkspace(t *testing.T) {
-	cmd := &gitFakeCommander{}
-	h := newMiniGitHandler(t, cmd, "/repo/ws")
+	cmd := &fakeCommander{}
+	h := newMiniTaskHandler(t, cmd, "/repo/ws")
 
 	h.cmdPush(context.Background(), "chat-1", "")
-	waitForGitCalled(t, cmd)
+	waitForTaskCalled(t, cmd)
 
-	_, _, _, args := cmd.snapshot()
-	if len(args) != 1 || args[0] != "push" {
-		t.Errorf("git args = %v, want [push]", args)
+	_, _, name, args := cmd.snapshot()
+	if name != "git" || len(args) != 1 || args[0] != "push" {
+		t.Errorf("cmd = %s %v, want [git push]", name, args)
+	}
+}
+
+// TestCmdBuild_WithWorkspace verifies /build forwards `make build`.
+func TestCmdBuild_WithWorkspace(t *testing.T) {
+	cmd := &fakeCommander{}
+	h := newMiniTaskHandler(t, cmd, "/repo/ws")
+
+	h.cmdBuild(context.Background(), "chat-1", "")
+	waitForTaskCalled(t, cmd)
+
+	_, _, name, args := cmd.snapshot()
+	if name != "make" || len(args) != 1 || args[0] != "build" {
+		t.Errorf("cmd = %s %v, want [make build]", name, args)
 	}
 }

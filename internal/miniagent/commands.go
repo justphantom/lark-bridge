@@ -42,6 +42,8 @@ func init() {
 			Title: "拉取", Level: "info"}, Handler: (*Handler).cmdPullBridge},
 		{Spec: cmdutil.Spec{Name: "/push", Summary: "在当前工作目录执行 git push",
 			Title: "推送", Level: "info"}, Handler: (*Handler).cmdPushBridge},
+		{Spec: cmdutil.Spec{Name: "/build", Summary: "在当前工作目录执行 make build",
+			Title: "构建", Level: "info"}, Handler: (*Handler).cmdBuildBridge},
 		{Spec: cmdutil.Spec{Name: "/running", Summary: "显示所有运行中的 miniagent 会话",
 			Title: "运行中会话", Level: "info"}, Handler: (*Handler).cmdRunningBridge},
 		{Spec: cmdutil.Spec{Name: "/abort", Summary: "中止当前正在执行的任务",
@@ -188,6 +190,14 @@ func (h *Handler) cmdPullBridge(ctx context.Context, chatID string, _ []string) 
 
 func (h *Handler) cmdPushBridge(ctx context.Context, chatID string, _ []string) (cmdutil.Result, error) {
 	level, title, body := h.cmdPush(ctx, chatID, "")
+	if level == "async" {
+		return cmdutil.Result{Handled: true}, nil
+	}
+	return cmdutil.Result{Body: body, Title: title, Level: level}, nil
+}
+
+func (h *Handler) cmdBuildBridge(ctx context.Context, chatID string, _ []string) (cmdutil.Result, error) {
+	level, title, body := h.cmdBuild(ctx, chatID, "")
 	if level == "async" {
 		return cmdutil.Result{Handled: true}, nil
 	}
