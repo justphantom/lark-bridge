@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-13T18:00:00+08:00
+updated: 2026-08-14T08:30:00+08:00
 ---
 
 # .agent 记忆索引
@@ -10,10 +10,10 @@ updated: 2026-08-13T18:00:00+08:00
 - [persona.md](L0/persona.md)
 
 ## L1 活跃过程
-- [active/session.md](L1/active/session.md) — 会话状态（当前：deploy 脚本简化，进行中）
-- [tasks/deploy-simplification.md](L1/tasks/deploy-simplification.md) — deploy 脚本简化（进行中，3 文件未提交）
+- [active/session.md](L1/active/session.md) — 会话状态（当前：GitRunner → TaskRunner 泛化重命名，进行中）
 
 ## L1 归档（已完成）
+- [archive/deploy-simplification.md](L1/archive/deploy-simplification.md) — deploy 脚本简化（`520a11c` / `7cd9996` / `d396df7`）
 - [archive/agnes-backend-removal.md](L1/archive/agnes-backend-removal.md) — 彻底移除 agnes-back C 档全量清零（`89e29e6`）
 - [archive/claude-backend-removal.md](L1/archive/claude-backend-removal.md) — 清理 Claude 对接 B+C（`254bcd4`）
 - [archive/config-dir-env-injection.md](L1/archive/config-dir-env-injection.md) — /config 扫描路径 MINIAGENT_CONFIG_DIR（`71349e0` / `89e29e6`）

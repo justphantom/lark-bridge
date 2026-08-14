@@ -11,6 +11,12 @@ confidence: high
 
 # /send 文件卡片“回弹”问题
 
+
+> ⚠️ **历史参考**：CardKit 实体 API 全量切换（`b214834`）后，卡片更新改用 PUT
+> 无回弹，延迟 PATCH / 终态守卫等防御机制（含 `terminalCards`、
+> `cardPatchDelay`、`scheduleSubmitFallback`）已整体删除，以下保留作历史参考。
+> 相关模式见 [patterns/card-terminal-state-guard.md](../patterns/card-terminal-state-guard.md)（已标 historical）。
+
 ## 现象
 用户在群里点击 `/send` 文件后，卡片先变绿“已发送”，约几秒后回弹成灰“已选择”。文件本身发送成功。
 
