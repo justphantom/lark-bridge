@@ -1,7 +1,7 @@
 # lark-bridge 项目架构说明文档
 
 > 本文档基于仓库 `github.com/justphantom/lark-bridge` 实际代码归纳。
-> 最近核对：2026-08-13 | 基线：v1.14.0（HEAD = v1.14.0-32-gd396df7）
+> 最近核对：2026-08-14 | 基线：v1.14.0（HEAD = v1.14.0-36-g13cd729）
 
 ---
 
@@ -30,8 +30,8 @@
 
 ### 1.3 规模
 
-- **222 个 Go 文件，约 47,917 行**，其中生产代码 **约 24,928 行**，测试代码 **约 22,989 行（约 48.0%）**
-- `internal/` 下 **19 个顶层子包**（`go list` 计 24 个含嵌套）
+- **222 个 Go 文件，约 47,944 行**，其中生产代码 **约 24,941 行**，测试代码 **约 23,003 行（约 48.0%）**
+- `internal/` 下 **19 个顶层子包**（`go list` 计 25 个含嵌套）
 - `go.mod` **零外部依赖**（无 `go.sum`），仅用 Go 标准库
 
 ---
@@ -189,12 +189,12 @@ miniagent-back 的业务逻辑。Handler 复用 `bridgebase` 的包级 helper（
 | `commands.go` | 斜杠命令表 + 派发（:23-52），复用 `bridgebase.Commands` |
 | `commands_picker.go` | `/model` `/cd` `/config` `/mode` `/effort` 选择卡 |
 | `commands_send.go` | `/send` 文件投递（复用 `bridgebase.BuildSendOptions`/`ReadFilePayload`） |
-| `commands_git.go` | `/pull` `/push`（复用 `bridgebase.GitRunner`） |
+| `commands_task.go` | `/pull` `/push` `/build`（复用 `bridgebase.TaskRunner`，原 `GitRunner`） |
 | `commands_config.go` | `/config` 切换配置文件 |
 | `commands_settings.go` | `/maxiter` `/new` 等 |
 | `commands_misc.go` | `/current` `/help` 等 |
 
-miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mode` `/effort` `/maxiter` `/new` `/send` `/pull` `/push` `/running` `/abort` `/help`（`/running` `/abort` 在 `HandleEvent` 内早于 startTurn 派发，不占 turn 槽）。
+miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mode` `/effort` `/maxiter` `/new` `/send` `/pull` `/push` `/build` `/running` `/abort` `/help`（`/running` `/abort` 在 `HandleEvent` 内早于 startTurn 派发，不占 turn 槽）。
 
 ### 5.4 `bridgebase/`——后端通用脊梁
 
@@ -208,7 +208,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 | `interactive.go` | `PickAnswerValue`（:10）：picker 应答取值（`AskAndWait`/`EmitNotice` 等交互发送逻辑已迁至 `miniagent/commands_send.go`/`commands_picker.go`） |
 | `commands_send.go` | `/send` 文件工具：`SafeJoin`/`BuildSendOptions`/`ParseSendOption`/`ReadFilePayload` |
 | `dir_cache.go` | `DirCache`（:29）/ `NewDirCache`：`/cd` 工作目录扫描缓存 |
-| `git_runner.go` | `GitRunner` / `AcquireAndRun`：`/pull` `/push` 每 chat 单飞（内部 goroutine 走 `gosafe.Go` :93） |
+| `taskrunner.go` | **`TaskRunner`**（原 `GitRunner`）/ `AcquireAndRun`：`/pull` `/push` `/build` 每 chat 单飞（内部 goroutine 走 `gosafe.Go` :93），支持任意命令执行 |
 | `running.go` | `FormatDuration`（:10） |
 | `toolinput.go` | `SummarizeToolInput`（:19）：工具输入摘要（提取 command/file_path 等） |
 | `linereader/` | 有上限的行读取器（miniclient pump 用于 NDJSON stdout） |
@@ -290,10 +290,10 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 cmd/*/main.go: main()
    └─ config.Load(cfgPath)                              internal/config/config.go:468
         ├─ os.ReadFile
-        ├─ expandEnvVars(raw)                           :435  ← ${VAR} 展开，空值报错
-        ├─ json.NewDecoder + DisallowUnknownFields     :497  ← 拼写错误硬拒绝
-        ├─ applyDefaults(&cfg, path)                   config_defaults.go:14
-        └─ validate(&cfg)                              config_validate.go:37
+        ├─ expandEnvVars(raw)                            :435  ← ${VAR} 展开，空值报错
+        ├─ json.NewDecoder + DisallowUnknownFields       :497  ← 拼写错误硬拒绝
+        ├─ applyDefaults(&cfg, path)                    config_defaults.go:14
+        └─ validate(&cfg)                               config_validate.go:37
 ```
 
 ### 6.2 前端启动（`cmd/feishu-front/main.go:83 run()`）
@@ -532,7 +532,7 @@ miniagent-back  status-monitor
 
 ### 9.3 后端通用工具脊梁（bridgebase）
 
-bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`PromptCancel`（cancel 条目）、`AnswerBroker`（问答/权限卡配对）、`Commands`/`CommandSpec`（泛型命令 dispatcher）、`EmitTerminalControl`（终态重试）、`GitRunner`（`/pull` `/push` 单飞）、`GoSafe`（panic-recovered goroutine）、`SafeJoin`/`BuildSendOptions`（`/send`）、`SummarizeToolInput`、`AskAndWait`/`EmitNotice` 等。各后端**按需调用**这些工具、自管 router/rpc/cancel 状态，而非嵌入共享结构。新增 agent 后端成本可控（miniagent 是范例：自持 `Handler`，仅在需要处调用 bridgebase helper）。
+bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`PromptCancel`（cancel 条目）、`AnswerBroker`（问答/权限卡配对）、`Commands`/`CommandSpec`（泛型命令 dispatcher）、`EmitTerminalControl`（终态重试）、`TaskRunner`（`/pull` `/push` `/build` 单飞，支持任意命令）、`SafeJoin`/`BuildSendOptions`（`/send`）、`SummarizeToolInput`、`AskAndWait`/`EmitNotice` 等。各后端**按需调用**这些工具、自管 router/rpc/cancel 状态，而非嵌入共享结构。新增 agent 后端成本可控（miniagent 是范例：自持 `Handler`，仅在需要处调用 bridgebase helper）。
 
 ### 9.4 零外部依赖
 
@@ -554,7 +554,7 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 
 ### 9.7 测试文化
 
-测试占比 ~47%（26682/56275 行），`go test -race ./...` 全绿。模式：表驱动 + interface fake 注入（`feishuClient` interface、`Commander` interface、`backendrpc.ControlSender` alias、`feishufront.NewLayer1Router` 等）。`cmd/*/main_test.go` 覆盖各入口错误路径。
+测试占比 ~48%（23003/47944 行），`go test -race ./...` 全绿。模式：表驱动 + interface fake 注入（`feishuClient` interface、`Commander` interface、`backendrpc.ControlSender` alias、`feishufront.NewLayer1Router` 等）。`cmd/*/main_test.go` 覆盖各入口错误路径。
 
 ---
 
@@ -562,9 +562,9 @@ bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`Pro
 
 - **module**：`github.com/justphantom/lark-bridge`（go.mod:1）
 - **Go 版本**：1.25.0（go.mod:3）
-- **二进制数**：4（cmd/ 下 4 子目录）
-- **internal 包数**：22（顶层）/ 27（含嵌套）
-- **Go 文件**：222 个，约 47,917 行（生产代码约 24,928 行，测试代码约 22,989 行，约 48.0%）
+- **二进制数**：3（cmd/ 下 3 子目录）
+- **internal 包数**：22（顶层）/ 25（含嵌套）
+- **Go 文件**：222 个，约 47,944 行（生产代码约 24,941 行，测试代码约 23,003 行，约 48.0%）
 - **外部依赖**：0（无 go.sum）
 - **版本**：v1.14.0
 - **License**：MIT（LICENSE）
