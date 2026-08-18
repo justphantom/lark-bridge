@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Removed
+- **移除 miniagent.mode 配置字段 + `/mode` 命令**（**breaking**）：miniagent v5.0.0 删除 `-mode` 双模式（default/auto 合并为单模式），bridge 硬切对齐——不再发射 `-mode` flag、移除 `/mode` 斜杠命令与 `settableModes`/`modeOptions`、`Binding.Mode` + `Router.SetMode`、`Config.MiniAgent.Mode` + `applyDefaults` 默认 + `validate` 校验、`Client.Mode`/`DefaultMode()`/`RunOptions.Mode`、`activeMode()`/`clientDefaultMode()`、`activeTurnConfig` 从 6 元组降 5 元组。`minSupportedVersion` 从 `4.2.0` 提升到 `5.0.0`（4.x 二进制启动健康门直接拒绝，避免双安全语义并行）。**迁移**：从 config JSON 删除 `"miniagent.mode"` 键（DisallowUnknownFields 会使旧配置启动失败）。router JSON 的 `mode` key 被 `json.Unmarshal` 静默忽略，无需迁移。
 - **移除 agnes-back 后端**（`89e29e6`，**breaking**）：Agnes AI 图片/视频生成后端整目录删除（`cmd/agnes-back` + `internal/agnesback`，8 文件 / 2494 行），接受永久丢失媒体生成能力。config/Makefile/deploy 脚本全量清零；`deploy-status.sh` removed_blocks 加 `"agnes"` 迁移。
 - **移除 deploy-monitor 独立服务**（`89e29e6`）：状态监控逻辑合并回 `deploy.sh`，`cmd/deploy-monitor` + `deploy/deploy-monitor.sh` 删除。
 - **移除 config Timeouts 废弃字段**（`0021ca1`）：`PromptTimeout`/`IdleTimeout`/`UsageSessionTTL` 删除。

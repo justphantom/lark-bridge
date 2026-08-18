@@ -40,16 +40,6 @@ func TestSetDirectory(t *testing.T) {
 	}
 }
 
-// TestSetMode verifies the miniagent -mode field round-trips.
-func TestSetMode(t *testing.T) {
-	r := newTestRouter(t, "c1")
-	r.SetMode("c1", "auto")
-	b, _ := r.Lookup("c1")
-	if b.Mode != "auto" {
-		t.Errorf("Mode = %q, want auto", b.Mode)
-	}
-}
-
 // TestSetConfigFile verifies the miniagent -config path field round-trips.
 func TestSetConfigFile(t *testing.T) {
 	r := newTestRouter(t, "c1")
@@ -94,17 +84,16 @@ func TestSetMaxIterations(t *testing.T) {
 	}
 }
 
-// TestSetMode_PersistsAcrossReload verifies SetMode writes through to disk:
-// after Close, a fresh Router loading the same persistPath must surface the
-// pinned mode. Guards the saveAsync coalescer end-to-end for the new field.
-func TestSetMode_PersistsAcrossReload(t *testing.T) {
+// TestSetThinking_PersistsAcrossReload verifies SetThinking writes through to
+// disk: after Close, a fresh Router loading the same persistPath must surface
+// the pinned thinking. Guards the saveAsync coalescer end-to-end.
+func TestSetThinking_PersistsAcrossReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "r.json")
 	r1, err := New(path, log.Nop())
 	if err != nil {
 		t.Fatalf("router new: %v", err)
 	}
 	r1.Bind("c1", "", "", "", "")
-	r1.SetMode("c1", "auto")
 	r1.SetThinking("c1", "max")
 	r1.SetMaxIterations("c1", 42)
 	r1.Close()
@@ -117,9 +106,6 @@ func TestSetMode_PersistsAcrossReload(t *testing.T) {
 	b, ok := r2.Lookup("c1")
 	if !ok {
 		t.Fatal("binding missing after reload")
-	}
-	if b.Mode != "auto" {
-		t.Errorf("Mode after reload = %q, want auto", b.Mode)
 	}
 	if b.Thinking != "max" {
 		t.Errorf("Thinking after reload = %q, want max", b.Thinking)
@@ -136,7 +122,6 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	// Seed every field.
 	r.SetModelSpec("c1", "sonnet")
 	r.SetDirectory("c1", "/work")
-	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
 	r.SetMaxIterations("c1", 30)
 
@@ -146,7 +131,7 @@ func TestSetMethods_LeaveOtherFieldsUntouched(t *testing.T) {
 	if b.ModelSpec != "opus" {
 		t.Errorf("ModelSpec = %q, want opus", b.ModelSpec)
 	}
-	if b.Directory != "/work" || b.Mode != "auto" ||
+	if b.Directory != "/work" ||
 		b.Thinking != "high" || b.MaxIterations != 30 {
 		t.Errorf("SetModelSpec corrupted other fields: %+v", b)
 	}
@@ -162,7 +147,6 @@ func TestSetMethods_NoOpOnMissingBinding(t *testing.T) {
 	// None of these should panic.
 	r.SetModelSpec("ghost", "x")
 	r.SetDirectory("ghost", "x")
-	r.SetMode("ghost", "x")
 	r.SetThinking("ghost", "x")
 	r.SetMaxIterations("ghost", 5)
 	if _, ok := r.Lookup("ghost"); ok {

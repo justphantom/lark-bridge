@@ -16,7 +16,6 @@
     "workspace_root":  "${WORKSPACE_ROOT}",
     "stream":          false,
     "max_iterations":  0,
-    "mode":            "default",
     "thinking":        "off",
     "key_file":        "",
     "config_path":     "/etc/lark-bridge/miniagent-cli.json",

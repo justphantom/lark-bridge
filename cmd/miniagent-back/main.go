@@ -143,7 +143,6 @@ func run(cfgPath string) error {
 		APIKey:        cfg.MiniAgent.APIKey,
 		Stream:        cfg.MiniAgent.Stream,
 		MaxIterations: cfg.MiniAgent.MaxIterations,
-		Mode:          cfg.MiniAgent.Mode,
 		Thinking:      cfg.MiniAgent.Thinking,
 		KeyFile:       cfg.MiniAgent.KeyFile,
 		ConfigPath:    cfg.MiniAgent.ConfigPath,

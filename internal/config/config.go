@@ -136,17 +136,13 @@ type MiniAgent struct {
 	// {stateDir}/streams/miniagent/. 0 → 50; negative → disable.
 	StreamHistory int `json:"stream_history,omitempty"`
 	// WorkspaceRoot is the REQUIRED global workdir. Bounds the /cd picker and
-	// is the default -workdir. Required since v3 -mode default needs a workdir.
+	// is the default -workdir (miniagent requires an absolute -workdir).
 	// [P1: required, enforced in cmd/miniagent-back/main.go]
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	// Stream enables -stream (SSE reasoning_delta → live 思考区). Default false.
 	Stream bool `json:"stream,omitempty"`
 	// MaxIterations caps one turn's LLM-call count (-max-iterations). <=0 → 20.
 	MaxIterations int `json:"max_iterations,omitempty"`
-	// Mode is the permission mode (-mode): "default" (write confined to workdir
-	// + shell rejects 11 privilege escalators) or "auto" (unrestricted). Default
-	// "default" (applyDefaults). v3 replaced -confine. [P2]
-	Mode string `json:"mode,omitempty"`
 	// Thinking is the reasoning effort (-thinking): off|minimal|low|medium|high|
 	// xhigh|max. Default "off" (applyDefaults). [P2]
 	Thinking string `json:"thinking,omitempty"`

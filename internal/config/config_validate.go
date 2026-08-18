@@ -59,15 +59,11 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	// MiniAgent enum fields. applyDefaults always populates Mode/Thinking, so
-	// reaching validate with "" means an explicit clear; the default values
-	// themselves are valid. (WorkspaceRoot/ConfigPath requireds are binary-specific
+	// MiniAgent enum fields. applyDefaults always populates Thinking, so
+	// reaching validate with "" means an explicit clear; the default value
+	// itself is valid. (-mode was removed in miniagent v5.0.0.)
+	// (WorkspaceRoot/ConfigPath requireds are binary-specific
 	// → enforced in cmd/miniagent-back/main.go, per this func's header comment.)
-	switch cfg.MiniAgent.Mode {
-	case "default", "auto", "":
-	default:
-		return fmt.Errorf("miniagent.mode must be one of default/auto, got %q", cfg.MiniAgent.Mode)
-	}
 	switch cfg.MiniAgent.Thinking {
 	case "off", "minimal", "low", "medium", "high", "xhigh", "max", "":
 	default:

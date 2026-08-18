@@ -311,20 +311,17 @@ func TestEmitCLIEvent_TextDelta_Dropped(t *testing.T) {
 }
 
 // TestActiveTurnConfig_DefaultsNoBinding verifies that without a router the
-// global defaults (cfgModel, workspaceRoot) are returned. Mode/Thinking fall
-// back to the client-default sentinels ("default"/"off") since no client is
-// wired in newCLIHandler.
+// global defaults (cfgModel, workspaceRoot) are returned. Thinking falls
+// back to the client-default sentinel ("off") since no client is wired in
+// newCLIHandler. (Mode was removed with miniagent v5.0.0.)
 func TestActiveTurnConfig_DefaultsNoBinding(t *testing.T) {
 	h, _ := newCLIHandler(t)
-	model, _, dir, mode, thinking, _ := h.activeTurnConfig("c1")
+	model, _, dir, thinking, _ := h.activeTurnConfig("c1")
 	if model != "test-model" {
 		t.Errorf("model = %q, want test-model", model)
 	}
 	if dir != "" {
 		t.Errorf("dir = %q, want empty (no workspaceRoot configured)", dir)
-	}
-	if mode != "default" {
-		t.Errorf("mode = %q, want default (client nil)", mode)
 	}
 	if thinking != "off" {
 		t.Errorf("thinking = %q, want off (client nil)", thinking)
@@ -352,26 +349,26 @@ func TestActiveTurnConfig_BoundOverridesDefault(t *testing.T) {
 
 	h := New(&captureSender{}, log.Nop(), r, "/global-root", "test-model", "", nil, "", 0, "", false)
 
-	if model, _, _, _, _, _ := h.activeTurnConfig("c1"); model != "kimi" {
+	if model, _, _, _, _ := h.activeTurnConfig("c1"); model != "kimi" {
 		t.Errorf("bound model = %q, want kimi", model)
 	}
-	if _, _, dir, _, _, _ := h.activeTurnConfig("c1"); dir != "/proj" {
+	if _, _, dir, _, _ := h.activeTurnConfig("c1"); dir != "/proj" {
 		t.Errorf("bound dir = %q, want /proj", dir)
 	}
 
 	// A chat without a binding still gets the global defaults — proves the
 	// override is per-chat, not process-wide.
-	if model, _, dir, _, _, _ := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
+	if model, _, dir, _, _ := h.activeTurnConfig("no-such-chat"); model != "test-model" || dir != "/global-root" {
 		t.Errorf("unbound = (%q, %q), want (test-model, /global-root)", model, dir)
 	}
 }
 
-// TestActiveTurnConfig_PerChatModeThinkingOverride verifies per-chat Mode and
-// Thinking pins (set by /mode and /thinking via SetMode/SetThinking) override
-// the client defaults returned by activeTurnConfig. With no client wired the
-// defaults are "default"/"off"; pinning "auto"/"high" must surface through the
-// 4-value return so runViaCLI's RunOptions carries the per-chat value.
-func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
+// TestActiveTurnConfig_PerChatThinkingOverride verifies per-chat Thinking
+// pins (set by /effort via SetThinking) override the client default returned
+// by activeTurnConfig. With no client wired the default is "off"; pinning
+// "high" must surface through the return so runViaCLI's RunOptions carries
+// the per-chat value. (Mode was removed with miniagent v5.0.0.)
+func TestActiveTurnConfig_PerChatThinkingOverride(t *testing.T) {
 	r, err := router.New(filepath.Join(t.TempDir(), "r.json"), log.Nop())
 	if err != nil {
 		t.Fatalf("router.New: %v", err)
@@ -381,28 +378,26 @@ func TestActiveTurnConfig_PerChatModeThinkingOverride(t *testing.T) {
 
 	h := New(&captureSender{}, log.Nop(), r, "/root", "m", "", nil, "", 0, "", false)
 
-	// Default effective values without any pin.
-	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
-		t.Errorf("defaults = (%q, %q), want (default, off)", mode, thinking)
+	// Default effective value without any pin.
+	if _, _, _, thinking, _ := h.activeTurnConfig("c1"); thinking != "off" {
+		t.Errorf("default thinking = %q, want off", thinking)
 	}
 
-	r.SetMode("c1", "auto")
 	r.SetThinking("c1", "high")
-	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "auto" || thinking != "high" {
-		t.Errorf("pinned = (%q, %q), want (auto, high)", mode, thinking)
+	if _, _, _, thinking, _ := h.activeTurnConfig("c1"); thinking != "high" {
+		t.Errorf("pinned thinking = %q, want high", thinking)
 	}
 
 	// Clearing the pin returns the global default (no per-chat value).
-	r.SetMode("c1", "")
 	r.SetThinking("c1", "")
-	if _, _, _, mode, thinking, _ := h.activeTurnConfig("c1"); mode != "default" || thinking != "off" {
-		t.Errorf("after clear = (%q, %q), want (default, off)", mode, thinking)
+	if _, _, _, thinking, _ := h.activeTurnConfig("c1"); thinking != "off" {
+		t.Errorf("after clear thinking = %q, want off", thinking)
 	}
 }
 
 // TestActiveMaxIter_PerChatOverrideAndDefault verifies activeMaxIter returns the
 // per-chat pin (>0) when set, and falls back to the client default (0 with no
-// client wired) otherwise — same precedence shape as activeMode/activeThinking.
+// client wired) otherwise — same precedence shape as activeThinking.
 // 0 is the clear value: a pinned 0 must NOT shadow the client default.
 func TestActiveMaxIter_PerChatOverrideAndDefault(t *testing.T) {
 	r, err := router.New(filepath.Join(t.TempDir(), "r.json"), log.Nop())

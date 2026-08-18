@@ -20,7 +20,7 @@ var commands *Commands
 
 func init() {
 	commands = NewCommands([]CommandSpec{
-		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前模型/工作目录/权限/思考/会话",
+		{Spec: cmdutil.Spec{Name: "/current", Summary: "显示当前模型/工作目录/思考/会话",
 			Title: "当前状态", Level: "info"}, Handler: (*Handler).cmdCurrentBridge},
 		{Spec: cmdutil.Spec{Name: "/model", Summary: "切换模型；不带参数弹出选择；传 clear 清除",
 			Args: "[model|clear]", Title: "已切换模型", Level: "success"}, Handler: (*Handler).cmdModelBridge},
@@ -28,8 +28,6 @@ func init() {
 			Args: "[dir|clear]", Title: "已切换目录", Level: "success"}, Handler: (*Handler).cmdDirectoryBridge},
 		{Spec: cmdutil.Spec{Name: "/config", Summary: "切换配置文件；不带参数弹出选择；传 clear 清除",
 			Args: "[clear]", Title: "已切换配置文件", Level: "success"}, Handler: (*Handler).cmdConfigBridge},
-		{Spec: cmdutil.Spec{Name: "/mode", Summary: "设置权限模式；不带参数弹出选择；传 clear 清除",
-			Args: "[mode|clear]", Title: "已切换权限模式", Level: "success"}, Handler: (*Handler).cmdModeBridge},
 		{Spec: cmdutil.Spec{Name: "/effort", Summary: "设置思考级别；不带参数弹出选择；传 clear 清除",
 			Args: "[level|clear]", Title: "已切换思考级别", Level: "success"}, Handler: (*Handler).cmdEffortBridge},
 		{Spec: cmdutil.Spec{Name: "/maxiter", Summary: "设置每轮 LLM 调用上限；不带参数显示当前；传 clear 清除",
@@ -146,14 +144,6 @@ func (h *Handler) cmdConfigBridge(ctx context.Context, chatID string, args []str
 	return cmdutil.Result{Body: body, Title: title, Level: level}, nil
 }
 
-func (h *Handler) cmdModeBridge(ctx context.Context, chatID string, args []string) (cmdutil.Result, error) {
-	level, title, body := h.cmdMode(ctx, chatID, firstArg(args))
-	if level == "async" {
-		return cmdutil.Result{Handled: true}, nil
-	}
-	return cmdutil.Result{Body: body, Title: title, Level: level}, nil
-}
-
 func (h *Handler) cmdEffortBridge(ctx context.Context, chatID string, args []string) (cmdutil.Result, error) {
 	level, title, body := h.cmdEffort(ctx, chatID, firstArg(args))
 	if level == "async" {
@@ -220,7 +210,7 @@ func (h *Handler) cmdHelpBridge(context.Context, string, []string) (cmdutil.Resu
 	return cmdutil.Result{Body: renderCmdHelp(), Title: "帮助", Level: "info"}, nil
 }
 
-// cmdCurrent reports the per-chat model + directory + config + mode + thinking
+// cmdCurrent reports the per-chat model + directory + config + thinking
 // + session id the next fork will use. Falls back to the global defaults when
 // the chat has no pin. The session id is the miniagent-generated id persisted
 // for this chat (absent → next prompt creates a fresh session via -save-session).
@@ -229,6 +219,6 @@ func (h *Handler) cmdCurrent(_ context.Context, chatID, _ string) (level, title,
 	if sid == "" {
 		sid = "无（下次提问新建）"
 	}
-	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n配置文件：%s\n权限模式：%s\n思考级别：%s\n迭代上限：%s\n会话ID：%s",
-		displayModel(h.activeProvider(chatID), h.activeModel(chatID)), h.activeDir(chatID), h.activeConfig(chatID), h.activeMode(chatID), h.activeThinking(chatID), h.formatMaxIter(h.activeMaxIter(chatID)), sid)
+	return "info", "当前状态", fmt.Sprintf("模型：%s\n工作目录：%s\n配置文件：%s\n思考级别：%s\n迭代上限：%s\n会话ID：%s",
+		displayModel(h.activeProvider(chatID), h.activeModel(chatID)), h.activeDir(chatID), h.activeConfig(chatID), h.activeThinking(chatID), h.formatMaxIter(h.activeMaxIter(chatID)), sid)
 }

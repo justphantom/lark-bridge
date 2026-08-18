@@ -187,14 +187,14 @@ miniagent-back 的业务逻辑。Handler 复用 `bridgebase` 的包级 helper（
 | `handler_todo.go` | 每 turn todo 累加器（miniagent 的 todo 工具单条输出 → 卡片 todo 区快照） |
 | `picker.go` | 模型/目录 picker 公共逻辑 |
 | `commands.go` | 斜杠命令表 + 派发（:23-52），复用 `bridgebase.Commands` |
-| `commands_picker.go` | `/model` `/cd` `/config` `/mode` `/effort` 选择卡 |
+| `commands_picker.go` | `/model` `/cd` `/config` `/effort` 选择卡 |
 | `commands_send.go` | `/send` 文件投递（复用 `bridgebase.BuildSendOptions`/`ReadFilePayload`） |
 | `commands_task.go` | `/pull` `/push` `/build`（复用 `bridgebase.TaskRunner`，原 `GitRunner`） |
 | `commands_config.go` | `/config` 切换配置文件 |
 | `commands_settings.go` | `/maxiter` `/new` 等 |
 | `commands_misc.go` | `/current` `/help` 等 |
 
-miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mode` `/effort` `/maxiter` `/new` `/send` `/pull` `/push` `/build` `/running` `/abort` `/help`（`/running` `/abort` 在 `HandleEvent` 内早于 startTurn 派发，不占 turn 槽）。
+miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/effort` `/maxiter` `/new` `/send` `/pull` `/push` `/build` `/running` `/abort` `/help`（`/running` `/abort` 在 `HandleEvent` 内早于 startTurn 派发，不占 turn 槽）。
 
 ### 5.4 `bridgebase/`——后端通用脊梁
 
@@ -221,7 +221,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 
 | 文件 | 职责 |
 |---|---|
-| `client.go` | **`Client`**（:58）/ `New`（:72）：fork miniagent 二进制。`Run`（:300）启动子进程、信号量限并发（`defaultMaxConcurrent=4`）、ctx 取消走进程组 SIGKILL（`cmdutil.ApplyGroupCancel`）。`buildArgs`（:371）拼 CLI flags（`-provider/-model` 配对、`-config`、`-workdir`、`-mode`、`-thinking`、`-max-iterations`、`-session/-save-session`）。`pump`（:450）读 stdout 行 + 捕获 stderr。`IsReady`（:250）启动健康门（`miniagent --version`，最低 `4.2.0`）。`DetectVersion`（:170）/ `satisfiesVersion` 组件数值比较 |
+| `client.go` | **`Client`**（:58）/ `New`（:72）：fork miniagent 二进制。`Run`（:300）启动子进程、信号量限并发（`defaultMaxConcurrent=4`）、ctx 取消走进程组 SIGKILL（`cmdutil.ApplyGroupCancel`）。`buildArgs`（:371）拼 CLI flags（`-provider/-model` 配对、`-config`、`-workdir`、`-thinking`、`-max-iterations`、`-session/-save-session`；`-mode` 已随 miniagent v5.0.0 删除）。`pump`（:450）读 stdout 行 + 捕获 stderr。`IsReady`（:250）启动健康门（`miniagent --version`，最低 `5.0.0`——v5.0.0 删 `-mode` 为 breaking CLI 契约变更，硬切）。`DetectVersion`（:170）/ `satisfiesVersion` 组件数值比较 |
 | `event.go` | **`Event`**（:40）+ 事件 kind 常量（:9-28：`tool_use`/`tool_result`/`text_delta`/`reasoning_delta`/`result`/`error`/`session`）+ `parseEvent`（:119，NDJSON 行解码，未知 type 不中断 pump） |
 | `models.go` | `ModelRef`（:36）+ `ListModels`（:60）：跑 `miniagent -list-models`，按行解析 `{"type":"model","provider","model"}`，返回 provider/model 配对 |
 
@@ -259,7 +259,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/mod
 
 ### 5.10 `router/`——chatID 绑定持久化
 
-- `router.go`：**`Router`**（:47）+ **`Binding`**（:26，SessionID/Directory/ModelSpec/Provider/Mode/Thinking/MaxIterations/ConfigFile 的并集）。
+- `router.go`：**`Router`**（:47）+ **`Binding`**（:26，SessionID/Directory/ModelSpec/Provider/Thinking/MaxIterations/ConfigFile 的并集）。
 - `persistence.go`：单 worker save 合并器（`saveLoop` :164，`saveAsync` :149，`save` :98；load/save 走 atomicwrite）。
 - `accessors.go`/`binding.go`：Get/Set/Lookup。`Router.Close`（`router.go:120`）关 saveLoop 后同步 save 一次防丢失。
 
@@ -377,7 +377,7 @@ miniagent.Handler.HandleEvent ........................ internal/miniagent/handle
    │     ├─ busy-then-drop 并发检查 ................. handler_lifecycle.go:44 (startTurn)
    │     └─ GoSafe → runTurn ....................... handler.go:244
    │          └─ runViaCLI ........................ handler_cli.go:26
-   │               ├─ activeTurnConfig 取 model/provider/workdir/mode/thinking/config :28
+   │               ├─ activeTurnConfig 取 model/provider/workdir/thinking/config :28
    │               ├─ streamarchive.NewSink 落盘 NDJSON :40
    │               ├─ client.Run(ctx, RunOptions{...}) :55 → fork miniagent 子进程
    │               │    └─ miniclient/client.go:300（信号量限并发，ctx 取消 SIGKILL 进程组）
@@ -448,7 +448,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 | `backend_id` | 后端 | 在前端 registry 的唯一 ID |
 | `frontend_url` | 后端 | 前端 IPC 地址 |
 | `router_path` | 共用 | router 持久化文件路径 |
-| `miniagent{}` | miniagent-back | api_key/model/provider/max_iterations/stream_history/workspace_root/stream/mode/thinking/key_file/config_path/config_dir |
+| `miniagent{}` | miniagent-back | api_key/model/provider/max_iterations/stream_history/workspace_root/stream/thinking/key_file/config_path/config_dir |
 | `status_monitor{}` | status-monitor | interval |
 | `log_level`/`log_output`/`log_format`/`log_debug_redact`/`stream_archive_redact` | 共用 | 日志与流归档脱敏 |
 | `component_log_levels{}` | 共用 | 分组件级别（router/feishu/dedup/miniagent/status_monitor 等） |

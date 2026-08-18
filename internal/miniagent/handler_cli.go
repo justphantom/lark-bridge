@@ -25,7 +25,7 @@ import (
 // owns IPC + per-chat binding (Directory/ModelSpec) + command dispatch.
 func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string) {
 	start := time.Now()
-	model, provider, workdir, mode, thinking, config := h.activeTurnConfig(chatID)
+	model, provider, workdir, thinking, config := h.activeTurnConfig(chatID)
 	maxIter := h.activeMaxIter(chatID)
 	h.logger.Info("miniagent turn start",
 		log.FieldChatID, chatID,
@@ -57,7 +57,6 @@ func (h *Handler) runViaCLI(ctx context.Context, promptID, chatID, prompt string
 		Model:         model,
 		Provider:      provider,
 		Workdir:       workdir,
-		Mode:          mode,
 		Thinking:      thinking,
 		MaxIterations: maxIter,
 		ConfigPath:    config,
@@ -265,16 +264,6 @@ func (h *Handler) emitToolResult(chatID, promptID string, ev miniclient.Event) {
 	})
 }
 
-// clientDefaultMode is the global -mode fallback (config.MiniAgent.Mode via
-// miniclient), used when a chat has no per-chat Mode pin. "default" when the
-// client is nil (tests).
-func (h *Handler) clientDefaultMode() string {
-	if h.client != nil {
-		return h.client.DefaultMode()
-	}
-	return "default"
-}
-
 // clientDefaultThinking is the global -thinking fallback. "off" when the
 // client is nil (tests).
 func (h *Handler) clientDefaultThinking() string {
@@ -305,28 +294,27 @@ func (h *Handler) activeConfig(chatID string) string {
 	return h.clientDefaultConfig()
 }
 
-// activeTurnConfig returns the (model, provider, workdir, mode, thinking,
+// activeTurnConfig returns the (model, provider, workdir, thinking,
 // config) the CLI subprocess should be invoked with for this chat. Per-chat
 // binding fields (router.Lookup) win; empty fields fall back to the bridge's
 // global defaults from config. model+provider are tracked as a pair because
 // miniagent post-v4.0.1 requires -provider/-model together.
 //
 // When no binding exists the globals are returned directly — the binding is
-// created lazily by /model, /cd, /mode or /thinking, not by the first prompt
+// created lazily by /model, /cd or /thinking, not by the first prompt
 // (miniagent has no session to seed).
-func (h *Handler) activeTurnConfig(chatID string) (model, provider, workdir, mode, thinking, config string) {
+func (h *Handler) activeTurnConfig(chatID string) (model, provider, workdir, thinking, config string) {
 	model = h.cfgModel
 	provider = h.cfgProvider
 	workdir = h.workspaceRoot
-	mode = h.clientDefaultMode()
 	thinking = h.clientDefaultThinking()
 	config = h.clientDefaultConfig()
 	if h.router == nil {
-		return model, provider, workdir, mode, thinking, config
+		return model, provider, workdir, thinking, config
 	}
 	b, ok := h.router.Lookup(chatID)
 	if !ok {
-		return model, provider, workdir, mode, thinking, config
+		return model, provider, workdir, thinking, config
 	}
 	if b.ModelSpec != "" {
 		model = b.ModelSpec
@@ -341,16 +329,13 @@ func (h *Handler) activeTurnConfig(chatID string) (model, provider, workdir, mod
 	if b.Directory != "" {
 		workdir = b.Directory
 	}
-	if b.Mode != "" {
-		mode = b.Mode
-	}
 	if b.Thinking != "" {
 		thinking = b.Thinking
 	}
 	if b.ConfigFile != "" {
 		config = b.ConfigFile
 	}
-	return model, provider, workdir, mode, thinking, config
+	return model, provider, workdir, thinking, config
 }
 
 // activeModel returns the model the CLI would be invoked with for this chat
@@ -391,17 +376,6 @@ func (h *Handler) activeDir(chatID string) string {
 		}
 	}
 	return h.workspaceRoot
-}
-
-// activeMode returns the -mode the CLI would be invoked with for this chat
-// (used by /current and /mode display). Same precedence as activeTurnConfig.
-func (h *Handler) activeMode(chatID string) string {
-	if h.router != nil {
-		if b, ok := h.router.Lookup(chatID); ok && b.Mode != "" {
-			return b.Mode
-		}
-	}
-	return h.clientDefaultMode()
 }
 
 // activeThinking returns the -thinking the CLI would be invoked with for this

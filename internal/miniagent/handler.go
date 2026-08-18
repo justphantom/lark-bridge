@@ -57,7 +57,7 @@ type Handler struct {
 	stateDir        string             // streams root dir
 	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat chatID→sessionID ".id" mappings
 	configDir       string             // directory scanned by /config picker (default ~/.miniagent)
-	runner *bridgebase.TaskRunner
+	runner          *bridgebase.TaskRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
@@ -99,7 +99,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		streamHistory: streamHistory,
 		archiveRedact: archiveRedact,
 		stateDir:      stateDir,
-runner:         bridgebase.NewTaskRunner(bridgebase.ExecCommander{}, logger, 0),
+		runner:        bridgebase.NewTaskRunner(bridgebase.ExecCommander{}, logger, 0),
 		cancelBy:      make(map[string]*bridgebase.PromptCancel),
 	}
 	// [P3] sessionRoot holds per-chat jsonl. Only set when stateDir is non-empty:

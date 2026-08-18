@@ -1,11 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [miniagent, config-only, version-check, eventmetrics, stream-archive]
+tags: [miniagent, config-only, version-check, eventmetrics, stream-archive, v5-breaking]
 created: 2026-08-09
 confidence: high
-verified_at: 2026-08-13
-applies_to: b965415
+verified_at: 2026-08-18
+applies_to: 4076af4
 ---
 
 # Miniagent 对接模式与常见缺口
@@ -17,7 +17,7 @@ applies_to: b965415
 
 1. **config-only（v3.1+）**
    - 端点/API key/providers/run/compaction 全部收敛到 `miniagent.json`。
-   - bridge 启动子进程时恒带 `-config <abs>`；model/mode/thinking/max-iterations/session 仍可用 flag 覆盖。
+   - bridge 启动子进程时恒带 `-config <abs>`；model/thinking/max-iterations/session 仍可用 flag 覆盖（`-mode` 已随 miniagent v5.0.0 删除）。
 2. **事件流**
    - NDJSON 事件：`tool_use` / `tool_result` / `text_delta` / `reasoning_delta` / `result` / `error`。
    - `text_delta` 在 bridge 侧故意不转发；`reasoning_delta` 作为 Thinking 增量直发前端。
@@ -40,6 +40,14 @@ applies_to: b965415
    - miniagent CLI 的 workdir：非空 + 必须绝对路径 + **只来自 `-workdir` flag**（删 config `run.workdir`、删 `absWorkdir` 的 `os.Getwd()` 回退、auto 模式也强制）。bridge 恒传绝对 `-workdir`（`workspaceRoot`/`b.Directory` 均绝对），本就合规、无需改动。
    - **教训（排查"漂移到 /home/dev"）**：那是 conflation——`/home/dev/.miniagent` 是 `-config` 配置目录，`/current` 把 `配置文件：…` 印在 `工作目录：…` 下一行易被误读；`/var/lib/lark-bridge/router-miniagent.v5.json`（非 config 里失效的 `router_path`）才是真 binding 来源。systemd 下进程 cwd=`/`、HOME=`/var/lib/lark-bridge`，全链路 workdir 恒为 `/opt/code/*`。
    - **部署生效前提**：在线 `/usr/local/bin/miniagent` 须 `make build` 重装，否则仍是旧契约。
+
+## v5.0.0 破坏性变更对齐（2026-08-18）
+
+miniagent v5.0.0 删除 `-mode` 双模式（default/auto 合并为单模式），**删 agent 层全部安全保障**（confineWrap / `.git` 封锁 / 白名单子命令工具 / deny-args / rtk proxy），安全完全靠运行用户 OS 权限。工具精简到 8 个（read/write/edit/grep/glob/ast/shell/web），新增 OpenAI Responses provider（`kind=responses`）和 `web` 抓取工具。
+
+**bridge 对齐**：硬切——`minSupportedVersion` 从 `4.2.0` 提升到 `5.0.0`（4.x 直接拒绝，避免双安全语义并行）；删 `-mode` 发射、`/mode` 命令（`settableModes`/`modeOptions`/`cmdMode`/`cmdModeBridge`）、`Binding.Mode`/`Router.SetMode`、`Config.MiniAgent.Mode`（含 `applyDefaults` 默认 + `validate` 校验）、`Client.Mode`/`DefaultMode()`/`RunOptions.Mode`、`activeMode()`/`clientDefaultMode()`；`activeTurnConfig` 从 6 元组降 5 元组；`/current` 去掉"权限模式"行。
+
+**兼容性分析**：NDJSON 事件契约不变（tool_use/tool_result/text_delta/reasoning_delta/result/error/session/model 全保留），result 事件新增 `llm_requests` 字段被 `json.Unmarshal` 忽略未知字段安全处理。`-provider/-model` 成对规则、`-list-models` 格式、`-workdir` 必填绝对路径均不变。bridge config `DisallowUnknownFields` 意味着旧配置里的 `"mode"` 键会启动失败——operator 必须删除该键（迁移提示已写入 CHANGELOG）。router JSON 不用 `DisallowUnknownFields`，旧 `mode` key 静默忽略，无需迁移。
 
 ## 参考
 - 相关代码：`internal/miniclient/client.go`、`internal/miniagent/handler_cli.go`

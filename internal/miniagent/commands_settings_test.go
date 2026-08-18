@@ -11,10 +11,11 @@ import (
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// newSettingsHandler builds a Handler with a persisted router so /mode and
-// /effort can exercise the SetMode/SetThinking → mutate → saveAsync path.
-// client is nil: clientDefaultMode/Thinking return the "default"/"off"
-// sentinels, which is what the display + clear branches need to assert.
+// newSettingsHandler builds a Handler with a persisted router so /effort
+// can exercise the SetThinking → mutate → saveAsync path. client is nil:
+// clientDefaultThinking returns the "off" sentinel, which is what the
+// display + clear branches need to assert. (/mode was removed with
+// miniagent v5.0.0.)
 func newSettingsHandler(t *testing.T) (*Handler, *router.Router) {
 	t.Helper()
 	r, err := router.New(filepath.Join(t.TempDir(), "r.json"), log.Nop())
@@ -24,84 +25,6 @@ func newSettingsHandler(t *testing.T) (*Handler, *router.Router) {
 	t.Cleanup(func() { r.Close() })
 	h := New(&captureSender{}, log.Nop(), r, "/root", "test-model", "", nil, "", 0, "", false)
 	return h, r
-}
-
-// TestCmdMode_PickerIsAsync verifies /mode with no arg returns the "async"
-// sentinel (the actual selection happens in a goroutine; the picker card is
-// driven by askAndWait). The legacy "show current value" behavior was
-// replaced by an interactive picker to align with claude-back's /mode.
-func TestCmdMode_PickerIsAsync(t *testing.T) {
-	h, _ := newSettingsHandler(t)
-	level, _, _ := h.cmdMode(context.Background(), "c1", "")
-	if level != "async" {
-		t.Errorf("level = %q, want async (interactive picker)", level)
-	}
-}
-
-// TestCmdMode_PinValid verifies /mode <valid> creates the binding, persists the
-// pin, and reports success.
-func TestCmdMode_PinValid(t *testing.T) {
-	h, r := newSettingsHandler(t)
-	for _, m := range []string{"default", "auto"} {
-		if level, _, _ := h.cmdMode(context.Background(), "c1", m); level != "success" {
-			t.Errorf("mode=%s: level = %q, want success", m, level)
-		}
-		b, _ := r.Lookup("c1")
-		if b.Mode != m {
-			t.Errorf("after pin mode=%s: binding.Mode = %q", m, b.Mode)
-		}
-	}
-}
-
-// TestCmdMode_BadValueRejected verifies an out-of-enum value is rejected with
-// an error notice AND does NOT create or mutate the binding.
-func TestCmdMode_BadValueRejected(t *testing.T) {
-	h, r := newSettingsHandler(t)
-	level, _, _ := h.cmdMode(context.Background(), "c1", "yolo")
-	if level != "error" {
-		t.Errorf("level = %q, want error for bad mode", level)
-	}
-	if _, ok := r.Lookup("c1"); ok {
-		t.Error("bad /mode value must not create a binding")
-	}
-}
-
-// TestCmdMode_Clear verifies /mode clear empties the pin and the body mentions
-// the global default. Runs after a pin so ensureBinding already created the
-// binding; clear must set the field to "" without dropping the binding itself.
-func TestCmdMode_Clear(t *testing.T) {
-	h, r := newSettingsHandler(t)
-	r.Bind("c1", "", "", "", "")
-	r.SetMode("c1", "auto")
-
-	level, title, body := h.cmdMode(context.Background(), "c1", "clear")
-	if level != "success" || !strings.Contains(title, "默认") {
-		t.Errorf("clear = (%q, %q), want success + 默认 in title", level, title)
-	}
-	b, _ := r.Lookup("c1")
-	if b.Mode != "" {
-		t.Errorf("after clear: Mode = %q, want empty", b.Mode)
-	}
-	if !strings.Contains(body, "default") {
-		t.Errorf("clear body = %q should mention global default", body)
-	}
-}
-
-// TestCmdMode_EnsureBindingCreatesOne verifies /mode <valid> on a chat with no
-// prior binding creates one (ensureBinding) so SetMode is not a silent no-op.
-func TestCmdMode_EnsureBindingCreatesOne(t *testing.T) {
-	h, r := newSettingsHandler(t)
-	if _, ok := r.Lookup("ghost"); ok {
-		t.Fatal("precondition: ghost must not exist")
-	}
-	h.cmdMode(context.Background(), "ghost", "auto")
-	b, ok := r.Lookup("ghost")
-	if !ok {
-		t.Fatal("ensureBinding must create the binding before SetMode")
-	}
-	if b.Mode != "auto" {
-		t.Errorf("binding.Mode = %q, want auto", b.Mode)
-	}
 }
 
 // TestCmdEffort_PickerIsAsync verifies /effort with no arg returns the
@@ -196,7 +119,7 @@ func TestCmdMaxIter_PinValid(t *testing.T) {
 
 // TestCmdMaxIter_BadValueRejected verifies <1 and non-numeric args are rejected
 // with an error AND do NOT create a binding (ensureBinding runs only on the
-// success paths, mirroring cmdMode).
+// success paths, mirroring cmdEffort).
 func TestCmdMaxIter_BadValueRejected(t *testing.T) {
 	h, r := newSettingsHandler(t)
 	for _, bad := range []string{"0", "-1", "abc", "1.5"} {

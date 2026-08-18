@@ -37,13 +37,10 @@ func applyDefaults(cfg *Config, cfgPath string) {
 	if cfg.MiniAgent.StreamHistory == 0 {
 		cfg.MiniAgent.StreamHistory = 50
 	}
-	// Mode/Thinking defaults for v3 (-mode/-thinking replaced -confine). Empty
-	// falls under the valid-enum switches in validate, but filling them here
-	// means a turn always sends an explicit flag value (matching the configured
-	// safety posture) and /mode /thinking can show a real default.
-	if cfg.MiniAgent.Mode == "" {
-		cfg.MiniAgent.Mode = "default"
-	}
+	// Thinking default for v3 (-thinking). Empty falls under the valid-enum
+	// switch in validate, but filling it here means a turn always sends an
+	// explicit flag value and /thinking can show a real default. (-mode was
+	// removed in miniagent v5.0.0 and has no bridge config counterpart.)
 	if cfg.MiniAgent.Thinking == "" {
 		cfg.MiniAgent.Thinking = "off"
 	}

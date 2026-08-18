@@ -255,6 +255,8 @@ func TestBuildArgs_ModelWithoutProviderOmitted(t *testing.T) {
 // v4.2.0 removed -system/-max-tokens (moved to miniagent-cli.json), so both banned.
 // (-stream was also deleted in fe85c16 but RE-ADDED in v2.0.0, so it is no
 // longer banned; see TestBuildArgs_Stream.)
+// v5.0.0 removed -mode (default|auto dual-mode merged into a single mode;
+// the bridge no longer emits it), so it is banned.
 func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 	c := New(Config{
 		CLIPath:    "/bin/ma",
@@ -267,6 +269,7 @@ func TestBuildArgs_NoRemovedFlags(t *testing.T) {
 		"-base-url", "-confine",
 		"-chat-url", "-models-url", "-context-window", "-shell-timeout",
 		"-system", "-max-tokens",
+		"-mode",
 	}
 	for _, b := range banned {
 		if contains(args, b) {
@@ -356,16 +359,16 @@ func TestBuildArgs_V2OptionalFlags_Omitted(t *testing.T) {
 // (endpoints come from miniagent.json). -model and other flags still appear.
 //
 // This also pins the Phase 4 contract: config mode is NOT a "minimal args"
-// mode — it only swaps the endpoint source. The per-turn -mode/-thinking and
-// the per-chat -session MUST still appear alongside -config so that /mode,
-// /thinking, and per-chat memory keep working under multi-provider deployments.
+// mode — it only swaps the endpoint source. The per-turn -thinking and
+// the per-chat -session MUST still appear alongside -config so that
+// /thinking and per-chat memory keep working under multi-provider deployments.
+// (-mode was removed in miniagent v5.0.0 and is no longer emitted.)
 func TestBuildArgs_ConfigPath(t *testing.T) {
 	c := New(Config{
 		CLIPath:    "/bin/ma",
 		APIKey:     "k",
 		ConfigPath: "/etc/miniagent/miniagent.json",
-		Mode:       "default", // client default still emits -mode in config mode
-		Thinking:   "off",     // client default still emits -thinking in config mode
+		Thinking:   "off", // client default still emits -thinking in config mode
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Provider: "openrouter",
@@ -391,11 +394,8 @@ func TestBuildArgs_ConfigPath(t *testing.T) {
 	if v := argValue(args, "-workdir"); v != "/w" {
 		t.Errorf("-workdir = %q, want /w", v)
 	}
-	// Phase 4: -mode/-thinking/-session co-exist with -config (config mode only
+	// Phase 4: -thinking/-session co-exist with -config (config mode only
 	// re-routes endpoints, not the per-chat turn shape).
-	if v := argValue(args, "-mode"); v != "default" {
-		t.Errorf("-mode = %q, want default (config mode keeps per-turn mode)", v)
-	}
 	if v := argValue(args, "-thinking"); v != "off" {
 		t.Errorf("-thinking = %q, want off (config mode keeps per-turn thinking)", v)
 	}
@@ -457,45 +457,37 @@ func TestBuildArgs_ConfigPathOverride(t *testing.T) {
 	}
 }
 
-// TestBuildArgs_V3ModeThinking verifies the v3 -mode/-thinking flags appear
-// with their configured values when set on the client (the per-chat "" path:
-// RunOptions.Mode/Thinking empty → client default). (-context-window moved to
+// TestBuildArgs_V3Thinking verifies the v3 -thinking flag appears with its
+// configured value when set on the client (the per-chat "" path:
+// RunOptions.Thinking empty → client default). (-mode was removed in
+// miniagent v5.0.0 and is no longer emitted; -context-window moved to
 // miniagent.json in v3.1.)
-func TestBuildArgs_V3ModeThinking(t *testing.T) {
+func TestBuildArgs_V3Thinking(t *testing.T) {
 	c := New(Config{
 		CLIPath:  "/bin/ma",
 		APIKey:   "k",
-		Mode:     "auto",
 		Thinking: "high",
 	}, nil)
 	args := c.buildArgs(RunOptions{Model: "m", Workdir: "/w"})
-	if v := argValue(args, "-mode"); v != "auto" {
-		t.Errorf("-mode = %q, want auto", v)
-	}
 	if v := argValue(args, "-thinking"); v != "high" {
 		t.Errorf("-thinking = %q, want high", v)
 	}
 }
 
-// TestBuildArgs_PerTurnModeThinkingOverride verifies a non-empty
-// RunOptions.Mode/Thinking overrides the client's configured default — this is
-// the per-chat pin path (handler.activeTurnConfig → binding.Mode/Thinking).
-func TestBuildArgs_PerTurnModeThinkingOverride(t *testing.T) {
+// TestBuildArgs_PerTurnThinkingOverride verifies a non-empty
+// RunOptions.Thinking overrides the client's configured default — this is
+// the per-chat pin path (handler.activeTurnConfig → binding.Thinking).
+func TestBuildArgs_PerTurnThinkingOverride(t *testing.T) {
 	c := New(Config{
 		CLIPath:  "/bin/ma",
 		APIKey:   "k",
-		Mode:     "default", // global default
-		Thinking: "off",     // global default
+		Thinking: "off", // global default
 	}, nil)
 	args := c.buildArgs(RunOptions{
 		Model:    "m",
 		Workdir:  "/w",
-		Mode:     "auto", // per-chat pin wins
-		Thinking: "max",  // per-chat pin wins
+		Thinking: "max", // per-chat pin wins
 	})
-	if v := argValue(args, "-mode"); v != "auto" {
-		t.Errorf("-mode = %q, want per-turn override auto", v)
-	}
 	if v := argValue(args, "-thinking"); v != "max" {
 		t.Errorf("-thinking = %q, want per-turn override max", v)
 	}
@@ -579,22 +571,21 @@ func TestCompareVersion(t *testing.T) {
 // TestSatisfiesVersion pins the version-gate logic the startup health check
 // (IsReady) uses against minSupportedVersion. "dev" (untagged local build)
 // always passes so local development is not blocked. A pre-release of the
-// minimum (4.2.0-rc1) is treated as the release version and passes.
+// minimum (5.0.0-rc1) is treated as the release version and passes.
 func TestSatisfiesVersion(t *testing.T) {
 	cases := []struct {
 		v    string
 		want bool
 	}{
 		{"dev", true},   // untagged local build — always pass
-		{"4.2.0", true}, // exact floor
-		{"4.2.1", true}, // above floor
-		{"4.3.0", true},
-		{"5.0.0", true},
-		{"4.2.0-rc1", true}, // pre-release strips to 4.2.0
-		{"4.1.0", false},    // < 4.2.0 lacks the run.max_tokens config model — rejected
-		{"4.0.1", false},    // the previous floor — now rejected
+		{"5.0.0", true}, // exact floor
+		{"5.0.1", true}, // above floor
+		{"5.1.0", true},
+		{"5.0.0-rc1", true}, // pre-release strips to 5.0.0
+		{"4.2.0", false},    // < 5.0.0 still emits -mode — rejected
+		{"4.7.0", false},    // last 4.x — rejected
+		{"4.1.0", false},
 		{"4.0.0", false},
-		{"4.1.9", false},
 		{"3.5.0", false},
 		{"3.10.0", false},
 	}

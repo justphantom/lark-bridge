@@ -25,7 +25,7 @@
 ## 斜杠命令
 
 - 前端：`/backend`（弹出在线后端选择卡片，绑定后端）、`/skill <指令>`（透传，绕过后端本地命令分发）。
-- miniagent-back：`/current` `/model` `/cd` `/new` `/send` `/pull` `/push` `/running` `/abort` `/mode` `/effort` `/help`。
+- miniagent-back：`/current` `/model` `/cd` `/new` `/send` `/pull` `/push` `/running` `/abort` `/effort` `/help`。
 - status-monitor：无斜杠命令（被动推送；绑定后每 `status_monitor.interval` 自动刷新总览卡）。
 
 ## 构建
@@ -49,9 +49,10 @@ JSON 文件，支持 `${VAR}` 引用环境变量（空值/未设置报错退出�
 
 ### miniagent 后端配置要点
 
+- **版本要求**：miniagent ≥ 5.0.0（v5.0.0 删除 `-mode` 双模式为 breaking 变更，bridge 已硬切对齐：不再发射 `-mode`、移除 `/mode` 命令与 `miniagent.mode` 配置键；4.x 二进制启动健康门直接拒绝）。
 - **bare 模式**：配 `miniagent.chat_url` + `miniagent.models_url`（完整 URL），`api_key` 通过环境变量 `${MINIAGENT_API_KEY}` 注入。
 - **多 provider 模式**：配 `miniagent.config_path` 指向部署期生成的 `miniagent.json`，并可选 `provider` 切换 provider；此模式下 `chat_url`/`models_url` 由 config 文件提供，bridge 只透传 `-config <abspath>`。
-- **每 chat 覆盖**：`/mode`、`/thinking`、`/model` 会持久化到 router binding；`key_file` 让 bridge 从文件读取密钥并注入子进程 env，替代直接在 JSON 里写 `api_key`。
+- **每 chat 覆盖**：`/thinking`、`/model` 会持久化到 router binding；`key_file` 让 bridge 从文件读取密钥并注入子进程 env，替代直接在 JSON 里写 `api_key`。
 
 ### 敏感数据落盘
 

@@ -1,6 +1,6 @@
 // Package router maps a Feishu chatID to a persistent backend session id
-// and the working directory that session lives in, plus the pinned model,
-// agent and run-mode overrides the bridge forwards to the backend on every
+// and the working directory that session lives in, plus the pinned model
+// and agent overrides the bridge forwards to the backend on every
 // prompt.
 //
 // One chatID maps to exactly one Binding for the lifetime of the bridge
@@ -17,8 +17,8 @@ import (
 )
 
 // Binding pairs a backend session id with the working directory the session
-// lives in, a title snapshot used for display, and the pinned model / agent /
-// run-mode overrides that the bridge should forward.
+// lives in, a title snapshot used for display, and the pinned model / agent
+// overrides that the bridge should forward.
 //
 // Empty means "not set" for every optional field; callers fall back to the
 // backend's configured default.
@@ -28,7 +28,6 @@ type Binding struct {
 	Title         string `json:"title,omitempty"`
 	ModelSpec     string `json:"modelSpec,omitempty"`
 	Provider      string `json:"provider,omitempty"`      // miniagent (-provider; paired with ModelSpec → -model)
-	Mode          string `json:"mode,omitempty"`          // miniagent
 	Thinking      string `json:"thinking,omitempty"`      // miniagent
 	MaxIterations int    `json:"maxIterations,omitempty"` // miniagent (-max-iterations; 0 = unset)
 	ConfigFile    string `json:"configFile,omitempty"`    // miniagent (-config absolute path; "" → client default)

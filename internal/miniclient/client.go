@@ -47,7 +47,6 @@ type Config struct {
 	MaxConcurrent int
 	Stream        bool
 	MaxIterations int
-	Mode          string // [P2] "default"|"auto"
 	Thinking      string // [P2] off|minimal|low|medium|high|xhigh|max
 	KeyFile       string
 	ConfigPath    string // [P4] required → -config <abspath> (config-only mode)
@@ -60,7 +59,6 @@ type Client struct {
 	apiKey        string
 	stream        bool
 	maxIterations int
-	mode          string
 	thinking      string
 	keyFile       string
 	configPath    string
@@ -82,21 +80,12 @@ func New(cfg Config, logger *log.Logger) *Client {
 		apiKey:        cfg.APIKey,
 		stream:        cfg.Stream,
 		maxIterations: cfg.MaxIterations,
-		mode:          cfg.Mode,
 		thinking:      cfg.Thinking,
 		keyFile:       cfg.KeyFile,
 		configPath:    cfg.ConfigPath,
 		logger:        logger,
 		sem:           make(chan struct{}, n),
 	}
-}
-
-// DefaultMode returns the configured -mode default ("default" when unset).
-func (c *Client) DefaultMode() string {
-	if c.mode == "" {
-		return "default"
-	}
-	return c.mode
 }
 
 // DefaultThinking returns the configured -thinking default ("off" when unset).
@@ -148,21 +137,29 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Bumped to "4.2.0" because the bridge now relies on features that
-// only a 4.2.0+ tag provides:
-//   - 4.2.0 removed -system/-max-tokens: buildArgs no longer emits them, so the
-//     system prompt and the max output-token cap must come from miniagent-cli.json
-//     (defaults.system_prompt / run.max_tokens); the three-layer max_tokens model
-//     (run/provider/model) is itself 4.2.0-new.
-//   - the 4.0.1+ tag carries 02f8f81 (-model/-provider split, emitted as a pair)
-//     and 2099241 (-list-models NDJSON).
+// requires. Bumped to "5.0.0" because 5.0.0 is a breaking CLI-contract change:
+// the -mode flag (default|auto dual-mode) was REMOVED entirely — default/auto
+// merged into a single mode with the shell tool always registered, and all
+// agent-layer safety guards (confineWrap / .git blocking / whitelisted
+// subcommand tools) were dropped in favour of plain OS-level isolation. The
+// bridge no longer emits -mode, so a 4.x binary would silently fall back to
+// its own "default" confined mode while 5.0.0 runs unconfined — divergent
+// security semantics we refuse to paper over, hence the hard cut.
+//
+// 5.0.0 also trimmed the toolset to 8 (read/write/edit/grep/glob/ast/shell/web)
+// and added the OpenAI Responses provider; the NDJSON event contract used by
+// the bridge (tool_use/tool_result/text_delta/reasoning_delta/result/error/
+// session/model) is unchanged, and result events gained llm_requests (ignored
+// additively by json.Unmarshal).
 //
 // "dev" (untagged local build) always passes so developers are not blocked.
 //
-// Prior bumps: v4.0.1 moved -save-session session id from a stderr text line to
-// a stdout NDJSON type=session event; v4.0.0 split -session (resume) from
-// -save-session (create); v3.5.0 removed -key-file (key via $MINIAGENT_API_KEY).
-const minSupportedVersion = "4.2.0"
+// Prior bumps: 4.2.0 removed -system/-max-tokens and added the three-layer
+// max_tokens model; v4.0.1 moved -save-session session id from a stderr text
+// line to a stdout NDJSON type=session event; v4.0.0 split -session (resume)
+// from -save-session (create); v3.5.0 removed -key-file (key via
+// $MINIAGENT_API_KEY).
+const minSupportedVersion = "5.0.0"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
 // string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only
@@ -270,7 +267,6 @@ type RunOptions struct {
 	Model    string
 	Provider string
 	Workdir  string
-	Mode     string // [P2] per-chat override; "" → client default
 	Thinking string // [P2] per-chat override; "" → client default
 	// MaxIterations is the per-chat -max-iterations override. <=0 → client
 	// default (which itself 0/unset → upstream CLI default of 20).
@@ -388,15 +384,6 @@ func (c *Client) buildArgs(opts RunOptions) []string {
 	a = append(a, "-config", configPath)
 	if opts.Workdir != "" {
 		a = append(a, "-workdir", opts.Workdir)
-	}
-	// -mode（替代 v2 -confine）：每轮覆盖 > client 默认。default 模式需 workdir，
-	// 由 main.go 强校验 WorkspaceRoot + /cd 仅设非空保证。
-	mode := opts.Mode
-	if mode == "" {
-		mode = c.mode
-	}
-	if mode != "" {
-		a = append(a, "-mode", mode)
 	}
 	// -thinking：每轮覆盖 > client 默认。
 	thinking := opts.Thinking

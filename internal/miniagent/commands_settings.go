@@ -8,66 +8,9 @@ import (
 	"strconv"
 )
 
-// settableModes is the set of -mode values /mode accepts (v3 default|auto).
-var settableModes = map[string]struct{}{
-	"default": {},
-	"auto":    {},
-}
-
-// modeOptions is the sorted list of selectable -mode values offered by the
-// /mode picker. Built once from settableModes so the map stays the single
-// source of truth for both validation and the picker card.
-var modeOptions = func() []string {
-	opts := make([]string, 0, len(settableModes))
-	for m := range settableModes {
-		opts = append(opts, m)
-	}
-	sort.Strings(opts)
-	return opts
-}()
-
 // settableThinkingLevels is the set of -thinking values /effort accepts.
 var settableThinkingLevels = map[string]struct{}{
 	"off": {}, "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
-}
-
-// cmdMode pins/clears/selects the per-chat permission mode (-mode):
-//
-//	/mode              → interactive picker (default|auto)
-//	/mode clear        → clear pin (fall back to global default)
-//	/mode default|auto → pin for this chat
-//
-// The picker reuses the command's progress card (see cmdModel): promptID +
-// TakeOverProgress morph it into the picker, and the result patches the same
-// card via UpdateMessageID.
-func (h *Handler) cmdMode(_ context.Context, chatID, arg string) (level, title, body string) {
-	if arg == "" {
-		// Interactive picker: askAndWait blocks for a human click; run off
-		// the turn goroutine like /model and /cd.
-		promptID := h.PromptIDForPickers(chatID)
-		go func() { //nolint:gosec // G118: picker outlives the request ctx
-			choice, messageID, err := h.askAndWait(context.Background(), chatID, promptID, "权限模式", modeOptions)
-			if err != nil {
-				h.notifyWithPromptID(chatID, promptID, "warning", "选择失败", err.Error())
-				return
-			}
-			h.ensureBinding(chatID)
-			h.router.SetMode(chatID, choice)
-			h.notifyWithCardUpdate(chatID, messageID, "success", "已切换权限模式", "已切换到 "+choice+"（下次提问生效）。")
-		}()
-		return "async", "", "" // sentinel: handleSessionCommand must not notify
-	}
-	if arg == "clear" {
-		h.ensureBinding(chatID)
-		h.router.SetMode(chatID, "")
-		return "success", "已恢复默认", fmt.Sprintf("已清除自定义权限模式，将使用全局默认 %s。", h.clientDefaultMode())
-	}
-	if _, ok := settableModes[arg]; !ok {
-		return "error", "权限模式", "可选 default | auto，收到 " + arg
-	}
-	h.ensureBinding(chatID)
-	h.router.SetMode(chatID, arg)
-	return "success", "已切换权限模式", "已切换到 " + arg + "（下次提问生效）。"
 }
 
 // effortOptions is the sorted list of selectable -thinking values offered by
