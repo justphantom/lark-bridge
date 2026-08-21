@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase/linereader"
 	"github.com/justphantom/lark-bridge/internal/cmdutil"
 	"github.com/justphantom/lark-bridge/internal/eventmetrics"
+	"github.com/justphantom/lark-bridge/internal/linereader"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 

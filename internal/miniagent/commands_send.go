@@ -6,13 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // cmdSend delivers a file from the chat's active working directory into the
 // chat via the frontend (send-file-design.md). No-arg opens the directory
-// browser; a relative path sends directly. miniagent has no bridgebase.Core
+// browser; a relative path sends directly. miniagent has no Core
 // and its own picker/emit, so this reuses only the shared pure helpers
 // (SafeJoin / BuildSendOptions / ParseSendOption / ReadFilePayload) and drives
 // the askAndWait loop + sendCtrl emit off the miniagent Handler directly.
@@ -25,13 +24,13 @@ func (h *Handler) cmdSend(_ context.Context, chatID, arg string) (level, title, 
 	if dir == "" {
 		return "warning", "未设置目录", "尚未配置工作目录（WORKSPACE_ROOT 为空或未 /cd），无法发送文件。"
 	}
-	absRoot, err := bridgebase.ResolveRoot(dir)
+	absRoot, err := ResolveRoot(dir)
 	if err != nil {
 		return "error", "发送失败", "工作目录无效：" + err.Error()
 	}
 	promptID := h.PromptIDForPickers(chatID)
 	if arg != "" {
-		target, jerr := bridgebase.SafeJoin(absRoot, arg)
+		target, jerr := SafeJoin(absRoot, arg)
 		if jerr != nil {
 			return "error", "发送失败", jerr.Error()
 		}
@@ -65,7 +64,7 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 			h.notifyWithPromptID(chatID, promptID, "error", "发送失败", "读取目录失败："+err.Error())
 			return
 		}
-		options := bridgebase.BuildSendOptions(currDir, absRoot, entries)
+		options := BuildSendOptions(currDir, absRoot, entries)
 		if len(options) == 0 {
 			h.notifyWithPromptID(chatID, promptID, "warning", "发送文件", "当前目录为空。")
 			return
@@ -88,26 +87,26 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 		if pickerMsgID == "" {
 			pickerMsgID = messageID
 		}
-		kind, name := bridgebase.ParseSendOption(choice)
+		kind, name := ParseSendOption(choice)
 		switch kind {
 		case "up":
 			currDir = sendParentDirMini(currDir, absRoot)
 		case "dir":
 			// SafeJoin per transition so a symlinked (or mid-browse swapped)
 			// directory cannot walk the browser outside absRoot.
-			target, jerr := bridgebase.SafeJoin(currDir, name)
+			target, jerr := SafeJoin(currDir, name)
 			if jerr != nil {
 				h.notifyWithPromptID(chatID, promptID, "error", "发送失败", jerr.Error())
 				return
 			}
 			currDir = target
 		case "file":
-			target, jerr := bridgebase.SafeJoin(currDir, name)
+			target, jerr := SafeJoin(currDir, name)
 			if jerr != nil {
 				h.notifyWithCardUpdate(chatID, messageID, "error", "发送失败", jerr.Error())
 				return
 			}
-			// Same selected-state lock as the bridgebase flow: terminates the
+			// Same selected-state lock as the picker flow: terminates the
 			// interactive binding before the upload so no fallback can race the
 			// outcome card.
 			h.emitSelectedCard(chatID, messageID, "已选择 "+name)
@@ -121,9 +120,8 @@ func (h *Handler) runSendBrowser(chatID, promptID, absRoot string) {
 }
 
 // emitSelectedCard PATCHes the picker card into its final locked "user picked
-// X" state — miniagent's counterpart of bridgebase.Core.AskSelectedCard: a
-// single-option question card (already selected) with a fresh, never
-// registered requestID. The frontend ends any prior interactive binding on
+// X" state: a single-option question card (already selected) with a fresh,
+// never registered requestID. The frontend ends any prior interactive binding on
 // this card when it registers the refresh, so the delayed submit-fallback
 // PATCH from the just-clicked round never fires and cannot race the outcome
 // card. Best-effort: a failure leaves the prior round's card, which the
@@ -153,7 +151,7 @@ func (h *Handler) emitSelectedCard(chatID, updateMessageID, label string) {
 // re-enforced inside ReadFilePayload at read time.
 func (h *Handler) emitSendFile(chatID, absRoot, path, updateMessageID string) {
 	fileName := filepath.Base(path)
-	payload, err := bridgebase.ReadFilePayload(chatID, fileName, absRoot, path, updateMessageID)
+	payload, err := ReadFilePayload(chatID, fileName, absRoot, path, updateMessageID)
 	if err != nil {
 		h.notifyWithPromptID(chatID, "", "error", "发送失败", err.Error())
 		return
@@ -165,9 +163,7 @@ func (h *Handler) emitSendFile(chatID, absRoot, path, updateMessageID string) {
 	})
 }
 
-// sendParentDirMini moves up one level without escaping absRoot. A local copy
-// of bridgebase's helper since miniagent stays independent of the Core-based
-// package's internals.
+// sendParentDirMini moves up one level without escaping absRoot.
 func sendParentDirMini(currDir, absRoot string) string {
 	parent := filepath.Dir(currDir)
 	rel, err := filepath.Rel(absRoot, parent)

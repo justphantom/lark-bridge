@@ -10,7 +10,7 @@ import (
 
 // maxControlBody bounds the size of a POSTed Control JSON. It must accommodate
 // the largest legitimate payload: a /send TypeFile carries 30 MiB raw → ~40 MiB
-// base64 (bridgebase.MaxSendFileSize), so the cap sits at 48 MiB with headroom
+// base64 (miniagent.MaxSendFileSize), so the cap sits at 48 MiB with headroom
 // for envelope fields, while still preventing a runaway/compromised backend
 // from driving the frontend OOM.
 const maxControlBody = 48 << 20

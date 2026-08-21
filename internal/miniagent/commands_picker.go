@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
 )
 
@@ -126,7 +125,7 @@ func displayModel(provider, model string) string {
 // TakeOverProgress morph it into the picker, and the result patches the same
 // card via UpdateMessageID.
 func (h *Handler) cmdDirectory(_ context.Context, chatID, arg string) (level, title, body string) {
-	cache := bridgebase.NewDirCache(h.workspaceRoot)
+	cache := NewDirCache(h.workspaceRoot)
 	if arg == "" {
 		// Interactive picker: scan WORKSPACE_ROOT for subdirectories.
 		promptID := h.PromptIDForPickers(chatID)
@@ -181,7 +180,7 @@ func (h *Handler) cmdDirectory(_ context.Context, chatID, arg string) (level, ti
 // applyDir validates dir under WORKSPACE_ROOT, MkdirAll's it with 0o700, and
 // binds it on the chat. Returns the first failure. Split out so the picker
 // and the /cd <path> path share identical side-effects.
-func applyDir(chatID, dir string, h *Handler, cache *bridgebase.DirCache) error {
+func applyDir(chatID, dir string, h *Handler, cache *DirCache) error {
 	cleaned := filepath.Clean(dir)
 	if err := cache.Validate(cleaned); err != nil {
 		return err

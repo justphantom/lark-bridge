@@ -52,8 +52,8 @@ applies_to: 55f4bcb
 | 阶段 | 内容 | 关键点 |
 |---|---|---|
 | P0 | 本评估沉淀 L2 | 即本文件 |
-| P1 | config 拆分 + 接口迁移 | CoreConfig(log/state/ipc 共享)+各服务 embed 自己 section；ControlSender/StatusQuerier 挪到 protocol，切断 bridgebase→backendrpc + 消除 feishufront 反环注释 |
-| P2 | bridgebase 并入 miniagent | 方向定为并入（非保留）：消除虚共享层，miniagent 成自包含域包 |
+| P1 | config 拆分 + 接口迁移 | ✅已交付：按服务 Load（owned 键过滤+联合 known-set 拒顶层 typo，D5 放宽）；ControlSender/StatusQuerier 迁 protocol |
+| P2 | bridgebase 并入 miniagent | ✅已交付：原 bridgebase/* 并入 internal/miniagent（sendfile.go 因文件名冲突改名），linereader 升顶层 internal/linereader（miniclient 唯一消费者，随入会成环），bridgebase→backendrpc 依赖随之消失 |
 | P3 | feishufront 子包化 | dispatcher/ipcserver 拆出，收益可维护性 |
 
 每阶段独立提交，build/vet/lint/test 全绿，ARCHITECTURE.md 与 L2 同步。

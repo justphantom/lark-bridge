@@ -113,12 +113,10 @@ func (s *dedupSet) Prune() int {
 // frontend process) so a Prune bug cannot crash the bot. Call once per set
 // at startup; calling twice would double the sweep rate harmlessly.
 //
-// Inlined here rather than reusing bridgebase.GoSafe to keep the frontend's
-// dependency footprint free of backend-side helper packages entirely
-// (backendrpc's tests use feishufront as a fixture, so feishufront must not
-// sit above backendrpc in the import graph; bridgebase no longer imports
-// backendrpc — its seam is protocol.ControlSender now — but the frontend
-// still has no reason to reach into a backend-side package).
+// Inlined here rather than reusing a backend-side GoSafe to keep the
+// frontend's dependency footprint free of backend packages (backendrpc's
+// tests use feishufront as a fixture, so feishufront must not sit above
+// backendrpc in the import graph).
 func (s *dedupSet) StartPrune(ctx context.Context) {
 	go func() {
 		defer func() { _ = recover() }()

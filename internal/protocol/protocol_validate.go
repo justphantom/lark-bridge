@@ -190,7 +190,7 @@ func validateProgress(c *Control) error {
 
 // validateFile requires a non-empty FileName and base64 Content. ChatID is
 // covered by the rule's needsChatID on the envelope field. The Content cap
-// (30 MiB raw → ~40 MiB base64) is enforced at the producer (bridgebase) before
+// (30 MiB raw → ~40 MiB base64) is enforced at the producer (miniagent) before
 // emit, not here, so a violation surfaces as a friendly notice rather than a
 // protocol rejection mid-flight.
 func validateFile(c *Control) error {

@@ -1,4 +1,4 @@
-package bridgebase
+package miniagent
 
 import (
 	"github.com/justphantom/lark-bridge/internal/protocol"

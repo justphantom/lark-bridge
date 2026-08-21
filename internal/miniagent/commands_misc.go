@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 )
 
 // cmdRunning lists currently active turns for this chat.
@@ -25,7 +23,7 @@ func (h *Handler) cmdRunning(_ context.Context, chatID, _ string) (level, title,
 	fmt.Fprintf(&sb, "🔄 **运行中会话** (%d)\n\n", len(filtered))
 	now := time.Now()
 	for _, s := range filtered {
-		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, bridgebase.FormatDuration(now.Sub(s.StartTime)))
+		fmt.Fprintf(&sb, "- 群ID：`%s`（运行 %s）\n", s.ChatID, FormatDuration(now.Sub(s.StartTime)))
 	}
 	sb.WriteString("\n💡 如需中止，请发送 `/abort`")
 	return "info", "运行中会话", sb.String()

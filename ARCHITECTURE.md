@@ -77,7 +77,6 @@ lark-bridge/
 │   │   ├── cardkit/          #   飞书卡片元素 schema
 │   │   └── renderer/         #   progress/result/interactive 渲染器
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
-│   ├── bridgebase/           # ★ 后端通用脊梁（包级 helper：cancel/answers/commands/git/emit）
 │   ├── miniagent/            # miniagent-back 业务逻辑（handler + 命令）
 │   ├── miniclient/           # miniagent CLI 子进程封装（fork + NDJSON）
 │   ├── eventmetrics/         # 每 turn 计量（duration/tokens/incomplete）
@@ -89,7 +88,8 @@ lark-bridge/
 │   ├── streamarchive/        # 每轮 CLI stdout 原文落盘（带保留期）
 │   ├── cmdutil/              # 斜杠命令公共框架 + 子进程组取消
 │   ├── atomicwrite/          # tmp+fsync+rename 原子写
-│   └── strutil/              # 截断/脱敏/环境变量工具
+│   ├── strutil/              # 截断/脱敏/环境变量工具
+│   └── linereader/           # 有上限行读取器（miniclient pump 用）
 ├── deploy/                   # 部署脚本 + 配置模板 + systemd 示例
 ├── scripts/                  # openapi_to_md.py（外部工具，.gitignore）
 ├── bin/                      # 编译产物（gitignore）
@@ -177,45 +177,42 @@ v1.3.0 的核心改动。
 
 ### 5.3 `miniagent/`——后端业务
 
-miniagent-back 的业务逻辑。Handler 复用 `bridgebase` 的包级 helper（`PromptCancel`、`AnswerBroker`、`Commands`、`EmitTerminalControl` 等），**不嵌入任何 Core 结构**——bridgebase 已不再导出 `Core` 类型，只提供包级工具。
+miniagent-back 的业务逻辑。**2026-08-19 起 bridgebase 虚共享层整体并入本包**（其消费者历经 claude/agnes 移除后仅剩 miniagent）：原 `bridgebase/*` 的包级 helper 现为 miniagent 包内文件（见下表下半部），调用点直接用符号名，不再跨包。
 
 | 文件 | 职责 |
 |---|---|
-| `handler.go` | **`Handler`**（:46）+ `New`（:85）+ `HandleEvent` 派发（:146，Prompt/Answer/Abort/Ping，ping 回 Pong 走 `gosafe.Go` :170）。`sendCtrl`（:269）/ `sendTerminalCtrl`（:286，走 `bridgebase.EmitTerminalControl` 终态重试） |
+| `handler.go` | **`Handler`**（:46）+ `New`（:85）+ `HandleEvent` 派发（:146，Prompt/Answer/Abort/Ping，ping 回 Pong 走 `gosafe.Go` :170）。`sendCtrl`（:269）/ `sendTerminalCtrl`（:286，走包内 `EmitTerminalControl` 终态重试） |
 | `handler_cli.go` | **`runViaCLI`**（:26）：单 turn 核心——fork miniagent、流式收 NDJSON 事件、emit 终态 Control。`emitCLIEvent`（:112）把 `miniclient.Event` 翻译成 `protocol.Control`；`activeTurnConfig`（:317）解析 per-chat binding |
 | `handler_lifecycle.go` | **turn 生命周期**：`startTurn`/`endTurn`（:44/:70，busy-then-drop）、`Close`（:126，幂等 `sync.Once` + 5s grace）、`abortChat`（:153）、`RunningSessions`（:26）、`sendTurnStarted/Finished`（:86/:106） |
 | `handler_todo.go` | 每 turn todo 累加器（miniagent 的 todo 工具单条输出 → 卡片 todo 区快照） |
 | `picker.go` | 模型/目录 picker 公共逻辑 |
-| `commands.go` | 斜杠命令表 + 派发（:23-52），复用 `bridgebase.Commands` |
+| `commands.go` | 斜杠命令表 + 派发（:23-52） |
 | `commands_picker.go` | `/model` `/cd` `/config` `/effort` 选择卡 |
-| `commands_send.go` | `/send` 文件投递（复用 `bridgebase.BuildSendOptions`/`ReadFilePayload`） |
-| `commands_task.go` | `/pull` `/push` `/build`（复用 `bridgebase.TaskRunner`，原 `GitRunner`） |
+| `commands_send.go` | `/send` 文件投递（复用包内 `BuildSendOptions`/`ReadFilePayload`） |
+| `commands_task.go` | `/pull` `/push` `/build`（复用包内 `TaskRunner`，原 `GitRunner`） |
 | `commands_config.go` | `/config` 切换配置文件 |
 | `commands_settings.go` | `/maxiter` `/new` 等 |
 | `commands_misc.go` | `/current` `/help` 等 |
 
 miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/effort` `/maxiter` `/new` `/send` `/pull` `/push` `/build` `/running` `/abort` `/help`（`/running` `/abort` 在 `HandleEvent` 内早于 startTurn 派发，不占 turn 槽）。
 
-### 5.4 `bridgebase/`——后端通用脊梁
-
-**包级 helper 集合**（无 `Core` 结构）：各 agent 后端按需调用，不通过嵌入共享状态。miniagent 自己持有 router/rpc/logger/cancelBy，只在需要时调用下列工具。
+**并入自 bridgebase 的包内 helper 文件**（原 `internal/bridgebase/` 已删）：
 
 | 文件 | 职责 |
 |---|---|
 | `core.go` | **`PromptCancel`**（:11）：cancel 条目（CancelFunc/StartTime/ChatID/PromptID），各后端自管 chatID→PromptCancel 映射 |
-| `prompt_result.go` | **`EmitTerminalControl`**（:32，接缝为 `protocol.ControlSender`——2026-08-19 接口自 backendrpc 迁入 protocol，bridgebase 不再依赖 backendrpc）：终态 Control 的 send-error 重试路径（miniagent 无状态，已删 AckRegistry，纯重试） |
+| `prompt_result.go` | **`EmitTerminalControl`**（:32，接缝为 `protocol.ControlSender`——接口自 backendrpc 迁入 protocol）：终态 Control 的 send-error 重试路径（miniagent 无状态，已删 AckRegistry，纯重试） |
 | `answer.go` | **`AnswerBroker`**（:20）/ `NewAnswerBroker`（:26）：问答/权限卡的 RequestID → chan 请求-应答配对 |
 | `interactive.go` | `PickAnswerValue`（:10）：picker 应答取值（`AskAndWait`/`EmitNotice` 等交互发送逻辑已迁至 `miniagent/commands_send.go`/`commands_picker.go`） |
-| `commands_send.go` | `/send` 文件工具：`SafeJoin`/`BuildSendOptions`/`ParseSendOption`/`ReadFilePayload` |
+| `sendfile.go` | `/send` 文件工具：`SafeJoin`/`BuildSendOptions`/`ParseSendOption`/`ReadFilePayload`/`MaxSendFileSize` |
 | `dir_cache.go` | `DirCache`（:29）/ `NewDirCache`：`/cd` 工作目录扫描缓存 |
 | `taskrunner.go` | **`TaskRunner`**（原 `GitRunner`）/ `AcquireAndRun`：`/pull` `/push` `/build` 每 chat 单飞（内部 goroutine 走 `gosafe.Go` :93），支持任意命令执行 |
 | `running.go` | `FormatDuration`（:10） |
 | `toolinput.go` | `SummarizeToolInput`（:19）：工具输入摘要（提取 command/file_path 等） |
-| `linereader/` | 有上限的行读取器（miniclient pump 用于 NDJSON stdout） |
 
 > 注：历史 `ack_registry.go`（终态 ACK 跟踪）、`commands.go`（泛型 dispatcher）、`gosafe.go`、`util.go` 已删——ACK 机制整体移除（`ad84f98`）、命令 dispatch 迁至 `miniagent/commands_dispatch.go`、goroutine 启动统一走顶层 `internal/gosafe/`、`ResolveModel`/`ParseTodoItems` 等 helper 随用随并。
 
-### 5.5 `miniclient/`——CLI 驱动层
+### 5.4 `miniclient/`——CLI 驱动层
 
 封装 miniagent CLI 子进程的 fork + NDJSON 事件流解析。是已移除的 `internal/claude` 的对应物（但 miniagent 是外部二进制，不是内联 SDK）。
 
@@ -225,7 +222,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | `event.go` | **`Event`**（:40）+ 事件 kind 常量（:9-28：`tool_use`/`tool_result`/`text_delta`/`reasoning_delta`/`result`/`error`/`session`）+ `parseEvent`（:132，NDJSON 行解码，未知 type 不中断 pump） |
 | `models.go` | `ModelRef`（:36）+ `ListModels`（:60）：跑 `miniagent -list-models`，按行解析 `{"type":"model","provider","model"}`，返回 provider/model 配对 |
 
-### 5.6 `feishu/`——飞书业务封装层
+### 5.5 `feishu/`——飞书业务封装层
 
 `lark/`（协议层）与 `feishufront`（前端业务）之间的适配层。
 - `bot.go`：**`Bot`**（:97）封装 `*lark.Client`，对外签名稳定（`NewBotWithLogger`/`Start`/`Stop`/`SendCard`/`UpdateCard`/`OnIncoming`/`OnCardAction`）。`ShouldExitUnhealthy`（:301）看门狗判定。`feishuClient` interface（:18）便于测试注入 fake。
@@ -233,7 +230,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 - `bot_send.go`：`SendCard`/`SendText`/`UpdateCard`，`isCardContentRejected` 错误识别。
 - `mention.go`：`Mention` 类型 + `StripMentionPlaceholders`。
 
-### 5.7 `backendrpc/`——后端 IPC 客户端
+### 5.6 `backendrpc/`——后端 IPC 客户端
 
 | 文件 | 职责 |
 |---|---|
@@ -242,7 +239,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | `config_validate.go` | `ValidateBackendConfig`：IPC 三件套校验 |
 | `interfaces.go` | （已迁移）`ControlSender`/`StatusQuerier` 接口 2026-08-19 移至 `protocol/interfaces.go`；本文件保留 `var _ protocol.ControlSender = (*Client)(nil)` 编译期断言 |
 
-### 5.8 `config/`
+### 5.7 `config/`
 
 **按服务 Load**（2026-08-19 解耦重构）：wire 格式仍是同一份 union 文档（deploy.sh 把 base-config.json 复制派生给 3 个服务），但 Go 侧每个二进制只解码自己 owned 的顶层键——foreign section 跳过，服务间可版本偏离；顶层键 typo 由联合 known-key 集（反射收集三个服务 struct 的 json tag 并集）硬拒绝，owned section 内 typo 由过滤后文档的 `DisallowUnknownFields` 硬拒绝。
 
@@ -254,7 +251,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | `miniagent.go` | **`MiniAgentBackConfig`** = Core + MiniAgent section（+ StatusMonitor section——metrics 推送周期复用 `status_monitor.interval`）+ 自有 defaults/validate + `ResolveConfigPath`/`ResolveConfigDir` |
 | `monitor.go` | **`StatusMonitorConfig`** = Core + StatusMonitor section + `applyStatusMonitorDefaults`（interval 默认 60s） |
 
-### 5.9 `protocol/`——双向协议
+### 5.8 `protocol/`——双向协议
 
 **纯结构 + Validate，无业务逻辑**。
 - `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ payload（Prompt/Answer/Abort/Ping/TurnStarted/TurnFinished）。`PromptPayload.HasFrontendOverride`（:79）是安全护栏。
@@ -263,13 +260,13 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 - `protocol_validate.go`：enum 校验（todo.status/priority、notice.level 等）。
 - `status.go`：`StatusSnapshot`（/v1/status 响应）。
 
-### 5.10 `router/`——chatID 绑定持久化
+### 5.9 `router/`——chatID 绑定持久化
 
 - `router.go`：**`Router`**（:47）+ **`Binding`**（:26，SessionID/Directory/ModelSpec/Provider/Thinking/MaxIterations/ConfigFile 的并集）。
 - `persistence.go`：单 worker save 合并器（`saveLoop` :164，`saveAsync` :149，`save` :98；load/save 走 atomicwrite）。
 - `accessors.go`/`binding.go`：Get/Set/Lookup。`Router.Close`（`router.go:120`）关 saveLoop 后同步 save 一次防丢失。
 
-### 5.11 其余工具包
+### 5.10 其余工具包
 
 | 包 | 职责 |
 |---|---|
@@ -280,6 +277,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | `streamarchive/` | 每 turn NDJSON stdout 落盘到 `{state_dir}/streams/{backend}/`，`NewSink`（sink.go:59），保留期裁剪。**含敏感数据**（`README.md` 警告，可用 `stream_archive_redact` 字段级脱敏） |
 | `atomicwrite/` | tmp+fsync+rename+dirfsync（`Write` atomicwrite.go:33），崩溃安全。`open_flags_unix.go`/`_other.go` 平台分叉（O_NOFOLLOW） |
 | `strutil/` | `Truncate`（rune 边界，strutil.go:17）、`redact.go`（脱敏）、`env.go`（`EnvVarPattern`，env.go:11，config 与 strutil 共享避免漂移） |
+| `linereader/` | 有上限的行读取器（`New`，miniclient pump 逐行读 NDJSON stdout 用；原 `bridgebase/linereader`，bridgebase 并入 miniagent 时升顶层——唯一消费者是 miniclient，随入会成环） |
 | `hostmetrics/` | 主机 CPU/内存/磁盘采样（/proc 解析，`CollectHost` hostmetrics.go:39），供 statusmonitor 总览卡 |
 | `statusmonitor/` | 周期性总览卡数据组装（push-only，无 IPC 入站） |
 | `eventmetrics/` | 每 turn 计量（duration/input/output tokens/incomplete），供 SLO 聚合 |
@@ -393,7 +391,7 @@ miniagent.Handler.HandleEvent ........................ internal/miniagent/handle
    │               │    └─ 转 protocol.Control{ToolUse/ToolResult/Thinking/Todo/Result/Error}
    │               │       ├─ sendCtrl（非终态）.............. handler.go:268 → rpc.SendControl POST
    │               │       └─ sendTerminalCtrl（终态 Result/Error）handler.go:286
-   │               │            └─ bridgebase.EmitTerminalControl .. bridgebase/prompt_result.go:47
+   │               │            └─ EmitTerminalControl .............. miniagent/prompt_result.go
    │               │                 └─ rpc.SendControl POST ........ backendrpc/client.go:480
    │               └─ ctx 取消且无终态事件 → "已中止" Notice :105
    ├─ Answer → Answers.Deliver（权限/问答回调）...... handler.go:163
@@ -431,7 +429,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 ### 6.6 关键并发与生命周期
 
 - **TurnManager**（`feishufront/turn.go`）：每 promptID 一个 Turn 状态，`/v1/status` 数据源。
-- **cancelBy**（`miniagent/handler.go:64`）：chatID → `*bridgebase.PromptCancel` 映射，miniagent 自管；busy-then-drop 由 `startTurn`（handler_lifecycle.go:44）把关。
+- **cancelBy**（`miniagent/handler.go:64`）：chatID → `*PromptCancel` 映射，miniagent 自管；busy-then-drop 由 `startTurn`（handler_lifecycle.go:44）把关。
 - **Close 顺序**（`miniagent/handler_lifecycle.go:126`）：`appCancel` → 置 `closed` → 遍历 cancelBy 取消所有 in-flight turn → `Answers.Drain` → `wg.Wait`（5s grace），幂等 via `sync.Once`。
 - **router.Close**（`router/router.go:106`）：关 saveLoop → 同步 save 一次（防丢失）。
 
@@ -538,9 +536,10 @@ miniagent-back  status-monitor
 - **`HasFrontendOverride`**（`protocol.go:79`）：运行时护栏——前端管道不得设置 Directory/ModelSpec 等"信任源专属"字段，否则被后端拒绝（防任意 CWD 注入）。
 - 协议纯结构，新接入 agent 后端只需实现 Control 发送。
 
-### 9.3 后端通用工具脊梁（bridgebase）
+### 9.3 后端 helper 就地化（bridgebase 已并入 miniagent）
 
-bridgebase 已不再导出 `Core` 结构，改为**包级 helper 集合**：`PromptCancel`（cancel 条目）、`AnswerBroker`（问答/权限卡配对）、`Commands`/`CommandSpec`（泛型命令 dispatcher）、`EmitTerminalControl`（终态重试）、`TaskRunner`（`/pull` `/push` `/build` 单飞，支持任意命令）、`SafeJoin`/`BuildSendOptions`（`/send`）、`SummarizeToolInput`、`AskAndWait`/`EmitNotice` 等。各后端**按需调用**这些工具、自管 router/rpc/cancel 状态，而非嵌入共享结构。新增 agent 后端成本可控（miniagent 是范例：自持 `Handler`，仅在需要处调用 bridgebase helper）。
+`internal/bridgebase/`（虚共享层——agnes/claude 后端移除后消费者仅剩 miniagent）2026-08-19 整体并入 `internal/miniagent/`：`PromptCancel`/`AnswerBroker`/`EmitTerminalControl`/`TaskRunner`/`SafeJoin`/`BuildSendOptions`/`SummarizeToolInput` 等成为 miniagent 包内符号，调用点去 `bridgebase.` 前缀；`linereader` 子包升为顶层 `internal/linereader`（唯一消费者是 miniclient，不能随入 miniagent 否则环）。判定虚共享层的经验：单消费者的"共享"层是死抽象，并入真正消费方更诚实——代价是 miniagent 包变大，但依赖图少一层间接。
+
 
 ### 9.4 零外部依赖
 

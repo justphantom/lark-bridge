@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/miniclient"
@@ -47,7 +46,7 @@ type Handler struct {
 	rpc             controlSender
 	logger          *log.Logger
 	router          *router.Router // per-chat Directory/ModelSpec bindings; nil only in tests
-	answers         *bridgebase.AnswerBroker
+	answers         *AnswerBroker
 	workspaceRoot   string             // global default for the /cd picker scope
 	cfgModel        string             // global default model (from config)
 	cfgProvider     string             // global default provider (from config); paired with cfgModel
@@ -57,13 +56,13 @@ type Handler struct {
 	stateDir        string             // streams root dir
 	sessionRoot     string             // [P3] {stateDir}/miniagent-sessions, holds per-chat chatID→sessionID ".id" mappings
 	configDir       string             // directory scanned by /config picker (default ~/.miniagent)
-	runner          *bridgebase.TaskRunner
+	runner          *TaskRunner
 	pickerPromptIDs sync.Map // chatID → promptID, for async picker goroutines
 
 	cancelMu  sync.Mutex
-	cancelBy  map[string]*bridgebase.PromptCancel // chatID → in-flight turn
-	closed    bool                                // set under cancelMu by Close; rejects new startTurn
-	wg        sync.WaitGroup                      // tracks runTurn goroutines
+	cancelBy  map[string]*PromptCancel // chatID → in-flight turn
+	closed    bool                     // set under cancelMu by Close; rejects new startTurn
+	wg        sync.WaitGroup           // tracks runTurn goroutines
 	closeOnce sync.Once
 
 	// appCtx is the process-lifetime context for sendTerminalCtrl's retry
@@ -90,7 +89,7 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		rpc:           rpc,
 		logger:        logger,
 		router:        r,
-		answers:       bridgebase.NewAnswerBroker(),
+		answers:       NewAnswerBroker(),
 		workspaceRoot: workspaceRoot,
 		cfgModel:      cfgModel,
 		cfgProvider:   cfgProvider,
@@ -99,8 +98,8 @@ func New(rpc controlSender, logger *log.Logger, r *router.Router, workspaceRoot,
 		streamHistory: streamHistory,
 		archiveRedact: archiveRedact,
 		stateDir:      stateDir,
-		runner:        bridgebase.NewTaskRunner(bridgebase.ExecCommander{}, logger, 0),
-		cancelBy:      make(map[string]*bridgebase.PromptCancel),
+		runner:        NewTaskRunner(ExecCommander{}, logger, 0),
+		cancelBy:      make(map[string]*PromptCancel),
 	}
 	// [P3] sessionRoot holds per-chat jsonl. Only set when stateDir is non-empty:
 	// filepath.Join("", "miniagent-sessions") would yield a relative path, which
@@ -277,14 +276,14 @@ func (h *Handler) sendCtrl(ctrl *protocol.Control) {
 }
 
 // sendTerminalCtrl emits a TERMINAL control (TypeResult / TypeError) through
-// bridgebase.EmitTerminalControl's retry path so a lost final reply is re-sent
+// EmitTerminalControl's retry path so a lost final reply is re-sent
 // instead of dropped on a single failed POST (pure retry-on-send-error: a
 // successful POST is "delivered"); h.appCtx cancels the backoff on Close.
 // Non-terminal controls (notice / progress / tool signals) stay on the
 // single-shot sendCtrl — only the final reply and error warrant the retry
 // budget.
 func (h *Handler) sendTerminalCtrl(ctrl *protocol.Control) {
-	if err := bridgebase.EmitTerminalControl(h.logger, h.rpc, h.appCtx, ctrl.PromptID, ctrl.ChatID, ctrl); err != nil {
+	if err := EmitTerminalControl(h.logger, h.rpc, h.appCtx, ctrl.PromptID, ctrl.ChatID, ctrl); err != nil {
 		h.logger.Warn("miniagent terminal emit failed",
 			log.FieldChatID, ctrl.ChatID, log.FieldPromptID, ctrl.PromptID,
 			log.FieldControlType, ctrl.Type, log.FieldError, err)

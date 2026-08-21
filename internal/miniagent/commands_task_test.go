@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 )
 
@@ -39,7 +38,7 @@ func (f *fakeCommander) snapshot() (called bool, dir, name string, args []string
 func newMiniTaskHandler(t *testing.T, cmd *fakeCommander, workspaceRoot string) *Handler {
 	t.Helper()
 	h := New(&captureSender{}, log.Nop(), nil, workspaceRoot, "test-model", "", nil, "", 0, "", false)
-	h.runner = bridgebase.NewTaskRunner(cmd, nil, 0)
+	h.runner = NewTaskRunner(cmd, nil, 0)
 	return h
 }
 

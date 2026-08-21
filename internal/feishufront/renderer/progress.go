@@ -41,7 +41,7 @@ const maxToolOutputLen = 50
 const maxToolNameLen = 50
 
 // maxToolDescLen caps a tool row's description (the input summary produced by
-// bridgebase.SummarizeToolInput). Without it a long shell command, deep file
+// miniagent.SummarizeToolInput). Without it a long shell command, deep file
 // path, or MCP parameter value can dominate the row.
 const maxToolDescLen = 50
 

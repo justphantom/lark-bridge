@@ -29,6 +29,8 @@ applies_to: HEAD (config 按服务 Load 重构后)
 ## 验证门（全过才算完，见 L0 #9）
 `go build ./...` → `go vet ./...` → `./deploy/tests/smoke.sh` → `go test -race ./...` → `golangci-lint run ./...`（0 issue）。
 
+> ⚠️ 历史注记（2026-08-19）：`internal/bridgebase/` 已整体并入 `internal/miniagent/`（虚共享层收口，见 decoupling-assessment P2）；下文 bridgebase 死叶/保留建议写于该层尚存时，现仅作历史参考。
+
 ## 保留 vs 清理的两档
 - **留共享层（B）**：config.<X> 结构体、bridgebase 死叶符号、router 字段、文档全留作 dormant/stale。低风险。
 - **全量清零（C）**：额外删 config.<X> + bridgebase 死叶 + router 字段 + 重写文档。**必须**同时重构 config.example.json base 派生；router 字段删除可能破坏已部署状态文件。高风险，仅在确认无隐藏引用时做。

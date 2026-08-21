@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -39,9 +38,9 @@ func (h *Handler) RunningSessions() []RunningSession {
 // from the process ctx so Close can cancel it, and the wg is incremented so
 // Close waits for this turn.
 //
-// Uses bridgebase.PromptCancel (the shared shape every CLI backend's
+// Uses PromptCancel (the shared shape every CLI backend's
 // cancel entry shares) — the local copy was byte-identical.
-func (h *Handler) startTurn(ctx context.Context, chatID, promptID string) (turnCtx context.Context, mine *bridgebase.PromptCancel, ok bool) {
+func (h *Handler) startTurn(ctx context.Context, chatID, promptID string) (turnCtx context.Context, mine *PromptCancel, ok bool) {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()
 	// After Close, reject new turns so the wg.Wait in Close is not held open
@@ -54,7 +53,7 @@ func (h *Handler) startTurn(ctx context.Context, chatID, promptID string) (turnC
 		return nil, nil, false
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
-	mine = &bridgebase.PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID, PromptID: promptID}
+	mine = &PromptCancel{Cancel: cancel, StartTime: time.Now(), ChatID: chatID, PromptID: promptID}
 	h.cancelBy[chatID] = mine
 	h.wg.Add(1)
 	// Announce the turn to the frontend so the running-session set stays
@@ -67,7 +66,7 @@ func (h *Handler) startTurn(ctx context.Context, chatID, promptID string) (turnC
 // endTurn releases the per-chat slot only if it still points at mine (a
 // later Close or superceding turn may have already cleared it). Always
 // decrements wg to match startTurn's Add.
-func (h *Handler) endTurn(chatID string, mine *bridgebase.PromptCancel) {
+func (h *Handler) endTurn(chatID string, mine *PromptCancel) {
 	h.cancelMu.Lock()
 	if cur, ok := h.cancelBy[chatID]; ok && cur == mine {
 		delete(h.cancelBy, chatID)
@@ -148,8 +147,7 @@ func (h *Handler) Close() {
 // abortChat cancels the in-flight turn for chatID, if any. Returns whether a
 // turn was running. It does NOT delete the cancelBy entry: the goroutine that
 // owns the slot (startTurn's caller) will endTurn on its own as it unwinds,
-// and deleting here would make endTurn's `cur == mine` check fail to clean
-// up. Mirrors bridgebase.Core.AbortChat's contract.
+// and deleting here would make endTurn's `cur == mine` check fail to clean up.
 func (h *Handler) abortChat(chatID string) bool {
 	h.cancelMu.Lock()
 	defer h.cancelMu.Unlock()

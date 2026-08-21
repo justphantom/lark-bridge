@@ -1,7 +1,7 @@
 // Package gosafe provides Go, a goroutine launcher that recovers from panics
 // so a stray bug in a long-lived goroutine cannot crash the process. It is the
 // single home for the panic-safe-launch pattern previously duplicated in
-// bridgebase and backendrpc.
+// miniagent, statusmonitor, and backendrpc.
 package gosafe
 
 import (

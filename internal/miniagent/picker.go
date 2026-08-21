@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -15,10 +14,10 @@ import (
 // interactive cards expire on the frontend; this only needs to outlast that.
 const askWaitTimeout = 9 * time.Minute
 
-// The AnswerBroker lives in bridgebase (shared with the CLI agent bridges);
-// miniagent composes that part instead of duplicating it. Local helper
-// functions below (pickAnswerValue / newRequestID) wrap its API for the
-// picker flow.
+// The AnswerBroker (answer.go) is a miniagent-local type: the bridgebase
+// shared layer dissolved into this package in the 2026-08-19 merge. Local
+// helper functions below (pickAnswerValue / newRequestID) wrap its API for
+// the picker flow.
 
 // askAndWait emits a TypeQuestion card with the given options, then blocks
 // until the user answers (via the frontend card → TypeAnswer event → broker
@@ -73,7 +72,7 @@ func (h *Handler) askAndWait(ctx context.Context, chatID, promptID, label string
 		if !ok {
 			return "", "", fmt.Errorf("服务正在关闭，请稍后重试")
 		}
-		choice := bridgebase.PickAnswerValue(ans)
+		choice := PickAnswerValue(ans)
 		if choice == "" {
 			return "", "", fmt.Errorf("未选择任何%s", label)
 		}
@@ -123,7 +122,7 @@ func (h *Handler) askCardUpdate(ctx context.Context, chatID, updateMessageID, la
 		if !ok {
 			return "", "", fmt.Errorf("服务正在关闭，请稍后重试")
 		}
-		choice := bridgebase.PickAnswerValue(ans)
+		choice := PickAnswerValue(ans)
 		if choice == "" {
 			return "", "", fmt.Errorf("未选择任何%s", label)
 		}
