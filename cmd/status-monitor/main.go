@@ -42,7 +42,7 @@ func main() {
 }
 
 func run(cfgPath string) error {
-	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
+	cfg, cfgWarns, err := config.LoadStatusMonitorWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}

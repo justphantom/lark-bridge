@@ -22,37 +22,37 @@ func TestValidateIPCTLS(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		mutate  func(*Config)
+		mutate  func(*Core)
 		wantErr string
 	}{
-		{"loopback without TLS ok", func(c *Config) { c.IPCAddr = "127.0.0.1:6060" }, ""},
-		{"empty addr without TLS ok", func(c *Config) {}, ""},
-		{"non-loopback without TLS rejected", func(c *Config) { c.IPCAddr = "0.0.0.0:6060" }, "non-loopback"},
-		{"all-interfaces implicit host rejected", func(c *Config) { c.IPCAddr = ":6060" }, "non-loopback"},
-		{"non-loopback with TLS ok", func(c *Config) {
+		{"loopback without TLS ok", func(c *Core) { c.IPCAddr = "127.0.0.1:6060" }, ""},
+		{"empty addr without TLS ok", func(c *Core) {}, ""},
+		{"non-loopback without TLS rejected", func(c *Core) { c.IPCAddr = "0.0.0.0:6060" }, "non-loopback"},
+		{"all-interfaces implicit host rejected", func(c *Core) { c.IPCAddr = ":6060" }, "non-loopback"},
+		{"non-loopback with TLS ok", func(c *Core) {
 			c.IPCAddr = "0.0.0.0:6060"
 			c.IPCTLSCertFile, c.IPCTLSKeyFile = cert, key
 		}, ""},
-		{"cert without key rejected", func(c *Config) { c.IPCTLSCertFile = cert }, "together"},
-		{"key without cert rejected", func(c *Config) { c.IPCTLSKeyFile = key }, "together"},
-		{"CA without pair rejected", func(c *Config) { c.IPCTLSClientCAFile = ca }, "requires"},
-		{"missing cert file rejected", func(c *Config) {
+		{"cert without key rejected", func(c *Core) { c.IPCTLSCertFile = cert }, "together"},
+		{"key without cert rejected", func(c *Core) { c.IPCTLSKeyFile = key }, "together"},
+		{"CA without pair rejected", func(c *Core) { c.IPCTLSClientCAFile = ca }, "requires"},
+		{"missing cert file rejected", func(c *Core) {
 			c.IPCTLSCertFile, c.IPCTLSKeyFile = filepath.Join(dir, "gone.pem"), key
 		}, "ipc_tls_cert_file"},
-		{"full mTLS ok", func(c *Config) {
+		{"full mTLS ok", func(c *Core) {
 			c.IPCAddr = "10.0.0.5:6060"
 			c.IPCTLSCertFile, c.IPCTLSKeyFile, c.IPCTLSClientCAFile = cert, key, ca
 		}, ""},
-		{"backend client cert without key rejected", func(c *Config) { c.IPCTLSClientCertFile = cert }, "together"},
-		{"backend CA file missing rejected", func(c *Config) { c.IPCTLSCAFile = filepath.Join(dir, "gone.pem") }, "ipc_tls_ca_file"},
-		{"backend TLS client ok", func(c *Config) {
+		{"backend client cert without key rejected", func(c *Core) { c.IPCTLSClientCertFile = cert }, "together"},
+		{"backend CA file missing rejected", func(c *Core) { c.IPCTLSCAFile = filepath.Join(dir, "gone.pem") }, "ipc_tls_ca_file"},
+		{"backend TLS client ok", func(c *Core) {
 			c.IPCTLSCAFile = ca
 			c.IPCTLSClientCertFile, c.IPCTLSClientKeyFile = cert, key
 		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &Config{}
+			cfg := &Core{}
 			tc.mutate(cfg)
 			err := validateIPCTLS(cfg)
 			if tc.wantErr == "" && err != nil {
@@ -102,9 +102,9 @@ func TestLoadWithWarnings_SecretPerm(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := write(tc.body, tc.mode)
-			_, warns, err := LoadWithWarnings(path)
+			_, warns, err := LoadFeishuFrontWithWarnings(path)
 			if err != nil {
-				t.Fatalf("LoadWithWarnings: %v", err)
+				t.Fatalf("LoadFeishuFrontWithWarnings: %v", err)
 			}
 			if len(warns) != tc.wantWarns {
 				t.Fatalf("warnings = %v, want %d", warns, tc.wantWarns)

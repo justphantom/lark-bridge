@@ -44,7 +44,7 @@
 | 外部依赖 | **无**（仅标准库） | `go.mod` 无 `require`；无 `go.sum` |
 | 飞书对接 | **自实现** RFC 6455 WebSocket 客户端 + 手写 protobuf 帧编解码 + REST | `internal/lark/` |
 | 日志 | 标准库 `log/slog` 封装 | `internal/log/logger.go:29`（`type Logger = slog.Logger`） |
-| 配置 | JSON + `${VAR}` 环境变量展开 | `internal/config/config.go:435` |
+| 配置 | JSON + `${VAR}` 环境变量展开 + 按服务 section 解码 | `internal/config/` |
 | HTTP/IPC | 标准库 `net/http`（SSE 长连接 + POST） | `internal/feishufront/ipcserver_sse.go:16` |
 | 构建工具 | GNU Make（git 版本号注入 `-X main.version`） | `Makefile:35`、build targets `Makefile:49-67` |
 | 部署 | systemd unit + shell 脚本 | `deploy/deploy.sh` |
@@ -116,7 +116,7 @@ lark-bridge/
 
 ## 4. `cmd/` 入口点
 
-3 个二进制共享一致的骨架：`flag.Parse → config.Load → buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
+3 个二进制共享一致的骨架：`flag.Parse → config.LoadXxx（按服务解码）→ buildLogger → 校验 IPC 三件套 → 组装依赖 → signal.NotifyContext → 阻塞运行`。入口都极薄（~130-270 行），仅做依赖注入。
 
 | 二进制 | 入口文件 | 产物名 | 职责 | 关键依赖装配 |
 |---|---|---|---|---|
@@ -203,7 +203,7 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | 文件 | 职责 |
 |---|---|
 | `core.go` | **`PromptCancel`**（:11）：cancel 条目（CancelFunc/StartTime/ChatID/PromptID），各后端自管 chatID→PromptCancel 映射 |
-| `prompt_result.go` | **`EmitTerminalControl`**（:33）：终态 Control 的 send-error 重试路径（miniagent 无状态，已删 AckRegistry，纯重试） |
+| `prompt_result.go` | **`EmitTerminalControl`**（:32，接缝为 `protocol.ControlSender`——2026-08-19 接口自 backendrpc 迁入 protocol，bridgebase 不再依赖 backendrpc）：终态 Control 的 send-error 重试路径（miniagent 无状态，已删 AckRegistry，纯重试） |
 | `answer.go` | **`AnswerBroker`**（:20）/ `NewAnswerBroker`（:26）：问答/权限卡的 RequestID → chan 请求-应答配对 |
 | `interactive.go` | `PickAnswerValue`（:10）：picker 应答取值（`AskAndWait`/`EmitNotice` 等交互发送逻辑已迁至 `miniagent/commands_send.go`/`commands_picker.go`） |
 | `commands_send.go` | `/send` 文件工具：`SafeJoin`/`BuildSendOptions`/`ParseSendOption`/`ReadFilePayload` |
@@ -240,20 +240,26 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 | `client.go` | **`Client`**（:180）：SSE 长连接读 Event + POST 写 Control。`Connect`（:260）、`readSSE`（:378）、`RecvEvent`（:463）、`SendControl`（:480）、`Status`（:628）、`Close`（:661）；事件经 `eventCh`（:198） |
 | `reconnect.go` | **`Run`**（:58）/ `RunWithClient`（:84）：带指数退避 + 抖动的重连循环，`ErrGiveUpReconnect`（:47）连续失败放弃 |
 | `config_validate.go` | `ValidateBackendConfig`：IPC 三件套校验 |
+| `interfaces.go` | （已迁移）`ControlSender`/`StatusQuerier` 接口 2026-08-19 移至 `protocol/interfaces.go`；本文件保留 `var _ protocol.ControlSender = (*Client)(nil)` 编译期断言 |
 
 ### 5.8 `config/`
 
+**按服务 Load**（2026-08-19 解耦重构）：wire 格式仍是同一份 union 文档（deploy.sh 把 base-config.json 复制派生给 3 个服务），但 Go 侧每个二进制只解码自己 owned 的顶层键——foreign section 跳过，服务间可版本偏离；顶层键 typo 由联合 known-key 集（反射收集三个服务 struct 的 json tag 并集）硬拒绝，owned section 内 typo 由过滤后文档的 `DisallowUnknownFields` 硬拒绝。
+
 | 文件 | 职责 |
 |---|---|
-| `config.go` | **`Config`** 顶层结构（:32）+ 各后端子结构（StatusMonitor/MiniAgent，无 Claude/Agnes 字段）+ `Load`（:468）/ `LoadWithWarnings`（:477）+ `expandEnvVars`（:435，5 步 pipeline 见 :10 注释） |
-| `config_defaults.go` | `applyDefaults`（:14）：所有零值字段的默认值 |
-| `config_validate.go` | `validate`（:37）：跨字段一致性校验 |
+| `config.go` | 按服务 Load 入口：**`LoadFeishuFront` / `LoadMiniAgentBack` / `LoadStatusMonitor`**（+ 各 WithWarnings 变体）+ `loadService`（读→警告→`${VAR}` 展开→顶层键过滤→严格解码）+ `ownedKeys`/`allKnownKeys`（反射收集）+ `expandEnvVars` + `secretPermWarnings` |
+| `core.go` | **`Core`** 共享结构（IPC/BackendID/FrontendURL/TLS×6/RouterPath/Log×4/StateDir/Timeouts/StreamArchiveRedact；embed 后 JSON 扁平解码）+ `applyCoreDefaults`/`validateCore`（含 `validateIPCTLS` M10-1）+ `RedactStreams()` |
+| `feishu.go` | **`FeishuFrontConfig`** = Core + FeishuCreds + Dedup/Renderer/FileConvert sections + 自有 defaults/validate（含 file_convert 模板语法校验） |
+| `miniagent.go` | **`MiniAgentBackConfig`** = Core + MiniAgent section（+ StatusMonitor section——metrics 推送周期复用 `status_monitor.interval`）+ 自有 defaults/validate + `ResolveConfigPath`/`ResolveConfigDir` |
+| `monitor.go` | **`StatusMonitorConfig`** = Core + StatusMonitor section + `applyStatusMonitorDefaults`（interval 默认 60s） |
 
 ### 5.9 `protocol/`——双向协议
 
 **纯结构 + Validate，无业务逻辑**。
 - `protocol.go`：**`Event`**（:18，前端→后端，SSE）+ payload（Prompt/Answer/Abort/Ping/TurnStarted/TurnFinished）。`PromptPayload.HasFrontendOverride`（:79）是安全护栏。
 - `protocol_control.go`：**`Control`**（:6，后端→前端，POST）+ 14 类 payload（含 `TypeFile`：后端→前端投递文件；`QuestionPayload.UpdateMessageID`：原地刷新既有 picker 卡；`TypeTurnStarted`/`TypeTurnFinished` 用于运行中会话对账）。
+- `interfaces.go`：**`ControlSender` / `StatusQuerier`** 能力接口（2026-08-19 从 backendrpc 迁入——接口只依赖 context + protocol 类型，放契约包使后端依赖接缝而非传输层；`*backendrpc.Client` 经编译期断言满足）。
 - `protocol_validate.go`：enum 校验（todo.status/priority、notice.level 等）。
 - `status.go`：`StatusSnapshot`（/v1/status 响应）。
 
@@ -284,22 +290,24 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 
 以"用户在飞书群 @机器人 发消息 → miniagent-back 处理 → 回复卡片"为例，标注关键文件:行号。
 
-### 6.1 配置加载（所有二进制共享）
+### 6.1 配置加载（所有二进制，按服务 Load）
 
 ```
 cmd/*/main.go: main()
-   └─ config.Load(cfgPath)                              internal/config/config.go:468
+   └─ config.LoadXxx(WithWarnings)(cfgPath)              internal/config/config.go
         ├─ os.ReadFile
-        ├─ expandEnvVars(raw)                            :435  ← ${VAR} 展开，空值报错
-        ├─ json.NewDecoder + DisallowUnknownFields       :497  ← 拼写错误硬拒绝
-        ├─ applyDefaults(&cfg, path)                    config_defaults.go:14
-        └─ validate(&cfg)                               config_validate.go:37
+        ├─ secretPermWarnings                            ← 明文 secret + 宽权限警告
+        ├─ expandEnvVars(raw)                            ← ${VAR} 展开，空值报错
+        ├─ 顶层键拆分 → allKnownKeys 校验                 ← 顶层 typo 硬拒绝（三服务 struct 并集）
+        ├─ 过滤 foreign section → DisallowUnknownFields  ← owned section 内 typo 硬拒绝
+        ├─ applyCoreDefaults + applyXxxDefaults
+        └─ validateCore + validateXxx
 ```
 
 ### 6.2 前端启动（`cmd/feishu-front/main.go:83 run()`）
 
 ```
-config.LoadWithWarnings ................................ :84
+config.LoadFeishuFrontWithWarnings ..................... :84
 buildLogger(cfg) ....................................... :95
 feishu.NewBotWithLogger(appID, appSecret, logger, ...) .. :110   ← 内部 lark.NewClient
 feishufront.NewLayer1Router(routingPath) ................ :124   ← routing.json 持久化
@@ -431,11 +439,11 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ## 7. 配置体系
 
-### 7.1 加载 pipeline（config.go:10 注释）
+### 7.1 加载 pipeline（config.go 包注释）
 
-`readRaw → expandEnvVars → json.Unmarshal(DisallowUnknownFields) → applyDefaults → validate`
+`readRaw → secretPermWarnings → expandEnvVars → 顶层键拆分（allKnownKeys 拒未知）→ 过滤 foreign section → 严格解码(DisallowUnknownFields) → applyCoreDefaults+applyXxx → validateCore+validateXxx`
 
-### 7.2 顶层结构（`config.example.json` + `config.go:32`）
+### 7.2 顶层结构（`config.example.json`；wire 为 union，Go 侧各服务只解码 owned 键）
 
 | 字段 | 所属二进制 | 说明 |
 |---|---|---|
@@ -458,7 +466,7 @@ bot.UpdateCard / SendCard → lark REST PatchMessage / SendMessage
 
 ### 7.3 配置特点
 
-1. **`${VAR}` 环境变量展开**（`config.go:435`）：机密走环境变量不进 JSON；未设置或空值报错退出；值做 JSON escape 防 secret 破坏 JSON 结构。
+1. **`${VAR}` 环境变量展开**（`config.go` expandEnvVars）：机密走环境变量不进 JSON；未设置或空值报错退出；值做 JSON escape 防 secret 破坏 JSON 结构。
 2. **DisallowUnknownFields**（`config.go:497`）：拼错字段名硬拒绝，避免"已改未生效"陷阱。
 3. **单文件共享 or 分文件**：进程各取所需字段，跨二进制必填校验在各自 `main.go`（如 miniagent-back 校验 `api_key`/`model`/`workspace_root`/`config_path`，`cmd/miniagent-back/main.go:77-103`）。
 4. **Duration 自定义类型**（`config.go:243`）：JSON 编码为 `"5m"` 而非纳秒，负值拒绝。

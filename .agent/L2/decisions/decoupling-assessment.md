@@ -1,0 +1,62 @@
+---
+layer: L2
+type: decision
+tags: [decoupling, dependency-graph, config-split, interface-seam, bridgebase, feishufront, refactor-campaign]
+created: 2026-08-19
+confidence: high
+verified_at: 2026-08-19
+applies_to: 55f4bcb
+---
+
+# 解耦程度评估与重构战役决策
+
+## 背景
+用户要求深入评估项目解耦程度。基于 `go list` 权威非测试 import 图 + 关键接缝核查（bridgebase 消费者、router 语义、config 结构、protocol/backendrpc 契约面）得出结论，并拍板四阶段重构战役。
+
+## 评估结论：整体良好
+强隔离在关键缝上是有意识设计的结果；债务集中两处（config 单体、bridgebase 虚共享层）。
+
+## 依赖图（严格 DAG，无环）
+```
+叶(0依赖)   protocol log strutil cmdutil eventmetrics atomicwrite
+中          gosafe→log  streamarchive→log  config→strutil
+            lark→lark/ws→lark/websocket  fileconvert→strutil  router→atomicwrite,log
+高          backendrpc→gosafe,hostmetrics,log,protocol ★传输层
+            feishu→lark,log  feishufront/renderer→cardkit,protocol
+            bridgebase→backendrpc,cmdutil,eventmetrics,gosafe,log,protocol
+            miniclient→bridgebase/linereader,cmdutil,eventmetrics,log
+顶          feishufront→feishu,cardkit,renderer,fileconvert,protocol,…
+            miniagent→bridgebase,backendrpc,miniclient,router,protocol,…
+            statusmonitor→backendrpc,protocol
+装配        cmd/{feishu-front,miniagent-back,status-monitor}→config+各自域包
+```
+
+## 强项（按含金量）
+1. **外部依赖零**：go.mod 仅 module 行 + go 1.25.0，无 go.sum，飞书 SDK/WS/SSE 全自实现。
+2. **前后端隔离最强缝**：feishufront 的 import 零后端代码（无 backendrpc/miniagent/miniclient），只认 protocol 契约 + registry 动态注册（BackendID/BackendType 字符串）。新增第三种后端前端零改动——agnes/claude 两次整体移除未碰 feishufront 即证明。
+3. **传输层接口化**：backendrpc.ControlSender/StatusQuerier 接口 + `var _ ControlSender = (*Client)(nil)` 编译期断言；miniagent 用 `type controlSender = backendrpc.ControlSender` 别名持接口。
+4. **后端对飞书零反向依赖**：miniagent 不 import feishu/lark/feishufront。
+5. **反环被文档化守护**：feishufront/dedup.go:117 显式注明"backendrpc 测试用 feishufront 做 fixture，故 feishufront 不得 import bridgebase"。
+
+## 债务（按修复价值）
+1. **config 单体**：三服务共享同一 union struct（feishu 凭证+IPC+TLS+miniagent+status_monitor+日志…），字段归属仅靠注释约定。加字段三服务全重编译；DisallowUnknownFields 下字段演进是全局事件。deploy 拆了 3 文件但类型层没拆。
+2. **bridgebase 虚共享层**：1832 行"共享助手层"，agnes/claude 删除后消费者只剩 miniagent（7 文件 import）。唯一真跨切面接缝 EmitTerminalControl 因接口定义在 backendrpc 包，拉出 bridgebase→backendrpc 整包依赖 + feishufront 反环约束。
+3. **feishufront 巨包**：21 文件 ~11.6k 行（约占全项目 2/3），dispatcher/卡片渲染/IPC server/dedup 同包。cardkit/renderer 已子包化，dispatcher 主体未分。
+4. **protocol 胖契约**（可接受）：~780 行非测试，单一契约包合理形态，不算真债。
+5. **库化 N/A**：全在 internal/ 下——应用定位（3 binaries）无外部复用场景，正确选择而非债。
+
+## 评分
+外部依赖★★★★★ / 前后端隔离★★★★★ / 传输-业务接缝★★★★☆ / 配置隔离★★☆☆☆ / 共享层抽象★★☆☆☆ / 包粒度★★★☆☆
+
+## 决策：四阶段重构战役（用户拍板顺序）
+| 阶段 | 内容 | 关键点 |
+|---|---|---|
+| P0 | 本评估沉淀 L2 | 即本文件 |
+| P1 | config 拆分 + 接口迁移 | CoreConfig(log/state/ipc 共享)+各服务 embed 自己 section；ControlSender/StatusQuerier 挪到 protocol，切断 bridgebase→backendrpc + 消除 feishufront 反环注释 |
+| P2 | bridgebase 并入 miniagent | 方向定为并入（非保留）：消除虚共享层，miniagent 成自包含域包 |
+| P3 | feishufront 子包化 | dispatcher/ipcserver 拆出，收益可维护性 |
+
+每阶段独立提交，build/vet/lint/test 全绿，ARCHITECTURE.md 与 L2 同步。
+
+## 参考
+- 接缝核查证据：`go list -f ... ./internal/...`；bridgebase 消费者 grep；feishufront/dedup.go:117 反环注释

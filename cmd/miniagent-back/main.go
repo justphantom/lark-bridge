@@ -55,7 +55,7 @@ func main() {
 }
 
 func run(cfgPath string) error {
-	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
+	cfg, cfgWarns, err := config.LoadMiniAgentBackWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -249,6 +249,6 @@ func runningSessionsToTurnInfo(sessions []miniagent.RunningSession) []protocol.T
 	return out
 }
 
-func buildLogger(cfg *config.Config) (*log.Logger, error) {
+func buildLogger(cfg *config.MiniAgentBackConfig) (*log.Logger, error) {
 	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "miniagent")
 }

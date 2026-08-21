@@ -39,11 +39,13 @@ updated: 2026-08-19T00:00:00+08:00
 | `diagnostics` `control-flow` | [diagnostic-logging](L2/patterns/diagnostic-logging.md) |
 | `race-condition` `terminal-state` `inflight-turn` | [inflight-turn-consistency](L2/patterns/inflight-turn-consistency.md)、[feishu-card-bounce-back](L2/incidents/feishu-card-bounce-back.md)、[card-terminal-state-guard](L2/patterns/card-terminal-state-guard.md)（⚠️historical） |
 | `agnes-ai` | [agnes-api-integration](L2/patterns/agnes-api-integration.md)（⚠️historical）、[agnes-override-handler-layer](L2/patterns/agnes-override-handler-layer.md)（⚠️historical） |
+| `decoupling` `dependency-graph` `config-split` `interface-seam` | [decoupling-assessment](L2/decisions/decoupling-assessment.md)（决策：评估+四阶段重构战役） |
 
 ### 全部条目
 - [incidents/feishu-card-bounce-back.md](L2/incidents/feishu-card-bounce-back.md) — `/send` 文件卡片回弹事故
 - [incidents/schema2-card-action-regression.md](L2/incidents/schema2-card-action-regression.md) — schema 2.0 全量切换后交互卡片回调失效
 - [decisions/cardkit-migration.md](L2/decisions/cardkit-migration.md) — 迁移到 CardKit 实体 API 决策
+- [decisions/decoupling-assessment.md](L2/decisions/decoupling-assessment.md) — 解耦程度评估 + 四阶段重构战役决策
 - [patterns/miniagent-integration.md](L2/patterns/miniagent-integration.md) — Miniagent 对接模式与缺口
 - [patterns/miniagent-session-archive.md](L2/patterns/miniagent-session-archive.md) — Miniagent 会话 JSONL 解析与清理
 - [patterns/inflight-turn-consistency.md](L2/patterns/inflight-turn-consistency.md) — 前后端运行中 Turn 一致性模型

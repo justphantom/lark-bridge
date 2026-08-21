@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/bridgebase"
 	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -18,10 +17,11 @@ import (
 	"github.com/justphantom/lark-bridge/internal/router"
 )
 
-// controlSender is the subset of *backendrpc.Client the handler needs.
-// Lifted to internal/backendrpc.ControlSender in phase 3.2; aliased here so
-// miniagent's existing call sites stay readable without a wide import sweep.
-type controlSender = backendrpc.ControlSender
+// controlSender is the subset of *backendrpc.Client the handler needs to POST
+// a Control. Aliased from the protocol seam (ControlSender now lives in
+// protocol, not backendrpc) so the backend depends on the contract, not the
+// transport, and a test fake needs only protocol.
+type controlSender = protocol.ControlSender
 
 // Handler owns the per-process bridge state: the IPC sender, the CLI
 // subprocess client (one fork per turn), the per-chat binding router, and

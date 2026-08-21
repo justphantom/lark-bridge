@@ -14,17 +14,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/gosafe"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
-// controlSender / statusQuerier are lifted to internal/backendrpc (shared
-// with miniagent). Local type aliases keep the call sites
-// readable.
-type controlSender = backendrpc.ControlSender
-type statusQuerier = backendrpc.StatusQuerier
+// controlSender / statusQuerier are the protocol seam (lived in backendrpc
+// before; moved to protocol so this backend depends on the contract, not the
+// transport). Local type aliases keep the call sites readable.
+type controlSender = protocol.ControlSender
+type statusQuerier = protocol.StatusQuerier
 
 // Config carries the status-monitor runtime settings.
 type Config struct {

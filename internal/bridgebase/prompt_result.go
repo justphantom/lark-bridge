@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/eventmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
@@ -30,7 +29,7 @@ import (
 // ctrl.PromptID is back-filled from promptID when unset. Idempotent on the
 // frontend (terminal dedup keys on PromptID), so a retry is a harmless no-op
 // there if the first attempt did land.
-func EmitTerminalControl(logger *log.Logger, rpc backendrpc.ControlSender, appCtx context.Context, promptID, chatID string, ctrl *protocol.Control) error {
+func EmitTerminalControl(logger *log.Logger, rpc protocol.ControlSender, appCtx context.Context, promptID, chatID string, ctrl *protocol.Control) error {
 	if ctrl.PromptID == "" {
 		ctrl.PromptID = promptID
 	}

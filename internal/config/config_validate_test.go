@@ -22,12 +22,13 @@ func writeValidateConfig(t *testing.T, body string) string {
 
 // TestValidateMiniAgentMode_FieldRemoved verifies miniagent.mode is no longer
 // a config key: miniagent v5.0.0 removed -mode entirely, so the bridge dropped
-// the field. Load uses DisallowUnknownFields, so an old config still carrying
-// "mode" fails fast with an explicit unknown-field error rather than silently
-// ignoring a stale safety-posture knob. Operators must delete the key.
+// the field. LoadMiniAgentBack strict-decodes the owned miniagent section, so
+// an old config still carrying "mode" fails fast with an explicit
+// unknown-field error rather than silently ignoring a stale safety-posture
+// knob. Operators must delete the key.
 func TestValidateMiniAgentMode_FieldRemoved(t *testing.T) {
 	body := `{"miniagent":{"mode":"default"}}`
-	_, err := Load(writeValidateConfig(t, body))
+	_, err := LoadMiniAgentBack(writeValidateConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "unknown field \"mode\"") {
 		t.Fatalf("want unknown-field error for removed miniagent.mode, got %v", err)
 	}
@@ -56,7 +57,7 @@ func TestValidateMiniAgentThinking_RejectsBad(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			body := `{"miniagent":{"thinking":` + c.thinking + `}}`
-			_, err := Load(writeValidateConfig(t, body))
+			_, err := LoadMiniAgentBack(writeValidateConfig(t, body))
 			if c.ok && err != nil {
 				t.Fatalf("thinking=%s: want accept, got err: %v", c.thinking, err)
 			}
@@ -68,12 +69,12 @@ func TestValidateMiniAgentThinking_RejectsBad(t *testing.T) {
 }
 
 // TestValidateMiniAgentDefaults_Pass confirms applyDefaults-populated values
-// (no miniagent block at all) load cleanly through validate — i.e. the new
-// enum switches accept the defaults.
+// (no miniagent block at all) load cleanly through validate — i.e. the enum
+// switches accept the defaults.
 func TestValidateMiniAgentDefaults_Pass(t *testing.T) {
-	// An empty config gets the full applyDefaults treatment, including
-	// MiniAgent.Mode="default" and MiniAgent.Thinking="off".
-	if _, err := Load(writeValidateConfig(t, `{}`)); err != nil {
+	// An empty config gets the full defaults treatment, including
+	// MiniAgent.Thinking="off".
+	if _, err := LoadMiniAgentBack(writeValidateConfig(t, `{}`)); err != nil {
 		t.Fatalf("empty config with miniagent defaults must load: %v", err)
 	}
 }

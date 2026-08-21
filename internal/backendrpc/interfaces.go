@@ -1,28 +1,16 @@
 package backendrpc
 
-import (
-	"context"
+import "github.com/justphantom/lark-bridge/internal/protocol"
 
-	"github.com/justphantom/lark-bridge/internal/protocol"
-)
+// ControlSender / StatusQuerier moved to internal/protocol (the contract
+// package): the interfaces reference only context + protocol types, and
+// defining them in backendrpc forced every consumer of the seam (bridgebase,
+// miniagent, statusmonitor) to import the transport package. backendrpc now
+// only asserts conformance.
 
-// ControlSender is the subset of *Client the statusmonitor /
-// miniagent handlers need to POST a Control. Lifted from per-package private
-// copies so a test fake in one binary can be shared across both.
-// *Client satisfies this interface via its SendControl method.
-type ControlSender interface {
-	SendControl(ctx context.Context, ctrl *protocol.Control) error
-}
-
-// StatusQuerier is the subset of *Client the statusmonitor
-// handlers need to read the frontend's in-flight turn snapshot via
-// GET /v1/status. *Client satisfies this interface via its Status method.
-type StatusQuerier interface {
-	Status(ctx context.Context) (*protocol.StatusSnapshot, error)
-}
-
-// compile-time assertions that *Client satisfies both interfaces.
+// compile-time assertions that *Client satisfies the protocol seam
+// interfaces.
 var (
-	_ ControlSender = (*Client)(nil)
-	_ StatusQuerier = (*Client)(nil)
+	_ protocol.ControlSender = (*Client)(nil)
+	_ protocol.StatusQuerier = (*Client)(nil)
 )

@@ -81,7 +81,7 @@ func main() {
 }
 
 func run(cfgPath, addr string) error {
-	cfg, cfgWarns, err := config.LoadWithWarnings(cfgPath)
+	cfg, cfgWarns, err := config.LoadFeishuFrontWithWarnings(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -325,7 +325,7 @@ func run(cfgPath, addr string) error {
 }
 
 // buildLogger builds the component logger from cfg.
-func buildLogger(cfg *config.Config) (*log.Logger, error) {
+func buildLogger(cfg *config.FeishuFrontConfig) (*log.Logger, error) {
 	return log.NewFromConfig(cfg.LogLevel, cfg.LogOutput, cfg.LogFormat, "feishu-front")
 }
 
@@ -340,7 +340,7 @@ func buildLogger(cfg *config.Config) (*log.Logger, error) {
 //     accumulate stale uploads.
 //
 // Returns an error only on unrecoverable setup (inbox dir not creatable).
-func wireFilePipeline(cfg *config.Config, bot *feishu.Bot, dispatcher *feishufront.Dispatcher, logger *log.Logger) error {
+func wireFilePipeline(cfg *config.FeishuFrontConfig, bot *feishu.Bot, dispatcher *feishufront.Dispatcher, logger *log.Logger) error {
 	inbox := cfg.FileConvert.InboxDir
 	if inbox == "" {
 		inbox = filepath.Join(cfg.StateDir, "inbox")

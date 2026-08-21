@@ -4,8 +4,8 @@ type: pattern
 tags: [deploy, backend-removal, disallowunknownfields, smoke]
 created: 2026-08-11
 confidence: high
-verified_at: 2026-08-13
-applies_to: 89e29e6
+verified_at: 2026-08-19
+applies_to: HEAD (config 按服务 Load 重构后)
 ---
 
 # 从 lark-bridge 移除一个后端的清单
@@ -14,7 +14,8 @@ applies_to: 89e29e6
 
 ## 关键认知
 - **真正的危险在 deploy/config，不在 Go。** Go 层后端天然隔离（cmd/<x>-back + internal/<x> + internal/<x>bridge 三块，无兄弟后端 import）。删 Go 包后 `go build ./...` 唯一可能断点就是它自己的 `cmd/<x>-back/main.go`。
-- **共享 `Config` + `DisallowUnknownFields`**：三个后端解析同一 base 配置（deploy.sh 的 `stage_configs` 从 config.example.json 派生 feishu/miniagent/<x> config）。base 里的 `<x>{}` 子块必须被 `config.<X>` 结构体识别，否则**所有**后端配置解析失败。→ 删后端时**不要顺手删 config.<X> 结构体**，除非同时重构 base 派生（属更激进的清理）。
+- **按服务 Load + 联合 known-key 集**（2026-08-19 config 重构后语义）：三个服务仍解析同一 base 配置（deploy.sh 从 config.example.json 派生各服务 config），但各服务只严格解码自己 owned 的 section，foreign section 跳过。**顶层键的 typo 检测依赖 `allKnownKeys()`——三个服务 struct 的并集（反射收集）**。base 里的 `<x>{}` 子块必须仍被至少一个 struct 的 owned 键覆盖，否则**所有**服务解析失败（unknown top-level key）。→ 删后端时**不要顺手删 XxxBackConfig struct**（或其 section 字段），除非同时重构 base 派生（属更激进的清理）。
+- **owned section 内的拼写保护仍在**：`DisallowUnknownFields` 作用于过滤后的文档——本服务 owned section 内的 typo 键仍硬拒绝（例：miniagent-back 拒绝已删除的 `miniagent.mode`）。
 - **staging 文件名是 base 模板的内部名**（曾叫 `claude-config.json`），不是随服务发布的文件；改名安全（只影响 STAGE 临时目录），但配置**内容**（claude{} 块）须保留直到结构体也删。
 
 ## 删除清单（按层）

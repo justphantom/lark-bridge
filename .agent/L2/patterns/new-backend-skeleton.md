@@ -4,8 +4,8 @@ type: pattern
 tags: [deploy, new-backend, config, disallowunknownfields]
 created: 2026-08-10
 confidence: high
-verified_at: 2026-08-13
-applies_to: b965415
+verified_at: 2026-08-19
+applies_to: HEAD (config 按服务 Load 重构后)
 ---
 
 # 新后端搭建标准骨架
@@ -18,10 +18,10 @@ applies_to: b965415
 
 | # | 层 | 文件 | 做什么 |
 |---|---|---|---|
-| 1 | config 段 | `internal/config/config.go` + `config_defaults.go` + `config_validate.go` | 新增 `XxxBack` struct + `Config` 字段（`json:"xxx,omitempty"`）+ `ComponentLogLevel` 字段 + applyDefaults + validate |
+| 1 | config | `internal/config/`（新文件 `xxx.go`） | 新建 `XxxBackConfig` struct（embed `Core` + 自有 section 字段）+ `LoadXxxBack(WithWarnings)`（在 `config.go`）+ 自有 applyDefaults/validate。owned 顶层键由反射 `ownedKeys` 自动收集，`allKnownKeys()` 联合三个服务 struct——新 section 键自动被其它服务容忍 |
 | 2 | config 模板 | `config.example.json` + `deploy/env.example` | 补配置段 + `${VAR}` 占位 + env.example 变量说明 |
 | 3 | 业务包 | `internal/xxxback/` | `client.go`（HTTP 客户端）+ `handler.go`（SSE 事件分发 + 异步执行）+ `prompt.go`（固定提示词） |
-| 4 | 入口 | `cmd/xxx-back/main.go`（+ `main_test.go`） | 薄入口：`config.Load → logger → backendrpc.ValidateBackendConfig → Connect → NewHandler → RunWithClient` |
+| 4 | 入口 | `cmd/xxx-back/main.go`（+ `main_test.go`） | 薄入口：`config.LoadXxxBack → logger → backendrpc.ValidateBackendConfig → Connect → NewHandler → RunWithClient` |
 | 5 | 部署 | `deploy/deploy-xxx.sh` + `Makefile`（`build-xxx-back` / `deploy-xxx` 目标） + `deploy/tests/smoke.sh`（source guard） | systemd unit + 首次安装 / 升级 |
 
 ## 关键约束
@@ -31,7 +31,8 @@ applies_to: b965415
 3. **config 缺失项 fail-fast**：API key 等必填项在 main.go 的 `run()` 开头校验，缺则 return error（main 提升为 os.Exit(1)）。
 4. **BackendType 在 registry 无白名单**：前端 `Register(id, typ)` 接受任意类型字符串，不需改前端代码。
 5. **deploy 脚本 init 路径须自带 build**：deploy.sh 的 init 应不依赖外部预 build，init 开头调 `build_xxx()` 最健壮。
-6. **config `${VAR}` 展开在二进制启动时**：systemd `EnvironmentFile=/etc/lark-bridge/.env` 注入环境变量，`config.Load` 展开 `${VAR}`。init 路径只写 config 文件，env 变量需另行补到 `.env`。
+6. **config `${VAR}` 展开在二进制启动时**：systemd `EnvironmentFile=/etc/lark-bridge/.env` 注入环境变量，`config.LoadXxxBack` 展开 `${VAR}`。init 路径只写 config 文件，env 变量需另行补到 `.env`。
+7. **Control 接缝用 protocol 类型**（2026-08-19 起）：业务包持 `protocol.ControlSender`（接口已从 backendrpc 迁到 protocol），不 import backendrpc；测试 fake 只依赖 protocol。
 
 ## 常见陷阱
 
