@@ -7,9 +7,10 @@ updated: 2026-08-19T00:00:00+08:00
 # 会话状态
 
 ## 当前任务
-**解耦重构战役**（goal，四阶段）— P0/P1（`ad3f6e4`）/P2（`9ccdaf1`：bridgebase 并入 miniagent + linereader 升顶层）已交付。P3 进行中：feishufront 子包化（dispatcher/ipcserver 拆出）。详见 [.agent/L2/decisions/decoupling-assessment.md](L2/decisions/decoupling-assessment.md)。
+（无活跃任务）
 
 ## 最近提交
+- `66d530f` refactor(feishufront): extract ipcserver into a subpackage
 - `9ccdaf1` refactor(miniagent): dissolve bridgebase — merge the single-consumer helper layer
 - `ad3f6e4` refactor(decouple): per-service config Load + protocol seam interfaces
 - `55f4bcb` chore(agent): mark miniagent v5.1.0 follow-up delivered

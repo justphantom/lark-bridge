@@ -10,7 +10,7 @@ updated: 2026-08-19T00:00:00+08:00
 - [persona.md](L0/persona.md)
 
 ## L1 活跃过程
-- [active/session.md](L1/active/session.md) — 会话状态（当前：miniagent v5.1.0 兼容跟进，进行中）
+- [active/session.md](L1/active/session.md) — 会话状态（当前：无活跃任务；解耦战役 P0-P3 已全交付）
 
 ## L1 归档（已完成）
 - [archive/deploy-simplification.md](L1/archive/deploy-simplification.md) — deploy 脚本简化（`520a11c` / `7cd9996` / `d396df7`）
