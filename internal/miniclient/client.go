@@ -137,29 +137,39 @@ func (c *Client) effectiveAPIKey() (string, error) {
 const readyTimeout = 10 * time.Second
 
 // minSupportedVersion is the minimum upstream miniagent version the bridge
-// requires. Bumped to "5.0.0" because 5.0.0 is a breaking CLI-contract change:
-// the -mode flag (default|auto dual-mode) was REMOVED entirely — default/auto
-// merged into a single mode with the shell tool always registered, and all
-// agent-layer safety guards (confineWrap / .git blocking / whitelisted
-// subcommand tools) were dropped in favour of plain OS-level isolation. The
-// bridge no longer emits -mode, so a 4.x binary would silently fall back to
-// its own "default" confined mode while 5.0.0 runs unconfined — divergent
-// security semantics we refuse to paper over, hence the hard cut.
+// requires. v5.1.0 is a compatible follow-on to the v5.0.0 hard cut: the only
+// bridge-visible change is two new boolean fields on the result NDJSON event
+// (compacted / thinking_downgraded), both absent-→-false on older CLIs, so
+// bumping the floor only codifies "follow the latest released version" and
+// keeps the prior hard cut (refusing pre-5.0.0 binaries that still emit -mode
+// and run a divergent confined security model).
+//
+// v5.0.0 (the prior floor) was a breaking CLI-contract change: the -mode flag
+// (default|auto dual-mode) was REMOVED entirely — default/auto merged into a
+// single mode with the shell tool always registered, and all agent-layer
+// safety guards (confineWrap / .git blocking / whitelisted subcommand tools)
+// were dropped in favour of plain OS-level isolation. The bridge no longer
+// emits -mode, so a 4.x binary would silently fall back to its own "default"
+// confined mode while 5.0.0+ runs unconfined — divergent security semantics
+// we refuse to paper over, hence the hard cut at 5.0.0.
 //
 // 5.0.0 also trimmed the toolset to 8 (read/write/edit/grep/glob/ast/shell/web)
-// and added the OpenAI Responses provider; the NDJSON event contract used by
+// and added the OpenAI Responses provider; 5.1.0 added the compacted/
+// thinking_downgraded result-event fields. The NDJSON event contract used by
 // the bridge (tool_use/tool_result/text_delta/reasoning_delta/result/error/
-// session/model) is unchanged, and result events gained llm_requests (ignored
-// additively by json.Unmarshal).
+// session/model) is unchanged; result events gained llm_requests (5.0.0, ignored
+// additively by json.Unmarshal) and compacted/thinking_downgraded (5.1.0, parsed
+// into Event for advisory logging, not surfaced to the protocol layer).
 //
 // "dev" (untagged local build) always passes so developers are not blocked.
 //
-// Prior bumps: 4.2.0 removed -system/-max-tokens and added the three-layer
+// Prior bumps: 5.0.0 removed -mode + trimmed tools + added responses provider
+// (hard cut); 4.2.0 removed -system/-max-tokens and added the three-layer
 // max_tokens model; v4.0.1 moved -save-session session id from a stderr text
 // line to a stdout NDJSON type=session event; v4.0.0 split -session (resume)
 // from -save-session (create); v3.5.0 removed -key-file (key via
 // $MINIAGENT_API_KEY).
-const minSupportedVersion = "5.0.0"
+const minSupportedVersion = "5.1.0"
 
 // DetectVersion runs `miniagent --version` and returns the parsed version
 // string (e.g. "3.3.0") or "dev" for untagged builds. Returns an error only

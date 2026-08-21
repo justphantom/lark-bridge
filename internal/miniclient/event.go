@@ -76,6 +76,15 @@ type Event struct {
 	// session id for a -save-session turn; the bridge persists it per-chat.
 	SessionID string
 
+	// result event fields (v5.1.0+). Compacted is true when this turn triggered
+	// context compaction (a transcript summary replaced older history).
+	// ThinkingDowngraded is true when the requested thinking level was lowered
+	// and reasoning output dropped for this turn (e.g. a model limit). Both are
+	// false (zero value) on older CLIs that predate the fields, so absence is
+	// indistinguishable from "did not occur" — fine, both are advisory signals.
+	Compacted          bool
+	ThinkingDowngraded bool
+
 	// Derived: true for KindResult and KindError.
 	IsTerminal bool
 }
@@ -108,6 +117,11 @@ type rawEvent struct {
 
 	// session event field (v4.0.1+, type=session). The miniagent-generated id.
 	ID string `json:"id,omitempty"`
+
+	// result event fields (v5.1.0+). Both always-present booleans on 5.1.0+;
+	// absent (→ false) on older CLIs. See Event.Compacted / ThinkingDowngraded.
+	Compacted          bool `json:"compacted,omitempty"`
+	ThinkingDowngraded bool `json:"thinking_downgraded,omitempty"`
 }
 
 // parseEvent decodes one NDJSON line into an Event. Returns ok=false on
@@ -121,22 +135,24 @@ func parseEvent(line []byte) (Event, bool) {
 		return Event{}, false
 	}
 	ev := Event{
-		Kind:         raw.Type,
-		Name:         raw.Name,
-		Input:        raw.Input,
-		Text:         raw.Text,
-		Model:        raw.Model,
-		InputTokens:  raw.InputTokens,
-		OutputTokens: raw.OutputTokens,
-		Steps:        raw.Steps,
-		Finish:       raw.Finish,
-		Output:       raw.Output,
-		Truncated:    raw.Truncated,
-		IsError:      raw.IsError,
-		ExitCode:     raw.ExitCode,
-		Step:         raw.Step,
-		Message:      raw.Message,
-		SessionID:    raw.ID,
+		Kind:               raw.Type,
+		Name:               raw.Name,
+		Input:              raw.Input,
+		Text:               raw.Text,
+		Model:              raw.Model,
+		InputTokens:        raw.InputTokens,
+		OutputTokens:       raw.OutputTokens,
+		Steps:              raw.Steps,
+		Finish:             raw.Finish,
+		Output:             raw.Output,
+		Truncated:          raw.Truncated,
+		IsError:            raw.IsError,
+		ExitCode:           raw.ExitCode,
+		Step:               raw.Step,
+		Message:            raw.Message,
+		SessionID:          raw.ID,
+		Compacted:          raw.Compacted,
+		ThinkingDowngraded: raw.ThinkingDowngraded,
 	}
 	switch raw.Type {
 	case KindResult, KindError:

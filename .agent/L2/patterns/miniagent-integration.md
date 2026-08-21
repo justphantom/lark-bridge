@@ -1,11 +1,11 @@
 ---
 layer: L2
 type: pattern
-tags: [miniagent, config-only, version-check, eventmetrics, stream-archive, v5-breaking]
+tags: [miniagent, config-only, version-check, eventmetrics, stream-archive, v5-breaking, v5.1-compatible]
 created: 2026-08-09
 confidence: high
-verified_at: 2026-08-18
-applies_to: 4076af4
+verified_at: 2026-08-19
+applies_to: HEAD (miniagent v5.1.0)
 ---
 
 # Miniagent 对接模式与常见缺口
@@ -48,6 +48,20 @@ miniagent v5.0.0 删除 `-mode` 双模式（default/auto 合并为单模式）�
 **bridge 对齐**：硬切——`minSupportedVersion` 从 `4.2.0` 提升到 `5.0.0`（4.x 直接拒绝，避免双安全语义并行）；删 `-mode` 发射、`/mode` 命令（`settableModes`/`modeOptions`/`cmdMode`/`cmdModeBridge`）、`Binding.Mode`/`Router.SetMode`、`Config.MiniAgent.Mode`（含 `applyDefaults` 默认 + `validate` 校验）、`Client.Mode`/`DefaultMode()`/`RunOptions.Mode`、`activeMode()`/`clientDefaultMode()`；`activeTurnConfig` 从 6 元组降 5 元组；`/current` 去掉"权限模式"行。
 
 **兼容性分析**：NDJSON 事件契约不变（tool_use/tool_result/text_delta/reasoning_delta/result/error/session/model 全保留），result 事件新增 `llm_requests` 字段被 `json.Unmarshal` 忽略未知字段安全处理。`-provider/-model` 成对规则、`-list-models` 格式、`-workdir` 必填绝对路径均不变。bridge config `DisallowUnknownFields` 意味着旧配置里的 `"mode"` 键会启动失败——operator 必须删除该键（迁移提示已写入 CHANGELOG）。router JSON 不用 `DisallowUnknownFields`，旧 `mode` key 静默忽略，无需迁移。
+
+## v5.1.0 兼容跟进（2026-08-19）
+
+miniagent v5.1.0 是 v5.0.0 之后的**兼容**版本，对 bridge 唯一可见的接口变化：
+
+- **`result` NDJSON 事件新增 `compacted` / `thinking_downgraded` 布尔字段**（恒出键，false 默认）。`compacted` 表示本轮触发过上下文摘要压缩；`thinking_downgraded` 表示请求的 thinking 级别被降级、reasoning 输出被丢弃。非破坏：旧 CLI 不发此键 → `json.Unmarshal` 零值，行为不变。
+- 内部重构（模型清单聚合从 `openai` 包上移至 `cmd` 层、清 v5.0.0 工具残留）——CLI/NDJSON/config 契约零变化。
+
+**bridge 对齐**：
+- `minSupportedVersion` 从 `5.0.0` 提升到 `5.1.0`（非硬切：v5.1.0 非 breaking，5.0.0 CLI 仍可工作；提升下限仅为"跟进最新已发版"语义，同时保留 v5.0.0 硬切拒绝 4.x 的既有语义）。
+- `Event` / `rawEvent`（`internal/miniclient/event.go`）各加 `Compacted` / `ThinkingDowngraded` 字段（`omitempty`），`parseEvent` 透传。
+- `handler_cli.go` 的 `KindResult` 分支把两字段纳入 `miniagent turn done` 诊断日志（仅日志，不进 `ResultPayload`——协议层无对应字段，避免扩散到前端渲染，保持最小改动）。
+
+**未跟进（miniagent HEAD 未发版）**：HEAD 领先 v5.1.0 三提交，含**未打 tag 的破坏性变更**——删 `anthropic`+`responses` provider（`ProviderConfig.Kind` 只收 `""`/`"openai"`）+ config `DisallowUnknownFields`。bridge 部署生成的 `miniagent-cli.json` 不设 `kind`（默认 openai）、无 anthropic/responses provider，不受影响；未发版不对齐，待其发版后再评估。
 
 ## 参考
 - 相关代码：`internal/miniclient/client.go`、`internal/miniagent/handler_cli.go`

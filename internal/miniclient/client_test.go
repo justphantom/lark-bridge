@@ -52,6 +52,21 @@ func TestParseEvent_ResultFinish(t *testing.T) {
 	}
 }
 
+func TestParseEvent_ResultCompacted(t *testing.T) {
+	// miniagent v5.1.0+ reports compacted/thinking_downgraded booleans on the
+	// result event; older versions omit the fields (both stay false, so absence
+	// is indistinguishable from "did not occur" — acceptable, both advisory).
+	ev, _ := parseEvent([]byte(`{"type":"result","text":"ok","compacted":true,"thinking_downgraded":true}`))
+	if !ev.Compacted || !ev.ThinkingDowngraded {
+		t.Errorf("compacted=%v thinking_downgraded=%v, want both true", ev.Compacted, ev.ThinkingDowngraded)
+	}
+	// Absent fields parse as false (pre-v5.1.0 / a turn where neither fired).
+	ev2, _ := parseEvent([]byte(`{"type":"result","text":"ok"}`))
+	if ev2.Compacted || ev2.ThinkingDowngraded {
+		t.Errorf("compacted=%v thinking_downgraded=%v, want both false when absent", ev2.Compacted, ev2.ThinkingDowngraded)
+	}
+}
+
 func TestParseEvent_Error(t *testing.T) {
 	ev, _ := parseEvent([]byte(`{"type":"error","message":"boom"}`))
 	if ev.Kind != KindError || ev.Message != "boom" {
@@ -571,20 +586,21 @@ func TestCompareVersion(t *testing.T) {
 // TestSatisfiesVersion pins the version-gate logic the startup health check
 // (IsReady) uses against minSupportedVersion. "dev" (untagged local build)
 // always passes so local development is not blocked. A pre-release of the
-// minimum (5.0.0-rc1) is treated as the release version and passes.
+// minimum (5.1.0-rc1) is treated as the release version and passes.
 func TestSatisfiesVersion(t *testing.T) {
 	cases := []struct {
 		v    string
 		want bool
 	}{
 		{"dev", true},   // untagged local build — always pass
-		{"5.0.0", true}, // exact floor
-		{"5.0.1", true}, // above floor
-		{"5.1.0", true},
-		{"5.0.0-rc1", true}, // pre-release strips to 5.0.0
-		{"4.2.0", false},    // < 5.0.0 still emits -mode — rejected
-		{"4.7.0", false},    // last 4.x — rejected
-		{"4.1.0", false},
+		{"5.1.0", true}, // exact floor
+		{"5.1.1", true}, // above floor
+		{"5.2.0", true},
+		{"5.1.0-rc1", true}, // pre-release strips to 5.1.0
+		{"5.0.0", false},    // < 5.1.0 — below current floor (was the 5.0.0 hard cut floor)
+		{"5.0.1", false},    // < 5.1.0 — rejected
+		{"4.7.0", false},    // last 4.x still emits -mode — rejected
+		{"4.2.0", false},
 		{"4.0.0", false},
 		{"3.5.0", false},
 		{"3.10.0", false},

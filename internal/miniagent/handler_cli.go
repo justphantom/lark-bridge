@@ -173,6 +173,8 @@ func (h *Handler) emitCLIEvent(chatID, promptID string, ev miniclient.Event, sta
 			"incomplete", incomplete,
 			"input_tokens", ev.InputTokens,
 			"output_tokens", ev.OutputTokens,
+			"compacted", ev.Compacted,
+			"thinking_downgraded", ev.ThinkingDowngraded,
 			log.FieldDuration, turnDur.Milliseconds())
 		// Per-turn metrics: surface turn duration, token counts, and
 		// completion status for SLO aggregation (P1).

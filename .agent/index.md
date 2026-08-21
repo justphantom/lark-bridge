@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-18T22:30:00+08:00
+updated: 2026-08-19T00:00:00+08:00
 ---
 
 # .agent 记忆索引
@@ -10,7 +10,7 @@ updated: 2026-08-18T22:30:00+08:00
 - [persona.md](L0/persona.md)
 
 ## L1 活跃过程
-- [active/session.md](L1/active/session.md) — 会话状态（当前：GitRunner → TaskRunner 泛化重命名，进行中）
+- [active/session.md](L1/active/session.md) — 会话状态（当前：miniagent v5.1.0 兼容跟进，进行中）
 
 ## L1 归档（已完成）
 - [archive/deploy-simplification.md](L1/archive/deploy-simplification.md) — deploy 脚本简化（`520a11c` / `7cd9996` / `d396df7`）
@@ -34,7 +34,7 @@ updated: 2026-08-18T22:30:00+08:00
 | `cardkit` `schema-2.0` `card-update` | [cardkit-migration](L2/decisions/cardkit-migration.md)（决策）、[feishu-interactive-card-callback](L2/patterns/feishu-interactive-card-callback.md)（实践）、[schema2-regression](L2/incidents/schema2-card-action-regression.md)（事故）、[feishu-card-bounce-back](L2/incidents/feishu-card-bounce-back.md)（事故）、[card-terminal-state-guard](L2/patterns/card-terminal-state-guard.md)（⚠️historical） |
 | `card-callback` `inline-vs-entity` | [feishu-interactive-card-callback](L2/patterns/feishu-interactive-card-callback.md)、[schema2-regression](L2/incidents/schema2-card-action-regression.md) |
 | `picker` `question-card` `mobile-layout` | [button-card-mobile-list-layout](L2/patterns/button-card-mobile-list-layout.md)、[multi-question-card](L2/patterns/multi-question-card.md) |
-| `miniagent` `session` `jsonl` `v5-breaking` | [miniagent-integration](L2/patterns/miniagent-integration.md)、[miniagent-session-archive](L2/patterns/miniagent-session-archive.md) |
+| `miniagent` `session` `jsonl` `v5-breaking` `v5.1-compatible` | [miniagent-integration](L2/patterns/miniagent-integration.md)、[miniagent-session-archive](L2/patterns/miniagent-session-archive.md) |
 | `deploy` `backend-removal` `disallowunknownfields` | [backend-removal-checklist](L2/patterns/backend-removal-checklist.md)、[new-backend-skeleton](L2/patterns/new-backend-skeleton.md) |
 | `diagnostics` `control-flow` | [diagnostic-logging](L2/patterns/diagnostic-logging.md) |
 | `race-condition` `terminal-state` `inflight-turn` | [inflight-turn-consistency](L2/patterns/inflight-turn-consistency.md)、[feishu-card-bounce-back](L2/incidents/feishu-card-bounce-back.md)、[card-terminal-state-guard](L2/patterns/card-terminal-state-guard.md)（⚠️historical） |

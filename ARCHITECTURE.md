@@ -221,8 +221,8 @@ miniagent-back 支持的斜杠命令：`/current` `/model` `/cd` `/config` `/eff
 
 | 文件 | 职责 |
 |---|---|
-| `client.go` | **`Client`**（:58）/ `New`（:72）：fork miniagent 二进制。`Run`（:300）启动子进程、信号量限并发（`defaultMaxConcurrent=4`）、ctx 取消走进程组 SIGKILL（`cmdutil.ApplyGroupCancel`）。`buildArgs`（:371）拼 CLI flags（`-provider/-model` 配对、`-config`、`-workdir`、`-thinking`、`-max-iterations`、`-session/-save-session`；`-mode` 已随 miniagent v5.0.0 删除）。`pump`（:450）读 stdout 行 + 捕获 stderr。`IsReady`（:250）启动健康门（`miniagent --version`，最低 `5.0.0`——v5.0.0 删 `-mode` 为 breaking CLI 契约变更，硬切）。`DetectVersion`（:170）/ `satisfiesVersion` 组件数值比较 |
-| `event.go` | **`Event`**（:40）+ 事件 kind 常量（:9-28：`tool_use`/`tool_result`/`text_delta`/`reasoning_delta`/`result`/`error`/`session`）+ `parseEvent`（:119，NDJSON 行解码，未知 type 不中断 pump） |
+| `client.go` | **`Client`**（:58）/ `New`（:72）：fork miniagent 二进制。`Run`（:300）启动子进程、信号量限并发（`defaultMaxConcurrent=4`）、ctx 取消走进程组 SIGKILL（`cmdutil.ApplyGroupCancel`）。`buildArgs`（:371）拼 CLI flags（`-provider/-model` 配对、`-config`、`-workdir`、`-thinking`、`-max-iterations`、`-session/-save-session`；`-mode` 已随 miniagent v5.0.0 删除）。`pump`（:450）读 stdout 行 + 捕获 stderr。`IsReady`（:250）启动健康门（`miniagent --version`，最低 `5.1.0`——v5.0.0 删 `-mode` 为 breaking CLI 契约变更硬切至 5.0.0，v5.1.0 为兼容跟进：result 事件增 `compacted`/`thinking_downgraded` 布尔字段）。`DetectVersion`（:170）/ `satisfiesVersion` 组件数值比较 |
+| `event.go` | **`Event`**（:40）+ 事件 kind 常量（:9-28：`tool_use`/`tool_result`/`text_delta`/`reasoning_delta`/`result`/`error`/`session`）+ `parseEvent`（:132，NDJSON 行解码，未知 type 不中断 pump） |
 | `models.go` | `ModelRef`（:36）+ `ListModels`（:60）：跑 `miniagent -list-models`，按行解析 `{"type":"model","provider","model"}`，返回 provider/model 配对 |
 
 ### 5.6 `feishu/`——飞书业务封装层
