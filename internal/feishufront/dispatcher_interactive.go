@@ -244,6 +244,43 @@ func (d *Dispatcher) expireInteractive(requestID, messageID, cardID string) {
 	}
 }
 
+// ForceExpireInteractive runs the interactive-gate expiry path synchronously
+// for requestID. Test hook (the production path runs it on a TTL timer): the
+// ipcserver package's e2e tests use it to advance the expiry without waiting.
+func (d *Dispatcher) ForceExpireInteractive(requestID, messageID, cardID string) {
+	d.expireInteractive(requestID, messageID, cardID)
+}
+
+// CardForRequest returns the last card rendered for an interactive request.
+// Test hook for e2e assertions (the production code never reads cards back).
+func (d *Dispatcher) CardForRequest(requestID string) ([]byte, bool) {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	card, ok := d.cards[requestID]
+	return card, ok
+}
+
+// InteractiveGateState reports whether an interactive request currently has
+// a rendered card and a live TTL timer registered. Test hook for e2e
+// assertions on the expiry lifecycle (both are cleared together).
+func (d *Dispatcher) InteractiveGateState(requestID string) (hasCard, hasTimer bool) {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	return d.cards[requestID] != nil, d.interactiveTimers[requestID] != nil
+}
+
+// SeedCardForRequest pre-populates the per-request card map. Test hook so an
+// e2e test can set up a pre-existing card (e.g. a prior round) without going
+// through a full interactive send.
+func (d *Dispatcher) SeedCardForRequest(requestID string, card []byte) {
+	d.cardMu.Lock()
+	defer d.cardMu.Unlock()
+	if d.cards == nil {
+		d.cards = make(map[string][]byte)
+	}
+	d.cards[requestID] = card
+}
+
 // finalizeLinkedInteractive flips every still-pending interactive card tied to
 // promptID to a finished state now that the result card has landed. Without
 // this a permission/question card would stay grey forever after the turn it

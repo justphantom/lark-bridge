@@ -5,7 +5,7 @@ tags: [decoupling, dependency-graph, config-split, interface-seam, bridgebase, f
 created: 2026-08-19
 confidence: high
 verified_at: 2026-08-19
-applies_to: 55f4bcb
+applies_to: HEAD (P0-P3 全交付)
 ---
 
 # 解耦程度评估与重构战役决策
@@ -41,7 +41,7 @@ applies_to: 55f4bcb
 ## 债务（按修复价值）
 1. **config 单体**：三服务共享同一 union struct（feishu 凭证+IPC+TLS+miniagent+status_monitor+日志…），字段归属仅靠注释约定。加字段三服务全重编译；DisallowUnknownFields 下字段演进是全局事件。deploy 拆了 3 文件但类型层没拆。
 2. **bridgebase 虚共享层**：1832 行"共享助手层"，agnes/claude 删除后消费者只剩 miniagent（7 文件 import）。唯一真跨切面接缝 EmitTerminalControl 因接口定义在 backendrpc 包，拉出 bridgebase→backendrpc 整包依赖 + feishufront 反环约束。
-3. **feishufront 巨包**：21 文件 ~11.6k 行（约占全项目 2/3），dispatcher/卡片渲染/IPC server/dedup 同包。cardkit/renderer 已子包化，dispatcher 主体未分。
+3. **feishufront 巨包**（✅已部分缓解 2026-08-19）：IPC 传输拆出 `feishufront/ipcserver/` 子包，与后端 `backendrpc` 对称；`cardkit`/`renderer` 此前已拆。dispatcher 主体（与 registry/turn/routing/dedup 同一内聚类）刻意保留——拆 dispatcher 只搬代码不降耦合（P3 评估结论）。
 4. **protocol 胖契约**（可接受）：~780 行非测试，单一契约包合理形态，不算真债。
 5. **库化 N/A**：全在 internal/ 下——应用定位（3 binaries）无外部复用场景，正确选择而非债。
 
@@ -54,7 +54,7 @@ applies_to: 55f4bcb
 | P0 | 本评估沉淀 L2 | 即本文件 |
 | P1 | config 拆分 + 接口迁移 | ✅已交付：按服务 Load（owned 键过滤+联合 known-set 拒顶层 typo，D5 放宽）；ControlSender/StatusQuerier 迁 protocol |
 | P2 | bridgebase 并入 miniagent | ✅已交付：原 bridgebase/* 并入 internal/miniagent（sendfile.go 因文件名冲突改名），linereader 升顶层 internal/linereader（miniclient 唯一消费者，随入会成环），bridgebase→backendrpc 依赖随之消失 |
-| P3 | feishufront 子包化 | dispatcher/ipcserver 拆出，收益可维护性 |
+| P3 | feishufront 子包化 | ✅已交付（范围收窄为 ipcserver only）：`feishufront/ipcserver/` 子包拆出（与 backendrpc 对称的传输边界）；实测 ipcserver 对 Dispatcher **零类型依赖**（callback 反向接线），仅依赖 BackendRegistry/Turn/BackendConn——与建议 B 全拆 dispatcher 相比：dispatcher 与支撑类型（registry/turn/routing/dedup）是同一内聚类，拆它只搬代码不降耦合，故弃。需导出 3 处（ConnSnapshot/HostDedupKey + Events() 访问器 + Dispatcher 4 个测试钩子）+ e2e 测试随迁 ipcserver |
 
 每阶段独立提交，build/vet/lint/test 全绿，ARCHITECTURE.md 与 L2 同步。
 

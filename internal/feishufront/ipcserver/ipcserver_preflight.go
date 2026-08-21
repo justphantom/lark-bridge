@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 )
 
 // preflightResponse is the JSON body of GET /v1/deploy-preflight. Affected
@@ -41,7 +43,7 @@ func (s *IPCServer) handleDeployPreflight(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var turns []Turn
+	var turns []feishufront.Turn
 	if fn := s.inFlightDetail.Load(); fn != nil {
 		turns = (*fn)()
 	}

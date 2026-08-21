@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"encoding/json"
@@ -7,15 +7,17 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 )
 
 // newPreflightServer builds an IPCServer with a shared secret and a canned
 // in-flight turn list.
-func newPreflightServer(t *testing.T, turns []Turn) *httptest.Server {
+func newPreflightServer(t *testing.T, turns []feishufront.Turn) *httptest.Server {
 	t.Helper()
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "s3cret")
-	srv.SetInFlightDetail(func() []Turn { return turns })
+	srv.SetInFlightDetail(func() []feishufront.Turn { return turns })
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 	return ts
@@ -46,7 +48,7 @@ func preflightGet(t *testing.T, ts *httptest.Server, services, auth string) (int
 }
 
 func TestDeployPreflight(t *testing.T) {
-	turns := []Turn{
+	turns := []feishufront.Turn{
 		{PromptID: "p1", ChatID: "c1", BackendID: "claude-1", StartedAt: time.Now()},
 		{PromptID: "p2", ChatID: "c2", BackendID: "opencode-1", StartedAt: time.Now()},
 		{PromptID: "p3", ChatID: "c3", BackendID: "agnes-1", StartedAt: time.Now()},

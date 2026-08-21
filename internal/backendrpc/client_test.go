@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/feishufront/ipcserver"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -18,7 +19,7 @@ import (
 // Control over POST.
 func TestClient_EventAndControl(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -84,7 +85,7 @@ func TestConnect_RequiresAllParams(t *testing.T) {
 
 func TestConnect_Non200Handshake(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	// Hit the control endpoint with GET to force a 405, not the SSE 200 path.
@@ -95,7 +96,7 @@ func TestConnect_Non200Handshake(t *testing.T) {
 
 func TestRecvEvent_AfterClose(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -114,7 +115,7 @@ func TestRecvEvent_AfterClose(t *testing.T) {
 
 func TestClose_Idempotent(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -154,7 +155,7 @@ func (t *countingTransport) CloseIdleConnections() {
 // embedder passing http.DefaultClient would see the global pool cleared.
 func TestClose_ExternalClientDoesNotClearPool(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -205,7 +206,7 @@ func TestNewHTTPClient_ClonesDefaultTransport(t *testing.T) {
 // verified by the race detector, not assertions.
 func TestConnect_ParallelWithInFlight(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -238,7 +239,7 @@ func TestConnect_ParallelWithInFlight(t *testing.T) {
 // SetInFlightTurns / SetInFlightDetail, and Client.Status decodes them.
 func TestStatus_ReturnsInFlightTurns(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	srv.SetInFlightTurns(func() int { return 2 })
 	srv.SetInFlightDetail(func() []feishufront.Turn {
 		return []feishufront.Turn{
@@ -274,7 +275,7 @@ func TestStatus_ReturnsInFlightTurns(t *testing.T) {
 
 func TestSendControl_ValidationFails(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 

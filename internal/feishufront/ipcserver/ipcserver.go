@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
@@ -22,7 +23,7 @@ import (
 // backends long-connect to receive Events, and the POST endpoint backends
 // push Controls through.
 type IPCServer struct {
-	registry *BackendRegistry
+	registry *feishufront.BackendRegistry
 	// server is set by Listen (main goroutine) and read by Shutdown (signal
 	// goroutine), so it is stored atomically to avoid a data race.
 	server atomic.Pointer[http.Server]
@@ -54,7 +55,7 @@ type IPCServer struct {
 	// (promptID/chatID/backendID/elapsed). GET /v1/status exposes it so a turn
 	// stranded by a crashed backend is visible by name, not just as a stale
 	// inflight number. nil in unit tests — the endpoint then omits the list.
-	inFlightDetail atomic.Pointer[func() []Turn]
+	inFlightDetail atomic.Pointer[func() []feishufront.Turn]
 
 	// selfMetrics, when set, returns feishu-front's own host/process snapshot
 	// for GET /v1/status (the frontend does not POST /v1/metrics to itself —
@@ -107,11 +108,11 @@ const (
 	authFailuresCap = 256
 )
 
-// NewIPCServer wraps a BackendRegistry. secret is the shared bearer token
+// NewIPCServer wraps a feishufront.BackendRegistry. secret is the shared bearer token
 // every backend must present in its Authorization header; when non-empty,
 // SSE and POST endpoints reject requests without it. Pass "" only when the
 // listener is bound to loopback and no untrusted process can reach it.
-func NewIPCServer(registry *BackendRegistry, secret string) *IPCServer {
+func NewIPCServer(registry *feishufront.BackendRegistry, secret string) *IPCServer {
 	s := &IPCServer{registry: registry, secret: secret}
 	s.logger.Store(log.Nop())
 	return s
@@ -298,7 +299,7 @@ const backendTokenHeader = "X-Backend-Token"
 // recorded token via timing. Note: ConstantTimeCompare returns early on
 // unequal lengths, which still leaks the token's length; the token is a
 // fixed-length 256-bit value, so this does not aid brute force.
-func validateBackendToken(conn *BackendConn, r *http.Request) bool {
+func validateBackendToken(conn *feishufront.BackendConn, r *http.Request) bool {
 	want := conn.Token()
 	if want == "" {
 		return true // pre-token backend: rolling-upgrade compatibility
@@ -405,7 +406,7 @@ func (s *IPCServer) SetInFlightTurns(fn func() int) {
 // SetInFlightDetail wires the per-turn snapshot queried by GET /v1/status.
 // Pass TurnManager.InFlightTurns. When unset, the endpoint omits the turns
 // list (back-compat for callers/tests that only need the count).
-func (s *IPCServer) SetInFlightDetail(fn func() []Turn) {
+func (s *IPCServer) SetInFlightDetail(fn func() []feishufront.Turn) {
 	s.inFlightDetail.Store(&fn)
 }
 

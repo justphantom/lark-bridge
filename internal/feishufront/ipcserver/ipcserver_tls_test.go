@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"context"
@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 )
 
 // writeSelfSignedCert generates a throwaway self-signed cert/key pair for
@@ -78,7 +80,7 @@ func freeTCPPort(t *testing.T) string {
 // TestListen_NonLoopbackRequiresTLS locks in M10-1: a non-loopback bind with
 // no TLS configured is refused (bearer would cross the network in cleartext).
 func TestListen_NonLoopbackRequiresTLS(t *testing.T) {
-	s := NewIPCServer(NewBackendRegistry(), "secret")
+	s := NewIPCServer(feishufront.NewBackendRegistry(), "secret")
 	err := s.Listen("0.0.0.0:0")
 	if err == nil || !strings.Contains(err.Error(), "tls") {
 		t.Fatalf("Listen non-loopback without TLS = %v, want TLS-required error", err)
@@ -89,7 +91,7 @@ func TestListen_NonLoopbackRequiresTLS(t *testing.T) {
 // rule survives the TLS addition (TLS does not replace auth).
 func TestListen_NonLoopbackRequiresSecretStillEnforced(t *testing.T) {
 	cert, key := writeSelfSignedCert(t)
-	s := NewIPCServer(NewBackendRegistry(), "")
+	s := NewIPCServer(feishufront.NewBackendRegistry(), "")
 	s.SetTLS(cert, key, "")
 	err := s.Listen("0.0.0.0:0")
 	if err == nil || !strings.Contains(err.Error(), "ipc_secret") {
@@ -101,7 +103,7 @@ func TestListen_NonLoopbackRequiresSecretStillEnforced(t *testing.T) {
 // /v1/status; a plaintext HTTP client is rejected by the handshake.
 func TestListen_TLS(t *testing.T) {
 	cert, key := writeSelfSignedCert(t)
-	s := NewIPCServer(NewBackendRegistry(), "")
+	s := NewIPCServer(feishufront.NewBackendRegistry(), "")
 	s.SetTLS(cert, key, "")
 	addr := freeTCPPort(t)
 	errCh := make(chan error, 1)
@@ -154,7 +156,7 @@ func TestListen_BadClientCA(t *testing.T) {
 	if err := os.WriteFile(badCA, []byte("not a pem"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := NewIPCServer(NewBackendRegistry(), "")
+	s := NewIPCServer(feishufront.NewBackendRegistry(), "")
 	s.SetTLS(cert, key, badCA)
 	err := s.Listen(freeTCPPort(t))
 	if err == nil || !strings.Contains(err.Error(), "client_ca") {

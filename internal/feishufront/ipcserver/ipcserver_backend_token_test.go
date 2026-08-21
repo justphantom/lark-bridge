@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -18,7 +19,7 @@ func TestIPCBackendToken_BindsPOSTToRegistrant(t *testing.T) {
 	const shared = "shared-secret"
 	const tok = "backend-1-session-token"
 
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.RegisterWithToken("back-1", "claude", tok)
 	srv := NewIPCServer(reg, shared)
 	ts := httptest.NewServer(srv.Routes())
@@ -58,7 +59,7 @@ func TestIPCBackendToken_BindsPOSTToRegistrant(t *testing.T) {
 // using Register) is not opted into the binding, so its POSTs are accepted
 // even with no X-Backend-Token header.
 func TestIPCBackendToken_LegacyBackendOptsOut(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("back-1", "claude") // no token → legacy
 	srv := NewIPCServer(reg, "shared-secret")
 	ts := httptest.NewServer(srv.Routes())
@@ -88,7 +89,7 @@ func TestIPCBackendToken_SSERecordsHeader(t *testing.T) {
 	const shared = "shared-secret"
 	const tok = "via-sse-header"
 
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, shared)
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)

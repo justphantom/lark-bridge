@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"bytes"
@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // TestMetrics_UnregisteredBackendRejected locks the anti-forgery gate: a push
 // for an ID with no live SSE connection must not invent a row.
 func TestMetrics_UnregisteredBackendRejected(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -36,7 +37,7 @@ func TestMetrics_UnregisteredBackendRejected(t *testing.T) {
 // with a version, pushes a MetricsReport, and GET /v1/status aggregates the
 // host/service rows plus the frontend's self-report.
 func TestMetrics_RoundTrip(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "s")
 	srv.SetSelfMetrics(func() (protocol.HostStats, protocol.ServiceStat) {
 		return protocol.HostStats{IP: "10.0.0.1", MemTotalBytes: 8 << 30, ReportedAt: 100},
@@ -141,7 +142,7 @@ func TestMergeHostByKey(t *testing.T) {
 // TestRegistrySnapshot_DedupesHostsByIP locks the (IP, Hostname) fallback:
 // two backends on one IP with no machine-id collapse to the latest report.
 func TestRegistrySnapshot_DedupesHostsByIP(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("a", "claude")
 	reg.Register("b", "opencode")
 	_ = reg.SetMetrics("a", &protocol.MetricsReport{IP: "10.0.0.1", ReportedAt: 100,
@@ -165,7 +166,7 @@ func TestRegistrySnapshot_DedupesHostsByIP(t *testing.T) {
 // backends reporting the same machine-id fold to one row even if their IPs
 // differ (a host with multiple NICs / a re-probed outbound IP).
 func TestRegistrySnapshot_DedupesByMachineID(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("a", "claude")
 	reg.Register("b", "opencode")
 	_ = reg.SetMetrics("a", &protocol.MetricsReport{IP: "10.0.0.1", MachineID: "mid-1", ReportedAt: 100,
@@ -186,7 +187,7 @@ func TestRegistrySnapshot_DedupesByMachineID(t *testing.T) {
 // backends behind one public IP but with different machine-ids stay as two
 // rows (the bug the IP-only dedup had collapsed into one).
 func TestRegistrySnapshot_NATSameIPDistinctMachines(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("a", "claude")
 	reg.Register("b", "opencode")
 	_ = reg.SetMetrics("a", &protocol.MetricsReport{IP: "203.0.113.1", MachineID: "mid-1", ReportedAt: 100,
@@ -203,7 +204,7 @@ func TestRegistrySnapshot_NATSameIPDistinctMachines(t *testing.T) {
 // TestRegistrySnapshot_NoMetricsYet: a freshly registered backend with no push
 // yields a service row with only its version, and no host row.
 func TestRegistrySnapshot_NoMetricsYet(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("a", "claude")
 	reg.SetVersion("a", "v1.2.3")
 	hosts, services := reg.Snapshot()
@@ -217,7 +218,7 @@ func TestRegistrySnapshot_NoMetricsYet(t *testing.T) {
 
 // TestMetrics_OversizedBodyRejected caps abuse: the 64KiB limit must trip.
 func TestMetrics_OversizedBodyRejected(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("b1", "claude")
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())

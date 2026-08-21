@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"encoding/json"
@@ -87,7 +87,7 @@ func (s *IPCServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case ev, ok := <-conn.eventCh:
+		case ev, ok := <-conn.Events():
 			if !ok {
 				return
 			}

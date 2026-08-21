@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/feishufront/ipcserver"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -29,7 +30,7 @@ func TestConnect_UnreachableFails(t *testing.T) {
 // connects, delivers Events to handle, and returns nil when ctx is cancelled.
 func TestRun_ReceivesEventsThenExitsOnCancel(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -97,7 +98,7 @@ func TestRun_ReceivesEventsThenExitsOnCancel(t *testing.T) {
 // delivering events. Exercises the exponential-backoff path once.
 func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -189,7 +190,7 @@ func TestRun_ReconnectsAfterStreamEnd(t *testing.T) {
 // connect/drop storm. Reset belongs in RunWithClient, gated on a successful receive.
 func TestReconnect_NoBackoffResetOnConnectSuccess(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -293,7 +294,7 @@ func TestReconnect_GivesUpAtThreshold(t *testing.T) {
 // give-up threshold.
 func TestReconnect_FailuresPersistAcrossConnectSuccess(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -331,7 +332,7 @@ func TestRun_GivesUpAfterSustainedFailures(t *testing.T) {
 	patchReconnectTunables(t, time.Millisecond, 5*time.Millisecond, 4)
 
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	var reject atomic.Bool
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reject.Load() {
@@ -403,7 +404,7 @@ func TestRun_RecvSuccessResetsFailures(t *testing.T) {
 	patchReconnectTunables(t, 2*time.Millisecond, 5*time.Millisecond, 3)
 
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -502,7 +503,7 @@ func TestRun_RecvSuccessResetsFailures(t *testing.T) {
 // use).
 func TestConnect_PinnedBackendToken(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -539,7 +540,7 @@ func TestConnect_PinnedBackendToken(t *testing.T) {
 // worse, whose token mismatch would get every POST rejected as impersonation).
 func TestRunWithClient_ReusesInitialConnection(t *testing.T) {
 	reg := feishufront.NewBackendRegistry()
-	srv := feishufront.NewIPCServer(reg, "")
+	srv := ipcserver.NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 

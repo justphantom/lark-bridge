@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"bufio"
@@ -13,12 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/log"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 func TestIPCServer_EventAndControlRoundTrip(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -88,7 +89,7 @@ func TestIPCServer_EventAndControlRoundTrip(t *testing.T) {
 }
 
 func TestSSE_MissingParams(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -104,7 +105,7 @@ func TestSSE_MissingParams(t *testing.T) {
 }
 
 func TestControl_UnregisteredBackend(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -125,7 +126,7 @@ func TestControl_UnregisteredBackend(t *testing.T) {
 // running-session view reported by backends (via TypeTurnStarted / metrics)
 // instead of relying solely on the legacy in-flight counter.
 func TestStatus_UsesBackendRunningTurns(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("b1", "miniagent")
 	if err := reg.StartTurn("b1", protocol.TurnInfo{PromptID: "p1", ChatID: "c1", ElapsedS: 12}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
@@ -176,7 +177,7 @@ func TestStatus_UsesBackendRunningTurns(t *testing.T) {
 // is wired), while an authenticated request returns the in-flight turn count
 // the operator needs to decide whether a restart is safe.
 func TestStatus_ReportsInFlight(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("b1", "claude")
 	srv := NewIPCServer(reg, "topsecret")
 	// Wire an in-flight counter that reflects a live conversation.
@@ -234,7 +235,7 @@ func TestStatus_ReportsInFlight(t *testing.T) {
 // main.go wiring), the endpoint reports InFlight=0 so a deploy check treats it
 // as "safe to restart" rather than erroring or blocking forever.
 func TestStatus_UnsetCounterReportsZero(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "s")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -253,7 +254,7 @@ func TestStatus_UnsetCounterReportsZero(t *testing.T) {
 }
 
 func TestControl_InvalidBody(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -276,7 +277,7 @@ func TestControl_InvalidBody(t *testing.T) {
 // maxControlBody is rejected with 400, so a runaway backend cannot drive the
 // frontend OOM.
 func TestControl_OversizedBodyRejected(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -301,7 +302,7 @@ func TestControl_OversizedBodyRejected(t *testing.T) {
 // UnregisterIfMatch does not evict the NEW connection: after the old SSE
 // reader returns, the new conn is still registered and still receives events.
 func TestReconnect_OldHandlerDoesNotEvictNewConn(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -352,7 +353,7 @@ func TestReconnect_OldHandlerDoesNotEvictNewConn(t *testing.T) {
 // onOffline callback fires so in-flight turns are released. Without this a
 // deploy that stops the backend strands turns until the 90s health check.
 func TestSSE_DisconnectFiresOnOffline(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -392,7 +393,7 @@ func TestSSE_DisconnectFiresOnOffline(t *testing.T) {
 // wasOffline, so the reconnect's LoadAndDelete missed and onOnline never
 // fired — chats saw an "offline" notice with no matching "recovered" notice.
 func TestSSE_ReconnectFiresOnOnline(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -447,7 +448,7 @@ func TestSSE_ReconnectFiresOnOnline(t *testing.T) {
 // report a data race here. The assertion is structural (no race + the latest
 // logger is observed), not about log output.
 func TestIPCServer_SetLoggerConcurrent(t *testing.T) {
-	srv := NewIPCServer(NewBackendRegistry(), "")
+	srv := NewIPCServer(feishufront.NewBackendRegistry(), "")
 
 	done := make(chan struct{})
 	// Reader side: hammer fireCallback, which loads s.logger. A callback with
@@ -479,7 +480,7 @@ func TestIPCServer_SetLoggerConcurrent(t *testing.T) {
 // deadline never applies to streaming endpoints. The connection must stay
 // writable well past ReadTimeout.
 func TestSSESurvivesReadTimeout(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	// Use a short ReadTimeout so the test is quick; the assertion is
 	// structural (SSE outlives ReadTimeout), not about any specific value.
@@ -516,7 +517,7 @@ func TestSSESurvivesReadTimeout(t *testing.T) {
 // deadline gets cut instead of pinning a server goroutine forever. SSE is
 // exempt (proven by TestSSESurvivesReadTimeout); this test covers POST.
 func TestIPCReadTimeoutDropsSlowBody(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("b1", "claude")
 	srv := NewIPCServer(reg, "")
 	const short = 200 * time.Millisecond
@@ -554,7 +555,7 @@ func TestIPCReadTimeoutDropsSlowBody(t *testing.T) {
 // total under the cap; the cosmetic cost (next reconnect looks
 // first-time) is acceptable per markOffline's doc.
 func TestMarkOffline_ResetsAtCap(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 
 	// Fill past the cap; each markOffline past the cap should trigger a reset.
@@ -582,7 +583,7 @@ func TestMarkOffline_ResetsAtCap(t *testing.T) {
 // rejected 503 BEFORE the body is decoded — an invalid/garbage body must
 // still yield 503, not the 400 a decode error would produce.
 func TestControl_UnregisteredSkipsBodyDecode(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -603,7 +604,7 @@ func TestControl_UnregisteredSkipsBodyDecode(t *testing.T) {
 // enter the dispatcher pump (it is a liveness signal, not a business
 // control).
 func TestControl_PongResetsMissedPongs(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	conn := reg.Register("b1", "omp")
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())

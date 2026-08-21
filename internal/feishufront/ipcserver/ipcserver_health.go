@@ -1,9 +1,10 @@
-package feishufront
+package ipcserver
 
 import (
 	"context"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -66,7 +67,7 @@ func (s *IPCServer) healthTick(ctx context.Context, timeout time.Duration) {
 	// Snapshot the IDs once; the ping and the re-check iterate the same set.
 	var ids []string
 	var types []string
-	s.registry.EachConn(func(c connSnapshot) {
+	s.registry.EachConn(func(c feishufront.ConnSnapshot) {
 		ids = append(ids, c.ID)
 		types = append(types, c.Type)
 	})

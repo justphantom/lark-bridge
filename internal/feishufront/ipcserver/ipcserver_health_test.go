@@ -1,10 +1,12 @@
-package feishufront
+package ipcserver
 
 import (
 	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 )
 
 // TestHealthTick_EvictsStaleBackend drives the health-check eviction loop
@@ -16,7 +18,7 @@ import (
 // still silent after the ping flush window, evicted (onOffline fires exactly
 // once, with its backend type); a fresh backend is retained.
 func TestHealthTick_EvictsStaleBackend(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 
 	stale := reg.Register("stale-1", "omp")
@@ -24,7 +26,7 @@ func TestHealthTick_EvictsStaleBackend(t *testing.T) {
 	// Backdate the stale conn past the eviction deadline. lastSeen is the
 	// atomic a live SSE flush updates; there is no public backdate API, so the
 	// in-package test pokes it directly.
-	stale.lastSeen.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	stale.BackdateLastSeen(time.Now().Add(-2 * time.Minute))
 
 	var (
 		mu  sync.Mutex
@@ -63,11 +65,11 @@ func TestHealthTick_EvictsStaleBackend(t *testing.T) {
 // "any inactivity". Guards against a regression where the ping loop evicted a
 // merely-idle backend.
 func TestHealthTick_KeepsFreshBackend(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	conn := reg.Register("b1", "omp")
 	// Idle but within deadline: last seen 10s ago, deadline 60s.
-	conn.lastSeen.Store(time.Now().Add(-10 * time.Second).UnixNano())
+	conn.BackdateLastSeen(time.Now().Add(-10 * time.Second))
 
 	evicted := false
 	srv.SetOnOffline(func(id, typ string) { evicted = true })
@@ -92,12 +94,12 @@ type evict struct {
 // check could NEVER evict it (its own ping's flush kept lastSeen fresh);
 // the missed-pong counter must evict it after maxMissedPongs pings.
 func TestHealthTick_EvictsDeadlockedBackend(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 
 	dead := reg.Register("dead-1", "omp")
 	// Start stale so the first tick pings it.
-	dead.lastSeen.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	dead.BackdateLastSeen(time.Now().Add(-2 * time.Minute))
 	// The SSE pipe stays writable the whole time: the flush handler Touches
 	// lastSeen on every write. Simulate that with a background Toucher —
 	// this is exactly why the lastSeen-only check could never evict a
@@ -153,11 +155,11 @@ func TestHealthTick_EvictsDeadlockedBackend(t *testing.T) {
 // every ping with a pong (missed-pong counter reset, flush Touch) is never
 // evicted, no matter how many ticks pass.
 func TestHealthTick_KeepsAliveRespondingBackend(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 
 	live := reg.Register("live-1", "omp")
-	live.lastSeen.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	live.BackdateLastSeen(time.Now().Add(-2 * time.Minute))
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {

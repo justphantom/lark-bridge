@@ -1,10 +1,11 @@
-package feishufront
+package ipcserver
 
 import (
 	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -83,7 +84,7 @@ func (s *IPCServer) handleControl(w http.ResponseWriter, r *http.Request) {
 	// are ephemeral (progress/text deltas); terminal controls retry through
 	// EmitTerminalControl's ACK loop and the backend's C1 reconnect lands a
 	// fresh stream well inside the eviction window.
-	if err := s.registry.ReceiveControl(RoutedControl{BackendID: id, Control: &ctrl}); err != nil {
+	if err := s.registry.ReceiveControl(feishufront.RoutedControl{BackendID: id, Control: &ctrl}); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}

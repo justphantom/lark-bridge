@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
 	"github.com/justphantom/lark-bridge/internal/feishu"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
@@ -118,19 +119,19 @@ func itoa(n int) string {
 // wireFrontend builds a real IPCServer + Layer1Router + Dispatcher with a
 // fake bot sink, and connects a real backendrpc.Client so the dispatcher can
 // read Answer Events exactly as it would in production.
-func wireFrontend(t *testing.T, defaultBackend string) (*Dispatcher, *fakeSink, *Layer1Router, *backendrpc.Client, *BackendRegistry, func()) {
+func wireFrontend(t *testing.T, defaultBackend string) (*feishufront.Dispatcher, *fakeSink, *feishufront.Layer1Router, *feishufront.TurnManager, *backendrpc.Client, *feishufront.BackendRegistry, func()) {
 	t.Helper()
 	sink := &fakeSink{}
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
-	router, err := NewLayer1Router("")
+	router, err := feishufront.NewLayer1Router("")
 	if err != nil {
 		ts.Close()
 		t.Fatalf("router: %v", err)
 	}
-	turns := NewTurnManager()
-	disp := NewDispatcher(sink, reg, turns, router)
+	turns := feishufront.NewTurnManager()
+	disp := feishufront.NewDispatcher(sink, reg, turns, router)
 
 	client, err := backendrpc.Connect(backendrpc.ConnectOptions{BackendID: defaultBackend, BackendType: "opencode", FrontendURL: ts.URL})
 	if err != nil {
@@ -141,22 +142,22 @@ func wireFrontend(t *testing.T, defaultBackend string) (*Dispatcher, *fakeSink, 
 		client.Close()
 		ts.Close()
 	}
-	return disp, sink, router, client, reg, cleanup
+	return disp, sink, router, turns, client, reg, cleanup
 }
 
 // TestCardActionIdempotent verifies a duplicate CardAction (same requestID)
 // is dropped after the first one.
 func TestCardActionIdempotent(t *testing.T) {
 	const backendID = "opencode-3"
-	disp, _, router, client, _, cleanup := wireFrontend(t, backendID)
+	disp, _, router, turns, client, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat3"
 	if err := router.Set(chatID, backendID); err != nil {
 		t.Fatal(err)
 	}
-	disp.turns.Start("msg-1", chatID, "", "", backendID)
-	disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
+	turns.Start("msg-1", chatID, "", "", backendID)
+	disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID,
 		Question: &protocol.QuestionPayload{RequestID: "req-3", PromptID: "msg-1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}})
@@ -193,7 +194,7 @@ func TestCardActionIdempotent(t *testing.T) {
 // dispatcher forwards an Answer Event carrying Choices + Custom + MessageID.
 func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 	const backendID = "opencode-4"
-	disp, _, router, client, _, cleanup := wireFrontend(t, backendID)
+	disp, _, router, _, client, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat4"
@@ -214,7 +215,7 @@ func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 			}},
 		},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
 		t.Fatalf("DispatchControl: %v", err)
 	}
 
@@ -254,7 +255,7 @@ func TestQuestionRoundTrip_AnswerForwarded(t *testing.T) {
 // using PickAnswerValue read it without a form submit.
 func TestPermissionCardAction_ButtonClick(t *testing.T) {
 	const backendID = "opencode-perm"
-	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, _, client, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_perm"
@@ -275,7 +276,7 @@ func TestPermissionCardAction_ButtonClick(t *testing.T) {
 			},
 		},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("DispatchControl: %v", err)
 	}
 	if sent := string(sink.lastSendCard()); !strings.Contains(sent, `"kind":"permission"`) || strings.Contains(sent, "select_static") {
@@ -321,7 +322,7 @@ func TestPermissionCardAction_ButtonClick(t *testing.T) {
 // expireInteractive directly (the timer's body) so the test need not wait.
 func TestInteractiveTimeout(t *testing.T) {
 	const backendID = "opencode-5"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat5"
@@ -333,26 +334,23 @@ func TestInteractiveTimeout(t *testing.T) {
 		Type: protocol.TypeQuestion, ChatID: chatID,
 		Question: &protocol.QuestionPayload{RequestID: "req-t", PromptID: "msg-1", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("DispatchControl: %v", err)
 	}
 
 	// Confirm the card and its binding/timer were registered.
-	_, bound := disp.turns.InteractiveMessageID("req-t")
+	_, bound := turns.InteractiveMessageID("req-t")
 	if !bound {
 		t.Fatal("interactive binding missing after send")
 	}
-	disp.cardMu.Lock()
-	timerThere := disp.interactiveTimers["req-t"] != nil
-	cardThere := disp.cards["req-t"] != nil
-	disp.cardMu.Unlock()
+	cardThere, timerThere := disp.InteractiveGateState("req-t")
 	if !timerThere || !cardThere {
 		t.Fatalf("timer=%v card=%v, want both registered", timerThere, cardThere)
 	}
 
 	// Resolve the real messageID, then fire the expiry callback.
-	mid, _ := disp.turns.InteractiveMessageID("req-t")
-	disp.expireInteractive("req-t", mid, "")
+	mid, _ := turns.InteractiveMessageID("req-t")
+	disp.ForceExpireInteractive("req-t", mid, "")
 
 	// The expired card should be the last UpdateCard, carrying the notice.
 	sink.mu.Lock()
@@ -365,13 +363,10 @@ func TestInteractiveTimeout(t *testing.T) {
 		t.Errorf("expected expired card, got: %s", last)
 	}
 	// Binding and timer must be gone.
-	if _, ok := disp.turns.InteractiveMessageID("req-t"); ok {
+	if _, ok := turns.InteractiveMessageID("req-t"); ok {
 		t.Error("binding should be cleared after expiry")
 	}
-	disp.cardMu.Lock()
-	_, timerGone := disp.interactiveTimers["req-t"]
-	_, cardGone := disp.cards["req-t"]
-	disp.cardMu.Unlock()
+	cardGone, timerGone := disp.InteractiveGateState("req-t")
 	if timerGone || cardGone {
 		t.Errorf("timer/card should be cleared after expiry")
 	}
@@ -384,7 +379,7 @@ func TestInteractiveTimeout(t *testing.T) {
 // linger grey forever.
 func TestInteractiveFinalizedOnResult(t *testing.T) {
 	const backendID = "opencode-6"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat6"
@@ -397,10 +392,10 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-6",
 		Question: &protocol.QuestionPayload{RequestID: "req-f", PromptID: "msg-6", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("permission: %v", err)
 	}
-	mid, _ := disp.turns.InteractiveMessageID("req-f")
+	mid, _ := turns.InteractiveMessageID("req-f")
 	if mid == "" {
 		t.Fatal("interactive card not bound")
 	}
@@ -410,7 +405,7 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-6",
 		Result: &protocol.ResultPayload{Text: "done"},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
 		t.Fatalf("result: %v", err)
 	}
 
@@ -427,7 +422,7 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 	if !seen {
 		t.Error("expected standalone interactive card finalised with '本轮已完成'")
 	}
-	if _, ok := disp.turns.InteractiveMessageID("req-f"); ok {
+	if _, ok := turns.InteractiveMessageID("req-f"); ok {
 		t.Error("interactive binding should be released after result")
 	}
 }
@@ -439,7 +434,7 @@ func TestInteractiveFinalizedOnResult(t *testing.T) {
 // binding is released.
 func TestInteractiveSendsNewCard(t *testing.T) {
 	const backendID = "opencode-7"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat7"
@@ -447,17 +442,17 @@ func TestInteractiveSendsNewCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress"
-	disp.turns.Start("msg-7", chatID, progressMID, "", backendID)
+	turns.Start("msg-7", chatID, progressMID, "", backendID)
 
 	permCtrl := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-7",
 		Question: &protocol.QuestionPayload{RequestID: "req-r", PromptID: "msg-7", Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}}},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("question: %v", err)
 	}
 	// The question card must ship as a fresh SendCard with its own messageID.
-	mid, _ := disp.turns.InteractiveMessageID("req-r")
+	mid, _ := turns.InteractiveMessageID("req-r")
 	if mid == "" {
 		t.Fatal("interactive card not bound")
 	}
@@ -484,7 +479,7 @@ func TestInteractiveSendsNewCard(t *testing.T) {
 		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-7",
 		Result: &protocol.ResultPayload{Text: "done"},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
 		t.Fatalf("result: %v", err)
 	}
 	sink.mu.Lock()
@@ -496,7 +491,7 @@ func TestInteractiveSendsNewCard(t *testing.T) {
 	if !strings.Contains(lastSend, "done") {
 		t.Errorf("result should ship as a fresh SendCard carrying the result text, got: %s", lastSend)
 	}
-	if _, ok := disp.turns.InteractiveMessageID("req-r"); ok {
+	if _, ok := turns.InteractiveMessageID("req-r"); ok {
 		t.Error("interactive binding should be released after result")
 	}
 }
@@ -506,7 +501,7 @@ func TestInteractiveSendsNewCard(t *testing.T) {
 // picked at a glance instead of a generic "已提交" placeholder.
 func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 	const backendID = "opencode-8"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat8"
@@ -519,10 +514,10 @@ func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 		Question: &protocol.QuestionPayload{RequestID: "req-a", PromptID: "msg-8",
 			Questions: []protocol.QuestionItem{{Label: "选什么", Options: []string{"选项A", "选项B"}}}},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
 		t.Fatalf("question: %v", err)
 	}
-	mid, _ := disp.turns.InteractiveMessageID("req-a")
+	mid, _ := turns.InteractiveMessageID("req-a")
 	if mid == "" {
 		t.Fatal("interactive card not bound")
 	}
@@ -558,7 +553,7 @@ func TestQuestionSubmit_ShowsAnswerOnCard(t *testing.T) {
 // expiry flips keep working on the same card.
 func TestInteractiveTakeOverProgressCard(t *testing.T) {
 	const backendID = "opencode-10"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat10"
@@ -566,7 +561,7 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-10"
-	disp.turns.Start("msg-10", chatID, progressMID, "", backendID)
+	turns.Start("msg-10", chatID, progressMID, "", backendID)
 
 	qCtrl := &protocol.Control{
 		Type: protocol.TypeQuestion, ChatID: chatID, PromptID: "msg-10",
@@ -575,11 +570,11 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 			Questions: []protocol.QuestionItem{{Label: "选择模型", Options: []string{"a", "b"}}},
 		},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
 		t.Fatalf("question: %v", err)
 	}
 
-	mid, ok := disp.turns.InteractiveMessageID("req-tk")
+	mid, ok := turns.InteractiveMessageID("req-tk")
 	if !ok {
 		t.Fatal("interactive card not bound")
 	}
@@ -601,7 +596,7 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 	if !progressUpdated {
 		t.Error("progress card should have been updated into the question card")
 	}
-	if _, turnOpen := disp.turns.Get("msg-10"); turnOpen {
+	if _, turnOpen := turns.Get("msg-10"); turnOpen {
 		t.Error("turn should be finished after takeover")
 	}
 
@@ -630,7 +625,7 @@ func TestInteractiveTakeOverProgressCard(t *testing.T) {
 // with no open turn ships a fresh standalone card exactly like before.
 func TestInteractiveTakeOverFallbackNoTurn(t *testing.T) {
 	const backendID = "opencode-11"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, _, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat11"
@@ -644,7 +639,7 @@ func TestInteractiveTakeOverFallbackNoTurn(t *testing.T) {
 			Questions: []protocol.QuestionItem{{Label: "q", Options: []string{"a"}}},
 		},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
 		t.Fatalf("question: %v", err)
 	}
 	sink.mu.Lock()
@@ -661,7 +656,7 @@ func TestInteractiveTakeOverFallbackNoTurn(t *testing.T) {
 // should swallow a later interactive card.
 func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 	const backendID = "opencode-9"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat9"
@@ -669,7 +664,7 @@ func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress"
-	disp.turns.Start("msg-9", chatID, progressMID, "", backendID)
+	turns.Start("msg-9", chatID, progressMID, "", backendID)
 
 	seenMIDs := make(map[string]bool)
 	for i := range 3 {
@@ -682,10 +677,10 @@ func TestInteractiveMultipleCardsInOneTurn(t *testing.T) {
 				Questions: []protocol.QuestionItem{{Label: "q" + itoa(i), Options: []string{"a", "b"}}},
 			},
 		}
-		if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
+		if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: qCtrl}); err != nil {
 			t.Fatalf("question %d: %v", i, err)
 		}
-		mid, ok := disp.turns.InteractiveMessageID(reqID)
+		mid, ok := turns.InteractiveMessageID(reqID)
 		if !ok {
 			t.Fatalf("question %d not bound", i)
 		}
@@ -735,7 +730,7 @@ func lastUpdateFor(updates []updatedCard, messageID string) []byte {
 // on amber "处理中" forever — never reaching a terminal green state.
 func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	const backendID = "opencode-fin"
-	disp, sink, router, client, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, client, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 	// Drain the answer the submit forwards so it does not back up.
 	go func() { _, _ = client.RecvEvent() }()
@@ -745,7 +740,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fin"
-	disp.turns.Start("msg-fin", chatID, progressMID, "", backendID)
+	turns.Start("msg-fin", chatID, progressMID, "", backendID)
 
 	// Mid-turn permission gate: standalone card (no TakeOverProgress).
 	permCtrl := &protocol.Control{
@@ -759,10 +754,10 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 			},
 		},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: permCtrl}); err != nil {
 		t.Fatalf("permission emit: %v", err)
 	}
-	mid, _ := disp.turns.InteractiveMessageID("req-fin")
+	mid, _ := turns.InteractiveMessageID("req-fin")
 	if mid == "" {
 		t.Fatal("interactive card not bound after emit")
 	}
@@ -785,7 +780,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 	}
 	// Binding MUST still be present after submit (the fix keeps it so finalize
 	// can advance the card).
-	if _, ok := disp.turns.InteractiveMessageID("req-fin"); !ok {
+	if _, ok := turns.InteractiveMessageID("req-fin"); !ok {
 		t.Error("binding must survive submit so finalize can advance the card")
 	}
 
@@ -794,7 +789,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 		Type: protocol.TypeResult, ChatID: chatID, PromptID: "msg-fin",
 		Result: &protocol.ResultPayload{Text: "done"},
 	}
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: resCtrl}); err != nil {
 		t.Fatalf("result emit: %v", err)
 	}
 	sink.mu.Lock()
@@ -810,7 +805,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 		t.Errorf("finalized card must NOT prepend '本轮已完成' when a ✓ echo exists; got %s", finalCard)
 	}
 	// Binding released after finalize.
-	if _, ok := disp.turns.InteractiveMessageID("req-fin"); ok {
+	if _, ok := turns.InteractiveMessageID("req-fin"); ok {
 		t.Error("binding should be released after finalize")
 	}
 }
@@ -821,7 +816,7 @@ func TestInteractiveSubmittedThenFinalized(t *testing.T) {
 // sendResult retries the reply as a plain-text message so it is not lost.
 func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 	const backendID = "opencode-fb"
-	disp, sink, router, _, _, cleanup := wireFrontend(t, backendID)
+	disp, sink, router, turns, _, _, cleanup := wireFrontend(t, backendID)
 	defer cleanup()
 
 	chatID := "oc_chat_fb"
@@ -829,7 +824,7 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 		t.Fatal(err)
 	}
 	const progressMID = "om-progress-fb"
-	disp.turns.Start("msg-fb", chatID, progressMID, "", backendID)
+	turns.Start("msg-fb", chatID, progressMID, "", backendID)
 
 	// Simulate Feishu rejecting the result card (e.g. reply had too many tables).
 	sink.mu.Lock()
@@ -837,7 +832,7 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 	sink.mu.Unlock()
 
 	replyText := "| col |\n|----|\n| a |\n| b |\n\n这是最终回复正文。"
-	if err := disp.DispatchControl(context.Background(), RoutedControl{BackendID: backendID, Control: &protocol.Control{
+	if err := disp.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: backendID, Control: &protocol.Control{
 		Type:     protocol.TypeResult,
 		PromptID: "msg-fb",
 		ChatID:   chatID,
@@ -874,7 +869,8 @@ func TestSendResult_CardRejectedFallsBackToText(t *testing.T) {
 // carried in value.choice (not FormValue).
 func TestSendBrowserButtons_NoForm(t *testing.T) {
 	sink := &fakeSink{}
-	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	turns := feishufront.NewTurnManager()
+	d := feishufront.NewDispatcher(sink, feishufront.NewBackendRegistry(), turns, nil)
 
 	// Round 1: directory browser question with several dir/file options.
 	q1 := &protocol.Control{
@@ -884,10 +880,10 @@ func TestSendBrowserButtons_NoForm(t *testing.T) {
 			Questions: []protocol.QuestionItem{{Label: "选择要发送的文件", Options: []string{"📁 docs/", "📁 src/", "📄 a.md", "📄 b.md", "📄 c.md"}}},
 		},
 	}
-	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
+	if err := d.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
 		t.Fatalf("round1: %v", err)
 	}
-	mid, _ := d.turns.InteractiveMessageID("req-b1")
+	mid, _ := turns.InteractiveMessageID("req-b1")
 
 	// The rendered card must be button-based: buttons present, no form/select.
 	sent := string(sink.lastSendCard())
@@ -913,14 +909,14 @@ func TestSendBrowserButtons_NoForm(t *testing.T) {
 			UpdateMessageID: mid,
 		},
 	}
-	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
+	if err := d.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
 		t.Fatalf("round2: %v", err)
 	}
 	sendsAfter, _ := sink.counts()
 	if sendsAfter != sendsBefore {
 		t.Errorf("in-place refresh must not SendCard, sends %d→%d", sendsBefore, sendsAfter)
 	}
-	if mid2, ok := d.turns.InteractiveMessageID("req-b2"); !ok || mid2 != mid {
+	if mid2, ok := turns.InteractiveMessageID("req-b2"); !ok || mid2 != mid {
 		t.Errorf("req-b2 should own %q, got (%q,%v)", mid, mid2, ok)
 	}
 
@@ -952,14 +948,13 @@ func TestSendBrowserButtons_NoForm(t *testing.T) {
 // synchronous (no click-window delay).
 func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 	sink := &fakeSink{}
-	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	turns := feishufront.NewTurnManager()
+	d := feishufront.NewDispatcher(sink, feishufront.NewBackendRegistry(), turns, nil)
 
 	// Simulate round 1: a prior picker already owns om_picker under req-r1
 	// (the progress card morphed into the picker on the first AskAndWait).
-	d.turns.BindInteractive("req-r1", "om_picker", "", "")
-	d.cardMu.Lock()
-	d.cards["req-r1"] = []byte("round1")
-	d.cardMu.Unlock()
+	turns.BindInteractive("req-r1", "om_picker", "", "")
+	d.SeedCardForRequest("req-r1", []byte("round1"))
 
 	// Round 2: backend asks to refresh the SAME card with a new option set
 	// under a fresh requestID (so clicks on the old options cannot collide).
@@ -971,7 +966,7 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 			UpdateMessageID: "om_picker",
 		},
 	}
-	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: ctrl}); err != nil {
+	if err := d.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: "claude-1", Control: ctrl}); err != nil {
 		t.Fatalf("DispatchControl: %v", err)
 	}
 
@@ -980,16 +975,14 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 	if sends, _ := sink.counts(); sends != 0 {
 		t.Errorf("expected 0 SendCard for an in-place refresh, got %d", sends)
 	}
-	if mid, ok := d.turns.InteractiveMessageID("req-r2"); !ok || mid != "om_picker" {
+	if mid, ok := turns.InteractiveMessageID("req-r2"); !ok || mid != "om_picker" {
 		t.Errorf("req-r2 should bind to om_picker, got (%q,%v)", mid, ok)
 	}
-	if _, ok := d.turns.InteractiveMessageID("req-r1"); ok {
+	if _, ok := turns.InteractiveMessageID("req-r1"); ok {
 		t.Error("req-r1 should be evicted by the refresh (only req-r2 owns the card)")
 	}
-	d.cardMu.Lock()
-	_, hasNew := d.cards["req-r2"]
-	_, hasOld := d.cards["req-r1"]
-	d.cardMu.Unlock()
+	_, hasNew := d.CardForRequest("req-r2")
+	_, hasOld := d.CardForRequest("req-r1")
 	if !hasNew {
 		t.Error("new card bytes should be cached under req-r2")
 	}
@@ -1020,7 +1013,8 @@ func TestSendInteractive_QuestionUpdateRefreshesSameCard(t *testing.T) {
 // not a binding owner for the submitted flip (no matching messageID).
 func TestDispatchCardAction_MultiRoundClickFlipsLatestBinding(t *testing.T) {
 	sink := &fakeSink{}
-	d := NewDispatcher(sink, NewBackendRegistry(), NewTurnManager(), nil)
+	turns := feishufront.NewTurnManager()
+	d := feishufront.NewDispatcher(sink, feishufront.NewBackendRegistry(), turns, nil)
 
 	// Round 1 card.
 	q1 := &protocol.Control{
@@ -1030,10 +1024,10 @@ func TestDispatchCardAction_MultiRoundClickFlipsLatestBinding(t *testing.T) {
 			Questions: []protocol.QuestionItem{{Label: "选择文件", Options: []string{"📁 sub/", "📄 a.txt"}}},
 		},
 	}
-	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
+	if err := d.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: "claude-1", Control: q1}); err != nil {
 		t.Fatalf("round1: %v", err)
 	}
-	mid, _ := d.turns.InteractiveMessageID("req-r1")
+	mid, _ := turns.InteractiveMessageID("req-r1")
 
 	// Round 2 refresh re-binds the same card to req-r2 (synchronous PATCH).
 	q2 := &protocol.Control{
@@ -1044,7 +1038,7 @@ func TestDispatchCardAction_MultiRoundClickFlipsLatestBinding(t *testing.T) {
 			UpdateMessageID: mid,
 		},
 	}
-	if err := d.DispatchControl(context.Background(), RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
+	if err := d.DispatchControl(context.Background(), feishufront.RoutedControl{BackendID: "claude-1", Control: q2}); err != nil {
 		t.Fatalf("round2: %v", err)
 	}
 

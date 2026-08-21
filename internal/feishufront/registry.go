@@ -97,6 +97,13 @@ func (c *BackendConn) LastSeen() time.Time {
 	return time.Unix(0, c.lastSeen.Load())
 }
 
+// BackdateLastSeen sets lastSeen to t. Test hook: the ipcserver package's
+// health-check tests use it to simulate a silent backend without reaching
+// into this struct's unexported atomic (Touch always stores "now").
+func (c *BackendConn) BackdateLastSeen(t time.Time) {
+	c.lastSeen.Store(t.UnixNano())
+}
+
 // BumpMissedPongs records one health ping sent without (yet) a pong reply.
 func (c *BackendConn) BumpMissedPongs() { c.missedPongs.Add(1) }
 
@@ -120,6 +127,14 @@ func (c *BackendConn) SendEvent(ev *protocol.Event) error {
 	default:
 		return fmt.Errorf("backend %s event channel full", c.id)
 	}
+}
+
+// Events exposes the receive side of the connection's event channel so the
+// IPC transport (internal/feishufront/ipcserver) can stream it to the
+// backend over SSE without reaching into the struct's unexported field.
+// The channel is closed by Close.
+func (c *BackendConn) Events() <-chan *protocol.Event {
+	return c.eventCh
 }
 
 // Close shuts the connection down. Idempotent.
@@ -425,7 +440,7 @@ func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []pro
 			if h.ReportedAt == 0 {
 				h.ReportedAt = m.ReportedAt
 			}
-			key := hostDedupKey(h.IP, h.Hostname, h.MachineID, id)
+			key := HostDedupKey(h.IP, h.Hostname, h.MachineID, id)
 			if i, ok := hostIdx[key]; ok {
 				// Same host: the push with the highest ReportedAt wins.
 				// r.conns is a map (random iteration order), so "latest" must
@@ -445,11 +460,11 @@ func (r *BackendRegistry) Snapshot() (hosts []protocol.HostStats, services []pro
 	return hosts, services
 }
 
-// hostDedupKey derives the per-host dedup key. machine-id wins (stable per
+// HostDedupKey derives the per-host dedup key. machine-id wins (stable per
 // physical host); absent → (IP, Hostname); both empty → backendID so distinct
 // backends never collapse into one row. Shared with mergeHostByKey so the
 // frontend's self-row uses the identical priority.
-func hostDedupKey(ip, hostname, machineID, backendID string) string {
+func HostDedupKey(ip, hostname, machineID, backendID string) string {
 	if machineID != "" {
 		return machineID
 	}
@@ -482,18 +497,18 @@ func (r *BackendRegistry) ReceiveControl(rc RoutedControl) error {
 // Controls returns the read-only channel the frontend main loop consumes.
 func (r *BackendRegistry) Controls() <-chan RoutedControl { return r.ctrlCh }
 
-// connSnapshot is one entry returned by EachConn for the health checker.
-type connSnapshot struct {
+// ConnSnapshot is one entry returned by EachConn for the health checker.
+type ConnSnapshot struct {
 	ID   string
 	Type string
 }
 
 // EachConn invokes fn for every currently-registered backend connection. Used
 // by the health checker to ping and to evict silent backends.
-func (r *BackendRegistry) EachConn(fn func(s connSnapshot)) {
+func (r *BackendRegistry) EachConn(fn func(s ConnSnapshot)) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for id, c := range r.conns {
-		fn(connSnapshot{ID: id, Type: c.typ})
+		fn(ConnSnapshot{ID: id, Type: c.typ})
 	}
 }

@@ -73,9 +73,10 @@ lark-bridge/
 │   │   ├── websocket/        #   RFC 6455 WS 客户端
 │   │   └── ws/               #   帧编解码 + 重连 + 分片重组
 │   ├── feishu/               # lark.Client 的业务封装层（Bot/IncomingMessage）
-│   ├── feishufront/          # ★ 前端核心（最大包）
+│   ├── feishufront/          # ★ 前端编排与状态层
 │   │   ├── cardkit/          #   飞书卡片元素 schema
-│   │   └── renderer/         #   progress/result/interactive 渲染器
+│   │   ├── renderer/         #   progress/result/interactive 渲染器
+│   │   └── ipcserver/        #   IPC 传输（SSE + POST + 鉴权/健康，对称 backendrpc）
 │   ├── backendrpc/           # 后端↔前端 IPC 客户端（SSE + 重连）
 │   ├── miniagent/            # miniagent-back 业务逻辑（handler + 命令）
 │   ├── miniclient/           # miniagent CLI 子进程封装（fork + NDJSON）
@@ -134,21 +135,17 @@ lark-bridge/
 
 按规模（行数）降序，共 22 个包。
 
-### 5.1 `feishufront/`（约 17,000 行，54 文件）——前端核心
+### 5.1 `feishufront/`——前端核心
 
-前端的所有业务逻辑集中地，是体量最大的包。
+前端编排与状态层。**2026-08-19 起 IPC 传输层拆出子包 `feishufront/ipcserver/`**（与后端侧 `backendrpc` 对称的传输边界；IPCServer 对 Dispatcher 零类型依赖——通过 onOffline/onOnline/inFlightTurns/inFlightDetail/selfMetrics callback 反向接线，唯一结构性依赖是 `*BackendRegistry`），卡片 schema/渲染此前已拆 `cardkit/`/`renderer/`。
 
 | 文件 | 职责 |
 |---|---|
 | `dispatcher.go` | **`Dispatcher` 编排器**（:89）。接收飞书消息与后端 Control，路由到对应卡片。核心方法 `DispatchIncoming`（:371）、`updateCard`（:357）；`ChatRouter` 接口（:80） |
 | `dispatcher_control.go` | `DispatchControl`（:20）：把后端 Control 分派到 `updateProgress`（:130） / `sendResult`（:287） / `sendNoticeControl` / `sendInteractive`（:95） |
-| `dispatcher_interactive.go` | 问答/权限卡生命周期 |
+| `dispatcher_interactive.go` | 问答/权限卡生命周期（含 e2e 测试钩子 `ForceExpireInteractive`/`CardForRequest`/`InteractiveGateState`/`SeedCardForRequest`） |
 | `dispatcher_backend.go` | `/backend` 选择卡处理 |
-| `ipcserver.go` | **`IPCServer`**（:24）：HTTP 服务，含 Bearer 鉴权（`subtle.ConstantTimeCompare` :179/:307）+ 每 IP 限流（`authFailuresCap=256` :107） |
-| `ipcserver_sse.go` | `GET /v1/events` SSE handler（:16），注册后端、流式推送 Event |
-| `ipcserver_control.go` | `POST /v1/control/{backendID}` handler（:21） |
-| `ipcserver_health.go` | 后端健康检查（静默超时驱逐） |
-| `registry.go` | **`BackendRegistry`**（:138）：backendID → `BackendConn` 映射 + Control 通道（`ReceiveControl` :473，`Controls` :483） |
+| `registry.go` | **`BackendRegistry`**（:138）：backendID → `BackendConn` 映射 + Control 通道（`ReceiveControl` :473，`Controls` :483）；`BackendConn.Events()` 暴露 SSE 流读端、`BackdateLastSeen` 为健康测试钩子 |
 | `turn.go` | **`TurnManager`**：每轮对话（prompt）的状态机，`/v1/status` 数据源 |
 | `routing.go` | `Layer1Router`：chatID → backendID 路由（持久化 `routing.json`） |
 | `dedup.go` | 三套 TTL+LRU 去重集（eventIDs/actionIDs/terminals），防重放 |
@@ -156,6 +153,7 @@ lark-bridge/
 | `form.go` | 表单解析 |
 | `cardkit/` | 飞书卡片 schema 的纯结构定义（Header/Footer/元素） |
 | `renderer/` | 四类卡片渲染：`progress.go`（流式进度，含工具行/todo/banner）、`result.go`（终态结果）、`interactive.go`（问答/权限）、`progress_snapshot.go`/`progress_category.go`（内部状态） |
+| `ipcserver/` | **IPC 传输子包**（原 feishufront/ipcserver*.go 拆出）：`IPCServer` HTTP 服务（Bearer 鉴权 `subtle.ConstantTimeCompare` + 每 IP 限流 `authFailuresCap=256`）、`GET /v1/events` SSE handler（注册后端+流式推送）、`POST /v1/control/{backendID}`、健康检查（静默超时驱逐）、deploy-preflight、metrics。依赖父包的 `BackendRegistry`/`Turn`/`BackendConn`；e2e 测试（原 interactive_e2e_test.go）随迁于此 |
 
 ### 5.2 `lark/`——自实现飞书客户端
 

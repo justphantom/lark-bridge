@@ -1,4 +1,4 @@
-package feishufront
+package ipcserver
 
 import (
 	"bytes"
@@ -12,14 +12,15 @@ import (
 	"time"
 
 	"github.com/justphantom/lark-bridge/internal/backendrpc"
+	"github.com/justphantom/lark-bridge/internal/feishufront"
 	"github.com/justphantom/lark-bridge/internal/protocol"
 )
 
 // newAuthTestServer builds an IPCServer with the given secret behind a test
 // server, plus registers one backend so control POSTs can target it.
-func newAuthTestServer(t *testing.T, secret string) (*httptest.Server, *BackendRegistry) {
+func newAuthTestServer(t *testing.T, secret string) (*httptest.Server, *feishufront.BackendRegistry) {
 	t.Helper()
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	reg.Register("back-1", "claude")
 	srv := NewIPCServer(reg, secret)
 	ts := httptest.NewServer(srv.Routes())
@@ -129,7 +130,7 @@ func TestIPCAuth_BearerPrefixRequired(t *testing.T) {
 // frontend→backend SSE and backend→frontend POST paths both work under auth.
 func TestIPCAuth_BackendClientEndToEnd(t *testing.T) {
 	const secret = "shared-secret-xyz"
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, secret)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -170,7 +171,7 @@ func TestIPCAuth_BackendClientEndToEnd(t *testing.T) {
 // TestIPCAuth_WrongSecretHandshakeFails verifies a backend presenting the
 // wrong secret is rejected at the SSE handshake (HTTP 401), so Connect fails.
 func TestIPCAuth_WrongSecretHandshakeFails(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "correct")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -183,7 +184,7 @@ func TestIPCAuth_WrongSecretHandshakeFails(t *testing.T) {
 // TestIPCAuth_NoSecretAllowsAll preserves the loopback-only escape hatch:
 // when no secret is configured, requests without a token are accepted.
 func TestIPCAuth_NoSecretAllowsAll(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
@@ -204,7 +205,7 @@ func TestIPCAuth_NoSecretAllowsAll(t *testing.T) {
 // during the lockout window. With the old TOCTOU (check and count under
 // separate lock acquisitions) concurrent requests could slip past the cap.
 func TestIPCAuth_ConcurrentFailuresTriggerLockout(t *testing.T) {
-	reg := NewBackendRegistry()
+	reg := feishufront.NewBackendRegistry()
 	srv := NewIPCServer(reg, "s3cr3t")
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()

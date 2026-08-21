@@ -23,6 +23,7 @@ import (
 	"github.com/justphantom/lark-bridge/internal/config"
 	"github.com/justphantom/lark-bridge/internal/feishu"
 	"github.com/justphantom/lark-bridge/internal/feishufront"
+	"github.com/justphantom/lark-bridge/internal/feishufront/ipcserver"
 	"github.com/justphantom/lark-bridge/internal/fileconvert"
 	"github.com/justphantom/lark-bridge/internal/hostmetrics"
 	"github.com/justphantom/lark-bridge/internal/log"
@@ -128,7 +129,7 @@ func run(cfgPath, addr string) error {
 
 	// IPC server + registry.
 	registry := feishufront.NewBackendRegistry()
-	ipc := feishufront.NewIPCServer(registry, cfg.IPCSecret)
+	ipc := ipcserver.NewIPCServer(registry, cfg.IPCSecret)
 	ipc.SetLogger(logger)
 	// M10-1: TLS (or mTLS) for the IPC listener; mandatory when ipc_addr is
 	// non-loopback (config validate + Listen both enforce).
